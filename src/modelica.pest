@@ -1,0 +1,103 @@
+// Basic Modelica Grammar for Pest
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)* }
+
+model_file = { SOI ~ model_definition ~ EOI }
+
+model_definition = { class_prefixes ~ identifier ~ declaration_section ~ (equation_section | algorithm_section)* ~ "end" ~ identifier ~ ";" }
+
+class_prefixes = { "partial"? ~ ("model" | "connector" | "class" | "record" | "block" | "package") }
+
+identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+dotted_identifier = { identifier ~ ("." ~ identifier)* }
+declaration_section = { (extends_clause | declaration)* }
+
+extends_clause = { "extends" ~ dotted_identifier ~ modification_part? ~ ";" }
+modification_part = { "(" ~ modification_list ~ ")" }
+modification_list = { modification ~ ("," ~ modification)* }
+modification = { component_ref ~ "=" ~ expression }
+
+declaration = { (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ type_name ~ identifier ~ array_subscript? ~ modification_part? ~ value_assignment? ~ string_comment? ~ ";" }
+
+string_comment = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+array_subscript = { "[" ~ expression ~ "]" }
+parameter_kw = { "parameter" }
+constant_kw = { "constant" }
+flow_kw = { "flow" }
+discrete_kw = { "discrete" }
+input_kw = { "input" }
+output_kw = { "output" }
+// Allow arbitrary identifiers as type names for models/connectors
+type_name = { !keyword ~ ("Real" | "Integer" | "Boolean" | dotted_identifier) }
+
+keyword = @{ ("model" | "end" | "equation" | "algorithm" | "extends" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "input" | "output" | "package" | "constant") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+value_assignment = { "=" ~ expression }
+// attribute_modification removed
+equation_section = { "equation" ~ equation_stmt* }
+equation_stmt = { connect_clause | equation | for_loop | when_equation | reinit_clause }
+
+when_equation = { "when" ~ expression ~ "then" ~ equation_stmt+ ~ ("elsewhen" ~ expression ~ "then" ~ equation_stmt+)* ~ "end" ~ "when" ~ ";" }
+
+reinit_clause = { "reinit" ~ "(" ~ component_ref ~ "," ~ expression ~ ")" ~ ";" }
+
+algorithm_section = { "algorithm" ~ algorithm_stmt+ }
+algorithm_stmt = { if_stmt | for_stmt | while_stmt | when_stmt | assignment_stmt }
+
+assignment_stmt = { component_ref ~ ":=" ~ expression ~ ";" }
+
+if_stmt = { "if" ~ expression ~ "then" ~ algorithm_stmt+ ~ ("elseif" ~ expression ~ "then" ~ algorithm_stmt+)* ~ ("else" ~ algorithm_stmt+)? ~ "end" ~ "if" ~ ";" }
+
+// range rule used in for_stmt?
+// for_stmt = { "for" ~ identifier ~ "in" ~ expression ~ ... }
+// "1.0:5.0" fails to parse as expression because ":" is not an operator in arithmetic_expression.
+// We need to allow range expression in for loops.
+// Option 1: Update expression to include range (colon operator).
+// Option 2: Update for_stmt to use `range` rule instead of `expression`.
+
+for_stmt = { "for" ~ identifier ~ "in" ~ (range | expression) ~ "loop" ~ algorithm_stmt+ ~ "end" ~ "for" ~ ";" }
+
+while_stmt = { "while" ~ expression ~ "loop" ~ algorithm_stmt+ ~ "end" ~ "while" ~ ";" }
+
+when_stmt = { "when" ~ expression ~ "then" ~ algorithm_stmt+ ~ ("elsewhen" ~ expression ~ "then" ~ algorithm_stmt+)* ~ "end" ~ "when" ~ ";" }
+
+equation = { expression ~ "=" ~ expression ~ ";" }
+connect_clause = { "connect" ~ "(" ~ expression ~ "," ~ expression ~ ")" ~ ";" }
+
+// For loop: for i in 1:5 loop ... end for;
+for_loop = { "for" ~ identifier ~ "in" ~ range ~ "loop" ~ equation_stmt+ ~ "end" ~ "for" ~ ";" }
+range = { expression ~ (":" ~ expression)+ }
+
+expression = { if_expression | logical_or }
+
+if_expression = { "if" ~ expression ~ "then" ~ expression ~ "else" ~ expression }
+
+logical_or = { logical_and ~ (or_op ~ logical_and)* }
+logical_and = { relation ~ (and_op ~ relation)* }
+relation = { arithmetic_expression ~ (rel_op ~ arithmetic_expression)? }
+
+or_op = { "or" }
+and_op = { "and" }
+
+arithmetic_expression = { term ~ (add_sub ~ term)* }
+term = { unary_minus? ~ factor ~ (mul_div ~ factor)* }
+// Order matters: try der_call/function_call before component_ref
+factor = { der_call | function_call | component_ref | number | "(" ~ expression ~ ")" | array_literal }
+
+array_literal = { "{" ~ expression ~ ("," ~ expression)* ~ "}" }
+
+component_ref = { identifier ~ (array_subscript | member_access)* }
+member_access = { "." ~ identifier }
+
+unary_minus = { "-" }
+
+der_call = { "der" ~ "(" ~ expression ~ ")" }
+function_call = { dotted_identifier ~ "(" ~ expression ~ ("," ~ expression)* ~ ")" }
+
+rel_op = { "<=" | ">=" | "==" | "<>" | "<" | ">" }
+add_sub = { "+" | "-" }
+mul_div = { "*" | "/" }
+
+number = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }

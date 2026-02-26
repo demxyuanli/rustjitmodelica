@@ -1,0 +1,17 @@
+[package]
+name = "rustmodlica"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+cranelift = "0.128.3"
+cranelift-frontend = "0.128.3"
+cranelift-jit = "0.128.3"
+cranelift-module = "0.128.3"
+cranelift-native = "0.128.3"
+cranelift-object = "0.128.3"
+pest = "2.8.6"
+pest_derive = "2.8.6"
+petgraph = "0.6"
+thiserror = "2.0.18"
