@@ -13,6 +13,35 @@ pub struct System<'a> {
 }
 
 impl<'a> System<'a> {
+    /// Compute ODE Jacobian J by finite differences: J[i][j] = d(deriv_i)/d(state_j).
+    /// jacobian must be row-major, length n*n. Uses one-sided difference with eps.
+    #[allow(dead_code)]
+    pub fn compute_ode_jacobian_numeric(
+        &mut self,
+        time: f64,
+        states: &[f64],
+        jacobian: &mut [f64],
+        eps: f64,
+    ) -> Result<(), i32> {
+        let n = states.len();
+        if jacobian.len() < n * n {
+            return Err(-1);
+        }
+        let mut derivs_base = vec![0.0_f64; n];
+        let mut states_scratch = states.to_vec();
+        self.evaluate(time, &mut states_scratch, &mut derivs_base)?;
+        for j in 0..n {
+            states_scratch.copy_from_slice(states);
+            states_scratch[j] += eps;
+            let mut derivs_pert = vec![0.0_f64; n];
+            self.evaluate(time, &mut states_scratch, &mut derivs_pert)?;
+            for i in 0..n {
+                jacobian[i * n + j] = (derivs_pert[i] - derivs_base[i]) / eps;
+            }
+        }
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn evaluate(
         &mut self,

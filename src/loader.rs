@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use crate::ast::Model;
+use crate::diag::ParseErrorInfo;
 use crate::parser;
 use thiserror::Error;
 
@@ -9,8 +10,8 @@ use thiserror::Error;
 pub enum LoadError {
     #[error("Model not found: {0}")]
     NotFound(String),
-    #[error("Parse failed for {0}: {1}")]
-    ParseFailed(String, String),
+    #[error("{0}")]
+    ParseFailedAt(ParseErrorInfo),
     #[error("IO error loading {0}: {1}")]
     Io(String, #[source] std::io::Error),
 }
@@ -62,10 +63,17 @@ impl ModelLoader {
                         return Ok(model);
                     }
                     Err(e) => {
-                        if !silent {
-                            eprintln!("Failed to parse dependency {}: {}", name, e);
-                        }
-                        return Err(LoadError::ParseFailed(name.to_string(), e.to_string()));
+                        let (line, column) = crate::diag::line_col_from_pest(&e.line_col);
+                        let path_str = full_path.display().to_string();
+                        let message = crate::diag::short_message_from_pest_string(&e.to_string());
+                        let info = ParseErrorInfo {
+                            path: path_str,
+                            source: content.clone(),
+                            line,
+                            column,
+                            message,
+                        };
+                        return Err(LoadError::ParseFailedAt(info));
                     }
                 }
             }

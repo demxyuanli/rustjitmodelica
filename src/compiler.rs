@@ -3,13 +3,14 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{Equation, Expression, AlgorithmStatement};
 use crate::loader::ModelLoader;
 use crate::flatten::{Flattener, eval_const_expr};
-use crate::analysis::{sort_algebraic_equations, collect_states_from_eq};
+use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, AnalysisOptions, partial_derivative};
 use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
 
 #[derive(Clone)]
 pub struct CompilerOptions {
     pub backend_dae_info: bool,
     pub index_reduction_method: String,
+    pub tearing_method: String,
     pub generate_dynamic_jacobian: String,
 }
 
@@ -18,6 +19,7 @@ impl Default for CompilerOptions {
         CompilerOptions {
             backend_dae_info: false,
             index_reduction_method: "none".to_string(),
+            tearing_method: "first".to_string(),
             generate_dynamic_jacobian: "none".to_string(),
         }
     }
@@ -56,7 +58,7 @@ impl Compiler {
         let opts = &self.options;
         println!("Loading model '{}'...", model_name);
         let mut root_model = self.loader.load_model(model_name)
-            .map_err(|e| format!("Failed to load model: {}", e))?;
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
         println!("Flattening model...");
         let mut flattener = Flattener::new();
@@ -308,12 +310,29 @@ impl Compiler {
         // IMPORTANT: Ensure der_x are NOT in known_vars!
         // (They are not in state_vars_sorted or discrete_vars_sorted, so we are good)
         
-        let sorted_eqs = sort_algebraic_equations(&continuous_eqs, &known_vars, &param_vars);
+        let analysis_opts = AnalysisOptions {
+            index_reduction_method: opts.index_reduction_method.clone(),
+            tearing_method: opts.tearing_method.clone(),
+        };
+        let (sorted_eqs, differential_index) = sort_algebraic_equations(
+            &continuous_eqs,
+            &known_vars,
+            &param_vars,
+            &analysis_opts,
+        );
         alg_equations = sorted_eqs;
+
+        let (strong_component_jacobians, symbolic_ode_jacobian, numeric_ode_jacobian) = {
+            let numeric = opts.generate_dynamic_jacobian == "numeric";
+            let symbolic = opts.generate_dynamic_jacobian == "symbolic";
+            let have_symbolic = symbolic && build_ode_jacobian_expressions(&state_vars_sorted, &alg_equations).is_some();
+            (false, have_symbolic, numeric)
+        };
 
         if opts.backend_dae_info {
             print_backend_dae_info(
                 opts,
+                differential_index,
                 total_equations,
                 total_declarations,
                 &state_vars_sorted,
@@ -324,6 +343,9 @@ impl Compiler {
                 &alg_equations,
                 &flat_model.equations,
                 &flat_model.algorithms,
+                strong_component_jacobians,
+                symbolic_ode_jacobian,
+                numeric_ode_jacobian,
             );
         }
 
@@ -382,8 +404,43 @@ impl Compiler {
     }
 }
 
+/// Build ODE Jacobian expressions J[i][j] = d(rhs_i)/d(state_j) from sorted equations that assign to der(x).
+/// Returns Some(matrix) if we can extract RHS for each state; None otherwise.
+fn build_ode_jacobian_expressions(
+    state_vars: &[String],
+    sorted_eqs: &[Equation],
+) -> Option<Vec<Vec<Expression>>> {
+    let mut rhs_by_state: Vec<Option<Expression>> = vec![None; state_vars.len()];
+    for eq in sorted_eqs {
+        if let Equation::Simple(lhs, rhs) = eq {
+            let der_var = match lhs {
+                Expression::Variable(v) if v.starts_with("der_") => v.clone(),
+                _ => continue,
+            };
+            let state_name = der_var.strip_prefix("der_")?;
+            if let Some(i) = state_vars.iter().position(|s| s == state_name) {
+                rhs_by_state[i] = Some(rhs.clone());
+            }
+        }
+    }
+    if rhs_by_state.iter().any(|o| o.is_none()) {
+        return None;
+    }
+    let mut jac = Vec::with_capacity(state_vars.len());
+    for i in 0..state_vars.len() {
+        let rhs = rhs_by_state[i].as_ref().unwrap();
+        let mut row = Vec::with_capacity(state_vars.len());
+        for state_j in state_vars {
+            row.push(partial_derivative(rhs, state_j));
+        }
+        jac.push(row);
+    }
+    Some(jac)
+}
+
 fn print_backend_dae_info(
     opts: &CompilerOptions,
+    differential_index: u32,
     total_equations: usize,
     total_declarations: usize,
     state_vars: &[String],
@@ -394,6 +451,9 @@ fn print_backend_dae_info(
     sorted_eqs: &[Equation],
     all_equations: &[Equation],
     algorithms: &[AlgorithmStatement],
+    strong_component_jacobians: bool,
+    symbolic_ode_jacobian: bool,
+    numeric_ode_jacobian: bool,
 ) {
     let mut simple = 0usize;
     let mut for_eq = 0usize;
@@ -453,15 +513,17 @@ fn print_backend_dae_info(
     println!("    Algorithm sections: {}", algorithms.len());
     println!("  [Index reduction]");
     println!("    Method: {}", opts.index_reduction_method);
-    println!("    Differential index: 1 (no reduction applied)");
+    println!("    Differential index: {}", differential_index);
     println!("  [Tearing]");
+    println!("    Method: {}", opts.tearing_method);
     println!("    Algebraic loops (strong components): {}", sorted_block);
     println!("    Tearing variables (selected): {}", tearing_var_count);
     println!("    Torn unknowns (total in blocks): {}", torn_unknowns_total);
     println!("  [Jacobian]");
     println!("    generateDynamicJacobian: {}", opts.generate_dynamic_jacobian);
-    println!("    Strong component Jacobians: no");
-    println!("    Symbolic ODE Jacobian: no");
+    println!("    Strong component Jacobians: {}", if strong_component_jacobians { "yes" } else { "no" });
+    println!("    Symbolic ODE Jacobian: {}", if symbolic_ode_jacobian { "yes" } else { "no" });
+    println!("    Numeric ODE Jacobian: {}", if numeric_ode_jacobian { "yes" } else { "no" });
     println!();
 }
 

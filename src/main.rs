@@ -1,4 +1,5 @@
 mod ast;
+mod diag;
 mod parser;
 mod loader;
 mod flatten;
@@ -17,6 +18,7 @@ use simulation::run_simulation;
 fn run(args: Vec<String>) {
     let mut backend_dae_info = false;
     let mut index_reduction_method = "none".to_string();
+    let mut tearing_method = "first".to_string();
     let mut generate_dynamic_jacobian = "none".to_string();
     let mut model_name = None;
     let mut i = 1;
@@ -35,6 +37,9 @@ fn run(args: Vec<String>) {
             i += 1;
         } else if let Some(v) = a.strip_prefix("--index-reduction-method=") {
             index_reduction_method = v.to_string();
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--tearing-method=") {
+            tearing_method = v.to_string();
             i += 1;
         } else if let Some(v) = a.strip_prefix("--generate-dynamic-jacobian=") {
             generate_dynamic_jacobian = v.to_string();
@@ -57,6 +62,7 @@ fn run(args: Vec<String>) {
             eprintln!("Usage: {} [options] <model_name>", args[0]);
             eprintln!("  --backend-dae-info, -d=backenddaeinfo  print backend DAE statistics (OpenModelica-style)");
             eprintln!("  --index-reduction-method=<none|uode|dynamicStateSelection|dummyDerivatives>  (default: none)");
+            eprintln!("  --tearing-method=<first|maxEquation|minCellier>  (default: first)");
             eprintln!("  --generate-dynamic-jacobian=<none|numeric|symbolic>  (default: none)");
             process::exit(1);
         }
@@ -64,6 +70,7 @@ fn run(args: Vec<String>) {
     let mut compiler = Compiler::new();
     compiler.options.backend_dae_info = backend_dae_info;
     compiler.options.index_reduction_method = index_reduction_method;
+    compiler.options.tearing_method = tearing_method;
     compiler.options.generate_dynamic_jacobian = generate_dynamic_jacobian;
     compiler.loader.add_path(".".into());
     compiler.loader.add_path("StandardLib".into());
@@ -72,7 +79,7 @@ fn run(args: Vec<String>) {
     let artifacts = match compiler.compile(&model_name) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("Compilation failed: {}", e);
+            eprintln!("{}", e);
             process::exit(1);
         }
     };

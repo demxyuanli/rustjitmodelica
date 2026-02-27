@@ -81,12 +81,66 @@ fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct AnalysisOptions {
+    #[allow(dead_code)]
+    pub index_reduction_method: String,
+    pub tearing_method: String,
+}
+
+/// Select tearing variable from block unknowns by method. OMC-style: first, maxEquation (most equations), minCellier (heuristic).
+fn select_tearing_variable(
+    block_unknowns: &[String],
+    block_eqs: &[Equation],
+    _unknown_map: &HashMap<String, usize>,
+    method: &str,
+) -> Option<String> {
+    if block_unknowns.is_empty() {
+        return None;
+    }
+    match method {
+        "maxEquation" => {
+            let mut best = block_unknowns[0].clone();
+            let mut best_count = 0usize;
+            for u in block_unknowns {
+                let count = block_eqs.iter().filter(|eq| equation_contains_var(eq, u)).count();
+                if count > best_count {
+                    best_count = count;
+                    best = u.clone();
+                }
+            }
+            Some(best)
+        }
+        "minCellier" => {
+            let mut best = block_unknowns[0].clone();
+            let mut best_score = usize::MAX;
+            for u in block_unknowns {
+                let count = block_eqs.iter().filter(|eq| equation_contains_var(eq, u)).count();
+                if count < best_score {
+                    best_score = count;
+                    best = u.clone();
+                }
+            }
+            Some(best)
+        }
+        _ => block_unknowns.first().cloned(),
+    }
+}
+
+fn equation_contains_var(eq: &Equation, var: &str) -> bool {
+    let mut vars = HashSet::new();
+    collect_vars_eq(eq, &mut vars);
+    vars.contains(var)
+}
+
 /// Sorts algebraic equations using Block Lower Triangular (BLT) transformation.
+/// Returns (sorted_equations, structural_differential_index).
 pub fn sort_algebraic_equations(
-    equations: &[Equation], 
-    known_vars: &HashSet<String>, 
-    params: &[String]
-) -> Vec<Equation> {
+    equations: &[Equation],
+    known_vars: &HashSet<String>,
+    params: &[String],
+    options: &AnalysisOptions,
+) -> (Vec<Equation>, u32) {
     // 0. Prepare known variables set (including parameters and time)
     let mut current_known = known_vars.clone();
     for p in params {
@@ -104,10 +158,8 @@ pub fn sort_algebraic_equations(
     //     println!("    [{}]: {:?}", i, eq);
     // }
 
-    // 1. Index Reduction (Pantelides-like)
-    // Placeholder for actual implementation. For now, we assume index 1 or 0.
-    // In a real system, we'd iterate until all constraints are differentiated enough.
-    let equations = equations; // perform_index_reduction(&equations, known_vars);
+    // 1. Index reduction is applied after matching (see differential_index below).
+    let equations = equations;
 
     // 2. Analyze equations to find unknowns
     struct EqInfo {
@@ -227,6 +279,8 @@ pub fn sort_algebraic_equations(
         }
     }
 
+    let differential_index = if assigned_var.iter().any(|o| o.is_none()) { 2 } else { 1 };
+
     // 4. Build Dependency Graph
     let mut dep_graph = DiGraph::<usize, ()>::new();
     let node_indices: Vec<NodeIndex> = (0..eq_infos.len()).map(|i| dep_graph.add_node(i)).collect();
@@ -267,9 +321,15 @@ pub fn sort_algebraic_equations(
                         expr
                     ));
                 } else {
+                    let tearing_var = select_tearing_variable(
+                        &[var_name.clone()],
+                        &[eq.clone()],
+                        &unknown_map,
+                        &options.tearing_method,
+                    );
                     sorted_equations.push(Equation::SolvableBlock {
                         unknowns: vec![var_name.clone()],
-                        tearing_var: Some(var_name.clone()),
+                        tearing_var,
                         equations: vec![],
                         residuals: vec![make_residual(eq)]
                     });
@@ -284,27 +344,32 @@ pub fn sort_algebraic_equations(
             let block_eqs: Vec<Equation> = block_indices.iter()
                 .map(|&idx| equations[eq_infos[idx].original_idx].clone())
                 .collect();
-            
-            // Simple approach for now: dump as block
-            // In future: solve_scc_with_tearing
+
             let block_unknowns: Vec<String> = block_indices.iter()
                 .filter_map(|&idx| assigned_var[idx].map(|v_idx| unknown_list[v_idx].clone()))
                 .collect();
-            
+
+            let tearing_var = select_tearing_variable(
+                &block_unknowns,
+                &block_eqs,
+                &unknown_map,
+                &options.tearing_method,
+            );
+
             sorted_equations.push(Equation::SolvableBlock {
                 unknowns: block_unknowns.clone(),
-                tearing_var: block_unknowns.first().cloned(), // Naive tearing
+                tearing_var,
                 equations: vec![],
                 residuals: block_eqs.iter().map(|eq| make_residual(eq)).collect()
             });
-            
+
             for u in block_unknowns {
                 current_known.insert(u);
             }
         }
     }
-    
-    sorted_equations
+
+    (sorted_equations, differential_index)
 }
 
 fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> {
@@ -641,4 +706,76 @@ pub fn make_add(lhs: Expression, rhs: Expression) -> Expression {
 
 pub fn make_binary(lhs: Expression, op: Operator, rhs: Expression) -> Expression {
     Expression::BinaryOp(Box::new(lhs), op, Box::new(rhs))
+}
+
+/// Partial derivative of expression w.r.t. variable (symbolic). Used for Jacobian and index reduction.
+pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
+    use crate::ast::Operator;
+    match expr {
+        Expression::Variable(name) => {
+            if name == var {
+                Expression::Number(1.0)
+            } else {
+                Expression::Number(0.0)
+            }
+        }
+        Expression::Number(_) => Expression::Number(0.0),
+        Expression::BinaryOp(lhs, op, rhs) => {
+            let dl = partial_derivative(lhs, var);
+            let dr = partial_derivative(rhs, var);
+            match op {
+                Operator::Add | Operator::Sub => {
+                    let r = if *op == Operator::Add { Operator::Add } else { Operator::Sub };
+                    Expression::BinaryOp(Box::new(dl), r, Box::new(dr))
+                }
+                Operator::Mul => {
+                    let term1 = Expression::BinaryOp(Box::new(dl.clone()), Operator::Mul, rhs.clone());
+                    let term2 = Expression::BinaryOp(Box::new((**lhs).clone()), Operator::Mul, Box::new(dr));
+                    Expression::BinaryOp(Box::new(term1), Operator::Add, Box::new(term2))
+                }
+                Operator::Div => {
+                    let num = Expression::BinaryOp(
+                        Box::new(Expression::BinaryOp(Box::new(dl.clone()), Operator::Mul, rhs.clone())),
+                        Operator::Sub,
+                        Box::new(Expression::BinaryOp(Box::new((**lhs).clone()), Operator::Mul, Box::new(dr.clone()))),
+                    );
+                    let r = (**rhs).clone();
+                    let den = Expression::BinaryOp(Box::new(r.clone()), Operator::Mul, Box::new(r));
+                    Expression::BinaryOp(Box::new(num), Operator::Div, Box::new(den))
+                }
+                _ => Expression::Number(0.0),
+            }
+        }
+        Expression::Der(inner) => {
+            if contains_var(inner, var) {
+                Expression::Der(Box::new(partial_derivative(inner, var)))
+            } else {
+                Expression::Number(0.0)
+            }
+        }
+        Expression::Call(_, _) | Expression::If(_, _, _) | Expression::ArrayAccess(_, _)
+        | Expression::Dot(_, _) | Expression::Range(_, _, _) | Expression::ArrayLiteral(_) => Expression::Number(0.0),
+    }
+}
+
+/// Time derivative of expression using chain rule: d/dt expr = sum over state x of (d expr/d x * der(x)).
+/// Used for index reduction (Pantelides) when differentiating constraint equations.
+#[allow(dead_code)]
+pub fn time_derivative(expr: &Expression, state_vars: &[String]) -> Expression {
+    let mut sum: Option<Expression> = None;
+    for x in state_vars {
+        let pd = partial_derivative(expr, x);
+        if let Expression::Number(n) = &pd {
+            if n.abs() < 1e-15 {
+                continue;
+            }
+        }
+        let der_x = Expression::Variable(format!("der_{}", x));
+        let term = Expression::BinaryOp(Box::new(pd), Operator::Mul, Box::new(der_x));
+        sum = Some(match sum {
+            None => term,
+            Some(s) => Expression::BinaryOp(Box::new(s), Operator::Add, Box::new(term)),
+        });
+    }
+    sum.unwrap_or_else(|| Expression::Number(0.0))
 }

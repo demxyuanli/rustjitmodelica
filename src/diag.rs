@@ -1,0 +1,118 @@
+// Rust-style compile error reporting: file:line:col with snippet and caret.
+
+use std::fmt;
+
+/// Location in a source file (1-based line and column for display).
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct SourceLocation {
+    pub file: String,
+    pub line: usize,
+    pub column: usize,
+}
+
+/// Structured parse error for pretty-printing.
+#[derive(Debug, Clone)]
+pub struct ParseErrorInfo {
+    pub path: String,
+    pub source: String,
+    pub line: usize,
+    pub column: usize,
+    pub message: String,
+}
+
+impl fmt::Display for ParseErrorInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let lines: Vec<&str> = self.source.lines().collect();
+        let line_index = self.line.saturating_sub(1).min(lines.len().saturating_sub(1));
+        let line_content = lines.get(line_index).unwrap_or(&"");
+
+        let line_num_width = self.line.to_string().len().max(2);
+        let gutter = " ".repeat(line_num_width);
+
+        writeln!(f, "error: {}", self.message)?;
+        writeln!(f, "  --> {}:{}:{}", self.path, self.line, self.column)?;
+        writeln!(f, "{} |", gutter)?;
+        writeln!(f, "{:>width$} | {}", self.line, line_content, width = line_num_width)?;
+
+        let col = self.column.saturating_sub(1).min(line_content.len());
+        let caret_width = (line_content.len().saturating_sub(col)).max(1);
+        let spaces = " ".repeat(col);
+        let carets = "^".repeat(caret_width);
+        writeln!(f, "{} | {}{}", gutter, spaces, carets)
+    }
+}
+
+impl ParseErrorInfo {
+    /// Print error to stderr in Rust compiler style.
+    #[allow(dead_code)]
+    pub fn print(&self) {
+        eprint!("{}", self);
+    }
+}
+
+/// Format a pest parse error with path and source into Rust-style output.
+#[allow(dead_code)]
+pub fn format_parse_error(
+    path: &str,
+    source: &str,
+    message: &str,
+    line: usize,
+    column: usize,
+) {
+    let info = ParseErrorInfo {
+        path: path.to_string(),
+        source: source.to_string(),
+        line,
+        column,
+        message: message.to_string(),
+    };
+    info.print();
+}
+
+/// Extract (line, column) from pest's LineColLocation (1-based).
+pub fn line_col_from_pest(line_col: &pest::error::LineColLocation) -> (usize, usize) {
+    use pest::error::LineColLocation;
+    match line_col {
+        LineColLocation::Pos((l, c)) => (*l, *c),
+        LineColLocation::Span((l, c), _) => (*l, *c),
+    }
+}
+
+impl std::error::Error for ParseErrorInfo {}
+
+/// Extract a one-line hint from pest error string (the line after "=").
+/// Tries to replace grammar rule names with user-friendly hints.
+pub fn short_message_from_pest_string(s: &str) -> String {
+    let raw = s
+        .lines()
+        .find(|l| l.trim_start().starts_with('='))
+        .map(|l| l.trim_start().trim_start_matches('=').trim().to_string())
+        .unwrap_or_else(|| s.lines().next().unwrap_or(s).to_string());
+    humanize_expected_message(&raw)
+}
+
+fn humanize_expected_message(raw: &str) -> String {
+    if !raw.starts_with("expected ") {
+        return raw.to_string();
+    }
+    let rest = raw.trim_start_matches("expected ").trim();
+    if rest.contains("modification_part")
+        && (rest.contains("value_assignment") || rest.contains("array_subscript"))
+    {
+        return "expected `;` or `=` or `[` after variable name (e.g. `Real x;` or `Real x = 1;`)"
+            .to_string();
+    }
+    if rest.contains("value_assignment") && rest.contains(";") {
+        return "expected `=` or `;` (e.g. `Real x = 1;`)".to_string();
+    }
+    let replaced = rest
+        .replace("value_assignment", "`= expression`")
+        .replace("modification_part", "`( ... )`")
+        .replace("array_subscript", "`[ ... ]`")
+        .replace("string_comment", "string or comment")
+        .replace("equation_section", "`equation`")
+        .replace("algorithm_section", "`algorithm`");
+    format!("expected {}", replaced)
+}
+
