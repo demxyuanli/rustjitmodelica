@@ -83,6 +83,13 @@ fn run(args: Vec<String>) {
             process::exit(1);
         }
     };
+    let warnings = compiler.take_warnings();
+    for w in &warnings {
+        eprintln!("{}", w);
+    }
+    if !warnings.is_empty() {
+        eprintln!("{} warning(s) generated", warnings.len());
+    }
     println!("Compilation successful!");
     println!("  States: {}", artifacts.states.len());
     println!("  Discrete Vars: {}", artifacts.discrete_vars.len());

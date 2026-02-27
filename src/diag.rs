@@ -81,6 +81,75 @@ pub fn line_col_from_pest(line_col: &pest::error::LineColLocation) -> (usize, us
 
 impl std::error::Error for ParseErrorInfo {}
 
+/// A single compile warning with optional source location and snippet.
+#[derive(Debug, Clone)]
+pub struct WarningInfo {
+    pub path: String,
+    pub line: usize,
+    pub column: usize,
+    pub message: String,
+    pub source: Option<String>,
+}
+
+impl fmt::Display for WarningInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "warning: {}", self.message)?;
+        if self.line > 0 && self.column > 0 {
+            write!(f, "  --> {}:{}:{}", self.path, self.line, self.column)?;
+        } else {
+            write!(f, "  --> {}", self.path)?;
+        }
+        writeln!(f)?;
+        if let Some(ref source) = self.source {
+            if self.line > 0 && self.column > 0 {
+            let lines: Vec<&str> = source.lines().collect();
+            let line_index = self.line.saturating_sub(1).min(lines.len().saturating_sub(1));
+            let line_content = lines.get(line_index).unwrap_or(&"");
+            let line_num_width = self.line.to_string().len().max(2);
+            let gutter = " ".repeat(line_num_width);
+            let col = self.column.saturating_sub(1).min(line_content.len());
+            let caret_width = (line_content.len().saturating_sub(col)).max(1);
+            let spaces = " ".repeat(col);
+            let carets = "^".repeat(caret_width);
+            writeln!(f, "{} |", gutter)?;
+            writeln!(f, "{:>width$} | {}", self.line, line_content, width = line_num_width)?;
+            writeln!(f, "{} | {}{}", gutter, spaces, carets)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Build a warning without source snippet (path:line:col only).
+#[allow(dead_code)]
+pub fn warning_at(path: &str, line: usize, column: usize, message: &str) -> WarningInfo {
+    WarningInfo {
+        path: path.to_string(),
+        line,
+        column,
+        message: message.to_string(),
+        source: None,
+    }
+}
+
+/// Build a warning with source for snippet display.
+#[allow(dead_code)]
+pub fn warning_at_with_source(
+    path: &str,
+    source: &str,
+    line: usize,
+    column: usize,
+    message: &str,
+) -> WarningInfo {
+    WarningInfo {
+        path: path.to_string(),
+        line,
+        column,
+        message: message.to_string(),
+        source: Some(source.to_string()),
+    }
+}
+
 /// Extract a one-line hint from pest error string (the line after "=").
 /// Tries to replace grammar rule names with user-friendly hints.
 pub fn short_message_from_pest_string(s: &str) -> String {

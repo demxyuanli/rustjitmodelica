@@ -4,6 +4,7 @@ use crate::ast::{Equation, Expression, AlgorithmStatement};
 use crate::loader::ModelLoader;
 use crate::flatten::{Flattener, eval_const_expr};
 use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, AnalysisOptions, partial_derivative};
+use crate::diag::WarningInfo;
 use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
 
 #[derive(Clone)]
@@ -29,6 +30,7 @@ pub struct Compiler {
     pub loader: ModelLoader,
     pub jit: Jit,
     pub options: CompilerOptions,
+    pub(crate) warnings: Vec<WarningInfo>,
 }
 
 pub struct Artifacts {
@@ -51,11 +53,18 @@ impl Compiler {
             loader: ModelLoader::new(),
             jit: Jit::new(),
             options: CompilerOptions::default(),
+            warnings: Vec::new(),
         }
     }
 
+    pub fn take_warnings(&mut self) -> Vec<WarningInfo> {
+        std::mem::take(&mut self.warnings)
+    }
+
     pub fn compile(&mut self, model_name: &str) -> Result<Artifacts, Box<dyn std::error::Error + Send + Sync>> {
+        self.warnings.clear();
         let opts = &self.options;
+        let model_file_path = format!("{}.mo", model_name.replace('.', "/"));
         println!("Loading model '{}'...", model_name);
         let mut root_model = self.loader.load_model(model_name)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
@@ -321,6 +330,26 @@ impl Compiler {
             &analysis_opts,
         );
         alg_equations = sorted_eqs;
+
+        if differential_index > 1 {
+            self.warnings.push(WarningInfo {
+                path: model_file_path.clone(),
+                line: 0,
+                column: 0,
+                message: "differential index is 2, index reduction not applied; simulation may be unreliable".to_string(),
+                source: None,
+            });
+        }
+        let algebraic_loops = alg_equations.iter().filter(|e| matches!(e, Equation::SolvableBlock { .. })).count();
+        if algebraic_loops > 0 {
+            self.warnings.push(WarningInfo {
+                path: model_file_path.clone(),
+                line: 0,
+                column: 0,
+                message: format!("{} algebraic loop(s) (strong component(s)) present, solved with tearing", algebraic_loops),
+                source: None,
+            });
+        }
 
         let (strong_component_jacobians, symbolic_ode_jacobian, numeric_ode_jacobian) = {
             let numeric = opts.generate_dynamic_jacobian == "numeric";
