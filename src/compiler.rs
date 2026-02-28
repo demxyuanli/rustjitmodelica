@@ -1,11 +1,17 @@
+mod inline;
+mod jacobian;
+
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Equation, Expression, AlgorithmStatement};
+use crate::backend_dae::{build_simulation_dae, SimulationDae};
 use crate::loader::ModelLoader;
 use crate::flatten::{Flattener, eval_const_expr};
-use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, AnalysisOptions, partial_derivative};
+use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, AnalysisOptions};
 use crate::diag::WarningInfo;
 use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
+use crate::expr_eval;
+use crate::i18n;
 
 #[derive(Clone)]
 pub struct CompilerOptions {
@@ -13,6 +19,16 @@ pub struct CompilerOptions {
     pub index_reduction_method: String,
     pub tearing_method: String,
     pub generate_dynamic_jacobian: String,
+    pub t_end: f64,
+    pub dt: f64,
+    pub atol: f64,
+    pub rtol: f64,
+    /// When running a function as entry: optional argument values (by input order). Missing => 0.0.
+    pub function_args: Option<Vec<f64>>,
+    /// RT1-3: Solver choice: "rk4" (fixed step) or "rk45" (adaptive when no when/zero-crossing).
+    pub solver: String,
+    /// DBG-3: Warnings level: "all" | "none" | "error" (none = suppress, error = treat as error).
+    pub warnings_level: String,
 }
 
 impl Default for CompilerOptions {
@@ -22,6 +38,13 @@ impl Default for CompilerOptions {
             index_reduction_method: "none".to_string(),
             tearing_method: "first".to_string(),
             generate_dynamic_jacobian: "none".to_string(),
+            t_end: 10.0,
+            dt: 0.01,
+            atol: 1e-6,
+            rtol: 1e-3,
+            function_args: None,
+            solver: "rk45".to_string(),
+            warnings_level: "all".to_string(),
         }
     }
 }
@@ -33,6 +56,12 @@ pub struct Compiler {
     pub(crate) warnings: Vec<WarningInfo>,
 }
 
+/// Result of compilation: either simulation artifacts or a single function result (F3-1).
+pub enum CompileOutput {
+    Simulation(Artifacts),
+    FunctionRun(f64),
+}
+
 pub struct Artifacts {
     pub calc_derivs: CalcDerivsFunc,
     pub states: Vec<f64>,
@@ -41,10 +70,18 @@ pub struct Artifacts {
     pub state_vars: Vec<String>,
     pub discrete_vars: Vec<String>,
     pub output_vars: Vec<String>,
+    pub state_var_index: HashMap<String, usize>,
     pub when_count: usize,
     pub crossings_count: usize,
     pub t_end: f64,
     pub dt: f64,
+    pub numeric_ode_jacobian: bool,
+    pub symbolic_ode_jacobian: Option<Vec<Vec<Expression>>>,
+    /// Tearing variable names per SolvableBlock (for Newton failure diagnostics).
+    pub newton_tearing_var_names: Vec<String>,
+    pub atol: f64,
+    pub rtol: f64,
+    pub solver: String,
 }
 
 impl Compiler {
@@ -61,29 +98,56 @@ impl Compiler {
         std::mem::take(&mut self.warnings)
     }
 
-    pub fn compile(&mut self, model_name: &str) -> Result<Artifacts, Box<dyn std::error::Error + Send + Sync>> {
+    /// Run a function once with given inputs (or 0.0 per input if not provided) and return the output (F3-1).
+    fn run_function_once(&mut self, model_name: &str) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
+        let root_model = self.loader.load_model(model_name)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        let (input_names, body) = inline::get_function_body(root_model.as_ref())
+            .ok_or("Function must have exactly one output and one assignment to it in algorithm.")?;
+        let args = self.options.function_args.as_deref().unwrap_or(&[]);
+        let mut vars = HashMap::new();
+        for (i, name) in input_names.iter().enumerate() {
+            let val = args.get(i).copied().unwrap_or(0.0);
+            vars.insert(name.clone(), val);
+        }
+        expr_eval::eval_expr(&body, &vars).map_err(|e| e.into())
+    }
+
+    pub fn compile(&mut self, model_name: &str) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
         self.warnings.clear();
         let opts = &self.options;
         let model_file_path = format!("{}.mo", model_name.replace('.', "/"));
-        println!("Loading model '{}'...", model_name);
+        println!("{}", i18n::msg("loading_model", &[&model_name as &dyn std::fmt::Display]));
         let mut root_model = self.loader.load_model(model_name)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
-        println!("Flattening model...");
+        if root_model.as_ref().is_function {
+            if self.options.function_args.is_some() {
+                println!("{}", i18n::msg0("evaluating_function_args"));
+            } else {
+                println!("{}", i18n::msg0("evaluating_function_default"));
+            }
+            let value = self.run_function_once(model_name)?;
+            return Ok(CompileOutput::FunctionRun(value));
+        }
+
+        println!("{}", i18n::msg0("flattening_model"));
         let mut flattener = Flattener::new();
         for path in &self.loader.library_paths {
             flattener.loader.add_path(path.clone());
         }
-        let flat_model = flattener.flatten(&mut root_model)?;
-        
+        let mut flat_model = flattener.flatten(&mut root_model)?;
+
+        inline::inline_function_calls(&mut flat_model, &mut self.loader);
+
         // Output detailed statistics
         let total_equations = flat_model.equations.len();
         let total_declarations = flat_model.declarations.len();
-        println!("  Flattened equations: {}", total_equations);
-        println!("  Flattened declarations: {}", total_declarations);
+        println!("{}", i18n::msg("flattened_equations", &[&total_equations]));
+        println!("{}", i18n::msg("flattened_declarations", &[&total_declarations]));
 
         // 2. Identify Variables
-        println!("Analyzing variables...");
+        println!("{}", i18n::msg0("analyzing_variables"));
         let mut state_vars = HashSet::new();
         let mut discrete_vars = HashSet::new();
         let mut param_vars = Vec::new();
@@ -159,15 +223,28 @@ impl Compiler {
                 algebraic_vars.insert(der_var);
             }
         }
-
-        for var in &state_vars_sorted { output_vars.push(var.clone()); }
-        for var in &discrete_vars_sorted { output_vars.push(var.clone()); }
-        output_vars.sort(); 
-        output_vars.dedup();
         
+        let input_var_names: Vec<String> = flat_model
+            .declarations
+            .iter()
+            .filter(|d| d.is_input)
+            .map(|d| d.name.clone())
+            .collect();
+
         let state_var_index: HashMap<String, usize> = state_vars_sorted.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
         let discrete_var_index: HashMap<String, usize> = discrete_vars_sorted.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
         let param_var_index: HashMap<String, usize> = param_vars.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
+
+        // Apply simple constant initial equations / algorithms to override defaults
+        apply_initial_conditions(
+            &flat_model,
+            &mut states,
+            &mut discrete_vals,
+            &mut params,
+            &state_var_index,
+            &discrete_var_index,
+            &param_var_index,
+        );
         let mut output_var_index: HashMap<String, usize> = output_vars.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
         
         let mut array_info = HashMap::new();
@@ -194,7 +271,7 @@ impl Compiler {
         }
 
         // 3. Normalize Derivatives (der(x) -> der_x)
-        println!("Normalizing derivatives...");
+        println!("{}", i18n::msg0("normalizing_derivatives"));
         let mut normalized_eqs = Vec::new();
         for eq in &flat_model.equations {
              match eq {
@@ -210,6 +287,29 @@ impl Compiler {
                          }
                      }).collect();
                      normalized_eqs.push(Equation::For(v.clone(), s.clone(), e.clone(), norm_body));
+                 }
+                 Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+                     let norm_then = then_eqs.iter().map(|e| match e {
+                         Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
+                         _ => e.clone(),
+                     }).collect();
+                     let norm_elseif = elseif_list.iter().map(|(c, eb)| (
+                         crate::analysis::normalize_der(c),
+                         eb.iter().map(|e| match e {
+                             Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
+                             _ => e.clone(),
+                         }).collect::<Vec<_>>(),
+                     )).collect();
+                     let norm_else = else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| match e {
+                         Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
+                         _ => e.clone(),
+                     }).collect());
+                     normalized_eqs.push(Equation::If(
+                         crate::analysis::normalize_der(cond),
+                         norm_then,
+                         norm_elseif,
+                         norm_else,
+                     ));
                  }
                  _ => normalized_eqs.push(eq.clone()),
              }
@@ -293,14 +393,15 @@ impl Compiler {
         }
 
         // 4. Structure Analysis (BLT)
-        println!("Performing Structure Analysis...");
+        println!("{}", i18n::msg0("performing_structure_analysis"));
         
         let mut continuous_eqs = Vec::new();
         
         for eq in normalized_eqs {
              match eq {
-                 Equation::When(_, _, _) | Equation::Reinit(_, _) => {
-                     // handled later
+                 Equation::When(_, _, _) | Equation::Reinit(_, _) | Equation::If(_, _, _, _)
+                 | Equation::Assert(_, _) | Equation::Terminate(_) => {
+                     // Converted to algorithms and handled later
                  }
                  _ => continuous_eqs.push(eq),
              }
@@ -323,25 +424,63 @@ impl Compiler {
             index_reduction_method: opts.index_reduction_method.clone(),
             tearing_method: opts.tearing_method.clone(),
         };
-        let (sorted_eqs, differential_index) = sort_algebraic_equations(
+        let sort_result = sort_algebraic_equations(
             &continuous_eqs,
             &known_vars,
             &param_vars,
             &analysis_opts,
         );
-        alg_equations = sorted_eqs;
+        alg_equations = sort_result.sorted_equations;
+        let differential_index = sort_result.differential_index;
+        let constraint_equation_count = sort_result.constraint_equation_count;
 
-        if differential_index > 1 {
+        if differential_index > 1 && opts.warnings_level != "none" {
+            let method_note = if opts.index_reduction_method == "none" {
+                "index reduction not applied (use --index-reduction-method=dummyDerivative); simulation may be unreliable".to_string()
+            } else {
+                format!("{} constraint equation(s) before reduction; differential index {}", constraint_equation_count, differential_index)
+            };
             self.warnings.push(WarningInfo {
                 path: model_file_path.clone(),
                 line: 0,
                 column: 0,
-                message: "differential index is 2, index reduction not applied; simulation may be unreliable".to_string(),
+                message: format!("differential index is {}; {}", differential_index, method_note),
+                source: None,
+            });
+        }
+
+        let mut known_at_initial = HashSet::new();
+        known_at_initial.insert("time".to_string());
+        for p in &param_vars {
+            known_at_initial.insert(p.clone());
+        }
+        let initial_info = analyze_initial_equations(&flat_model.initial_equations, &known_at_initial);
+        if initial_info.is_underdetermined && initial_info.equation_count > 0 && opts.warnings_level != "none" {
+            self.warnings.push(WarningInfo {
+                path: model_file_path.clone(),
+                line: 0,
+                column: 0,
+                message: format!(
+                    "initial equation system underdetermined ({} equations, {} unknowns); consistent initialization may be incomplete",
+                    initial_info.equation_count, initial_info.variable_count
+                ),
+                source: None,
+            });
+        }
+        if initial_info.is_overdetermined && opts.warnings_level != "none" {
+            self.warnings.push(WarningInfo {
+                path: model_file_path.clone(),
+                line: 0,
+                column: 0,
+                message: format!(
+                    "initial equation system overdetermined ({} equations, {} unknowns)",
+                    initial_info.equation_count, initial_info.variable_count
+                ),
                 source: None,
             });
         }
         let algebraic_loops = alg_equations.iter().filter(|e| matches!(e, Equation::SolvableBlock { .. })).count();
-        if algebraic_loops > 0 {
+        if algebraic_loops > 0 && opts.warnings_level != "none" {
             self.warnings.push(WarningInfo {
                 path: model_file_path.clone(),
                 line: 0,
@@ -351,15 +490,34 @@ impl Compiler {
             });
         }
 
-        let (strong_component_jacobians, symbolic_ode_jacobian, numeric_ode_jacobian) = {
-            let numeric = opts.generate_dynamic_jacobian == "numeric";
-            let symbolic = opts.generate_dynamic_jacobian == "symbolic";
-            let have_symbolic = symbolic && build_ode_jacobian_expressions(&state_vars_sorted, &alg_equations).is_some();
-            (false, have_symbolic, numeric)
-        };
+        let numeric_ode_jacobian =
+            opts.generate_dynamic_jacobian == "numeric" || opts.generate_dynamic_jacobian == "both";
+        let symbolic_ode_jacobian_enabled =
+            opts.generate_dynamic_jacobian == "symbolic" || opts.generate_dynamic_jacobian == "both";
+        let symbolic_ode_jacobian_matrix =
+            if symbolic_ode_jacobian_enabled {
+                jacobian::build_ode_jacobian_expressions(&state_vars_sorted, &alg_equations, &state_var_index)
+            } else {
+                None
+            };
+        let symbolic_ode_jacobian = symbolic_ode_jacobian_matrix.is_some();
+        let strong_component_jacobians = false;
+
+        let simulation_dae: SimulationDae = build_simulation_dae(
+            &state_vars_sorted,
+            &discrete_vars_sorted,
+            &param_vars,
+            &output_vars,
+            &input_var_names,
+            diff_equations.len(),
+            &alg_equations,
+            flat_model.initial_equations.len(),
+            differential_index,
+            constraint_equation_count,
+        );
 
         if opts.backend_dae_info {
-            print_backend_dae_info(
+            jacobian::print_backend_dae_info(
                 opts,
                 differential_index,
                 total_equations,
@@ -375,15 +533,17 @@ impl Compiler {
                 strong_component_jacobians,
                 symbolic_ode_jacobian,
                 numeric_ode_jacobian,
+                symbolic_ode_jacobian_matrix.as_ref(),
+                Some(&simulation_dae),
             );
         }
 
         // 5. JIT Compile
-        println!("JIT Compiling...");
-        println!("  Equations after aliasing/sorting: {}", alg_equations.len());
-        println!("  State variables: {}", state_vars_sorted.len());
-        println!("  Discrete variables: {}", discrete_vars_sorted.len());
-        println!("  Parameters: {}", param_vars.len());
+        println!("{}", i18n::msg0("jit_compiling"));
+        println!("{}", i18n::msg("equations_after_sorting", &[&alg_equations.len()]));
+        println!("{}", i18n::msg("state_variables", &[&state_vars_sorted.len()]));
+        println!("{}", i18n::msg("discrete_variables", &[&discrete_vars_sorted.len()]));
+        println!("{}", i18n::msg("parameters_count", &[&param_vars.len()]));
         
         let mut algorithms = flat_model.algorithms.clone();
         
@@ -399,10 +559,59 @@ impl Compiler {
                      let norm_eq = Equation::Reinit(v.clone(), crate::analysis::normalize_der(e));
                      algorithms.push(convert_eq_to_alg_stmt(norm_eq));
                  }
+                 Equation::Assert(cond, msg) => {
+                     algorithms.push(convert_eq_to_alg_stmt(Equation::Assert(
+                         crate::analysis::normalize_der(cond),
+                         crate::analysis::normalize_der(msg),
+                     )));
+                 }
+                 Equation::Terminate(msg) => {
+                     algorithms.push(convert_eq_to_alg_stmt(Equation::Terminate(
+                         crate::analysis::normalize_der(msg),
+                     )));
+                 }
+                 Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+                     let norm_if = Equation::If(
+                         crate::analysis::normalize_der(cond),
+                         then_eqs.iter().map(|e| match e {
+                             Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
+                             _ => e.clone(),
+                         }).collect(),
+                         elseif_list.iter().map(|(c, eb)| (
+                             crate::analysis::normalize_der(c),
+                             eb.iter().map(|e| match e {
+                                 Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
+                                 _ => e.clone(),
+                             }).collect(),
+                         )).collect(),
+                         else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| match e {
+                             Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
+                             _ => e.clone(),
+                         }).collect()),
+                     );
+                     algorithms.push(convert_eq_to_alg_stmt(norm_if));
+                 }
                 _ => {}
             }
         }
 
+        let newton_tearing_var_names: Vec<String> = alg_equations
+            .iter()
+            .filter_map(|eq| {
+                if let Equation::SolvableBlock { tearing_var: Some(ref t), residuals, .. } = eq {
+                    if residuals.len() == 1 {
+                        Some(t.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let t_end = self.options.t_end;
+        let dt = self.options.dt;
         let res = self.jit.compile(
             &state_vars_sorted,
             &discrete_vars_sorted,
@@ -411,11 +620,13 @@ impl Compiler {
             &array_info,
             &alg_equations,
             &diff_equations,
-            &algorithms
+            &algorithms,
+            t_end,
+            &newton_tearing_var_names,
         );
-        
+
         match res {
-            Ok((calc_derivs, when_count, crossings_count)) => Ok(Artifacts {
+            Ok((calc_derivs, when_count, crossings_count)) => Ok(CompileOutput::Simulation(Artifacts {
                 calc_derivs,
                 states,
                 discrete_vals,
@@ -423,137 +634,21 @@ impl Compiler {
                 state_vars: state_vars_sorted,
                 discrete_vars: discrete_vars_sorted,
                 output_vars,
+                state_var_index,
                 when_count,
                 crossings_count,
-                t_end: 10.0,
-                dt: 0.01,
-            }),
+                t_end,
+                dt,
+                numeric_ode_jacobian,
+                symbolic_ode_jacobian: symbolic_ode_jacobian_matrix,
+                newton_tearing_var_names,
+                atol: self.options.atol,
+                rtol: self.options.rtol,
+                solver: self.options.solver.clone(),
+            })),
             Err(e) => Err(format!("JIT compilation failed: {}", e).into()),
         }
     }
-}
-
-/// Build ODE Jacobian expressions J[i][j] = d(rhs_i)/d(state_j) from sorted equations that assign to der(x).
-/// Returns Some(matrix) if we can extract RHS for each state; None otherwise.
-fn build_ode_jacobian_expressions(
-    state_vars: &[String],
-    sorted_eqs: &[Equation],
-) -> Option<Vec<Vec<Expression>>> {
-    let mut rhs_by_state: Vec<Option<Expression>> = vec![None; state_vars.len()];
-    for eq in sorted_eqs {
-        if let Equation::Simple(lhs, rhs) = eq {
-            let der_var = match lhs {
-                Expression::Variable(v) if v.starts_with("der_") => v.clone(),
-                _ => continue,
-            };
-            let state_name = der_var.strip_prefix("der_")?;
-            if let Some(i) = state_vars.iter().position(|s| s == state_name) {
-                rhs_by_state[i] = Some(rhs.clone());
-            }
-        }
-    }
-    if rhs_by_state.iter().any(|o| o.is_none()) {
-        return None;
-    }
-    let mut jac = Vec::with_capacity(state_vars.len());
-    for i in 0..state_vars.len() {
-        let rhs = rhs_by_state[i].as_ref().unwrap();
-        let mut row = Vec::with_capacity(state_vars.len());
-        for state_j in state_vars {
-            row.push(partial_derivative(rhs, state_j));
-        }
-        jac.push(row);
-    }
-    Some(jac)
-}
-
-fn print_backend_dae_info(
-    opts: &CompilerOptions,
-    differential_index: u32,
-    total_equations: usize,
-    total_declarations: usize,
-    state_vars: &[String],
-    discrete_vars: &[String],
-    param_vars: &[String],
-    output_vars: &[String],
-    continuous_eqs: &[Equation],
-    sorted_eqs: &[Equation],
-    all_equations: &[Equation],
-    algorithms: &[AlgorithmStatement],
-    strong_component_jacobians: bool,
-    symbolic_ode_jacobian: bool,
-    numeric_ode_jacobian: bool,
-) {
-    let mut simple = 0usize;
-    let mut for_eq = 0usize;
-    let mut when_eq = 0usize;
-    let mut reinit_eq = 0usize;
-    let mut connect_eq = 0usize;
-    let mut solvable_block = 0usize;
-    for eq in all_equations {
-        match eq {
-            Equation::Simple(_, _) => simple += 1,
-            Equation::For(_, _, _, _) => for_eq += 1,
-            Equation::When(_, _, _) => when_eq += 1,
-            Equation::Reinit(_, _) => reinit_eq += 1,
-            Equation::Connect(_, _) => connect_eq += 1,
-            Equation::SolvableBlock { .. } => solvable_block += 1,
-        }
-    }
-    let mut sorted_simple = 0usize;
-    let mut sorted_for = 0usize;
-    let mut sorted_block = 0usize;
-    let mut tearing_var_count = 0usize;
-    let mut torn_unknowns_total = 0usize;
-    for eq in sorted_eqs {
-        match eq {
-            Equation::Simple(_, _) => sorted_simple += 1,
-            Equation::For(_, _, _, _) => sorted_for += 1,
-            Equation::SolvableBlock { unknowns, tearing_var, .. } => {
-                sorted_block += 1;
-                torn_unknowns_total += unknowns.len();
-                if tearing_var.is_some() {
-                    tearing_var_count += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    println!("\nBackend DAE info (OpenModelica-style):");
-    println!("  [Variables]");
-    println!("    Total: {}", total_declarations);
-    println!("    State (der): {}", state_vars.len());
-    println!("    Discrete: {}", discrete_vars.len());
-    println!("    Parameters: {}", param_vars.len());
-    println!("    Outputs: {}", output_vars.len());
-    println!("  [Equations (flattened)]");
-    println!("    Total: {}", total_equations);
-    println!("    Simple (single assignment): {}", simple);
-    println!("    For: {}", for_eq);
-    println!("    When: {}", when_eq);
-    println!("    Reinit: {}", reinit_eq);
-    println!("    Connect: {}", connect_eq);
-    println!("    SolvableBlock (algebraic blocks): {}", solvable_block);
-    println!("  [Equations (after BLT)]");
-    println!("    Continuous (sorted): {}", continuous_eqs.len());
-    println!("    Sorted: Simple {}, For {}, SolvableBlock {}", sorted_simple, sorted_for, sorted_block);
-    println!("  [Algorithms]");
-    println!("    Algorithm sections: {}", algorithms.len());
-    println!("  [Index reduction]");
-    println!("    Method: {}", opts.index_reduction_method);
-    println!("    Differential index: {}", differential_index);
-    println!("  [Tearing]");
-    println!("    Method: {}", opts.tearing_method);
-    println!("    Algebraic loops (strong components): {}", sorted_block);
-    println!("    Tearing variables (selected): {}", tearing_var_count);
-    println!("    Torn unknowns (total in blocks): {}", torn_unknowns_total);
-    println!("  [Jacobian]");
-    println!("    generateDynamicJacobian: {}", opts.generate_dynamic_jacobian);
-    println!("    Strong component Jacobians: {}", if strong_component_jacobians { "yes" } else { "no" });
-    println!("    Symbolic ODE Jacobian: {}", if symbolic_ode_jacobian { "yes" } else { "no" });
-    println!("    Numeric ODE Jacobian: {}", if numeric_ode_jacobian { "yes" } else { "no" });
-    println!();
 }
 
 fn convert_eq_to_alg_stmt(eq: Equation) -> AlgorithmStatement {
@@ -570,6 +665,16 @@ fn convert_eq_to_alg_stmt(eq: Equation) -> AlgorithmStatement {
              let alg_else = else_whens.into_iter().map(|(c, b)| (c, b.into_iter().map(convert_eq_to_alg_stmt).collect())).collect();
              AlgorithmStatement::When(cond, alg_body, alg_else)
         }
+        Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+            let then_alg = then_eqs.into_iter().map(convert_eq_to_alg_stmt).collect();
+            let elseif_alg = elseif_list.into_iter()
+                .map(|(c, eb)| (c, eb.into_iter().map(convert_eq_to_alg_stmt).collect()))
+                .collect();
+            let else_alg = else_eqs.map(|eqs| eqs.into_iter().map(convert_eq_to_alg_stmt).collect());
+            AlgorithmStatement::If(cond, then_alg, elseif_alg, else_alg)
+        }
+        Equation::Assert(cond, msg) => AlgorithmStatement::Assert(cond, msg),
+        Equation::Terminate(msg) => AlgorithmStatement::Terminate(msg),
         _ => panic!("Unsupported equation in algorithm conversion: {:?}", eq),
     }
 }
@@ -581,4 +686,307 @@ fn parse_array_index(name: &str) -> Option<(String, usize)> {
         }
     }
     None
+}
+
+/// Apply a very small subset of Modelica initialization semantics:
+/// - Handle `initial equation` and `initial algorithm` that are simple assignments
+///   to scalar variables with constant right-hand sides.
+/// - RHS is evaluated with `eval_const_expr` and can depend only on literals
+///   (no state/discrete/parameter references for now).
+fn apply_initial_conditions(
+    flat_model: &crate::flatten::FlattenedModel,
+    states: &mut [f64],
+    discrete_vals: &mut [f64],
+    params: &mut [f64],
+    state_var_index: &HashMap<String, usize>,
+    discrete_var_index: &HashMap<String, usize>,
+    param_var_index: &HashMap<String, usize>,
+) {
+    use crate::flatten::eval_const_expr;
+    use crate::ast::Expression;
+
+    // Helper: assign value to state / discrete / param vector if name matches.
+    fn assign_var(
+        name: &str,
+        value: f64,
+        states: &mut [f64],
+        discrete_vals: &mut [f64],
+        params: &mut [f64],
+        state_var_index: &HashMap<String, usize>,
+        discrete_var_index: &HashMap<String, usize>,
+        param_var_index: &HashMap<String, usize>,
+    ) {
+        if let Some(&idx) = state_var_index.get(name) {
+            if idx < states.len() {
+                states[idx] = value;
+                return;
+            }
+        }
+        if let Some(&idx) = discrete_var_index.get(name) {
+            if idx < discrete_vals.len() {
+                discrete_vals[idx] = value;
+                return;
+            }
+        }
+        if let Some(&idx) = param_var_index.get(name) {
+            if idx < params.len() {
+                params[idx] = value;
+                return;
+            }
+        }
+    }
+
+    // initial equation section: apply in dependency order by iteratively substituting known values (IR3-3).
+    let mut applied = true;
+    let mut pass_limit = 20;
+    while applied && pass_limit > 0 {
+        pass_limit -= 1;
+        applied = false;
+        for eq in &flat_model.initial_equations {
+            if let Equation::Simple(lhs, rhs) = eq {
+                if let Expression::Variable(name) = lhs {
+                    let rhs_sub = substitute_initial_values(
+                        rhs,
+                        state_var_index,
+                        discrete_var_index,
+                        param_var_index,
+                        states,
+                        discrete_vals,
+                        params,
+                    );
+                    if let Some(v) = eval_const_expr(&rhs_sub) {
+                        let prev = state_var_index.get(name).and_then(|&i| Some(states[i]))
+                            .or_else(|| discrete_var_index.get(name).and_then(|&i| Some(discrete_vals[i])))
+                            .or_else(|| param_var_index.get(name).and_then(|&i| Some(params[i])));
+                        let changed = prev.map(|p| (p - v).abs() > 1e-15).unwrap_or(true);
+                        if changed {
+                            assign_var(
+                                name,
+                                v,
+                                states,
+                                discrete_vals,
+                                params,
+                                state_var_index,
+                                discrete_var_index,
+                                param_var_index,
+                            );
+                            applied = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // initial algorithm section: apply with substitution of state/discrete/param (consistent init).
+    for stmt in &flat_model.initial_algorithms {
+        if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
+            if let Expression::Variable(name) = lhs {
+                let rhs_sub = substitute_initial_values(
+                    rhs,
+                    state_var_index,
+                    discrete_var_index,
+                    param_var_index,
+                    states,
+                    discrete_vals,
+                    params,
+                );
+                if let Some(v) = eval_const_expr(&rhs_sub) {
+                    assign_var(
+                        name,
+                        v,
+                        states,
+                        discrete_vals,
+                        params,
+                        state_var_index,
+                        discrete_var_index,
+                        param_var_index,
+                    );
+                } else {
+                    eprintln!(
+                        "Warning: initial assignment for '{}' ignored (non-constant rhs: {:?})",
+                        name,
+                        rhs
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Replace occurrences of state, discrete, and parameter variables with current values (for initial system).
+fn substitute_initial_values(
+    expr: &Expression,
+    state_var_index: &HashMap<String, usize>,
+    discrete_var_index: &HashMap<String, usize>,
+    param_var_index: &HashMap<String, usize>,
+    states: &[f64],
+    discrete_vals: &[f64],
+    params: &[f64],
+) -> Expression {
+    use Expression::*;
+    match expr {
+        Variable(name) => {
+            if let Some(&idx) = state_var_index.get(name) {
+                if idx < states.len() {
+                    return Number(states[idx]);
+                }
+            }
+            if let Some(&idx) = discrete_var_index.get(name) {
+                if idx < discrete_vals.len() {
+                    return Number(discrete_vals[idx]);
+                }
+            }
+            if let Some(&idx) = param_var_index.get(name) {
+                if idx < params.len() {
+                    return Number(params[idx]);
+                }
+            }
+            if name == "time" {
+                return Number(0.0);
+            }
+            Variable(name.clone())
+        }
+        Number(n) => Number(*n),
+        BinaryOp(lhs, op, rhs) => BinaryOp(
+            Box::new(substitute_initial_values(
+                lhs, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+            *op,
+            Box::new(substitute_initial_values(
+                rhs, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+        ),
+        Call(func, args) => Call(
+            func.clone(),
+            args.iter()
+                .map(|a| substitute_initial_values(
+                    a, state_var_index, discrete_var_index, param_var_index,
+                    states, discrete_vals, params,
+                ))
+                .collect(),
+        ),
+        Der(inner) => Der(Box::new(substitute_initial_values(
+            inner, state_var_index, discrete_var_index, param_var_index,
+            states, discrete_vals, params,
+        ))),
+        ArrayAccess(arr, idx) => ArrayAccess(
+            Box::new(substitute_initial_values(
+                arr, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+            Box::new(substitute_initial_values(
+                idx, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+        ),
+        If(cond, t, f) => If(
+            Box::new(substitute_initial_values(
+                cond, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+            Box::new(substitute_initial_values(
+                t, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+            Box::new(substitute_initial_values(
+                f, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+        ),
+        Range(start, step, end) => Range(
+            Box::new(substitute_initial_values(
+                start, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+            Box::new(substitute_initial_values(
+                step, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+            Box::new(substitute_initial_values(
+                end, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+        ),
+        ArrayLiteral(items) => ArrayLiteral(
+            items
+                .iter()
+                .map(|e| substitute_initial_values(
+                    e, state_var_index, discrete_var_index, param_var_index,
+                    states, discrete_vals, params,
+                ))
+                .collect(),
+        ),
+        Dot(base, member) => Dot(
+            Box::new(substitute_initial_values(
+                base, state_var_index, discrete_var_index, param_var_index,
+                states, discrete_vals, params,
+            )),
+            member.clone(),
+        ),
+    }
+}
+
+/// Replace occurrences of parameter variables in an expression with their
+/// numeric values from `params`. Used for initial algorithm RHS when no state yet.
+#[allow(dead_code)]
+fn substitute_params(
+    expr: &Expression,
+    param_var_index: &HashMap<String, usize>,
+    params: &[f64],
+) -> Expression {
+    use Expression::*;
+    match expr {
+        Variable(name) => {
+            if let Some(&idx) = param_var_index.get(name) {
+                if idx < params.len() {
+                    return Number(params[idx]);
+                }
+            }
+            Variable(name.clone())
+        }
+        Number(n) => Number(*n),
+        BinaryOp(lhs, op, rhs) => BinaryOp(
+            Box::new(substitute_params(lhs, param_var_index, params)),
+            *op,
+            Box::new(substitute_params(rhs, param_var_index, params)),
+        ),
+        Call(func, args) => Call(
+            func.clone(),
+            args.iter()
+                .map(|a| substitute_params(a, param_var_index, params))
+                .collect(),
+        ),
+        Der(inner) => Der(Box::new(substitute_params(
+            inner,
+            param_var_index,
+            params,
+        ))),
+        ArrayAccess(arr, idx) => ArrayAccess(
+            Box::new(substitute_params(arr, param_var_index, params)),
+            Box::new(substitute_params(idx, param_var_index, params)),
+        ),
+        If(cond, t, f) => If(
+            Box::new(substitute_params(cond, param_var_index, params)),
+            Box::new(substitute_params(t, param_var_index, params)),
+            Box::new(substitute_params(f, param_var_index, params)),
+        ),
+        Range(start, step, end) => Range(
+            Box::new(substitute_params(start, param_var_index, params)),
+            Box::new(substitute_params(step, param_var_index, params)),
+            Box::new(substitute_params(end, param_var_index, params)),
+        ),
+        ArrayLiteral(items) => ArrayLiteral(
+            items
+                .iter()
+                .map(|e| substitute_params(e, param_var_index, params))
+                .collect(),
+        ),
+        Dot(base, member) => Dot(
+            Box::new(substitute_params(base, param_var_index, params)),
+            member.clone(),
+        ),
+    }
 }

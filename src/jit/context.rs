@@ -34,6 +34,10 @@ pub struct TranslationContext<'a> {
     pub state_var_index: &'a HashMap<String, usize>,
     pub discrete_var_index: &'a HashMap<String, usize>,
     pub output_var_index: &'a HashMap<String, usize>,
+
+    /// When set, JIT writes residual and tearing value on Newton failure (status 2) for diagnostics.
+    pub diag_residual_ptr: Option<Value>,
+    pub diag_x_ptr: Option<Value>,
 }
 
 impl<'a> TranslationContext<'a> {
@@ -59,6 +63,8 @@ impl<'a> TranslationContext<'a> {
         state_var_index: &'a HashMap<String, usize>,
         discrete_var_index: &'a HashMap<String, usize>,
         output_var_index: &'a HashMap<String, usize>,
+        diag_residual_ptr: Option<Value>,
+        diag_x_ptr: Option<Value>,
     ) -> Self {
         Self {
             module,
@@ -82,6 +88,8 @@ impl<'a> TranslationContext<'a> {
             state_var_index,
             discrete_var_index,
             output_var_index,
+            diag_residual_ptr,
+            diag_x_ptr,
         }
     }
 

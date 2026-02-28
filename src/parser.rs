@@ -6,20 +6,39 @@ use crate::ast::*;
 #[grammar = "modelica.pest"]
 pub struct ModelicaParser;
 
-pub fn parse(input: &str) -> Result<Model, pest::error::Error<Rule>> {
+pub fn parse(input: &str) -> Result<ClassItem, pest::error::Error<Rule>> {
     let mut pairs = ModelicaParser::parse(Rule::model_file, input)?;
     let program = pairs.next().unwrap();
     let model_pair = program.into_inner().next().unwrap();
     parse_model(model_pair)
 }
 
-fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::Error<Rule>> {
+/// Extract annotation as raw string for storage in AST (parse-only; ignored in backend).
+fn parse_annotation_to_string(pair: &pest::iterators::Pair<Rule>) -> String {
+    pair.as_str().trim().to_string()
+}
+
+fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
     
-    // Grammar: class_prefixes ~ identifier ~ declaration_section ~ equation_section ~ "end" ~ identifier ~ ";"
-    // 1. class_prefixes
-    let prefix_pair = inner.next().unwrap(); 
-    let is_connector = prefix_pair.as_str() == "connector";
+    // Grammar: class_prefixes ~ identifier ~ declaration_section ~ ...
+    // 1. class_prefixes (partial? ~ (model | connector | function | record | ...))
+    let prefix_pair = inner.next().unwrap();
+    let mut is_connector = false;
+    let mut is_function = false;
+    let mut is_record = false;
+    let mut is_block = false;
+    for p in prefix_pair.into_inner() {
+        if p.as_rule() == Rule::function_prefix {
+            is_function = true;
+        } else if p.as_str().trim() == "connector" {
+            is_connector = true;
+        } else if p.as_str().trim() == "record" {
+            is_record = true;
+        } else if p.as_str().trim() == "block" {
+            is_block = true;
+        }
+    }
     
     // 2. identifier (name)
     let name = inner.next().unwrap().as_str().to_string();
@@ -27,7 +46,10 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
     let mut declarations = Vec::new();
     let mut equations = Vec::new();
     let mut algorithms = Vec::new();
+    let mut initial_equations = Vec::new();
+    let mut initial_algorithms = Vec::new();
     let mut extends = Vec::new();
+    let mut class_annotation: Option<String> = None;
 
     for pair in inner {
         match pair.as_rule() {
@@ -54,17 +76,26 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
                                     Rule::modification_part => {
                                         let mod_list = token.into_inner().next().unwrap().into_inner();
                                         for mod_pair in mod_list {
-                                            // class_modification: identifier = expression
-                                            let mut mod_inner = mod_pair.into_inner();
-                                            // modification = { component_ref ~ "=" ~ expression }
-                                            let name_pair = mod_inner.next().unwrap();
-                                            // let name_expr = parse_expression(name_pair); // ERROR: parse_expression expects Rule::expression
-                                            let name_expr = parse_component_ref(name_pair); // FIX: use parse_component_ref
-                                            // Extract name from expression (must be Variable or Dot)
+                                            let modification_pair = if mod_pair.as_rule() == Rule::modification {
+                                                mod_pair
+                                            } else {
+                                                match mod_pair.into_inner().find(|p| p.as_rule() == Rule::modification) {
+                                                    Some(p) => p,
+                                                    None => continue,
+                                                }
+                                            };
+                                            let mod_inner: Vec<_> = modification_pair.into_inner().collect();
+                                            let name_pair = match mod_inner.iter().find(|p| p.as_rule() == Rule::component_ref) {
+                                                Some(p) => p,
+                                                None => continue,
+                                            };
+                                            let name_expr = parse_component_ref(name_pair.clone());
                                             let mod_name = expr_to_string(name_expr);
-                                            
-                                            let expr_pair = mod_inner.next().unwrap();
-                                            let val = Some(parse_expression(expr_pair));
+                                            let expr_pair = match mod_inner.iter().find(|p| p.as_rule() == Rule::expression) {
+                                                Some(p) => p,
+                                                None => continue,
+                                            };
+                                            let val = Some(parse_expression(expr_pair.clone()));
                                             modifications.push(Modification {
                                                 name: mod_name,
                                                 value: val,
@@ -84,16 +115,19 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
                             let mut is_parameter = false;
                             let mut is_flow = false;
                             let mut is_discrete = false;
-                            
+                            let mut is_input = false;
+                            let mut is_output = false;
+
                             let mut next_token = decl_inner.next().unwrap();
-                            
+
                             while matches!(next_token.as_rule(), Rule::parameter_kw | Rule::constant_kw | Rule::flow_kw | Rule::discrete_kw | Rule::input_kw | Rule::output_kw) {
                                 match next_token.as_rule() {
                                     Rule::parameter_kw => is_parameter = true,
                                     Rule::constant_kw => is_parameter = true,
                                     Rule::flow_kw => is_flow = true,
                                     Rule::discrete_kw => is_discrete = true,
-                                    // input/output ignored for now
+                                    Rule::input_kw => is_input = true,
+                                    Rule::output_kw => is_output = true,
                                     _ => {}
                                 }
                                 next_token = decl_inner.next().unwrap();
@@ -113,9 +147,13 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
 
                             let mut start_value = None;
                             let mut modifications = Vec::new();
-                            
+                            let mut decl_annotation: Option<String> = None;
+
                             for token in decl_inner {
                                 match token.as_rule() {
+                                    Rule::annotation => {
+                                        decl_annotation = Some(parse_annotation_to_string(&token));
+                                    }
                                     Rule::value_assignment => {
                                         let expr_pair = token.into_inner().next().unwrap();
                                         start_value = Some(parse_expression(expr_pair));
@@ -123,19 +161,29 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
                                     Rule::modification_part => {
                                         let mod_list = token.into_inner().next().unwrap().into_inner();
                                         for mod_pair in mod_list {
-                                            let mut mod_inner = mod_pair.into_inner();
-                                            // modification = { component_ref ~ "=" ~ expression }
-                                            let name_pair = mod_inner.next().unwrap();
-                                            let name_expr = parse_component_ref(name_pair);
+                                            let modification_pair = if mod_pair.as_rule() == Rule::modification {
+                                                mod_pair
+                                            } else {
+                                                match mod_pair.into_inner().find(|p| p.as_rule() == Rule::modification) {
+                                                    Some(p) => p,
+                                                    None => continue,
+                                                }
+                                            };
+                                            let mod_inner: Vec<_> = modification_pair.into_inner().collect();
+                                            let name_pair = match mod_inner.iter().find(|p| p.as_rule() == Rule::component_ref) {
+                                                Some(p) => p,
+                                                None => continue,
+                                            };
+                                            let name_expr = parse_component_ref(name_pair.clone());
                                             let mod_name = expr_to_string(name_expr);
-                                            
-                                            let expr_pair = mod_inner.next().unwrap();
-                                            let val = Some(parse_expression(expr_pair));
-                                            
+                                            let expr_pair = match mod_inner.iter().find(|p| p.as_rule() == Rule::expression) {
+                                                Some(p) => p,
+                                                None => continue,
+                                            };
+                                            let val = Some(parse_expression(expr_pair.clone()));
                                             if mod_name == "start" {
                                                 start_value = val.clone();
                                             }
-
                                             modifications.push(Modification {
                                                 name: mod_name,
                                                 value: val,
@@ -146,15 +194,18 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
                                 }
                             }
 
-                            declarations.push(Declaration { 
-                                type_name, 
+                            declarations.push(Declaration {
+                                type_name,
                                 name: var_name,
                                 is_parameter,
                                 is_flow,
                                 is_discrete,
+                                is_input,
+                                is_output,
                                 start_value,
                                 array_size,
                                 modifications,
+                                annotation: decl_annotation,
                             });
                         }
                         _ => {}
@@ -186,6 +237,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
                             // "when" ~ expression ~ "then" ~ equation_stmt+ ~ ...
                             equations.push(parse_when_equation(inner_stmt));
                         }
+                        Rule::if_equation => {
+                            equations.push(parse_if_equation(inner_stmt));
+                        }
                         Rule::reinit_clause => {
                             // "reinit" ~ "(" ~ component_ref ~ "," ~ expression ~ ")" ~ ";"
                             let mut inner = inner_stmt.into_inner();
@@ -195,6 +249,66 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
                             // Extract variable name
                             let var_name = expr_to_string(var_expr);
                             equations.push(Equation::Reinit(var_name, val_expr));
+                        }
+                        Rule::assert_stmt => {
+                            let mut inner = inner_stmt.into_inner();
+                            let cond = parse_expression(inner.next().unwrap());
+                            let msg = parse_expression(inner.next().unwrap());
+                            equations.push(Equation::Assert(cond, msg));
+                        }
+                        Rule::terminate_stmt => {
+                            let mut inner = inner_stmt.into_inner();
+                            let msg = parse_expression(inner.next().unwrap());
+                            equations.push(Equation::Terminate(msg));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Rule::initial_equation_section => {
+                let eq_stmt_inner = pair.into_inner();
+                for stmt in eq_stmt_inner {
+                    let inner_stmt = stmt.into_inner().next().unwrap();
+                    match inner_stmt.as_rule() {
+                        Rule::equation => {
+                            let mut eq_parts = inner_stmt.into_inner();
+                            let lhs = parse_expression(eq_parts.next().unwrap());
+                            let rhs = parse_expression(eq_parts.next().unwrap());
+                            initial_equations.push(Equation::Simple(lhs, rhs));
+                        }
+                        Rule::connect_clause => {
+                            let mut conn_inner = inner_stmt.into_inner();
+                            let a_expr = parse_expression(conn_inner.next().unwrap());
+                            let b_expr = parse_expression(conn_inner.next().unwrap());
+                            initial_equations.push(Equation::Connect(a_expr, b_expr));
+                        }
+                        Rule::for_loop => {
+                            initial_equations.push(parse_for_loop(inner_stmt));
+                        }
+                        Rule::when_equation => {
+                            initial_equations.push(parse_when_equation(inner_stmt));
+                        }
+                        Rule::if_equation => {
+                            initial_equations.push(parse_if_equation(inner_stmt));
+                        }
+                        Rule::reinit_clause => {
+                            let mut inner = inner_stmt.into_inner();
+                            let var_expr = parse_component_ref(inner.next().unwrap());
+                            let val_expr = parse_expression(inner.next().unwrap());
+                            
+                            let var_name = expr_to_string(var_expr);
+                            initial_equations.push(Equation::Reinit(var_name, val_expr));
+                        }
+                        Rule::assert_stmt => {
+                            let mut inner = inner_stmt.into_inner();
+                            let cond = parse_expression(inner.next().unwrap());
+                            let msg = parse_expression(inner.next().unwrap());
+                            initial_equations.push(Equation::Assert(cond, msg));
+                        }
+                        Rule::terminate_stmt => {
+                            let mut inner = inner_stmt.into_inner();
+                            let msg = parse_expression(inner.next().unwrap());
+                            initial_equations.push(Equation::Terminate(msg));
                         }
                         _ => {}
                     }
@@ -209,18 +323,50 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<Model, pest::error::
                     algorithms.push(parse_algorithm_stmt(inner_stmt));
                 }
             }
+            Rule::initial_algorithm_section => {
+                let alg_stmt_inner = pair.into_inner();
+                for stmt in alg_stmt_inner {
+                    let inner_stmt = stmt.into_inner().next().unwrap();
+                    initial_algorithms.push(parse_algorithm_stmt(inner_stmt));
+                }
+            }
+            Rule::end_part => {
+                let end_inner = pair.into_inner();
+                for p in end_inner {
+                    if p.as_rule() == Rule::annotation {
+                        class_annotation = Some(parse_annotation_to_string(&p));
+                        break;
+                    }
+                }
+            }
             _ => {}
         }
     }
 
-    Ok(Model {
-        name,
-        is_connector,
-        extends,
-        declarations,
-        equations,
-        algorithms,
-    })
+    if is_function {
+        Ok(ClassItem::Function(Function {
+            name,
+            extends,
+            declarations,
+            algorithms,
+            initial_algorithms,
+        }))
+    } else {
+        Ok(ClassItem::Model(Model {
+            name,
+            is_connector,
+            is_function: false,
+            is_record,
+            is_block,
+            extends,
+            declarations,
+            equations,
+            algorithms,
+            initial_equations,
+            initial_algorithms,
+            annotation: class_annotation,
+        }))
+    }
 }
 
 fn expr_to_string(expr: Expression) -> String {
@@ -470,6 +616,50 @@ fn parse_when_equation(pair: pest::iterators::Pair<Rule>) -> Equation {
     Equation::When(cond, main_body, else_whens)
 }
 
+fn parse_if_equation(pair: pest::iterators::Pair<Rule>) -> Equation {
+    let mut inner = pair.into_inner();
+    let cond = parse_expression(inner.next().unwrap());
+    let mut then_eqs = Vec::new();
+    let mut elseif_list: Vec<(Expression, Vec<Equation>)> = Vec::new();
+    let mut else_eqs: Option<Vec<Equation>> = None;
+    for token in inner {
+        match token.as_rule() {
+            Rule::equation_stmt => {
+                let eq = parse_equation_stmt_inner(token.into_inner().next().unwrap());
+                if let Some(ref mut v) = else_eqs {
+                    v.push(eq);
+                } else if let Some(last) = elseif_list.last_mut() {
+                    last.1.push(eq);
+                } else {
+                    then_eqs.push(eq);
+                }
+            }
+            Rule::elseif_branch => {
+                let mut ib = token.into_inner();
+                let c = parse_expression(ib.next().unwrap());
+                let mut eqs = Vec::new();
+                for stmt in ib {
+                    if stmt.as_rule() == Rule::equation_stmt {
+                        eqs.push(parse_equation_stmt_inner(stmt.into_inner().next().unwrap()));
+                    }
+                }
+                elseif_list.push((c, eqs));
+            }
+            Rule::else_branch => {
+                let mut eqs = Vec::new();
+                for stmt in token.into_inner() {
+                    if stmt.as_rule() == Rule::equation_stmt {
+                        eqs.push(parse_equation_stmt_inner(stmt.into_inner().next().unwrap()));
+                    }
+                }
+                else_eqs = Some(eqs);
+            }
+            _ => {}
+        }
+    }
+    Equation::If(cond, then_eqs, elseif_list, else_eqs)
+}
+
 fn parse_equation_stmt_inner(inner_stmt: pest::iterators::Pair<Rule>) -> Equation {
     match inner_stmt.as_rule() {
         Rule::equation => {
@@ -486,12 +676,24 @@ fn parse_equation_stmt_inner(inner_stmt: pest::iterators::Pair<Rule>) -> Equatio
         }
         Rule::for_loop => parse_for_loop(inner_stmt),
         Rule::when_equation => parse_when_equation(inner_stmt),
+        Rule::if_equation => parse_if_equation(inner_stmt),
         Rule::reinit_clause => {
             let mut inner = inner_stmt.into_inner();
             let var_expr = parse_component_ref(inner.next().unwrap());
             let val_expr = parse_expression(inner.next().unwrap());
             let var_name = expr_to_string(var_expr);
             Equation::Reinit(var_name, val_expr)
+        }
+        Rule::assert_stmt => {
+            let mut inner = inner_stmt.into_inner();
+            let cond = parse_expression(inner.next().unwrap());
+            let msg = parse_expression(inner.next().unwrap());
+            Equation::Assert(cond, msg)
+        }
+        Rule::terminate_stmt => {
+            let mut inner = inner_stmt.into_inner();
+            let msg = parse_expression(inner.next().unwrap());
+            Equation::Terminate(msg)
         }
         _ => unreachable!("Unknown equation stmt rule: {:?}", inner_stmt.as_rule()),
     }
@@ -642,9 +844,38 @@ fn parse_factor(pair: pest::iterators::Pair<Rule>) -> Expression {
              
              let mut args = Vec::new();
              for arg_pair in func_inner {
-                 args.push(parse_expression(arg_pair));
+                 match arg_pair.as_rule() {
+                     // arg_list = expression ("," ~ expression)*
+                     Rule::arg_list => {
+                         for expr_pair in arg_pair.into_inner() {
+                             args.push(parse_expression(expr_pair));
+                         }
+                     }
+                     // Fallback: single expression directly (older grammar)
+                     Rule::expression => {
+                         args.push(parse_expression(arg_pair));
+                     }
+                     _ => {}
+                 }
              }
              Expression::Call(func_name, args)
+        }
+        Rule::initial_call => {
+            Expression::Call("initial".to_string(), Vec::new())
+        }
+        Rule::terminal_call => {
+            Expression::Call("terminal".to_string(), Vec::new())
+        }
+        Rule::assert_call => {
+            let mut a = inner.into_inner();
+            let cond = parse_expression(a.next().unwrap());
+            let msg = parse_expression(a.next().unwrap());
+            Expression::Call("assert".to_string(), vec![cond, msg])
+        }
+        Rule::terminate_call => {
+            let mut a = inner.into_inner();
+            let msg = parse_expression(a.next().unwrap());
+            Expression::Call("terminate".to_string(), vec![msg])
         }
         Rule::component_ref => {
             parse_component_ref(inner)

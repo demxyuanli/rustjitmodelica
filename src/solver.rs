@@ -10,6 +10,9 @@ pub struct System<'a> {
     pub crossings: &'a mut [f64],
     pub pre_states: &'a [f64],
     pub pre_discrete: &'a [f64],
+    pub t_end: f64,
+    pub diag_residual: *mut f64,
+    pub diag_x: *mut f64,
 }
 
 impl<'a> System<'a> {
@@ -61,6 +64,9 @@ impl<'a> System<'a> {
                 self.crossings.as_mut_ptr(),
                 self.pre_states.as_ptr(),
                 self.pre_discrete.as_ptr(),
+                self.t_end,
+                self.diag_residual,
+                self.diag_x,
             );
             if status != 0 {
                 return Err(status);
@@ -93,6 +99,9 @@ impl<'a> System<'a> {
                 scratch_crossings.as_mut_ptr(),
                 self.pre_states.as_ptr(),
                 self.pre_discrete.as_ptr(),
+                self.t_end,
+                self.diag_residual,
+                self.diag_x,
             );
             if status != 0 {
                 return Err(status);
@@ -216,6 +225,152 @@ impl Solver for RungeKutta4Solver {
         // y_{n+1} = y_n + h/6 * (k1 + 2k2 + 2k3 + k4)
         for i in 0..n {
             states[i] += (dt / 6.0) * (self.k1[i] + 2.0 * self.k2[i] + 2.0 * self.k3[i] + self.k4[i]);
+        }
+
+        Ok(())
+    }
+}
+
+pub struct AdaptiveRK45Solver {
+    k1: Vec<f64>,
+    k2: Vec<f64>,
+    k3: Vec<f64>,
+    k4: Vec<f64>,
+    k5: Vec<f64>,
+    k6: Vec<f64>,
+    tmp: Vec<f64>,
+    abs_tol: f64,
+    rel_tol: f64,
+}
+
+impl AdaptiveRK45Solver {
+    pub fn new(state_len: usize, abs_tol: f64, rel_tol: f64) -> Self {
+        Self {
+            k1: vec![0.0; state_len],
+            k2: vec![0.0; state_len],
+            k3: vec![0.0; state_len],
+            k4: vec![0.0; state_len],
+            k5: vec![0.0; state_len],
+            k6: vec![0.0; state_len],
+            tmp: vec![0.0; state_len],
+            abs_tol,
+            rel_tol,
+        }
+    }
+}
+
+impl Solver for AdaptiveRK45Solver {
+    fn name(&self) -> &str {
+        "AdaptiveRK45"
+    }
+
+    fn step(
+        &mut self,
+        system: &mut System,
+        time: f64,
+        mut dt: f64,
+        states: &mut [f64],
+    ) -> Result<(), i32> {
+        // Single adaptive step attempt: adjust dt internally but caller passes dt as suggestion.
+        let n = states.len();
+        if n == 0 {
+            return Ok(());
+        }
+
+        let t = time;
+        loop {
+            let y = states.to_vec();
+
+            // Coefficients for classic Dormand–Prince RK45
+            self.tmp.copy_from_slice(&y);
+            system.evaluate_scratch(t, &mut self.tmp, &mut self.k1)?;
+
+            // k2
+            for i in 0..n {
+                self.tmp[i] = y[i] + dt * (1.0 / 5.0) * self.k1[i];
+            }
+            system.evaluate_scratch(t + dt * (1.0 / 5.0), &mut self.tmp, &mut self.k2)?;
+
+            // k3
+            for i in 0..n {
+                self.tmp[i] = y[i] + dt * (3.0 / 40.0 * self.k1[i] + 9.0 / 40.0 * self.k2[i]);
+            }
+            system.evaluate_scratch(t + dt * (3.0 / 10.0), &mut self.tmp, &mut self.k3)?;
+
+            // k4
+            for i in 0..n {
+                self.tmp[i] = y[i]
+                    + dt
+                        * (44.0 / 45.0 * self.k1[i]
+                            - 56.0 / 15.0 * self.k2[i]
+                            + 32.0 / 9.0 * self.k3[i]);
+            }
+            system.evaluate_scratch(t + dt * (4.0 / 5.0), &mut self.tmp, &mut self.k4)?;
+
+            // k5
+            for i in 0..n {
+                self.tmp[i] = y[i]
+                    + dt
+                        * (19372.0 / 6561.0 * self.k1[i]
+                            - 25360.0 / 2187.0 * self.k2[i]
+                            + 64448.0 / 6561.0 * self.k3[i]
+                            - 212.0 / 729.0 * self.k4[i]);
+            }
+            system.evaluate_scratch(t + dt * (8.0 / 9.0), &mut self.tmp, &mut self.k5)?;
+
+            // k6
+            for i in 0..n {
+                self.tmp[i] = y[i]
+                    + dt
+                        * (9017.0 / 3168.0 * self.k1[i]
+                            - 355.0 / 33.0 * self.k2[i]
+                            + 46732.0 / 5247.0 * self.k3[i]
+                            + 49.0 / 176.0 * self.k4[i]
+                            - 5103.0 / 18656.0 * self.k5[i]);
+            }
+            system.evaluate_scratch(t + dt, &mut self.tmp, &mut self.k6)?;
+
+            // 5th order solution y5 and 4th order y4
+            let mut y5 = vec![0.0; n];
+            let mut y4 = vec![0.0; n];
+            for i in 0..n {
+                y5[i] = y[i]
+                    + dt
+                        * (35.0 / 384.0 * self.k1[i]
+                            + 500.0 / 1113.0 * self.k3[i]
+                            + 125.0 / 192.0 * self.k4[i]
+                            - 2187.0 / 6784.0 * self.k5[i]
+                            + 11.0 / 84.0 * self.k6[i]);
+
+                y4[i] = y[i]
+                    + dt
+                        * (5179.0 / 57600.0 * self.k1[i]
+                            + 7571.0 / 16695.0 * self.k3[i]
+                            + 393.0 / 640.0 * self.k4[i]
+                            - 92097.0 / 339200.0 * self.k5[i]
+                            + 187.0 / 2100.0 * self.k6[i]
+                            + 1.0 / 40.0 * self.k2[i]);
+            }
+
+            // Error estimate
+            let mut err = 0.0;
+            for i in 0..n {
+                let sk = self.abs_tol + self.rel_tol * y5[i].abs();
+                let e = ((y5[i] - y4[i]) / sk).abs();
+                if e > err {
+                    err = e;
+                }
+            }
+
+            if err <= 1.0 {
+                // Accept step
+                states.copy_from_slice(&y5);
+                break;
+            } else {
+                // Reject and reduce dt
+                let factor = (1.0 / (2.0 * err)).powf(0.25).min(0.5);
+                dt *= factor.max(0.1);
+            }
         }
 
         Ok(())

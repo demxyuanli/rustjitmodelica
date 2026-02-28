@@ -1,5 +1,6 @@
 use cranelift::prelude::*;
 use cranelift::prelude::types as cl_types;
+use cranelift_module::{Linkage, Module};
 use crate::ast::{AlgorithmStatement, Expression};
 use super::super::types::ArrayType;
 use super::super::context::TranslationContext;
@@ -56,6 +57,28 @@ pub fn compile_algorithm_stmt(
              } else {
                  return Err(format!("LHS of assignment must be a variable, got {:?}", lhs));
              }
+        }
+        AlgorithmStatement::Assert(cond, msg) => {
+            let cond_val = compile_expression(cond, ctx, builder)?;
+            let msg_val = compile_expression(msg, ctx, builder)?;
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(cl_types::F64));
+            sig.params.push(AbiParam::new(cl_types::F64));
+            sig.returns.push(AbiParam::new(cl_types::F64));
+            let func_id = ctx.module.declare_function("assert", Linkage::Import, &sig)
+                .map_err(|e| e.to_string())?;
+            let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+            builder.ins().call(func_ref, &[cond_val, msg_val]);
+        }
+        AlgorithmStatement::Terminate(msg) => {
+            let msg_val = compile_expression(msg, ctx, builder)?;
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(cl_types::F64));
+            sig.returns.push(AbiParam::new(cl_types::F64));
+            let func_id = ctx.module.declare_function("terminate", Linkage::Import, &sig)
+                .map_err(|e| e.to_string())?;
+            let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+            builder.ins().call(func_ref, &[msg_val]);
         }
         AlgorithmStatement::Reinit(var_name, val_expr) => {
              let val = compile_expression(val_expr, ctx, builder)?;

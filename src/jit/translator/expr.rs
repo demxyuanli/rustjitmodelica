@@ -171,6 +171,78 @@ pub fn compile_expression(
                  let zero = builder.ins().f64const(0.0);
                  return Ok(builder.ins().select(diff, one, zero));
             }
+            if func_name == "noEvent" {
+                if args.len() != 1 {
+                    return Err(format!("noEvent() expects 1 argument, got {}", args.len()));
+                }
+                // Semantics: evaluate expression without generating zero-crossings.
+                // Zero-cross detection is driven by compile_zero_crossing_store, which
+                // ignores function calls, so here we can just compile the inner expr.
+                return compile_expression(&args[0], ctx, builder);
+            }
+            if func_name == "initial" {
+                if !args.is_empty() {
+                    return Err(format!("initial() expects 0 arguments, got {}", args.len()));
+                }
+                // Approximate initial() by checking if time is approximately zero.
+                if let Some(&t_val) = ctx.var_map.get("time") {
+                    let zero = builder.ins().f64const(0.0);
+                    let diff = builder.ins().fsub(t_val, zero);
+                    let abs = builder.ins().fabs(diff);
+                    let eps = builder.ins().f64const(1e-9);
+                    let is_initial = builder.ins().fcmp(FloatCC::LessThanOrEqual, abs, eps);
+                    let one = builder.ins().f64const(1.0);
+                    let z = builder.ins().f64const(0.0);
+                    return Ok(builder.ins().select(is_initial, one, z));
+                } else {
+                    return Err("initial() requires time variable in context".to_string());
+                }
+            }
+            if func_name == "terminal" {
+                if !args.is_empty() {
+                    return Err(format!("terminal() expects 0 arguments, got {}", args.len()));
+                }
+                if let (Some(&t_val), Some(&t_end_val)) = (ctx.var_map.get("time"), ctx.var_map.get("t_end")) {
+                    let diff = builder.ins().fsub(t_end_val, t_val);
+                    let abs = builder.ins().fabs(diff);
+                    let eps = builder.ins().f64const(1e-9);
+                    let is_terminal = builder.ins().fcmp(FloatCC::LessThanOrEqual, abs, eps);
+                    let one = builder.ins().f64const(1.0);
+                    let z = builder.ins().f64const(0.0);
+                    return Ok(builder.ins().select(is_terminal, one, z));
+                }
+                return Ok(builder.ins().f64const(0.0));
+            }
+            if func_name == "assert" {
+                if args.len() != 2 {
+                    return Err(format!("assert() expects 2 arguments (condition, message), got {}", args.len()));
+                }
+                let cond_val = compile_expression(&args[0], ctx, builder)?;
+                let msg_val = compile_expression(&args[1], ctx, builder)?;
+                let mut sig = ctx.module.make_signature();
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.returns.push(AbiParam::new(cl_types::F64));
+                let func_id = ctx.module.declare_function("assert", Linkage::Import, &sig)
+                    .map_err(|e| e.to_string())?;
+                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+                builder.ins().call(func_ref, &[cond_val, msg_val]);
+                return Ok(builder.ins().f64const(0.0));
+            }
+            if func_name == "terminate" {
+                if args.len() != 1 {
+                    return Err(format!("terminate() expects 1 argument (message), got {}", args.len()));
+                }
+                let msg_val = compile_expression(&args[0], ctx, builder)?;
+                let mut sig = ctx.module.make_signature();
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.returns.push(AbiParam::new(cl_types::F64));
+                let func_id = ctx.module.declare_function("terminate", Linkage::Import, &sig)
+                    .map_err(|e| e.to_string())?;
+                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+                builder.ins().call(func_ref, &[msg_val]);
+                return Ok(builder.ins().f64const(0.0));
+            }
             let mut arg_vals = Vec::new();
             for arg in args {
                 arg_vals.push(compile_expression(arg, ctx, builder)?);

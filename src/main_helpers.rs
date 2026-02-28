@@ -23,6 +23,22 @@ fn collect_states_from_eq(eq: &Equation, states: &mut HashSet<String>) {
             collect_states_from_expr(b, states);
         }
         Equation::SolvableBlock { .. } => {}
+        Equation::Assert(cond, msg) => {
+            collect_states_from_expr(cond, states);
+            collect_states_from_expr(msg, states);
+        }
+        Equation::Terminate(msg) => collect_states_from_expr(msg, states),
+        Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+            collect_states_from_expr(cond, states);
+            for e in then_eqs { collect_states_from_eq(e, states); }
+            for (c, b) in elseif_list {
+                collect_states_from_expr(c, states);
+                for e in b { collect_states_from_eq(e, states); }
+            }
+            if let Some(eqs) = else_eqs {
+                for e in eqs { collect_states_from_eq(e, states); }
+            }
+        }
     }
 }
 

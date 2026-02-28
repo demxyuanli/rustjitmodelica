@@ -8,14 +8,41 @@ use petgraph::algo::tarjan_scc;
 // Assuming these are private within analysis.rs, we need to make sure they exist.
 // If they were removed or not public, we must restore them.
 
+/// F2-1: Expand der(linear combination of variables) to linear combination of der(x).
+/// Returns None if expr is not linear in variables (then caller keeps Der(inner)).
+fn expand_der_linear(inner: &Expression) -> Option<Expression> {
+    use Expression::*;
+    match inner {
+        Variable(name) => Some(Variable(format!("der_{}", name))),
+        BinaryOp(l, Operator::Add, r) => {
+            let dl = expand_der_linear(l)?;
+            let dr = expand_der_linear(r)?;
+            Some(BinaryOp(Box::new(dl), Operator::Add, Box::new(dr)))
+        }
+        BinaryOp(l, Operator::Sub, r) => {
+            let dl = expand_der_linear(l)?;
+            let dr = expand_der_linear(r)?;
+            Some(BinaryOp(Box::new(dl), Operator::Sub, Box::new(dr)))
+        }
+        BinaryOp(l, Operator::Mul, r) => {
+            match (&**l, &**r) {
+                (Number(c), Variable(name)) => Some(BinaryOp(Box::new(Number(*c)), Operator::Mul, Box::new(Variable(format!("der_{}", name))))),
+                (Variable(name), Number(c)) => Some(BinaryOp(Box::new(Number(*c)), Operator::Mul, Box::new(Variable(format!("der_{}", name))))),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub fn normalize_der(expr: &Expression) -> Expression {
     match expr {
         Expression::Der(inner) => {
-            if let Expression::Variable(name) = &**inner {
+            if let Some(expanded) = expand_der_linear(inner) {
+                normalize_der(&expanded)
+            } else if let Expression::Variable(name) = &**inner {
                 Expression::Variable(format!("der_{}", name))
             } else {
-                // If der(complex_expr), we might need to handle it or error out.
-                // For now, recursively normalize.
                 Expression::Der(Box::new(normalize_der(inner)))
             }
         },
@@ -52,6 +79,54 @@ pub fn collect_states_from_eq(eq: &Equation, states: &mut HashSet<String>) {
                 }
             }
         }
+        Equation::If(c, then_eqs, elseif_list, else_eqs) => {
+            collect_states_from_expr(c, states);
+            for eq in then_eqs {
+                collect_states_from_eq(eq, states);
+            }
+            for (ec, eb) in elseif_list {
+                collect_states_from_expr(ec, states);
+                for eq in eb {
+                    collect_states_from_eq(eq, states);
+                }
+            }
+            if let Some(eqs) = else_eqs {
+                for eq in eqs {
+                    collect_states_from_eq(eq, states);
+                }
+            }
+        }
+        Equation::Assert(cond, msg) => {
+            collect_states_from_expr(cond, states);
+            collect_states_from_expr(msg, states);
+        }
+        Equation::Terminate(msg) => {
+            collect_states_from_expr(msg, states);
+        }
+        _ => {}
+    }
+}
+
+fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
+    match expr {
+        Expression::Variable(name) => {
+            out.insert(name.clone());
+        }
+        Expression::BinaryOp(lhs, _, rhs) => {
+            collect_vars_in_expr(lhs, out);
+            collect_vars_in_expr(rhs, out);
+        }
+        Expression::Call(_, args) => {
+            for a in args {
+                collect_vars_in_expr(a, out);
+            }
+        }
+        Expression::If(c, t, f) => {
+            collect_vars_in_expr(c, out);
+            collect_vars_in_expr(t, out);
+            collect_vars_in_expr(f, out);
+        }
+        Expression::Der(inner) => collect_vars_in_expr(inner, out),
         _ => {}
     }
 }
@@ -59,9 +134,7 @@ pub fn collect_states_from_eq(eq: &Equation, states: &mut HashSet<String>) {
 fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
     match expr {
         Expression::Der(inner) => {
-             if let Expression::Variable(name) = &**inner {
-                 states.insert(name.clone());
-             }
+            collect_vars_in_expr(inner, states);
         }
         Expression::BinaryOp(lhs, _, rhs) => {
             collect_states_from_expr(lhs, states);
@@ -133,14 +206,66 @@ fn equation_contains_var(eq: &Equation, var: &str) -> bool {
     vars.contains(var)
 }
 
-/// Sorts algebraic equations using Block Lower Triangular (BLT) transformation.
-/// Returns (sorted_equations, structural_differential_index).
+/// Result of initial equation system analysis (IR3-3). Used for consistent initialization.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct InitialSystemInfo {
+    pub equation_count: usize,
+    pub variable_count: usize,
+    pub alias_eliminated_count: usize,
+    pub is_underdetermined: bool,
+    pub is_overdetermined: bool,
+}
+
+/// Analyze initial equations: count equations and variables, run alias elimination, detect over/under-determination.
+/// known_at_initial: typically parameters and time (t=0). Variables not in this set are unknowns.
+pub fn analyze_initial_equations(
+    initial_equations: &[Equation],
+    known_at_initial: &HashSet<String>,
+) -> InitialSystemInfo {
+    let (eqs_after_alias, alias_map) = eliminate_aliases(initial_equations);
+    let mut var_set = HashSet::new();
+    for eq in &eqs_after_alias {
+        collect_vars_eq(eq, &mut var_set);
+    }
+    for v in alias_map.keys() {
+        var_set.insert(v.clone());
+    }
+    let unknown_set: HashSet<String> = var_set
+        .difference(known_at_initial)
+        .cloned()
+        .collect();
+    let variable_count = unknown_set.len();
+    let equation_count = eqs_after_alias.len();
+    let is_underdetermined = equation_count < variable_count;
+    let is_overdetermined = equation_count > variable_count;
+    InitialSystemInfo {
+        equation_count,
+        variable_count,
+        alias_eliminated_count: alias_map.len(),
+        is_underdetermined,
+        is_overdetermined,
+    }
+}
+
+/// Result of sort_algebraic_equations: sorted equations, differential index, and constraint count (IR3-1, IR3-2).
+#[derive(Debug, Clone)]
+pub struct SortAlgebraicResult {
+    pub sorted_equations: Vec<Equation>,
+    pub differential_index: u32,
+    /// Number of equations not assigned to any variable (constraint equations) when index > 1.
+    pub constraint_equation_count: usize,
+}
+
+/// Sorts algebraic equations using variable-equation bipartite matching (IR2-1) and
+/// Block Lower Triangular (BLT) ordering (IR2-2). Returns sorted equations,
+/// structural differential index, and constraint equation count.
 pub fn sort_algebraic_equations(
     equations: &[Equation],
     known_vars: &HashSet<String>,
     params: &[String],
     options: &AnalysisOptions,
-) -> (Vec<Equation>, u32) {
+) -> SortAlgebraicResult {
     // 0. Prepare known variables set (including parameters and time)
     let mut current_known = known_vars.clone();
     for p in params {
@@ -151,72 +276,43 @@ pub fn sort_algebraic_equations(
     // 0.5. Eliminate Aliases (Simple equations like a = b)
     let (equations, alias_map) = eliminate_aliases(&equations);
     
-    println!("  Aliases eliminated: {}", alias_map.len());
-    // Debug
-    println!("  Remaining equations after alias elim: {}", equations.len());
+    println!("{}", crate::i18n::msg("aliases_eliminated", &[&alias_map.len()]));
+    println!("{}", crate::i18n::msg("remaining_equations", &[&equations.len()]));
     // for (i, eq) in equations.iter().enumerate() {
     //     println!("    [{}]: {:?}", i, eq);
     // }
 
-    // 1. Index reduction is applied after matching (see differential_index below).
-    let equations = equations;
+    // 1. Mutable equations for index reduction loop
+    let mut equations = equations;
 
-    // 2. Analyze equations to find unknowns
+    let mut state_set = HashSet::new();
+    for eq in equations.iter() {
+        collect_states_from_eq(eq, &mut state_set);
+    }
+    let state_vars: Vec<String> = state_set.into_iter().collect();
+    if options.index_reduction_method == "debugPrint" && !state_vars.is_empty() {
+        for eq in equations.iter() {
+            if let Equation::Simple(lhs, rhs) = eq {
+                let is_ode = matches!(lhs, Expression::Der(_));
+                if !is_ode {
+                    let residual = Expression::BinaryOp(
+                        Box::new(lhs.clone()),
+                        Operator::Sub,
+                        Box::new(rhs.clone()),
+                    );
+                    let dt = time_derivative(&residual, &state_vars);
+                    eprintln!("[debugPrint] time_derivative of constraint residual: {:?}", dt);
+                    break;
+                }
+            }
+        }
+    }
+
     struct EqInfo {
         original_idx: usize,
         unknowns: Vec<String>,
     }
 
-    let mut eq_infos = Vec::new();
-    let mut all_unknowns = HashSet::new();
-
-    for (i, eq) in equations.iter().enumerate() {
-        let unknowns = extract_unknowns(eq, &current_known);
-        for u in &unknowns {
-            all_unknowns.insert(u.clone());
-        }
-        eq_infos.push(EqInfo {
-            original_idx: i,
-            unknowns,
-        });
-    }
-
-    let unknown_list: Vec<String> = all_unknowns.into_iter().collect();
-    // Fix closure type inference
-    let unknown_map: HashMap<String, usize> = unknown_list.iter().enumerate().map(|(i, u): (usize, &String)| (u.clone(), i)).collect();
-
-    // 3. Perform Matching (Equation -> Variable)
-    let mut assigned_var = vec![None; eq_infos.len()];
-    let mut assigned_eq = vec![None; unknown_list.len()];
-    
-    // First pass: Try to assign equations to variables greedily
-    // Especially "der(x) = ..." to "der_x"
-    for (i, info) in eq_infos.iter().enumerate() {
-        let eq = &equations[info.original_idx];
-        if let Equation::Simple(lhs, _) = eq {
-            // Check if LHS is der(x) or der_x
-            let mut target_var = None;
-            if let Expression::Variable(v) = lhs {
-                 target_var = Some(v.clone());
-            } else if let Expression::Der(inner) = lhs {
-                 if let Expression::Variable(v) = &**inner {
-                     target_var = Some(format!("der_{}", v));
-                 }
-            }
-            
-            if let Some(v) = target_var {
-                if let Some(&v_idx) = unknown_map.get(&v) {
-                    if assigned_eq[v_idx].is_none() {
-                        assigned_eq[v_idx] = Some(i);
-                        assigned_var[i] = Some(v_idx);
-                    }
-                }
-            }
-        }
-    }
-    
-    // Augmenting path DFS for bipartite matching; iterative to avoid stack overflow.
-    // Frame: (eq_index, next_adj_index, var_chosen_for_next_level)
     fn dfs_iter(
         u_start: usize,
         adj: &[Vec<usize>],
@@ -253,33 +349,101 @@ pub fn sort_algebraic_equations(
         false
     }
 
-    let mut adj = vec![Vec::new(); eq_infos.len()];
-    for (i, info) in eq_infos.iter().enumerate() {
-        for u in &info.unknowns {
-            if let Some(&v_idx) = unknown_map.get(u) {
-                adj[i].push(v_idx);
+    let mut differential_index: u32;
+    let mut eq_infos = Vec::new();
+    let mut unknown_list: Vec<String>;
+    let mut unknown_map: HashMap<String, usize>;
+    let mut assigned_var: Vec<Option<usize>>;
+    let mut assigned_eq: Vec<Option<usize>>;
+
+    loop {
+        eq_infos.clear();
+        let mut all_unknowns = HashSet::new();
+        for (i, eq) in equations.iter().enumerate() {
+            let unknowns = extract_unknowns(eq, &current_known);
+            for u in &unknowns {
+                all_unknowns.insert(u.clone());
+            }
+            eq_infos.push(EqInfo {
+                original_idx: i,
+                unknowns,
+            });
+        }
+
+        unknown_list = all_unknowns.into_iter().collect();
+        unknown_map = unknown_list.iter().enumerate().map(|(i, u)| (u.clone(), i)).collect();
+
+        assigned_var = vec![None; eq_infos.len()];
+        assigned_eq = vec![None; unknown_list.len()];
+
+        for (i, info) in eq_infos.iter().enumerate() {
+            let eq = &equations[info.original_idx];
+            if let Equation::Simple(lhs, _) = eq {
+                let mut target_var = None;
+                if let Expression::Variable(v) = lhs {
+                    target_var = Some(v.clone());
+                } else if let Expression::Der(inner) = lhs {
+                    if let Expression::Variable(v) = &**inner {
+                        target_var = Some(format!("der_{}", v));
+                    }
+                }
+                if let Some(v) = target_var {
+                    if let Some(&v_idx) = unknown_map.get(&v) {
+                        if assigned_eq[v_idx].is_none() {
+                            assigned_eq[v_idx] = Some(i);
+                            assigned_var[i] = Some(v_idx);
+                        }
+                    }
+                }
             }
         }
+
+        let mut adj = vec![Vec::new(); eq_infos.len()];
+        for (i, info) in eq_infos.iter().enumerate() {
+            for u in &info.unknowns {
+                if let Some(&v_idx) = unknown_map.get(u) {
+                    adj[i].push(v_idx);
+                }
+            }
+        }
+
+        for i in 0..eq_infos.len() {
+            if assigned_var[i].is_some() {
+                continue;
+            }
+            let mut visited = vec![false; unknown_list.len()];
+            if dfs_iter(i, &adj, &mut assigned_eq, &mut visited) {
+                // assigned_eq updated
+            }
+        }
+
+        for (v_idx, eq_opt) in assigned_eq.iter().enumerate() {
+            if let Some(eq_idx) = eq_opt {
+                assigned_var[*eq_idx] = Some(v_idx);
+            }
+        }
+
+        differential_index = if assigned_var.iter().any(|o| o.is_none()) { 2 } else { 1 };
+        if differential_index == 1 {
+            break;
+        }
+        if options.index_reduction_method == "none" {
+            break;
+        }
+        if let Some(new_eqs) = try_index_reduction(
+            &equations,
+            &assigned_var,
+            &assigned_eq,
+            &unknown_list,
+            &state_vars,
+        ) {
+            equations = new_eqs;
+        } else {
+            break;
+        }
     }
 
-    for i in 0..eq_infos.len() {
-        if assigned_var[i].is_some() {
-            continue;
-        }
-        let mut visited = vec![false; unknown_list.len()];
-        if dfs_iter(i, &adj, &mut assigned_eq, &mut visited) {
-            // assigned_eq updated in dfs_iter
-        }
-    }
-
-    // Update assigned_var based on final assigned_eq
-    for (v_idx, eq_opt) in assigned_eq.iter().enumerate() {
-        if let Some(eq_idx) = eq_opt {
-            assigned_var[*eq_idx] = Some(v_idx);
-        }
-    }
-
-    let differential_index = if assigned_var.iter().any(|o| o.is_none()) { 2 } else { 1 };
+    let constraint_equation_count = assigned_var.iter().filter(|o| o.is_none()).count();
 
     // 4. Build Dependency Graph
     let mut dep_graph = DiGraph::<usize, ()>::new();
@@ -336,9 +500,8 @@ pub fn sort_algebraic_equations(
                     current_known.insert(var_name.clone());
                 }
             } else {
-                 // Equation not assigned to any variable (redundant or check?)
-                 // For now, just include it as residual check? or ignore?
-                 // Usually means over-determined or redundant.
+                 // Preserve structural equations (e.g. If) that have no single assigned variable
+                 sorted_equations.push(eq.clone());
             }
         } else {
             let block_eqs: Vec<Equation> = block_indices.iter()
@@ -369,7 +532,11 @@ pub fn sort_algebraic_equations(
         }
     }
 
-    (sorted_equations, differential_index)
+    SortAlgebraicResult {
+        sorted_equations,
+        differential_index,
+        constraint_equation_count,
+    }
 }
 
 fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> {
@@ -398,7 +565,18 @@ fn collect_vars_eq(eq: &Equation, vars: &mut HashSet<String>) {
                  collect_vars_expr(ec, vars);
                  for sub in eb { collect_vars_eq(sub, vars); }
              }
-        }
+         }
+        Equation::If(c, then_eqs, elseif_list, else_eqs) => {
+             collect_vars_expr(c, vars);
+             for sub in then_eqs { collect_vars_eq(sub, vars); }
+             for (ec, eb) in elseif_list {
+                 collect_vars_expr(ec, vars);
+                 for sub in eb { collect_vars_eq(sub, vars); }
+             }
+             if let Some(eqs) = else_eqs { for sub in eqs { collect_vars_eq(sub, vars); } }
+         }
+        Equation::Assert(cond, msg) => { collect_vars_expr(cond, vars); collect_vars_expr(msg, vars); }
+        Equation::Terminate(msg) => { collect_vars_expr(msg, vars); }
         _ => {}
     }
 }
@@ -455,6 +633,162 @@ fn make_residual(eq: &Equation) -> Expression {
     }
 }
 
+/// Substitute der_x -> expr in expression using the given map (from ODE equations).
+fn substitute_der_in_expr(expr: &Expression, der_map: &HashMap<String, Expression>) -> Expression {
+    match expr {
+        Expression::Variable(name) => {
+            if name.starts_with("der_") {
+                der_map.get(name).cloned().unwrap_or_else(|| expr.clone())
+            } else {
+                expr.clone()
+            }
+        }
+        Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
+            Box::new(substitute_der_in_expr(lhs, der_map)),
+            *op,
+            Box::new(substitute_der_in_expr(rhs, der_map)),
+        ),
+        Expression::Call(n, args) => Expression::Call(
+            n.clone(),
+            args.iter().map(|a| substitute_der_in_expr(a, der_map)).collect(),
+        ),
+        Expression::Der(inner) => Expression::Der(Box::new(substitute_der_in_expr(inner, der_map))),
+        Expression::If(c, t, f) => Expression::If(
+            Box::new(substitute_der_in_expr(c, der_map)),
+            Box::new(substitute_der_in_expr(t, der_map)),
+            Box::new(substitute_der_in_expr(f, der_map)),
+        ),
+        _ => expr.clone(),
+    }
+}
+
+/// Solve residual expr = 0 for var when expr is linear in var: expr = rest - coeff*var => var = rest/coeff.
+fn solve_residual_linear(expr: &Expression, var: &str) -> Option<Expression> {
+    if !contains_var(expr, var) {
+        return None;
+    }
+    if let Expression::BinaryOp(lhs, op, rhs) = expr {
+        let (rest, coeff) = match (op, lhs.as_ref(), rhs.as_ref()) {
+            (Operator::Sub, rest, Expression::BinaryOp(mul_l, Operator::Mul, mul_r)) => {
+                let coeff = if let Expression::Variable(vn) = mul_r.as_ref() {
+                    if vn == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
+                        mul_l.clone()
+                    } else if let Expression::Variable(vn) = mul_l.as_ref() {
+                        if vn == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
+                            mul_r.clone()
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                };
+                (rest.clone(), coeff)
+            }
+            (Operator::Sub, Expression::BinaryOp(mul_l, Operator::Mul, mul_r), rest) => {
+                let coeff = if let Expression::Variable(vn) = mul_r.as_ref() {
+                    if vn == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
+                        mul_l.clone()
+                    } else if let Expression::Variable(vn) = mul_l.as_ref() {
+                        if vn == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
+                            mul_r.clone()
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                };
+                (rest.clone(), coeff)
+            }
+            _ => return None,
+        };
+        Some(make_binary(rest, Operator::Div, *coeff))
+    } else {
+        None
+    }
+}
+
+/// Try to reduce differential index by differentiating constraint equations and solving for algebraic variables.
+/// Returns new equation list if one constraint was replaced by an explicit equation for an algebraic.
+fn try_index_reduction(
+    equations: &[Equation],
+    assigned_var: &[Option<usize>],
+    _assigned_eq: &[Option<usize>],
+    unknown_list: &[String],
+    state_vars: &[String],
+) -> Option<Vec<Equation>> {
+    let mut der_map: HashMap<String, Expression> = HashMap::new();
+    for (eq_idx, &var_idx_opt) in assigned_var.iter().enumerate() {
+        if let Some(var_idx) = var_idx_opt {
+            let var_name = &unknown_list[var_idx];
+            if var_name.starts_with("der_") {
+                let eq = &equations[eq_idx];
+                if let Equation::Simple(Expression::Variable(lhs), rhs) = eq {
+                    if *lhs == *var_name {
+                        der_map.insert(var_name.clone(), rhs.clone());
+                    }
+                } else if let Equation::Simple(Expression::Der(inner), rhs) = eq {
+                    if let Expression::Variable(v) = inner.as_ref() {
+                        let der_name = format!("der_{}", v);
+                        if der_name == *var_name {
+                            der_map.insert(var_name.clone(), rhs.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let unassigned: Vec<usize> = assigned_var
+        .iter()
+        .enumerate()
+        .filter_map(|(i, o)| if o.is_none() { Some(i) } else { None })
+        .collect();
+    for eq_idx in unassigned {
+        let eq = &equations[eq_idx];
+        let (is_constraint, residual) = match eq {
+            Equation::Simple(lhs, rhs) => {
+                let lhs_has_der = matches!(lhs, Expression::Der(_))
+                    || (if let Expression::Variable(n) = lhs { n.starts_with("der_") } else { false });
+                (!lhs_has_der, make_binary(lhs.clone(), Operator::Sub, rhs.clone()))
+            }
+            _ => continue,
+        };
+        if !is_constraint {
+            continue;
+        }
+        let mut diff_expr = time_derivative(&residual, state_vars);
+        diff_expr = substitute_der_in_expr(&diff_expr, &der_map);
+        let alg_vars: Vec<&String> = unknown_list
+            .iter()
+            .filter(|u| !u.starts_with("der_"))
+            .collect();
+        if let Some(alg_var) = alg_vars.first() {
+            if let Some(sol) = solve_residual_linear(&diff_expr, alg_var) {
+                let mut new_eqs = equations.to_vec();
+                new_eqs[eq_idx] =
+                    Equation::Simple(Expression::Variable((*alg_var).clone()), sol);
+                return Some(new_eqs);
+            }
+        }
+        let diff2 = time_derivative(&diff_expr, state_vars);
+        let diff2_sub = substitute_der_in_expr(&diff2, &der_map);
+        for alg_var in &alg_vars {
+            if let Some(sol) = solve_residual_linear(&diff2_sub, alg_var) {
+                let mut new_eqs = equations.to_vec();
+                new_eqs[eq_idx] =
+                    Equation::Simple(Expression::Variable((*alg_var).clone()), sol);
+                return Some(new_eqs);
+            }
+        }
+    }
+    None
+}
+
 
 // Alias Elimination
 // Simplifies the system by removing equations of the form:
@@ -471,7 +805,7 @@ fn eliminate_aliases(equations: &[Equation]) -> (Vec<Equation>, HashMap<String, 
     // Iteratively find and substitute aliases until no more changes
     while changed {
         changed = false;
-        let mut next_eqs = Vec::new();
+        let mut next_eqs = Vec::with_capacity(current_eqs.len());
         
         // 1. Find new aliases in this pass
         for eq in &current_eqs {
@@ -613,12 +947,21 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
         Equation::When(cond, body, else_whens) => Equation::When(
             substitute_aliases_in_expr(cond, map),
             body.iter().map(|b_eq| substitute_aliases_in_eq(b_eq, map)).collect(),
-            else_whens.iter().map(|(c, b)| (
-                substitute_aliases_in_expr(c, map),
-                b.iter().map(|b_eq| substitute_aliases_in_eq(b_eq, map)).collect()
-            )).collect()
+            else_whens.iter().map(|(ec, eb)| (
+                substitute_aliases_in_expr(ec, map),
+                eb.iter().map(|b_eq| substitute_aliases_in_eq(b_eq, map)).collect(),
+            )).collect(),
         ),
-        _ => eq.clone()
+        Equation::If(cond, then_eqs, elseif_list, else_eqs) => Equation::If(
+            substitute_aliases_in_expr(cond, map),
+            then_eqs.iter().map(|e| substitute_aliases_in_eq(e, map)).collect(),
+            elseif_list.iter().map(|(c, eb)| (
+                substitute_aliases_in_expr(c, map),
+                eb.iter().map(|e| substitute_aliases_in_eq(e, map)).collect(),
+            )).collect(),
+            else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| substitute_aliases_in_eq(e, map)).collect()),
+        ),
+        Equation::Connect(_, _) | Equation::Reinit(_, _) | Equation::Assert(_, _) | Equation::Terminate(_) | Equation::SolvableBlock { .. } => eq.clone(),
     }
 }
 
@@ -760,7 +1103,6 @@ pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
 
 /// Time derivative of expression using chain rule: d/dt expr = sum over state x of (d expr/d x * der(x)).
 /// Used for index reduction (Pantelides) when differentiating constraint equations.
-#[allow(dead_code)]
 pub fn time_derivative(expr: &Expression, state_vars: &[String]) -> Expression {
     let mut sum: Option<Expression> = None;
     for x in state_vars {

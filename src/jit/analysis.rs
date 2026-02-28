@@ -25,6 +25,7 @@ pub fn collect_modified(stmt: &AlgorithmStatement, vars: &mut HashSet<String>) {
             for (_, s) in else_whens { for stmt in s { collect_modified(stmt, vars); } }
         }
         AlgorithmStatement::Reinit(_, _) => {}
+        AlgorithmStatement::Assert(_, _) | AlgorithmStatement::Terminate(_) => {}
     }
 }
 
@@ -37,6 +38,15 @@ pub fn collect_modified_equations(equations: &[Equation], vars: &mut HashSet<Str
         } else if let Equation::For(loop_var, _, _, body) = eq {
             vars.insert(loop_var.clone());
             collect_modified_equations(body, vars);
+        } else if let Equation::Assert(_, _) | Equation::Terminate(_) = eq {
+        } else if let Equation::If(_, then_eqs, elseif_list, else_eqs) = eq {
+            collect_modified_equations(then_eqs, vars);
+            for (_, eb) in elseif_list {
+                collect_modified_equations(eb, vars);
+            }
+            if let Some(eqs) = else_eqs {
+                collect_modified_equations(eqs, vars);
+            }
         }
     }
 }

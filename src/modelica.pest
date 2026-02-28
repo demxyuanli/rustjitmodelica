@@ -5,9 +5,19 @@ COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)* }
 
 model_file = { SOI ~ model_definition ~ EOI }
 
-model_definition = { class_prefixes ~ identifier ~ declaration_section ~ (equation_section | algorithm_section)* ~ "end" ~ identifier ~ ";" }
+model_definition = {
+    class_prefixes
+    ~ identifier
+    ~ declaration_section
+    ~ initial_equation_section?
+    ~ initial_algorithm_section?
+    ~ (equation_section | algorithm_section)*
+    ~ end_part
+}
+end_part = { "end" ~ identifier ~ annotation? ~ ";" }
 
-class_prefixes = { "partial"? ~ ("model" | "connector" | "class" | "record" | "block" | "package") }
+function_prefix = { "function" }
+class_prefixes = { "partial"? ~ ("model" | "connector" | "class" | "record" | "block" | "package" | function_prefix) }
 
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 dotted_identifier = { identifier ~ ("." ~ identifier)* }
@@ -16,9 +26,9 @@ declaration_section = { (extends_clause | declaration)* }
 extends_clause = { "extends" ~ dotted_identifier ~ modification_part? ~ ";" }
 modification_part = { "(" ~ modification_list ~ ")" }
 modification_list = { modification ~ ("," ~ modification)* }
-modification = { component_ref ~ "=" ~ expression }
+modification = { ("each" ~ WHITESPACE?)? ~ component_ref ~ "=" ~ expression }
 
-declaration = { (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ type_name ~ identifier ~ array_subscript? ~ modification_part? ~ value_assignment? ~ string_comment? ~ ";" }
+declaration = { (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ type_name ~ identifier ~ array_subscript? ~ modification_part? ~ value_assignment? ~ string_comment? ~ annotation? ~ ";" }
 
 string_comment = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
@@ -32,18 +42,26 @@ output_kw = { "output" }
 // Allow arbitrary identifiers as type names for models/connectors
 type_name = { !keyword ~ ("Real" | "Integer" | "Boolean" | dotted_identifier) }
 
-keyword = @{ ("model" | "end" | "equation" | "algorithm" | "extends" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "input" | "output" | "package" | "constant") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "each" | "annotation" | "assert" | "terminate") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 value_assignment = { "=" ~ expression }
 // attribute_modification removed
 equation_section = { "equation" ~ equation_stmt* }
-equation_stmt = { connect_clause | equation | for_loop | when_equation | reinit_clause }
+initial_equation_section = { "initial" ~ "equation" ~ equation_stmt* }
+equation_stmt = { connect_clause | equation | assert_stmt | terminate_stmt | for_loop | when_equation | if_equation | reinit_clause }
+assert_stmt = { "assert" ~ "(" ~ expression ~ "," ~ expression ~ ")" ~ ";" }
+terminate_stmt = { "terminate" ~ "(" ~ expression ~ ")" ~ ";" }
+
+if_equation = { "if" ~ expression ~ "then" ~ equation_stmt+ ~ elseif_branch* ~ else_branch? ~ "end" ~ "if" ~ ";" }
+elseif_branch = { "elseif" ~ expression ~ "then" ~ equation_stmt+ }
+else_branch = { "else" ~ equation_stmt+ }
 
 when_equation = { "when" ~ expression ~ "then" ~ equation_stmt+ ~ ("elsewhen" ~ expression ~ "then" ~ equation_stmt+)* ~ "end" ~ "when" ~ ";" }
 
 reinit_clause = { "reinit" ~ "(" ~ component_ref ~ "," ~ expression ~ ")" ~ ";" }
 
 algorithm_section = { "algorithm" ~ algorithm_stmt+ }
+initial_algorithm_section = { "initial" ~ "algorithm" ~ algorithm_stmt+ }
 algorithm_stmt = { if_stmt | for_stmt | while_stmt | when_stmt | assignment_stmt }
 
 assignment_stmt = { component_ref ~ ":=" ~ expression ~ ";" }
@@ -63,12 +81,16 @@ while_stmt = { "while" ~ expression ~ "loop" ~ algorithm_stmt+ ~ "end" ~ "while"
 
 when_stmt = { "when" ~ expression ~ "then" ~ algorithm_stmt+ ~ ("elsewhen" ~ expression ~ "then" ~ algorithm_stmt+)* ~ "end" ~ "when" ~ ";" }
 
-equation = { expression ~ "=" ~ expression ~ ";" }
-connect_clause = { "connect" ~ "(" ~ expression ~ "," ~ expression ~ ")" ~ ";" }
+equation = { expression ~ "=" ~ expression ~ annotation? ~ ";" }
+connect_clause = { "connect" ~ "(" ~ expression ~ "," ~ expression ~ ")" ~ annotation? ~ ";" }
 
 // For loop: for i in 1:5 loop ... end for;
 for_loop = { "for" ~ identifier ~ "in" ~ range ~ "loop" ~ equation_stmt+ ~ "end" ~ "for" ~ ";" }
 range = { expression ~ (":" ~ expression)+ }
+
+annotation = { "annotation" ~ "(" ~ annotation_content ~ ")" }
+annotation_content = { ("(" ~ annotation_content ~ ")" | annotation_inner_char)* }
+annotation_inner_char = { (!"(" ~ !")" ~ ANY) }
 
 expression = { if_expression | logical_or }
 
@@ -83,8 +105,10 @@ and_op = { "and" }
 
 arithmetic_expression = { term ~ (add_sub ~ term)* }
 term = { unary_minus? ~ factor ~ (mul_div ~ factor)* }
-// Order matters: try der_call/function_call before component_ref
-factor = { der_call | function_call | component_ref | number | "(" ~ expression ~ ")" | array_literal }
+// Order matters: try der_call/function_call/initial_call/terminal_call before component_ref
+factor = { der_call | function_call | initial_call | terminal_call | assert_call | terminate_call | component_ref | number | "(" ~ expression ~ ")" | array_literal }
+assert_call = { "assert" ~ "(" ~ expression ~ "," ~ expression ~ ")" }
+terminate_call = { "terminate" ~ "(" ~ expression ~ ")" }
 
 array_literal = { "{" ~ expression ~ ("," ~ expression)* ~ "}" }
 
@@ -94,7 +118,10 @@ member_access = { "." ~ identifier }
 unary_minus = { "-" }
 
 der_call = { "der" ~ "(" ~ expression ~ ")" }
-function_call = { dotted_identifier ~ "(" ~ expression ~ ("," ~ expression)* ~ ")" }
+arg_list = { expression ~ ("," ~ expression)* }
+function_call = { dotted_identifier ~ "(" ~ arg_list? ~ ")" }
+initial_call = { "initial" ~ "(" ~ ")" }
+terminal_call = { "terminal" ~ "(" ~ ")" }
 
 rel_op = { "<=" | ">=" | "==" | "<>" | "<" | ">" }
 add_sub = { "+" | "-" }

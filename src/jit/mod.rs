@@ -43,15 +43,17 @@ impl Jit {
     }
 
     pub fn compile(
-        &mut self, 
-        state_vars: &[String], 
+        &mut self,
+        state_vars: &[String],
         discrete_vars: &[String],
-        param_vars: &[String], 
+        param_vars: &[String],
         output_vars: &[String],
         array_info: &HashMap<String, ArrayInfo>,
-        alg_equations: &[Equation], 
+        alg_equations: &[Equation],
         diff_equations: &[Equation],
-        algorithms: &[AlgorithmStatement]
+        algorithms: &[AlgorithmStatement],
+        _t_end: f64,
+        newton_tearing_var_names: &[String],
     ) -> Result<(CalcDerivsFunc, usize, usize), String> {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(cl_types::F64)); // time
@@ -64,6 +66,9 @@ impl Jit {
         sig.params.push(AbiParam::new(self.module.target_config().pointer_type())); // crossings ptr
         sig.params.push(AbiParam::new(self.module.target_config().pointer_type())); // pre_states ptr (const)
         sig.params.push(AbiParam::new(self.module.target_config().pointer_type())); // pre_discrete ptr (const)
+        sig.params.push(AbiParam::new(cl_types::F64)); // t_end
+        sig.params.push(AbiParam::new(self.module.target_config().pointer_type())); // diag_residual (mut f64)
+        sig.params.push(AbiParam::new(self.module.target_config().pointer_type())); // diag_x (mut f64)
         sig.returns.push(AbiParam::new(cl_types::I32)); // Return status code
 
         let func_id = self.module.declare_function("calc_derivs", Linkage::Export, &sig)
@@ -92,9 +97,19 @@ impl Jit {
                 let crossings_ptr = builder.block_params(entry_block)[7];
                 let pre_states_ptr = builder.block_params(entry_block)[8];
                 let pre_discrete_ptr = builder.block_params(entry_block)[9];
+                let t_end_val = builder.block_params(entry_block)[10];
+                let diag_residual_ptr = builder.block_params(entry_block)[11];
+                let diag_x_ptr = builder.block_params(entry_block)[12];
+
+                let (diag_res, diag_x) = if newton_tearing_var_names.is_empty() {
+                    (None, None)
+                } else {
+                    (Some(diag_residual_ptr), Some(diag_x_ptr))
+                };
 
                 let mut var_map = HashMap::new();
                 var_map.insert("time".to_string(), time_val);
+                var_map.insert("t_end".to_string(), t_end_val);
 
                 for (i, name) in state_vars.iter().enumerate() {
                     let offset = (i * 8) as i32;
@@ -159,6 +174,8 @@ impl Jit {
                 &state_var_index,
                 &discrete_var_index,
                 &output_var_index,
+                diag_res,
+                diag_x,
             );
 
             for stmt in algorithms {

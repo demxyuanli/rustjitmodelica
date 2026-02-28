@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use crate::ast::{Equation, Expression, Operator};
+use super::FlattenError;
 use super::structures::FlattenedModel;
 use super::utils::are_types_compatible;
 
-pub fn resolve_connections(flat: &mut FlattenedModel) {
+pub fn resolve_connections(flat: &mut FlattenedModel) -> Result<(), FlattenError> {
     let mut potential_eqs = Vec::new();
     let mut flow_adj: HashMap<String, Vec<String>> = HashMap::new();
     let mut flow_vars = HashSet::new();
@@ -15,18 +16,17 @@ pub fn resolve_connections(flat: &mut FlattenedModel) {
 
         if let (Some(ta), Some(tb)) = (&type_a, &type_b) {
             if !are_types_compatible(ta, tb) {
-                eprintln!("Error: Incompatible connector types in connect({}, {}): '{}' vs '{}'", 
-                    a_path, b_path, ta, tb);
-                // process::exit(1); 
+                return Err(FlattenError::IncompatibleConnector(
+                    a_path.clone(), b_path.clone(), ta.clone(), tb.clone(),
+                ));
             }
         } else {
-             // Warning: Type not found for one or both connectors
-             if type_a.is_none() {
-                 eprintln!("Warning: Could not determine type for connector '{}'", a_path);
-             }
-             if type_b.is_none() {
-                 eprintln!("Warning: Could not determine type for connector '{}'", b_path);
-             }
+            if type_a.is_none() {
+                eprintln!("Warning: Could not determine type for connector '{}' (path in model)", a_path);
+            }
+            if type_b.is_none() {
+                eprintln!("Warning: Could not determine type for connector '{}' (path in model)", b_path);
+            }
         }
 
         if let Some(_type_name) = flat.instances.get(a_path) {
@@ -79,7 +79,7 @@ pub fn resolve_connections(flat: &mut FlattenedModel) {
             }
         }
     }
-    
+
     flat.equations.extend(potential_eqs);
     
     let mut visited = HashSet::new();
@@ -117,6 +117,7 @@ pub fn resolve_connections(flat: &mut FlattenedModel) {
             }
         }
     }
+    Ok(())
 }
 
 fn find_connector_type(path: &str, flat: &FlattenedModel) -> Option<String> {

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::ast::{Expression, Equation, Declaration, Model, AlgorithmStatement};
 use crate::loader::{ModelLoader, LoadError};
 use thiserror::Error;
@@ -9,6 +10,8 @@ pub enum FlattenError {
     Load(#[from] LoadError),
     #[error("Unknown type '{0}' for instance '{1}'")]
     UnknownType(String, String),
+    #[error("Error: Incompatible connector types in connect({0}, {1}): type '{2}' vs '{3}' (model/connector paths as shown)")]
+    IncompatibleConnector(String, String, String, String),
 }
 
 pub mod structures;
@@ -37,33 +40,39 @@ impl Flattener {
         Flattener { loader: ModelLoader::new() }
     }
     
-    pub fn flatten(&mut self, root_model: &mut Model) -> Result<FlattenedModel, FlattenError> {
-        self.flatten_inheritance(root_model)?;
+    pub fn flatten(&mut self, root: &mut Arc<Model>) -> Result<FlattenedModel, FlattenError> {
+        self.flatten_inheritance(root)?;
+        let model = Arc::make_mut(root);
         let mut flat = FlattenedModel {
             declarations: Vec::new(),
             equations: Vec::new(),
             algorithms: Vec::new(),
+            initial_equations: Vec::new(),
+            initial_algorithms: Vec::new(),
             connections: Vec::new(),
             instances: HashMap::new(),
             array_sizes: HashMap::new(),
         };
-        self.expand_declarations(root_model, "", &mut flat)?;
-        self.expand_equations(root_model, "", &mut flat);
-        self.expand_algorithms(root_model, "", &mut flat);
-        resolve_connections(&mut flat);
+        self.expand_declarations(model, "", &mut flat)?;
+        self.expand_equations(model, "", &mut flat);
+        self.expand_algorithms(model, "", &mut flat);
+        self.expand_initial_equations(model, "", &mut flat);
+        self.expand_initial_algorithms(model, "", &mut flat);
+        resolve_connections(&mut flat)?;
         Ok(flat)
     }
 
-    fn flatten_inheritance(&mut self, model: &mut Model) -> Result<(), FlattenError> {
+    fn flatten_inheritance(&mut self, arc: &mut Arc<Model>) -> Result<(), FlattenError> {
+        let model = Arc::make_mut(arc);
         let extends = std::mem::take(&mut model.extends);
         for clause in extends {
             let base_name = clause.model_name.clone();
             let mut base_model = self.loader.load_model(&base_name)?;
             self.flatten_inheritance(&mut base_model)?;
             for modification in &clause.modifications {
-                apply_modification(&mut base_model, modification);
+                apply_modification(Arc::make_mut(&mut base_model), modification);
             }
-            merge_models(model, &base_model);
+            merge_models(model, base_model.as_ref());
         }
         Ok(())
     }
@@ -114,6 +123,8 @@ impl Flattener {
                         is_parameter: decl.is_parameter,
                         is_flow: decl.is_flow,
                         is_discrete: decl.is_discrete,
+                        is_input: decl.is_input,
+                        is_output: decl.is_output,
                         start_value: if let Some(val) = &decl.start_value {
                             let sub = self.substitute(val, &context);
                             if is_array {
@@ -124,19 +135,20 @@ impl Flattener {
                         } else {
                             None
                         },
-                        array_size: None, 
+                        array_size: None,
                         modifications: Vec::new(),
+                        annotation: None,
                     });
                 } else {
                     let mut sub_model = self.loader.load_model(&decl.type_name)
                         .map_err(|_| FlattenError::UnknownType(decl.type_name.clone(), full_path.clone()))?;
                     self.flatten_inheritance(&mut sub_model)?;
                     for modification in &decl.modifications {
-                        apply_modification(&mut sub_model, modification);
+                        apply_modification(Arc::make_mut(&mut sub_model), modification);
                     }
                     flat.instances.insert(full_path.clone(), decl.type_name.clone());
-                    self.expand_declarations(&sub_model, &full_path, flat)?;
-                    self.expand_equations(&sub_model, &full_path, flat);
+                    self.expand_declarations(sub_model.as_ref(), &full_path, flat)?;
+                    self.expand_equations(sub_model.as_ref(), &full_path, flat);
                 }
             }
         }
@@ -160,6 +172,25 @@ impl Flattener {
             array_sizes: &flat.array_sizes,
         };
         self.expand_equation_list(&model.equations, prefix, &mut target, &mut context_stack);
+    }
+
+    fn expand_initial_equations(&mut self, model: &Model, prefix: &str, flat: &mut FlattenedModel) {
+        let mut context: HashMap<String, Expression> = HashMap::new();
+        for decl in &model.declarations {
+            if decl.is_parameter {
+                if let Some(val) = &decl.start_value {
+                    context.insert(decl.name.clone(), val.clone());
+                }
+            }
+        }
+        let mut context_stack = vec![context];
+        let mut target = ExpandTarget {
+            equations: &mut flat.initial_equations,
+            algorithms: &mut flat.initial_algorithms,
+            connections: &mut flat.connections,
+            array_sizes: &flat.array_sizes,
+        };
+        self.expand_equation_list(&model.initial_equations, prefix, &mut target, &mut context_stack);
     }
 
     fn expand_equation_list(
@@ -223,6 +254,8 @@ impl Flattener {
                     let s_int = start_val as i64;
                     let e_int = end_val as i64;
                     let count = e_int - s_int + 1;
+                    // When loop range is large (>100), keep as single Equation::For for JIT to iterate;
+                    // avoids huge expansion and stack depth during flatten. See TestLib/BigFor.mo.
                     if count > 100 {
                         let mut temp_eqs = Vec::new();
                         let mut temp_alg = Vec::new();
@@ -294,6 +327,68 @@ impl Flattener {
                         prefix_expression(&val_sub, prefix)
                     ));
                 }
+                Equation::Assert(cond, msg) => {
+                    let cond_sub = self.substitute_stack(cond, context_stack);
+                    let msg_sub = self.substitute_stack(msg, context_stack);
+                    target.algorithms.push(AlgorithmStatement::Assert(
+                        prefix_expression(&cond_sub, prefix),
+                        prefix_expression(&msg_sub, prefix),
+                    ));
+                }
+                Equation::Terminate(msg) => {
+                    let msg_sub = self.substitute_stack(msg, context_stack);
+                    target.algorithms.push(AlgorithmStatement::Terminate(
+                        prefix_expression(&msg_sub, prefix),
+                    ));
+                }
+                Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+                    let cond_sub = self.substitute_stack(cond, context_stack);
+                    let mut temp_then = Vec::new();
+                    let mut temp_alg = Vec::new();
+                    let mut temp_conn = Vec::new();
+                    let mut then_target = ExpandTarget {
+                        equations: &mut temp_then,
+                        algorithms: &mut temp_alg,
+                        connections: &mut temp_conn,
+                        array_sizes: target.array_sizes,
+                    };
+                    self.expand_equation_list(then_eqs, prefix, &mut then_target, context_stack);
+                    let then_flat = then_target.equations.drain(..).collect();
+                    let mut new_elseif = Vec::new();
+                    for (c, eb) in elseif_list {
+                        let c_sub = self.substitute_stack(c, context_stack);
+                        let mut t_eqs = Vec::new();
+                        let mut t_alg = Vec::new();
+                        let mut t_conn = Vec::new();
+                        let mut t_target = ExpandTarget {
+                            equations: &mut t_eqs,
+                            algorithms: &mut t_alg,
+                            connections: &mut t_conn,
+                            array_sizes: target.array_sizes,
+                        };
+                        self.expand_equation_list(eb, prefix, &mut t_target, context_stack);
+                        new_elseif.push((prefix_expression(&c_sub, prefix), t_eqs));
+                    }
+                    let else_flat = else_eqs.as_ref().map(|eqs| {
+                        let mut t_eqs = Vec::new();
+                        let mut t_alg = Vec::new();
+                        let mut t_conn = Vec::new();
+                        let mut t_target = ExpandTarget {
+                            equations: &mut t_eqs,
+                            algorithms: &mut t_alg,
+                            connections: &mut t_conn,
+                            array_sizes: target.array_sizes,
+                        };
+                        self.expand_equation_list(eqs, prefix, &mut t_target, context_stack);
+                        t_eqs
+                    });
+                    target.equations.push(Equation::If(
+                        prefix_expression(&cond_sub, prefix),
+                        then_flat,
+                        new_elseif,
+                        else_flat,
+                    ));
+                }
                 Equation::SolvableBlock { .. } => panic!("SolvableBlock should not appear during expansion phase"),
             }
         }
@@ -316,6 +411,25 @@ impl Flattener {
             array_sizes: &flat.array_sizes,
         };
         self.expand_algorithm_list(&model.algorithms, prefix, &mut target, &mut context_stack);
+    }
+
+    fn expand_initial_algorithms(&mut self, model: &Model, prefix: &str, flat: &mut FlattenedModel) {
+        let mut context: HashMap<String, Expression> = HashMap::new();
+        for decl in &model.declarations {
+            if decl.is_parameter {
+                if let Some(val) = &decl.start_value {
+                    context.insert(decl.name.clone(), val.clone());
+                }
+            }
+        }
+        let mut context_stack = vec![context];
+        let mut target = ExpandTarget {
+            equations: &mut flat.initial_equations,
+            algorithms: &mut flat.initial_algorithms,
+            connections: &mut flat.connections,
+            array_sizes: &flat.array_sizes,
+        };
+        self.expand_algorithm_list(&model.initial_algorithms, prefix, &mut target, &mut context_stack);
     }
 
     fn expand_algorithm_list(
@@ -460,6 +574,20 @@ impl Flattener {
                     target.algorithms.push(AlgorithmStatement::Reinit(
                         var_flat,
                         prefix_expression(&val_sub, prefix)
+                    ));
+                }
+                AlgorithmStatement::Assert(cond, msg) => {
+                    let cond_sub = self.substitute_stack(cond, context_stack);
+                    let msg_sub = self.substitute_stack(msg, context_stack);
+                    target.algorithms.push(AlgorithmStatement::Assert(
+                        prefix_expression(&cond_sub, prefix),
+                        prefix_expression(&msg_sub, prefix),
+                    ));
+                }
+                AlgorithmStatement::Terminate(msg) => {
+                    let msg_sub = self.substitute_stack(msg, context_stack);
+                    target.algorithms.push(AlgorithmStatement::Terminate(
+                        prefix_expression(&msg_sub, prefix),
                     ));
                 }
             }

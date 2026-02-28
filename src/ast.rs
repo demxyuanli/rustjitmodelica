@@ -1,12 +1,55 @@
+/// Top-level class kind: model (or connector, block, etc.) or function.
+#[derive(Debug, Clone)]
+pub enum ClassItem {
+    Model(Model),
+    Function(Function),
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Function {
+    pub name: String,
+    pub extends: Vec<ExtendsClause>,
+    pub declarations: Vec<Declaration>,
+    pub algorithms: Vec<AlgorithmStatement>,
+    pub initial_algorithms: Vec<AlgorithmStatement>,
+}
+
+impl From<Function> for Model {
+    fn from(f: Function) -> Model {
+        Model {
+            name: f.name,
+            is_connector: false,
+            is_function: true,
+            is_record: false,
+            is_block: false,
+            extends: f.extends,
+            declarations: f.declarations,
+            equations: vec![],
+            algorithms: f.algorithms,
+            initial_equations: vec![],
+            initial_algorithms: f.initial_algorithms,
+            annotation: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Model {
     pub name: String,
     pub is_connector: bool,
-    pub extends: Vec<ExtendsClause>, 
+    pub is_function: bool,
+    pub is_record: bool,
+    pub is_block: bool,
+    pub extends: Vec<ExtendsClause>,
     pub declarations: Vec<Declaration>,
     pub equations: Vec<Equation>,
-    pub algorithms: Vec<AlgorithmStatement>, // New
+    pub algorithms: Vec<AlgorithmStatement>,
+    pub initial_equations: Vec<Equation>,
+    pub initial_algorithms: Vec<AlgorithmStatement>,
+    /// Parsed annotation (e.g. annotation(...)); stored as raw string, ignored in backend (F1-5).
+    pub annotation: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -17,6 +60,8 @@ pub enum AlgorithmStatement {
     While(Expression, Vec<AlgorithmStatement>), // while cond loop stmts
     When(Expression, Vec<AlgorithmStatement>, Vec<(Expression, Vec<AlgorithmStatement>)>), // when cond then stmts elsewhen cond stmts
     Reinit(String, Expression), // reinit(var, expr)
+    Assert(Expression, Expression),   // assert(condition, message)
+    Terminate(Expression),            // terminate(message)
 }
 
 #[derive(Debug, Clone)]
@@ -37,29 +82,33 @@ pub struct Declaration {
     pub type_name: String,
     pub name: String,
     pub is_parameter: bool,
-    pub is_flow: bool, // New
-    pub is_discrete: bool, // New
+    pub is_flow: bool,
+    pub is_discrete: bool,
+    pub is_input: bool,
+    pub is_output: bool,
     pub start_value: Option<Expression>,
-    pub array_size: Option<Expression>, 
-    pub modifications: Vec<Modification>, // New
+    pub array_size: Option<Expression>,
+    pub modifications: Vec<Modification>,
+    /// Parsed annotation; ignored in backend (F1-5).
+    #[allow(dead_code)]
+    pub annotation: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Equation {
     Simple(Expression, Expression), // lhs = rhs
-    For(String, Box<Expression>, Box<Expression>, Vec<Equation>), // for i in start:end loop ... end for;
-    Connect(Expression, Expression), // connect(a, b)
-    When(Expression, Vec<Equation>, Vec<(Expression, Vec<Equation>)>), // when cond then eqs elsewhen cond eqs
-    Reinit(String, Expression), // reinit(var, expr)
-    // A block of simultaneous equations that must be solved together
-    // tearing_var: The variable to iterate on (Newton-Raphson)
-    // equations: The sorted equations inside the loop (calculating other vars from tearing var)
-    // residuals: The equations that must effectively be zero (residuals)
+    For(String, Box<Expression>, Box<Expression>, Vec<Equation>),
+    Connect(Expression, Expression),
+    When(Expression, Vec<Equation>, Vec<(Expression, Vec<Equation>)>),
+    If(Expression, Vec<Equation>, Vec<(Expression, Vec<Equation>)>, Option<Vec<Equation>>), // cond, then, elseif list, else
+    Reinit(String, Expression),
+    Assert(Expression, Expression),   // assert(condition, message)
+    Terminate(Expression),            // terminate(message)
     SolvableBlock {
         unknowns: Vec<String>,
         tearing_var: Option<String>,
         equations: Vec<Equation>,
-        residuals: Vec<Expression> 
+        residuals: Vec<Expression>,
     },
 }
 

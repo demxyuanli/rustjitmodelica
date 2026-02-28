@@ -79,6 +79,16 @@ pub fn convert_eq_to_alg(eq: Equation) -> AlgorithmStatement {
              let alg_else_whens = else_whens.into_iter().map(|(c, b)| (c, b.into_iter().map(convert_eq_to_alg).collect())).collect();
              AlgorithmStatement::When(cond, alg_body, alg_else_whens)
         }
+        Equation::Assert(cond, msg) => AlgorithmStatement::Assert(cond, msg),
+        Equation::Terminate(msg) => AlgorithmStatement::Terminate(msg),
+        Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+            let then_alg = then_eqs.into_iter().map(convert_eq_to_alg).collect();
+            let elseif_alg = elseif_list.into_iter()
+                .map(|(c, eb)| (c, eb.into_iter().map(convert_eq_to_alg).collect()))
+                .collect();
+            let else_alg = else_eqs.map(|eqs| eqs.into_iter().map(convert_eq_to_alg).collect());
+            AlgorithmStatement::If(cond, then_alg, elseif_alg, else_alg)
+        }
         Equation::Connect(_, _) => panic!("Connect statements not supported inside When/Algorithm"),
         Equation::SolvableBlock { .. } => panic!("SolvableBlock not supported inside When/Algorithm"),
     }
