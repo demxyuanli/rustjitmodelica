@@ -39,26 +39,38 @@ fn substitute_expr(expr: &Expression, subst: &HashMap<String, Expression>) -> Ex
     }
 }
 
-pub(crate) fn get_function_body(model: &Model) -> Option<(Vec<String>, Expression)> {
+/// Returns (input_names, outputs) where outputs is (name, expr) per output in declaration order.
+/// Single-output: one element; multi-output (F3-3): multiple elements.
+pub(crate) fn get_function_body(model: &Model) -> Option<(Vec<String>, Vec<(String, Expression)>)> {
     if !model.is_function {
+        return None;
+    }
+    if model.external_info.is_some() {
         return None;
     }
     let input_names: Vec<String> = model.declarations.iter().filter(|d| d.is_input).map(|d| d.name.clone()).collect();
     let output_names: Vec<String> = model.declarations.iter().filter(|d| d.is_output).map(|d| d.name.clone()).collect();
-    if output_names.len() != 1 {
+    if output_names.is_empty() {
         return None;
     }
-    let output_name = &output_names[0];
+    let mut out_exprs: HashMap<String, Expression> = HashMap::new();
     for stmt in &model.algorithms {
         if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
             if let Expression::Variable(v) = lhs {
-                if v == output_name {
-                    return Some((input_names, rhs.clone()));
+                if output_names.contains(v) {
+                    out_exprs.insert(v.clone(), rhs.clone());
                 }
             }
         }
     }
-    None
+    let ordered: Vec<(String, Expression)> = output_names
+        .into_iter()
+        .filter_map(|name| out_exprs.remove(&name).map(|e| (name, e)))
+        .collect();
+    if ordered.is_empty() {
+        return None;
+    }
+    Some((input_names, ordered))
 }
 
 fn is_builtin_function(name: &str) -> bool {
@@ -81,8 +93,8 @@ fn inline_expr(expr: &Expression, loader: &mut ModelLoader, cache: &mut HashMap<
                 cache.get(name).cloned().or_else(|| loader.load_model(name).ok())
             };
             if let Some(func_model) = func {
-                if let Some((input_names, output_expr)) = get_function_body(func_model.as_ref()) {
-                    if input_names.len() == args.len() {
+                if let Some((input_names, outputs)) = get_function_body(func_model.as_ref()) {
+                    if input_names.len() == args.len() && outputs.len() == 1 {
                         cache.insert(name.to_string(), Arc::clone(&func_model));
                         let args_inlined: Vec<Expression> = args.iter().map(|a| inline_expr(a, loader, cache)).collect();
                         let mut subst = HashMap::new();
@@ -91,7 +103,7 @@ fn inline_expr(expr: &Expression, loader: &mut ModelLoader, cache: &mut HashMap<
                                 subst.insert(in_name.clone(), args_inlined[i].clone());
                             }
                         }
-                        return substitute_expr(&output_expr, &subst);
+                        return substitute_expr(&outputs[0].1, &subst);
                     }
                 }
             }
@@ -158,6 +170,10 @@ fn inline_equation(eq: &Equation, loader: &mut ModelLoader, cache: &mut HashMap<
                 eb.iter().map(|e| inline_equation(e, loader, cache)).collect(),
             )).collect(),
             else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| inline_equation(e, loader, cache)).collect()),
+        ),
+        Equation::MultiAssign(lhss, rhs) => Equation::MultiAssign(
+            lhss.iter().map(|e| inline_expr(e, loader, cache)).collect(),
+            inline_expr(rhs, loader, cache),
         ),
     }
 }

@@ -1,9 +1,11 @@
 // RT1-1: DAE/ODE solver with events. Adaptive RK45 when no when/zero-crossing; fixed-step with
 // event detection and reinit when when/zero-crossing present. Event iteration at each time step.
 use std::collections::HashMap;
+use std::io::{self, Write};
+use std::fs::File;
 use crate::jit::{CalcDerivsFunc, native};
 use crate::i18n;
-use crate::solver::{Solver, System, RungeKutta4Solver, AdaptiveRK45Solver};
+use crate::solver::{Solver, System, RungeKutta4Solver, AdaptiveRK45Solver, BackwardEulerSolver};
 use crate::ast::Expression;
 
 pub fn run_simulation(
@@ -25,6 +27,8 @@ pub fn run_simulation(
     atol: f64,
     rtol: f64,
     solver: &str,
+    output_interval: f64,
+    result_file: Option<&str>,
 ) -> Result<(), String> {
     let mut time = 0.0;
     let mut derivs = vec![0.0; states.len()];
@@ -36,17 +40,33 @@ pub fn run_simulation(
     
     // RT1-3: Use adaptive RK45 only when solver is rk45 and no when/zero-crossing.
     let use_adaptive = solver == "rk45" && when_count == 0 && crossings_count == 0;
+    let use_implicit = solver == "implicit";
     let mut rk4_solver = RungeKutta4Solver::new(states.len());
     let mut rk45_solver = AdaptiveRK45Solver::new(states.len(), atol, rtol);
+    let mut backward_euler_solver = BackwardEulerSolver::new(states.len());
 
-    // Header
-    print!("{}", i18n::msg0("time"));
-    for var in state_vars { print!(", {}", var); }
-    for var in discrete_vars { print!(", {}", var); }
-    for var in output_vars { print!(", {}", var); }
-    println!();
+    let mut out: Box<dyn Write> = if let Some(path) = result_file {
+        let f = File::create(path).map_err(|e| format!("Failed to create result file {}: {}", path, e))?;
+        Box::new(std::io::BufWriter::new(f))
+    } else {
+        Box::new(io::stdout())
+    };
 
-    let print_interval = 0.05; 
+    let w = &mut out;
+    let mut write_row = |line: &str| -> Result<(), String> {
+        w.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        w.write_all(b"\n").map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    };
+
+    let mut header = i18n::msg0("time").to_string();
+    for var in state_vars { header.push_str(&format!(", {}", var)); }
+    for var in discrete_vars { header.push_str(&format!(", {}", var)); }
+    for var in output_vars { header.push_str(&format!(", {}", var)); }
+    write_row(&header)?;
+
+    let print_interval = output_interval;
     let mut next_print = 0.0;
     let epsilon = 1e-5;
     let mut adaptive_step_count: u64 = 0;
@@ -197,13 +217,12 @@ pub fn run_simulation(
             }
         }
 
-        // Print Output
         if time >= next_print - epsilon {
-            print!("{:.4}", time);
-            for val in &states { print!(", {:.4}", val); }
-            for val in &discrete_vals { print!(", {:.4}", val); }
-            for val in &outputs { print!(", {:.4}", val); }
-            println!();
+            let mut row = format!("{:.4}", time);
+            for val in &states { row.push_str(&format!(", {:.4}", val)); }
+            for val in &discrete_vals { row.push_str(&format!(", {:.4}", val)); }
+            for val in &outputs { row.push_str(&format!(", {:.4}", val)); }
+            write_row(&row)?;
             next_print += print_interval;
         }
 
@@ -233,6 +252,8 @@ pub fn run_simulation(
             if use_adaptive {
                 rk45_solver.step(&mut system, time, dt, &mut states).unwrap();
                 adaptive_step_count += 1;
+            } else if use_implicit {
+                backward_euler_solver.step(&mut system, time, dt, &mut states).unwrap();
             } else {
                 rk4_solver.step(&mut system, time, dt, &mut states).unwrap();
             }
@@ -312,6 +333,8 @@ pub fn run_simulation(
                     if use_adaptive {
                         rk45_solver.step(&mut system, time, dt_event, &mut states).unwrap();
                         adaptive_step_count += 1;
+                    } else if use_implicit {
+                        backward_euler_solver.step(&mut system, time, dt_event, &mut states).unwrap();
                     } else {
                         rk4_solver.step(&mut system, time, dt_event, &mut states).unwrap();
                     }

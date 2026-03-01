@@ -28,9 +28,12 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
     let mut is_function = false;
     let mut is_record = false;
     let mut is_block = false;
+    let mut is_operator_record = false;
     for p in prefix_pair.into_inner() {
         if p.as_rule() == Rule::function_prefix {
             is_function = true;
+        } else if p.as_str().trim() == "operator" {
+            is_operator_record = true;
         } else if p.as_str().trim() == "connector" {
             is_connector = true;
         } else if p.as_str().trim() == "record" {
@@ -49,13 +52,41 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
     let mut initial_equations = Vec::new();
     let mut initial_algorithms = Vec::new();
     let mut extends = Vec::new();
+    let mut inner_classes = Vec::new();
+    let mut type_aliases = Vec::new();
     let mut class_annotation: Option<String> = None;
+    let mut external_info: Option<crate::ast::ExternalDecl> = None;
 
     for pair in inner {
         match pair.as_rule() {
             Rule::declaration_section => {
                 for decl_pair in pair.into_inner() {
                     match decl_pair.as_rule() {
+                        Rule::type_definition => {
+                            let mut type_id = String::new();
+                            let mut base = String::new();
+                            for p in decl_pair.into_inner() {
+                                match p.as_rule() {
+                                    Rule::identifier => {
+                                        if type_id.is_empty() {
+                                            type_id = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    Rule::type_name => base = p.as_str().trim().to_string(),
+                                    _ => {}
+                                }
+                            }
+                            if !type_id.is_empty() && !base.is_empty() {
+                                type_aliases.push((type_id, base));
+                            }
+                        }
+                        Rule::model_definition => {
+                            match parse_model(decl_pair) {
+                                Ok(crate::ast::ClassItem::Model(m)) => inner_classes.push(m),
+                                Ok(crate::ast::ClassItem::Function(f)) => inner_classes.push(crate::ast::Model::from(f)),
+                                Err(e) => return Err(e),
+                            }
+                        }
                         Rule::extends_clause => {
                             let ext_inner = decl_pair.into_inner();
                             let mut full_name = String::new();
@@ -85,6 +116,11 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                                 }
                                             };
                                             let mod_inner: Vec<_> = modification_pair.into_inner().collect();
+                                            let mod_redeclare = mod_inner.iter().any(|p| p.as_str().trim() == "redeclare");
+                                            let mod_redeclare_type = mod_inner.iter()
+                                                .find(|p| p.as_rule() == Rule::type_name)
+                                                .map(|p| p.as_str().trim().to_string());
+                                            let mod_each = mod_inner.iter().any(|p| p.as_str().trim() == "each");
                                             let name_pair = match mod_inner.iter().find(|p| p.as_rule() == Rule::component_ref) {
                                                 Some(p) => p,
                                                 None => continue,
@@ -99,6 +135,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                             modifications.push(Modification {
                                                 name: mod_name,
                                                 value: val,
+                                                each: mod_each,
+                                                redeclare: mod_redeclare,
+                                                redeclare_type: mod_redeclare_type,
                                             });
                                         }
                                     }
@@ -117,6 +156,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             let mut is_discrete = false;
                             let mut is_input = false;
                             let mut is_output = false;
+                            let mut is_replaceable = false;
 
                             let mut next_token = decl_inner.next().unwrap();
 
@@ -132,7 +172,10 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 }
                                 next_token = decl_inner.next().unwrap();
                             }
-                            
+                            if next_token.as_rule() == Rule::replaceable_kw {
+                                is_replaceable = true;
+                                next_token = decl_inner.next().unwrap();
+                            }
                             let type_name = next_token.as_str().trim().to_string();
                             let var_name = decl_inner.next().unwrap().as_str().trim().to_string();
                             
@@ -170,6 +213,11 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                                 }
                                             };
                                             let mod_inner: Vec<_> = modification_pair.into_inner().collect();
+                                            let mod_redeclare = mod_inner.iter().any(|p| p.as_str().trim() == "redeclare");
+                                            let mod_redeclare_type = mod_inner.iter()
+                                                .find(|p| p.as_rule() == Rule::type_name)
+                                                .map(|p| p.as_str().trim().to_string());
+                                            let mod_each = mod_inner.iter().any(|p| p.as_str().trim() == "each");
                                             let name_pair = match mod_inner.iter().find(|p| p.as_rule() == Rule::component_ref) {
                                                 Some(p) => p,
                                                 None => continue,
@@ -187,6 +235,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                             modifications.push(Modification {
                                                 name: mod_name,
                                                 value: val,
+                                                each: mod_each,
+                                                redeclare: mod_redeclare,
+                                                redeclare_type: mod_redeclare_type,
                                             });
                                         }
                                     }
@@ -197,6 +248,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             declarations.push(Declaration {
                                 type_name,
                                 name: var_name,
+                                replaceable: is_replaceable,
                                 is_parameter,
                                 is_flow,
                                 is_discrete,
@@ -229,6 +281,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             let a_expr = parse_expression(conn_inner.next().unwrap());
                             let b_expr = parse_expression(conn_inner.next().unwrap());
                             equations.push(Equation::Connect(a_expr, b_expr));
+                        }
+                        Rule::multi_assign_equation => {
+                            equations.push(parse_multi_assign_equation(inner_stmt));
                         }
                         Rule::for_loop => {
                             equations.push(parse_for_loop(inner_stmt));
@@ -282,6 +337,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             let b_expr = parse_expression(conn_inner.next().unwrap());
                             initial_equations.push(Equation::Connect(a_expr, b_expr));
                         }
+                        Rule::multi_assign_equation => {
+                            initial_equations.push(parse_multi_assign_equation(inner_stmt));
+                        }
                         Rule::for_loop => {
                             initial_equations.push(parse_for_loop(inner_stmt));
                         }
@@ -330,6 +388,23 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                     initial_algorithms.push(parse_algorithm_stmt(inner_stmt));
                 }
             }
+            Rule::external_section => {
+                let ext_inner: Vec<_> = pair.into_inner().collect();
+                let mut lang = None;
+                let mut c_name = None;
+                for p in &ext_inner {
+                    if p.as_rule() == Rule::string_comment {
+                        let s = p.as_str().trim();
+                        lang = Some(s.trim_matches('"').to_string());
+                    } else if p.as_rule() == Rule::identifier && c_name.is_none() {
+                        c_name = Some(p.as_str().trim().to_string());
+                    }
+                }
+                external_info = Some(crate::ast::ExternalDecl {
+                    language: lang,
+                    c_name,
+                });
+            }
             Rule::end_part => {
                 let end_inner = pair.into_inner();
                 for p in end_inner {
@@ -350,6 +425,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
             declarations,
             algorithms,
             initial_algorithms,
+            external_info,
         }))
     } else {
         Ok(ClassItem::Model(Model {
@@ -365,6 +441,10 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
             initial_equations,
             initial_algorithms,
             annotation: class_annotation,
+            inner_classes,
+            is_operator_record,
+            type_aliases,
+            external_info: None,
         }))
     }
 }
@@ -695,8 +775,22 @@ fn parse_equation_stmt_inner(inner_stmt: pest::iterators::Pair<Rule>) -> Equatio
             let msg = parse_expression(inner.next().unwrap());
             Equation::Terminate(msg)
         }
+        Rule::multi_assign_equation => parse_multi_assign_equation(inner_stmt),
         _ => unreachable!("Unknown equation stmt rule: {:?}", inner_stmt.as_rule()),
     }
+}
+
+fn parse_multi_assign_equation(pair: pest::iterators::Pair<Rule>) -> Equation {
+    let mut lhss = Vec::new();
+    let mut rhs = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::component_ref => lhss.push(parse_component_ref(p)),
+            Rule::expression => rhs = Some(parse_expression(p)),
+            _ => {}
+        }
+    }
+    Equation::MultiAssign(lhss, rhs.expect("multi_assign_equation must have rhs"))
 }
 
 fn parse_expression(pair: pest::iterators::Pair<Rule>) -> Expression {

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::ast::{Declaration, Equation, AlgorithmStatement};
+use crate::ast::{Declaration, Equation, AlgorithmStatement, Expression};
 
 pub struct FlattenedModel {
     pub declarations: Vec<Declaration>,
@@ -8,6 +8,8 @@ pub struct FlattenedModel {
     pub initial_equations: Vec<Equation>,
     pub initial_algorithms: Vec<AlgorithmStatement>,
     pub connections: Vec<(String, String)>,
+    /// F4-1: connect() inside when; (condition, (a_path, b_path))
+    pub conditional_connections: Vec<(Expression, (String, String))>,
     pub instances: HashMap<String, String>, // full_path -> type_name
     pub array_sizes: HashMap<String, usize>, // full_path -> size
 }

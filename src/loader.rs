@@ -20,6 +20,8 @@ pub enum LoadError {
 pub struct ModelLoader {
     pub library_paths: Vec<PathBuf>,
     loaded_models: HashMap<String, Arc<Model>>,
+    /// DBG-4: path used to load each model (for source location in errors).
+    loaded_paths: HashMap<String, PathBuf>,
 }
 
 impl ModelLoader {
@@ -27,7 +29,18 @@ impl ModelLoader {
         ModelLoader {
             library_paths: Vec::new(),
             loaded_models: HashMap::new(),
+            loaded_paths: HashMap::new(),
         }
+    }
+
+    /// DBG-4: Return the path from which the model was loaded, if known.
+    pub fn get_path_for_model(&self, name: &str) -> Option<PathBuf> {
+        self.loaded_paths.get(name).cloned()
+    }
+
+    /// DBG-4: Register a path for a model name (e.g. when root was loaded by another loader).
+    pub fn register_path(&mut self, name: &str, path: PathBuf) {
+        self.loaded_paths.insert(name.to_string(), path);
     }
 
     pub fn add_path(&mut self, path: PathBuf) {
@@ -48,10 +61,18 @@ impl ModelLoader {
         }
 
         let relative_path = name.replace('.', "/");
-        let filename = format!("{}.mo", relative_path);
+        let filenames: Vec<std::path::PathBuf> = if name.contains('.') {
+            vec![PathBuf::from(format!("{}.mo", relative_path))]
+        } else {
+            vec![
+                PathBuf::from(format!("{}.mo", relative_path)),
+                PathBuf::from(format!("{}/package.mo", relative_path)),
+            ]
+        };
 
         for lib_path in &self.library_paths {
-            let full_path = lib_path.join(&filename);
+            for filename in &filenames {
+            let full_path = lib_path.join(filename);
             if full_path.exists() {
                 if !silent {
                     println!("{}", crate::i18n::msg("loading_dependency", &[&full_path.display().to_string() as &dyn std::fmt::Display]));
@@ -66,6 +87,8 @@ impl ModelLoader {
                         };
                         let arc = Arc::new(model);
                         self.loaded_models.insert(name.to_string(), Arc::clone(&arc));
+                        self.loaded_paths.insert(name.to_string(), full_path.clone());
+                        self.register_inner_classes(name, arc.as_ref());
                         return Ok(arc);
                     }
                     Err(e) => {
@@ -83,11 +106,43 @@ impl ModelLoader {
                     }
                 }
             }
+            }
+        }
+
+        if let Some((prefix, suffix)) = name.split_once('.') {
+            let base = self.load_model_impl(prefix, silent)?;
+            let inner = base
+                .inner_classes
+                .iter()
+                .find(|m| m.name == suffix)
+                .cloned();
+            if let Some(m) = inner {
+                let arc = Arc::new(m);
+                self.loaded_models.insert(name.to_string(), Arc::clone(&arc));
+                self.loaded_paths
+                    .insert(name.to_string(), self.loaded_paths.get(prefix).cloned().unwrap_or_else(|| PathBuf::from(prefix)));
+                self.register_inner_classes(name, arc.as_ref());
+                return Ok(arc);
+            }
         }
 
         if !silent {
             eprintln!("{}", crate::i18n::msg("could_not_find_model", &[&name as &dyn std::fmt::Display]));
         }
         Err(LoadError::NotFound(name.to_string()))
+    }
+
+    fn register_inner_classes(&mut self, prefix: &str, model: &Model) {
+        for inner in &model.inner_classes {
+            let full_name = format!("{}.{}", prefix, inner.name);
+            if self.loaded_models.contains_key(&full_name) {
+                continue;
+            }
+            let arc = Arc::new(inner.clone());
+            self.loaded_models.insert(full_name.clone(), Arc::clone(&arc));
+            let path = self.loaded_paths.get(prefix).cloned().unwrap_or_else(|| PathBuf::from(prefix));
+            self.loaded_paths.insert(full_name.clone(), path);
+            self.register_inner_classes(&full_name, inner);
+        }
     }
 }

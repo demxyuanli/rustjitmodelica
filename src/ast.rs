@@ -1,4 +1,5 @@
 /// Top-level class kind: model (or connector, block, etc.) or function.
+/// T1-3: Dedicated Function variant for "function ... end function"; parser produces ClassItem::Function, loader converts to Model for pipeline.
 #[derive(Debug, Clone)]
 pub enum ClassItem {
     Model(Model),
@@ -13,6 +14,15 @@ pub struct Function {
     pub declarations: Vec<Declaration>,
     pub algorithms: Vec<AlgorithmStatement>,
     pub initial_algorithms: Vec<AlgorithmStatement>,
+    /// F3-4: external "C" [name(args)]; parse-only; linking documented in ABI.
+    pub external_info: Option<ExternalDecl>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ExternalDecl {
+    pub language: Option<String>,
+    pub c_name: Option<String>,
 }
 
 impl From<Function> for Model {
@@ -30,6 +40,10 @@ impl From<Function> for Model {
             initial_equations: vec![],
             initial_algorithms: f.initial_algorithms,
             annotation: None,
+            inner_classes: vec![],
+            is_operator_record: false,
+            type_aliases: vec![],
+            external_info: f.external_info,
         }
     }
 }
@@ -50,6 +64,14 @@ pub struct Model {
     pub initial_algorithms: Vec<AlgorithmStatement>,
     /// Parsed annotation (e.g. annotation(...)); stored as raw string, ignored in backend (F1-5).
     pub annotation: Option<String>,
+    /// F1-3: nested classes inside package/model (e.g. package P model A ... end A; end P).
+    pub inner_classes: Vec<Model>,
+    /// F1-4: operator record (parse-only; MSL compatibility).
+    pub is_operator_record: bool,
+    /// F1-4: type alias (e.g. type MyReal = Real;) parse-only; name -> base_type.
+    pub type_aliases: Vec<(String, String)>,
+    /// F3-4: when is_function, external decl if present.
+    pub external_info: Option<ExternalDecl>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +96,12 @@ pub struct ExtendsClause {
 pub struct Modification {
     pub name: String,
     pub value: Option<Expression>,
+    /// F1-6: each modifier in extends; when true, apply to all array elements.
+    pub each: bool,
+    /// F1-6: redeclare modifier; replace component type in extends.
+    pub redeclare: bool,
+    /// When redeclare is true, new type for the component (e.g. "Real"); applied in extends/expand.
+    pub redeclare_type: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +109,8 @@ pub struct Declaration {
     #[allow(dead_code)]
     pub type_name: String,
     pub name: String,
+    /// MSL-5: replaceable component (parse-only; allows redeclare in modifier).
+    pub replaceable: bool,
     pub is_parameter: bool,
     pub is_flow: bool,
     pub is_discrete: bool,
@@ -97,6 +127,8 @@ pub struct Declaration {
 #[derive(Debug, Clone)]
 pub enum Equation {
     Simple(Expression, Expression), // lhs = rhs
+    /// F3-3: (lhs1, lhs2, ...) = rhs; multi-output function call
+    MultiAssign(Vec<Expression>, Expression),
     For(String, Box<Expression>, Box<Expression>, Vec<Equation>),
     Connect(Expression, Expression),
     When(Expression, Vec<Equation>, Vec<(Expression, Vec<Equation>)>),

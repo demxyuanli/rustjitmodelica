@@ -60,6 +60,12 @@ pub fn collect_states_from_eq(eq: &Equation, states: &mut HashSet<String>) {
             collect_states_from_expr(lhs, states);
             collect_states_from_expr(rhs, states);
         }
+        Equation::MultiAssign(lhss, rhs) => {
+            for e in lhss {
+                collect_states_from_expr(e, states);
+            }
+            collect_states_from_expr(rhs, states);
+        }
         Equation::For(_, s, e, body) => {
             collect_states_from_expr(s, states);
             collect_states_from_expr(e, states);
@@ -184,7 +190,7 @@ fn select_tearing_variable(
             }
             Some(best)
         }
-        "minCellier" => {
+        "minCellier" | "leastOccurrence" => {
             let mut best = block_unknowns[0].clone();
             let mut best_score = usize::MAX;
             for u in block_unknowns {
@@ -248,6 +254,24 @@ pub fn analyze_initial_equations(
     }
 }
 
+/// IR3-3: Order initial equations for consistent initialization.
+/// Returns indices so that equations with fewer unknowns come first (apply simplest first).
+pub fn order_initial_equations_for_application(
+    initial_equations: &[Equation],
+    known_at_initial: &HashSet<String>,
+) -> Vec<usize> {
+    let mut indexed: Vec<(usize, usize)> = initial_equations
+        .iter()
+        .enumerate()
+        .map(|(i, eq)| {
+            let n = extract_unknowns(eq, known_at_initial).len();
+            (i, n)
+        })
+        .collect();
+    indexed.sort_by_key(|&(_, n)| n);
+    indexed.into_iter().map(|(i, _)| i).collect()
+}
+
 /// Result of sort_algebraic_equations: sorted equations, differential index, and constraint count (IR3-1, IR3-2).
 #[derive(Debug, Clone)]
 pub struct SortAlgebraicResult {
@@ -255,6 +279,8 @@ pub struct SortAlgebraicResult {
     pub differential_index: u32,
     /// Number of equations not assigned to any variable (constraint equations) when index > 1.
     pub constraint_equation_count: usize,
+    /// Maps aliased variable names to their RHS expression (for output computation).
+    pub alias_map: HashMap<String, Expression>,
 }
 
 /// Sorts algebraic equations using variable-equation bipartite matching (IR2-1) and
@@ -536,6 +562,7 @@ pub fn sort_algebraic_equations(
         sorted_equations,
         differential_index,
         constraint_equation_count,
+        alias_map,
     }
 }
 
@@ -554,6 +581,12 @@ fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> {
 fn collect_vars_eq(eq: &Equation, vars: &mut HashSet<String>) {
     match eq {
         Equation::Simple(l, r) => { collect_vars_expr(l, vars); collect_vars_expr(r, vars); }
+        Equation::MultiAssign(lhss, r) => {
+            for e in lhss {
+                collect_vars_expr(e, vars);
+            }
+            collect_vars_expr(r, vars);
+        }
         Equation::For(_, s, e, b) => { 
              collect_vars_expr(s, vars); collect_vars_expr(e, vars);
              for sub in b { collect_vars_eq(sub, vars); }
@@ -629,6 +662,7 @@ fn solve_for_variable(eq: &Equation, var: &str) -> Option<Expression> {
 fn make_residual(eq: &Equation) -> Expression {
     match eq {
         Equation::Simple(lhs, rhs) => make_binary(lhs.clone(), Operator::Sub, rhs.clone()),
+        Equation::MultiAssign(_, _) => Expression::Number(0.0),
         _ => make_num(0.0) // Placeholder
     }
 }
@@ -763,10 +797,18 @@ fn try_index_reduction(
         }
         let mut diff_expr = time_derivative(&residual, state_vars);
         diff_expr = substitute_der_in_expr(&diff_expr, &der_map);
-        let alg_vars: Vec<&String> = unknown_list
+        let mut alg_vars: Vec<&String> = unknown_list
             .iter()
             .filter(|u| !u.starts_with("der_"))
             .collect();
+        fn equation_contains_var(eq: &Equation, v: &str) -> bool {
+            let mut set = std::collections::HashSet::new();
+            collect_vars_eq(eq, &mut set);
+            set.contains(v)
+        }
+        alg_vars.sort_by_key(|v| {
+            equations.iter().filter(|eq| equation_contains_var(eq, v)).count()
+        });
         if let Some(alg_var) = alg_vars.first() {
             if let Some(sol) = solve_residual_linear(&diff_expr, alg_var) {
                 let mut new_eqs = equations.to_vec();
@@ -961,7 +1003,7 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
             )).collect(),
             else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| substitute_aliases_in_eq(e, map)).collect()),
         ),
-        Equation::Connect(_, _) | Equation::Reinit(_, _) | Equation::Assert(_, _) | Equation::Terminate(_) | Equation::SolvableBlock { .. } => eq.clone(),
+        Equation::Connect(_, _) | Equation::Reinit(_, _) | Equation::Assert(_, _) | Equation::Terminate(_) | Equation::SolvableBlock { .. } | Equation::MultiAssign(_, _) => eq.clone(),
     }
 }
 
@@ -1049,6 +1091,14 @@ pub fn make_add(lhs: Expression, rhs: Expression) -> Expression {
 
 pub fn make_binary(lhs: Expression, op: Operator, rhs: Expression) -> Expression {
     Expression::BinaryOp(Box::new(lhs), op, Box::new(rhs))
+}
+
+/// True if expression is structurally zero (Number(0.0) or constant 0). Used for sparse Jacobian (IR4-4).
+pub fn expression_is_zero(expr: &Expression) -> bool {
+    match expr {
+        Expression::Number(n) => n.abs() < 1e-15,
+        _ => false,
+    }
 }
 
 /// Partial derivative of expression w.r.t. variable (symbolic). Used for Jacobian and index reduction.

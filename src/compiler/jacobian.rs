@@ -1,11 +1,79 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AlgorithmStatement, Equation, Expression};
-use crate::analysis::partial_derivative;
-use crate::backend_dae::SimulationDae;
+use crate::analysis::{partial_derivative, expression_is_zero};
+use crate::backend_dae::{BlockType, SimulationDae};
 use crate::i18n;
 
 use super::CompilerOptions;
+
+/// Sparse ODE Jacobian: only non-zero entries (row, col, expr). IR4-4.
+#[derive(Debug, Clone)]
+pub struct SparseOdeJacobian {
+    pub n: usize,
+    pub entries: Vec<(usize, usize, Expression)>,
+}
+
+impl SparseOdeJacobian {
+    pub fn nnz(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn density(&self) -> f64 {
+        if self.n == 0 {
+            0.0
+        } else {
+            self.entries.len() as f64 / (self.n * self.n) as f64
+        }
+    }
+    /// Convert to dense row-major for existing numeric/symbolic eval.
+    pub fn to_dense(&self) -> Vec<Vec<Expression>> {
+        let mut jac = vec![vec![Expression::Number(0.0); self.n]; self.n];
+        for (i, j, e) in &self.entries {
+            if *i < self.n && *j < self.n {
+                jac[*i][*j] = e.clone();
+            }
+        }
+        jac
+    }
+}
+
+/// Build ODE Jacobian in sparse form (only non-zero partial derivatives). IR4-4.
+pub fn build_ode_jacobian_sparse(
+    state_vars: &[String],
+    sorted_eqs: &[Equation],
+    state_var_index: &HashMap<String, usize>,
+) -> Option<SparseOdeJacobian> {
+    let mut rhs_by_state: Vec<Option<Expression>> = vec![None; state_vars.len()];
+    for eq in sorted_eqs {
+        if let Equation::Simple(lhs, rhs) = eq {
+            let der_var = match lhs {
+                Expression::Variable(v) if v.starts_with("der_") => v.clone(),
+                _ => continue,
+            };
+            let state_name = der_var.strip_prefix("der_")?;
+            if let Some(&i) = state_var_index.get(state_name) {
+                if i < rhs_by_state.len() {
+                    rhs_by_state[i] = Some(rhs.clone());
+                }
+            }
+        }
+    }
+    if rhs_by_state.iter().any(|o| o.is_none()) {
+        return None;
+    }
+    let n = state_vars.len();
+    let mut entries = Vec::new();
+    for (i, rhs) in rhs_by_state.iter().enumerate() {
+        let rhs = rhs.as_ref().unwrap();
+        for (j, state_j) in state_vars.iter().enumerate() {
+            let pd = partial_derivative(rhs, state_j);
+            if !expression_is_zero(&pd) {
+                entries.push((i, j, pd));
+            }
+        }
+    }
+    Some(SparseOdeJacobian { n, entries })
+}
 
 pub fn build_ode_jacobian_expressions(
     state_vars: &[String],
@@ -143,6 +211,12 @@ fn collect_vars_eq_local(eq: &Equation, vars: &mut HashSet<String>) {
                 for sub in eqs { collect_vars_eq_local(sub, vars); }
             }
         }
+        Equation::MultiAssign(lhss, rhs) => {
+            for e in lhss {
+                collect_vars_expr_local(e, vars);
+            }
+            collect_vars_expr_local(rhs, vars);
+        }
     }
 }
 
@@ -163,6 +237,7 @@ pub fn print_backend_dae_info(
     symbolic_ode_jacobian: bool,
     numeric_ode_jacobian: bool,
     ode_jacobian_symbolic: Option<&Vec<Vec<Expression>>>,
+    ode_jacobian_sparse: Option<&SparseOdeJacobian>,
     simulation_dae: Option<&SimulationDae>,
 ) {
     let mut _simple = 0usize;
@@ -181,6 +256,7 @@ pub fn print_backend_dae_info(
             Equation::SolvableBlock { .. } => _solvable_block += 1,
             Equation::If(_, _, _, _) => {}
             Equation::Assert(_, _) | Equation::Terminate(_) => {}
+            Equation::MultiAssign(_, _) => {}
         }
     }
     let mut sorted_simple = 0usize;
@@ -255,6 +331,14 @@ pub fn print_backend_dae_info(
         if dae.dae.differential_index > 1 {
             println!("{}", i18n::msg("constraint_equations", &[&dae.dae.constraint_equation_count]));
         }
+        let (single_b, torn_b, mixed_b) = dae.dae.blocks.iter().fold((0usize, 0usize, 0usize), |(s, t, m), b| {
+            match b.block_type {
+                BlockType::Single => (s + 1, t, m),
+                BlockType::Torn => (s, t + 1, m),
+                BlockType::Mixed => (s, t, m + 1),
+            }
+        });
+        println!("{}", i18n::msg("blocks_partitioning", &[&single_b as &dyn std::fmt::Display, &torn_b as &dyn std::fmt::Display, &mixed_b as &dyn std::fmt::Display]));
     }
 
     println!("{}", i18n::msg0("notification_backend"));
@@ -317,6 +401,9 @@ pub fn print_backend_dae_info(
             }
             println!();
         }
+    }
+    if let Some(sparse) = ode_jacobian_sparse {
+        println!("{}", i18n::msg("ode_jacobian_sparsity", &[&sparse.nnz(), &(sparse.n * sparse.n), &format!("{:.2}%", sparse.density() * 100.0)]));
     }
     println!();
 }

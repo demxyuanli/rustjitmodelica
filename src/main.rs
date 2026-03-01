@@ -10,7 +10,10 @@ mod analysis;
 mod jit;
 mod simulation;
 mod compiler;
+mod fmi;
+mod script;
 mod solver;
+mod sparse_solve;
 
 use std::env;
 use std::process;
@@ -19,6 +22,90 @@ use compiler::{Compiler, CompileOutput};
 use simulation::run_simulation;
 
 type RunError = Box<dyn std::error::Error + Send + Sync>;
+
+/// INT-1: REPL loop. Commands: <var_name> (print value), simulate, list, quit/exit.
+fn run_repl_loop(artifacts: compiler::Artifacts) -> Result<(), RunError> {
+    use std::io::{self, BufRead, Write};
+    println!("REPL: type variable name to inspect, 'simulate' to run, 'list' for vars, 'quit' to exit.");
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    loop {
+        write!(stdout, "> ").ok();
+        stdout.flush().ok();
+        let mut line = String::new();
+        if stdin.lock().read_line(&mut line).is_err() || line.is_empty() {
+            break;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let lower = line.to_lowercase();
+        if lower == "quit" || lower == "exit" {
+            break;
+        }
+        if lower == "simulate" {
+            println!("{}", i18n::msg0("starting_simulation"));
+            run_simulation(
+                artifacts.calc_derivs,
+                artifacts.when_count,
+                artifacts.crossings_count,
+                artifacts.states.clone(),
+                artifacts.discrete_vals.clone(),
+                artifacts.params.clone(),
+                &artifacts.state_vars,
+                &artifacts.discrete_vars,
+                &artifacts.output_vars,
+                &artifacts.state_var_index,
+                artifacts.t_end,
+                artifacts.dt,
+                artifacts.numeric_ode_jacobian,
+                artifacts.symbolic_ode_jacobian.as_ref(),
+                &artifacts.newton_tearing_var_names,
+                artifacts.atol,
+                artifacts.rtol,
+                &artifacts.solver,
+                artifacts.output_interval,
+                artifacts.result_file.as_deref(),
+            )?;
+            println!("{}", i18n::msg0("simulation_completed"));
+            continue;
+        }
+        if lower == "list" || lower == "vars" {
+            for n in &artifacts.state_vars {
+                println!("  state {}", n);
+            }
+            for n in &artifacts.param_vars {
+                println!("  param {}", n);
+            }
+            for n in &artifacts.discrete_vars {
+                println!("  discrete {}", n);
+            }
+            continue;
+        }
+        let name = line;
+        if let Some(&i) = artifacts.state_var_index.get(name) {
+            if i < artifacts.states.len() {
+                println!("{}", artifacts.states[i]);
+                continue;
+            }
+        }
+        if let Some((i, _)) = artifacts.param_vars.iter().enumerate().find(|(_, s)| *s == name) {
+            if i < artifacts.params.len() {
+                println!("{}", artifacts.params[i]);
+                continue;
+            }
+        }
+        if let Some((i, _)) = artifacts.discrete_vars.iter().enumerate().find(|(_, s)| *s == name) {
+            if i < artifacts.discrete_vals.len() {
+                println!("{}", artifacts.discrete_vals[i]);
+                continue;
+            }
+        }
+        println!("unknown variable: {}", name);
+    }
+    Ok(())
+}
 
 fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut backend_dae_info = false;
@@ -31,7 +118,13 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut rtol = 1e-3_f64;
     let mut function_args: Option<Vec<f64>> = None;
     let mut solver = "rk45".to_string();
+    let mut output_interval = 0.05_f64;
+    let mut result_file: Option<String> = None;
     let mut warnings_level = "all".to_string();
+    let mut emit_c_dir: Option<String> = None;
+    let mut emit_fmu_dir: Option<String> = None;
+    let mut repl = false;
+    let mut script_path: Option<String> = None;
     let mut model_name = None;
     let mut i = 1;
     while i < args.len() {
@@ -78,8 +171,26 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if let Some(v) = a.strip_prefix("--solver=") {
             solver = v.to_string();
             i += 1;
+        } else if let Some(v) = a.strip_prefix("--output-interval=") {
+            output_interval = v.parse().unwrap_or(0.05);
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--result-file=") {
+            result_file = Some(v.to_string());
+            i += 1;
         } else if let Some(v) = a.strip_prefix("--warnings=") {
             warnings_level = v.to_string();
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--emit-c=") {
+            emit_c_dir = Some(v.to_string());
+            i += 1;
+        } else if a == "--repl" {
+            repl = true;
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--script=") {
+            script_path = Some(v.to_string());
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--emit-fmu=") {
+            emit_fmu_dir = Some(v.to_string());
             i += 1;
         } else if !a.starts_with('-') {
             model_name = Some(a.clone());
@@ -92,11 +203,40 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     if i < args.len() {
         return Err("Unknown or extra arguments after model name.".into());
     }
+    if let Some(ref path) = script_path {
+        let mut compiler = Compiler::new();
+        compiler.options.backend_dae_info = backend_dae_info;
+        compiler.options.index_reduction_method = index_reduction_method;
+        compiler.options.tearing_method = tearing_method;
+        compiler.options.generate_dynamic_jacobian = generate_dynamic_jacobian;
+        compiler.options.t_end = t_end;
+        compiler.options.dt = dt;
+        compiler.options.atol = atol;
+        compiler.options.rtol = rtol;
+        compiler.options.function_args = function_args;
+        compiler.options.solver = solver;
+        compiler.options.output_interval = output_interval;
+        compiler.options.result_file = result_file;
+        compiler.options.warnings_level = warnings_level;
+        compiler.options.emit_c_dir = emit_c_dir.clone();
+        compiler.loader.add_path(".".into());
+        compiler.loader.add_path("StandardLib".into());
+        compiler.loader.add_path("TestLib".into());
+        let mut runner = script::ScriptRunner::new(compiler);
+        if path == "-" {
+            runner.run_script(std::io::stdin())?;
+        } else {
+            let f = std::fs::File::open(path)
+                .map_err(|e| format!("Cannot open script file {}: {}", path, e))?;
+            runner.run_script(f)?;
+        }
+        return Ok(());
+    }
     let model_name = match model_name {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --solver=rk4|rk45  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --function-args=<f1,f2,...>  function input values",
+                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --solver=rk4|rk45|implicit  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run script file (load, setParameter, simulate, quit); use - for stdin\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --function-args=<f1,f2,...>  function input values",
                 args[0]
             );
             return Err(msg.into());
@@ -113,7 +253,14 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     compiler.options.rtol = rtol;
     compiler.options.function_args = function_args;
     compiler.options.solver = solver;
+    compiler.options.output_interval = output_interval;
+    compiler.options.result_file = result_file;
     compiler.options.warnings_level = warnings_level;
+    if emit_fmu_dir.is_some() && emit_c_dir.is_none() {
+        emit_c_dir = emit_fmu_dir.clone();
+    }
+    compiler.options.emit_c_dir = emit_c_dir;
+    let run_repl = repl;
     compiler.loader.add_path(".".into());
     compiler.loader.add_path("StandardLib".into());
     compiler.loader.add_path("TestLib".into());
@@ -145,6 +292,29 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
             println!("{}", i18n::msg("outputs", &[&artifacts.output_vars.len()]));
             println!("{}", i18n::msg("when_statements", &[&artifacts.when_count]));
             println!("{}", i18n::msg("zero_crossings", &[&artifacts.crossings_count]));
+            if let Some(ref dir) = emit_fmu_dir {
+                let path = std::path::Path::new(dir);
+                match fmi::emit_fmu_artifacts(
+                    path,
+                    &model_name,
+                    &artifacts.state_vars,
+                    &artifacts.param_vars,
+                    &artifacts.output_vars,
+                    0.0,
+                    artifacts.t_end,
+                    artifacts.dt,
+                ) {
+                    Ok(files) => {
+                        let paths: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
+                        println!("FMI: emitted {}", paths.join(", "));
+                    }
+                    Err(e) => return Err(format!("FMI emit failed: {}", e).into()),
+                }
+            }
+            if run_repl {
+                run_repl_loop(artifacts)?;
+                return Ok(());
+            }
             println!("{}", i18n::msg0("starting_simulation"));
             run_simulation(
                 artifacts.calc_derivs,
@@ -165,6 +335,8 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 artifacts.atol,
                 artifacts.rtol,
                 &artifacts.solver,
+                artifacts.output_interval,
+                artifacts.result_file.as_deref(),
             )?;
             println!("{}", i18n::msg0("simulation_completed"));
         }

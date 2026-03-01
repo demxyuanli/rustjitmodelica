@@ -48,6 +48,14 @@ extern "C" fn modelica_integer(x: f64) -> f64 {
     x.trunc()
 }
 
+extern "C" fn modelica_boolean(x: f64) -> f64 {
+    if x != 0.0 { 1.0 } else { 0.0 }
+}
+
+extern "C" fn modelica_string(x: f64) -> f64 {
+    x
+}
+
 /// Solves J * dx = -r for dx (dense n x n). Returns 0 on success, non-zero if singular.
 /// Used by general Newton tearing (SolvableBlock with N > 3 residuals).
 #[allow(clippy::cast_possible_truncation)]
@@ -166,4 +174,6 @@ pub fn register_symbols(builder: &mut JITBuilder) {
 
     builder.symbol("assert", modelica_assert as *const u8);
     builder.symbol("terminate", modelica_terminate as *const u8);
+    builder.symbol("Boolean", modelica_boolean as *const u8);
+    builder.symbol("String", modelica_string as *const u8);
 }

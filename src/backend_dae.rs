@@ -6,6 +6,29 @@ use std::collections::HashSet;
 
 use crate::ast::Equation;
 
+/// Block type for partitioning (IR1-3): explicit single eq, torn nonlinear system, or mixed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum BlockType {
+    /// Single equation (explicit or linear)
+    Single,
+    /// Torn algebraic loop (nonlinear system)
+    Torn,
+    /// Mixed continuous/discrete (future)
+    Mixed,
+}
+
+/// One strongly connected component / block after BLT (IR1-3).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct BlockInfo {
+    pub block_type: BlockType,
+    pub equation_count: usize,
+    pub unknown_count: usize,
+    /// For torn blocks: number of residual equations in Newton loop
+    pub residual_count: Option<usize>,
+}
+
 /// Variable classification for explicit DAE: 0 = F(x, x', z, u, t)
 #[derive(Debug, Clone, Default)]
 pub struct DaeVariableSets {
@@ -71,7 +94,7 @@ impl DaeVariableSets {
     }
 }
 
-/// Explicit DAE system: variable sets + equation counts.
+/// Explicit DAE system: variable sets + equation counts + blocks (IR1-1, IR1-3).
 /// Residual form: 0 = F(x, x', z, u, t).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -86,6 +109,8 @@ pub struct DaeSystem {
     pub torn_unknowns_total: usize,
     pub differential_index: u32,
     pub constraint_equation_count: usize,
+    /// Partitioning: strongly connected components with block type (IR1-3).
+    pub blocks: Vec<BlockInfo>,
 }
 
 /// Initial equation system: same structure as DaeSystem but for initial equations only.
@@ -124,6 +149,7 @@ impl SimulationDae {
 }
 
 /// Build SimulationDae from backend data (states, algebraic, sorted equations, initial equations).
+/// IR1-2: initial_equation_count and initial_variable_count describe the separate initial system.
 pub fn build_simulation_dae(
     state_vars: &[String],
     discrete_vars: &[String],
@@ -133,6 +159,8 @@ pub fn build_simulation_dae(
     differential_equation_count: usize,
     sorted_algebraic_equations: &[Equation],
     initial_equation_count: usize,
+    initial_variable_count: usize,
+    when_equation_count: usize,
     differential_index: u32,
     constraint_equation_count: usize,
 ) -> SimulationDae {
@@ -171,14 +199,27 @@ pub fn build_simulation_dae(
     let mut single_equation_count = 0usize;
     let mut torn_block_count = 0usize;
     let mut torn_unknowns_total = 0usize;
+    let mut blocks: Vec<BlockInfo> = Vec::new();
     for eq in sorted_algebraic_equations {
         match eq {
-            Equation::Simple(_, _) | Equation::For(_, _, _, _) | Equation::If(_, _, _, _) | Equation::Assert(_, _) | Equation::Terminate(_) => {
+            Equation::Simple(_, _) | Equation::For(_, _, _, _) | Equation::If(_, _, _, _) | Equation::Assert(_, _) | Equation::Terminate(_) | Equation::MultiAssign(_, _) => {
                 single_equation_count += 1;
+                blocks.push(BlockInfo {
+                    block_type: BlockType::Single,
+                    equation_count: 1,
+                    unknown_count: 1,
+                    residual_count: None,
+                });
             }
-            Equation::SolvableBlock { unknowns, .. } => {
+            Equation::SolvableBlock { unknowns, residuals, .. } => {
                 torn_block_count += 1;
                 torn_unknowns_total += unknowns.len();
+                blocks.push(BlockInfo {
+                    block_type: BlockType::Torn,
+                    equation_count: unknowns.len(),
+                    unknown_count: unknowns.len(),
+                    residual_count: Some(residuals.len()),
+                });
             }
             _ => {}
         }
@@ -189,7 +230,7 @@ pub fn build_simulation_dae(
 
     let initial = InitialDae {
         equation_count: initial_equation_count,
-        variable_count: 0,
+        variable_count: initial_variable_count,
     };
 
     let dae = DaeSystem {
@@ -197,12 +238,13 @@ pub fn build_simulation_dae(
         differential_equation_count,
         algebraic_equation_count,
         total_equation_count,
-        when_equation_count: 0,
+        when_equation_count,
         single_equation_count,
         torn_block_count,
         torn_unknowns_total,
         differential_index,
         constraint_equation_count,
+        blocks,
     };
 
     SimulationDae { dae, initial }

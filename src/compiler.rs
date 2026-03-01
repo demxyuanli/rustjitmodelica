@@ -1,3 +1,4 @@
+mod c_codegen;
 mod inline;
 mod jacobian;
 
@@ -7,7 +8,7 @@ use crate::ast::{Equation, Expression, AlgorithmStatement};
 use crate::backend_dae::{build_simulation_dae, SimulationDae};
 use crate::loader::ModelLoader;
 use crate::flatten::{Flattener, eval_const_expr};
-use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, AnalysisOptions};
+use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, order_initial_equations_for_application, AnalysisOptions};
 use crate::diag::WarningInfo;
 use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
 use crate::expr_eval;
@@ -27,8 +28,14 @@ pub struct CompilerOptions {
     pub function_args: Option<Vec<f64>>,
     /// RT1-3: Solver choice: "rk4" (fixed step) or "rk45" (adaptive when no when/zero-crossing).
     pub solver: String,
+    /// RT1-5: Output/print interval for simulation results.
+    pub output_interval: f64,
+    /// RT1-5: Optional CSV result file path; when set, simulation writes time series to this file.
+    pub result_file: Option<String>,
     /// DBG-3: Warnings level: "all" | "none" | "error" (none = suppress, error = treat as error).
     pub warnings_level: String,
+    /// CG1-1: When set, emit C source (model.c, model.h) to this directory.
+    pub emit_c_dir: Option<String>,
 }
 
 impl Default for CompilerOptions {
@@ -44,7 +51,10 @@ impl Default for CompilerOptions {
             rtol: 1e-3,
             function_args: None,
             solver: "rk45".to_string(),
+            output_interval: 0.05,
+            result_file: None,
             warnings_level: "all".to_string(),
+            emit_c_dir: None,
         }
     }
 }
@@ -68,6 +78,7 @@ pub struct Artifacts {
     pub discrete_vals: Vec<f64>,
     pub params: Vec<f64>,
     pub state_vars: Vec<String>,
+    pub param_vars: Vec<String>,
     pub discrete_vars: Vec<String>,
     pub output_vars: Vec<String>,
     pub state_var_index: HashMap<String, usize>,
@@ -82,6 +93,8 @@ pub struct Artifacts {
     pub atol: f64,
     pub rtol: f64,
     pub solver: String,
+    pub output_interval: f64,
+    pub result_file: Option<String>,
 }
 
 impl Compiler {
@@ -102,8 +115,9 @@ impl Compiler {
     fn run_function_once(&mut self, model_name: &str) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
         let root_model = self.loader.load_model(model_name)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        let (input_names, body) = inline::get_function_body(root_model.as_ref())
-            .ok_or("Function must have exactly one output and one assignment to it in algorithm.")?;
+        let (input_names, outputs) = inline::get_function_body(root_model.as_ref())
+            .ok_or("Function must have at least one output and assignments in algorithm.")?;
+        let body = outputs.first().ok_or("Function has no output expression.")?.1.clone();
         let args = self.options.function_args.as_deref().unwrap_or(&[]);
         let mut vars = HashMap::new();
         for (i, name) in input_names.iter().enumerate() {
@@ -136,7 +150,10 @@ impl Compiler {
         for path in &self.loader.library_paths {
             flattener.loader.add_path(path.clone());
         }
-        let mut flat_model = flattener.flatten(&mut root_model)?;
+        if let Some(p) = self.loader.get_path_for_model(model_name) {
+            flattener.loader.register_path(model_name, p);
+        }
+        let mut flat_model = flattener.flatten(&mut root_model, model_name)?;
 
         inline::inline_function_calls(&mut flat_model, &mut self.loader);
 
@@ -430,7 +447,16 @@ impl Compiler {
             &param_vars,
             &analysis_opts,
         );
-        alg_equations = sort_result.sorted_equations;
+        let mut alg_eqs = sort_result.sorted_equations;
+        for out_var in &output_vars {
+            if let Some(alias_expr) = sort_result.alias_map.get(out_var) {
+                alg_eqs.push(Equation::Simple(
+                    Expression::Variable(out_var.clone()),
+                    alias_expr.clone(),
+                ));
+            }
+        }
+        alg_equations = alg_eqs;
         let differential_index = sort_result.differential_index;
         let constraint_equation_count = sort_result.constraint_equation_count;
 
@@ -494,15 +520,29 @@ impl Compiler {
             opts.generate_dynamic_jacobian == "numeric" || opts.generate_dynamic_jacobian == "both";
         let symbolic_ode_jacobian_enabled =
             opts.generate_dynamic_jacobian == "symbolic" || opts.generate_dynamic_jacobian == "both";
-        let symbolic_ode_jacobian_matrix =
-            if symbolic_ode_jacobian_enabled {
-                jacobian::build_ode_jacobian_expressions(&state_vars_sorted, &alg_equations, &state_var_index)
-            } else {
-                None
-            };
+        let ode_jacobian_sparse = if symbolic_ode_jacobian_enabled {
+            jacobian::build_ode_jacobian_sparse(&state_vars_sorted, &alg_equations, &state_var_index)
+        } else {
+            None
+        };
+        let symbolic_ode_jacobian_matrix = ode_jacobian_sparse
+            .as_ref()
+            .map(|s| s.to_dense())
+            .or_else(|| {
+                if symbolic_ode_jacobian_enabled {
+                    jacobian::build_ode_jacobian_expressions(&state_vars_sorted, &alg_equations, &state_var_index)
+                } else {
+                    None
+                }
+            });
         let symbolic_ode_jacobian = symbolic_ode_jacobian_matrix.is_some();
         let strong_component_jacobians = false;
 
+        let when_equation_count = flat_model
+            .equations
+            .iter()
+            .filter(|e| matches!(e, Equation::When(_, _, _)))
+            .count();
         let simulation_dae: SimulationDae = build_simulation_dae(
             &state_vars_sorted,
             &discrete_vars_sorted,
@@ -512,6 +552,8 @@ impl Compiler {
             diff_equations.len(),
             &alg_equations,
             flat_model.initial_equations.len(),
+            initial_info.variable_count,
+            when_equation_count,
             differential_index,
             constraint_equation_count,
         );
@@ -534,8 +576,36 @@ impl Compiler {
                 symbolic_ode_jacobian,
                 numeric_ode_jacobian,
                 symbolic_ode_jacobian_matrix.as_ref(),
+                ode_jacobian_sparse.as_ref(),
                 Some(&simulation_dae),
             );
+        }
+
+        if let Some(ref dir) = self.options.emit_c_dir {
+            let path = std::path::Path::new(dir);
+            let jac = symbolic_ode_jacobian_matrix.as_deref();
+            let state_array_layout: Vec<(String, usize, usize)> = flat_model
+                .array_sizes
+                .iter()
+                .filter_map(|(name, &size)| {
+                    let first = format!("{}_1", name);
+                    state_var_index.get(&first).copied().map(|start| (name.clone(), start, size))
+                })
+                .collect();
+            let array_layout_opt = if state_array_layout.is_empty() {
+                None
+            } else {
+                Some(state_array_layout.as_slice())
+            };
+            match c_codegen::emit_c_files(path, &state_vars_sorted, &param_vars, &output_vars, &alg_equations, jac, array_layout_opt) {
+                Ok(files) => {
+                    let paths: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
+                    println!("{}", i18n::msg("c_codegen_emitted", &[&paths.join(", ")]));
+                }
+                Err(e) => {
+                    return Err(format!("C codegen failed: {}{}", e, self.source_loc_suffix(model_name)).into());
+                }
+            }
         }
 
         // 5. JIT Compile
@@ -632,6 +702,7 @@ impl Compiler {
                 discrete_vals,
                 params,
                 state_vars: state_vars_sorted,
+                param_vars,
                 discrete_vars: discrete_vars_sorted,
                 output_vars,
                 state_var_index,
@@ -645,9 +716,21 @@ impl Compiler {
                 atol: self.options.atol,
                 rtol: self.options.rtol,
                 solver: self.options.solver.clone(),
+                output_interval: self.options.output_interval,
+                result_file: self.options.result_file.clone(),
             })),
-            Err(e) => Err(format!("JIT compilation failed: {}", e).into()),
+            Err(e) => {
+                Err(format!("JIT compilation failed: {}{}", e, self.source_loc_suffix(model_name)).into())
+            }
         }
+    }
+
+    /// DBG-4: suffix for error messages (file path or model name).
+    fn source_loc_suffix(&self, model_name: &str) -> String {
+        self.loader
+            .get_path_for_model(model_name)
+            .map(|p| format!("\n  --> {}", p.display()))
+            .unwrap_or_else(|| format!(" (model: {})", model_name))
     }
 }
 
@@ -675,7 +758,9 @@ fn convert_eq_to_alg_stmt(eq: Equation) -> AlgorithmStatement {
         }
         Equation::Assert(cond, msg) => AlgorithmStatement::Assert(cond, msg),
         Equation::Terminate(msg) => AlgorithmStatement::Terminate(msg),
-        _ => panic!("Unsupported equation in algorithm conversion: {:?}", eq),
+        Equation::Connect(_, _) => panic!("connect() inside when/algorithm is not supported; use equation section"),
+        Equation::SolvableBlock { .. } => panic!("SolvableBlock (algebraic loop) inside when/algorithm is not supported; put equations in the equation section instead"),
+        Equation::MultiAssign(_, _) => panic!("(a,b,...)=f(x) in when/algorithm is not supported; use equation section"),
     }
 }
 
@@ -736,13 +821,20 @@ fn apply_initial_conditions(
         }
     }
 
-    // initial equation section: apply in dependency order by iteratively substituting known values (IR3-3).
+    // IR3-3: Apply initial equations in dependency order (fewest unknowns first).
+    let mut known_at_initial = HashSet::new();
+    known_at_initial.insert("time".to_string());
+    for name in param_var_index.keys() {
+        known_at_initial.insert(name.clone());
+    }
+    let initial_order = order_initial_equations_for_application(&flat_model.initial_equations, &known_at_initial);
     let mut applied = true;
     let mut pass_limit = 20;
     while applied && pass_limit > 0 {
         pass_limit -= 1;
         applied = false;
-        for eq in &flat_model.initial_equations {
+        for &idx in &initial_order {
+            let eq = &flat_model.initial_equations[idx];
             if let Equation::Simple(lhs, rhs) = eq {
                 if let Expression::Variable(name) = lhs {
                     let rhs_sub = substitute_initial_values(

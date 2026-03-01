@@ -28,6 +28,12 @@ fn collect_states_from_eq(eq: &Equation, states: &mut HashSet<String>) {
             collect_states_from_expr(msg, states);
         }
         Equation::Terminate(msg) => collect_states_from_expr(msg, states),
+        Equation::MultiAssign(lhss, rhs) => {
+            for e in lhss {
+                collect_states_from_expr(e, states);
+            }
+            collect_states_from_expr(rhs, states);
+        }
         Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
             collect_states_from_expr(cond, states);
             for e in then_eqs { collect_states_from_eq(e, states); }

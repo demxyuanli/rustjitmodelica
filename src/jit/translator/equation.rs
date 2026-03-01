@@ -545,6 +545,9 @@ pub fn compile_equation(
         Equation::If(..) => {
             return Err("if-equation not yet supported in JIT; use algorithm if(cond) then ... end if instead".to_string());
         }
+        Equation::MultiAssign(_, _) => {
+            return Err("MultiAssign should not reach JIT (expand in flatten)".to_string());
+        }
         _ => {}
     }
     Ok(())

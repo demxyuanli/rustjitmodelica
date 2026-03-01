@@ -2,13 +2,29 @@
 
 use std::fmt;
 
-/// Location in a source file (1-based line and column for display).
-#[allow(dead_code)]
+/// Location in a source file (1-based line and column for display). DBG-4: attach to flatten/analysis/JIT errors.
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
     pub file: String,
     pub line: usize,
     pub column: usize,
+}
+
+impl SourceLocation {
+    /// Format as suffix for error message (e.g. "\n  --> path:1:2" or "\n  --> path" when line is 0).
+    pub fn fmt_suffix(&self) -> String {
+        if self.line > 0 && self.column > 0 {
+            format!("\n  --> {}:{}:{}", self.file, self.line, self.column)
+        } else {
+            format!("\n  --> {}", self.file)
+        }
+    }
+}
+
+impl Default for SourceLocation {
+    fn default() -> Self {
+        Self { file: String::new(), line: 0, column: 0 }
+    }
 }
 
 /// Structured parse error for pretty-printing.

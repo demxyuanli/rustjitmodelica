@@ -12,23 +12,27 @@ model_definition = {
     ~ initial_equation_section?
     ~ initial_algorithm_section?
     ~ (equation_section | algorithm_section)*
+    ~ external_section?
     ~ end_part
 }
 end_part = { "end" ~ identifier ~ annotation? ~ ";" }
+external_section = { "external" ~ (string_comment ~ WHITESPACE?)? ~ (identifier ~ "(" ~ (component_ref ~ ("," ~ component_ref)*)? ~ ")")? ~ annotation? ~ ";" }
 
 function_prefix = { "function" }
-class_prefixes = { "partial"? ~ ("model" | "connector" | "class" | "record" | "block" | "package" | function_prefix) }
+class_prefixes = { "partial"? ~ ("operator"? ~ "record" | "model" | "connector" | "class" | "record" | "block" | "package" | function_prefix) }
 
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 dotted_identifier = { identifier ~ ("." ~ identifier)* }
-declaration_section = { (extends_clause | declaration)* }
+declaration_section = { (extends_clause | declaration | model_definition | type_definition)* }
+type_definition = { "type" ~ identifier ~ "=" ~ type_name ~ array_subscript? ~ ";" }
 
 extends_clause = { "extends" ~ dotted_identifier ~ modification_part? ~ ";" }
 modification_part = { "(" ~ modification_list ~ ")" }
 modification_list = { modification ~ ("," ~ modification)* }
-modification = { ("each" ~ WHITESPACE?)? ~ component_ref ~ "=" ~ expression }
+modification = { ("redeclare" ~ WHITESPACE? ~ (type_name ~ WHITESPACE?)?)? ~ ("each" ~ WHITESPACE?)? ~ component_ref ~ "=" ~ expression }
 
-declaration = { (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ type_name ~ identifier ~ array_subscript? ~ modification_part? ~ value_assignment? ~ string_comment? ~ annotation? ~ ";" }
+declaration = { (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ (replaceable_kw)? ~ type_name ~ identifier ~ array_subscript? ~ modification_part? ~ value_assignment? ~ string_comment? ~ annotation? ~ ";" }
+replaceable_kw = { "replaceable" }
 
 string_comment = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
@@ -42,13 +46,14 @@ output_kw = { "output" }
 // Allow arbitrary identifiers as type names for models/connectors
 type_name = { !keyword ~ ("Real" | "Integer" | "Boolean" | dotted_identifier) }
 
-keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "each" | "annotation" | "assert" | "terminate") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "each" | "redeclare" | "annotation" | "assert" | "terminate" | "operator" | "type" | "external" | "replaceable") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 value_assignment = { "=" ~ expression }
 // attribute_modification removed
 equation_section = { "equation" ~ equation_stmt* }
 initial_equation_section = { "initial" ~ "equation" ~ equation_stmt* }
-equation_stmt = { connect_clause | equation | assert_stmt | terminate_stmt | for_loop | when_equation | if_equation | reinit_clause }
+equation_stmt = { connect_clause | multi_assign_equation | equation | assert_stmt | terminate_stmt | for_loop | when_equation | if_equation | reinit_clause }
+multi_assign_equation = { "(" ~ component_ref ~ ("," ~ component_ref)+ ~ ")" ~ "=" ~ expression ~ annotation? ~ ";" }
 assert_stmt = { "assert" ~ "(" ~ expression ~ "," ~ expression ~ ")" ~ ";" }
 terminate_stmt = { "terminate" ~ "(" ~ expression ~ ")" ~ ";" }
 

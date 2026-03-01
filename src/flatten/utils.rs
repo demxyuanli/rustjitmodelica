@@ -1,8 +1,57 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use crate::ast::{Model, Modification, Equation, AlgorithmStatement, Expression};
 
+/// F3-3: Get function inputs and output (name, expr) list from model. Used for multi-output expand.
+pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, Expression)>)> {
+    if !model.is_function {
+        return None;
+    }
+    if model.external_info.is_some() {
+        return None;
+    }
+    let input_names: Vec<String> = model.declarations.iter().filter(|d| d.is_input).map(|d| d.name.clone()).collect();
+    let output_names: Vec<String> = model.declarations.iter().filter(|d| d.is_output).map(|d| d.name.clone()).collect();
+    if output_names.is_empty() {
+        return None;
+    }
+    let mut out_exprs: HashMap<String, Expression> = HashMap::new();
+    for stmt in &model.algorithms {
+        if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
+            if let Expression::Variable(v) = lhs {
+                if output_names.contains(v) {
+                    out_exprs.insert(v.clone(), rhs.clone());
+                }
+            }
+        }
+    }
+    let ordered: Vec<(String, Expression)> = output_names
+        .into_iter()
+        .filter_map(|name| out_exprs.remove(&name).map(|e| (name, e)))
+        .collect();
+    if ordered.is_empty() {
+        return None;
+    }
+    Some((input_names, ordered))
+}
+
+/// F1-4: Resolve type alias through type_aliases (e.g. type MyReal = Real;). Returns final type name; avoids cycles.
+pub fn resolve_type_alias(type_aliases: &[(String, String)], name: &str) -> String {
+    let mut current = name.to_string();
+    let mut visited = std::collections::HashSet::new();
+    while visited.insert(current.clone()) {
+        if let Some((_, base)) = type_aliases.iter().find(|(n, _)| n == &current) {
+            current = base.clone();
+        } else {
+            break;
+        }
+    }
+    current
+}
+
+/// MSL-4: SIunits types (Modelica.SIunits.Time, etc.) are resolved as Real; units parsed but not enforced.
 pub fn is_primitive(type_name: &str) -> bool {
     matches!(type_name, "Real" | "Integer" | "Boolean")
+        || type_name.starts_with("Modelica.SIunits.")
 }
 
 pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
@@ -36,6 +85,9 @@ pub fn apply_modification(model: &mut Model, modification: &Modification) {
                 decl.modifications.push(Modification {
                     name: tail.to_string(),
                     value: modification.value.clone(),
+                    each: modification.each,
+                    redeclare: modification.redeclare,
+                    redeclare_type: modification.redeclare_type.clone(),
                 });
                 return;
             }
@@ -43,7 +95,14 @@ pub fn apply_modification(model: &mut Model, modification: &Modification) {
     } else {
         for decl in &mut model.declarations {
             if decl.name == modification.name {
-                decl.start_value = modification.value.clone();
+                if modification.redeclare {
+                    if let Some(ref t) = modification.redeclare_type {
+                        decl.type_name = t.clone();
+                    }
+                    decl.start_value = modification.value.clone();
+                } else {
+                    decl.start_value = modification.value.clone();
+                }
                 return;
             }
         }
@@ -62,6 +121,11 @@ pub fn merge_models(child: &mut Model, base: &Model) {
     }
     for eq in &base.equations {
         child.equations.push(eq.clone());
+    }
+    for (name, base_type) in &base.type_aliases {
+        if !child.type_aliases.iter().any(|(n, _)| n == name) {
+            child.type_aliases.push((name.clone(), base_type.clone()));
+        }
     }
 }
 
@@ -89,7 +153,8 @@ pub fn convert_eq_to_alg(eq: Equation) -> AlgorithmStatement {
             let else_alg = else_eqs.map(|eqs| eqs.into_iter().map(convert_eq_to_alg).collect());
             AlgorithmStatement::If(cond, then_alg, elseif_alg, else_alg)
         }
-        Equation::Connect(_, _) => panic!("Connect statements not supported inside When/Algorithm"),
-        Equation::SolvableBlock { .. } => panic!("SolvableBlock not supported inside When/Algorithm"),
+        Equation::Connect(_, _) => panic!("F4-2: connect() inside when/algorithm is not supported; use equation section for connections"),
+        Equation::SolvableBlock { .. } => panic!("F4-2: SolvableBlock (algebraic loop) inside when/algorithm is not supported; put equations in the equation section instead"),
+        Equation::MultiAssign(_, _) => panic!("F3-3: (a,b,...)=f(x) in when/algorithm is not supported; use equation section"),
     }
 }

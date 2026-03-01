@@ -50,6 +50,14 @@ pub fn compile_expression(
                 let val = builder.ins().load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset);
                 ctx.var_map.insert(name.clone(), val);
                 Ok(val)
+            } else if name.starts_with("der_") {
+                let base = &name[4..];
+                if let Some(idx) = ctx.state_index(base) {
+                    let offset = (idx * 8) as i32;
+                    Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.derivs_ptr, offset))
+                } else {
+                    Err(format!("der({}) not found: state variable {} unknown", base, base))
+                }
             } else {
                 Err(format!("Variable {} not found", name))
             }
@@ -243,6 +251,22 @@ pub fn compile_expression(
                 builder.ins().call(func_ref, &[msg_val]);
                 return Ok(builder.ins().f64const(0.0));
             }
+            if func_name == "Boolean" {
+                if args.len() != 1 {
+                    return Err(format!("Boolean() expects 1 argument, got {}", args.len()));
+                }
+                let x = compile_expression(&args[0], ctx, builder)?;
+                let zero = builder.ins().f64const(0.0);
+                let one = builder.ins().f64const(1.0);
+                let cmp = builder.ins().fcmp(FloatCC::NotEqual, x, zero);
+                return Ok(builder.ins().select(cmp, one, zero));
+            }
+            if func_name == "sample" || func_name == "interval" {
+                return Err(format!(
+                    "{}() is not supported; clock/synchronous semantics are out of scope (F2-3). Use when/zero-crossing instead.",
+                    func_name
+                ));
+            }
             let mut arg_vals = Vec::new();
             for arg in args {
                 arg_vals.push(compile_expression(arg, ctx, builder)?);
@@ -258,7 +282,15 @@ pub fn compile_expression(
             let call_inst = builder.ins().call(func_ref, &arg_vals);
             Ok(builder.inst_results(call_inst)[0])
         }
-        Expression::Der(_) => Err("Nested der() not supported in expression".to_string()),
+        Expression::Der(inner) => {
+            if let Expression::Variable(name) = &**inner {
+                if let Some(idx) = ctx.state_index(name) {
+                    let offset = (idx * 8) as i32;
+                    return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.derivs_ptr, offset));
+                }
+            }
+            Err("der(expr) only supports der(x) for state variable x".to_string())
+        }
         Expression::Range(_, _, _) => Err("Range expression not supported as a scalar value. It should be handled by For loop structure.".to_string()),
         Expression::Dot(_, _) => Err("Dot expression should have been flattened before JIT compilation".to_string()),
         Expression::ArrayLiteral(_) => Err("ArrayLiteral should have been flattened before JIT compilation".to_string()),

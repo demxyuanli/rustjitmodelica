@@ -167,6 +167,64 @@ impl Solver for EulerSolver {
     }
 }
 
+/// RT1-2: Backward Euler (implicit) for stiff systems. Fixed-point iteration: y^{k+1} = y_n + dt*f(t+dt, y^k).
+pub struct BackwardEulerSolver {
+    derivs: Vec<f64>,
+    tmp: Vec<f64>,
+    max_iter: usize,
+    tol: f64,
+}
+
+impl BackwardEulerSolver {
+    pub fn new(state_len: usize) -> Self {
+        Self {
+            derivs: vec![0.0; state_len],
+            tmp: vec![0.0; state_len],
+            max_iter: 20,
+            tol: 1e-10,
+        }
+    }
+}
+
+impl Solver for BackwardEulerSolver {
+    fn name(&self) -> &str {
+        "BackwardEuler"
+    }
+
+    fn step(
+        &mut self,
+        system: &mut System,
+        time: f64,
+        dt: f64,
+        states: &mut [f64],
+    ) -> Result<(), i32> {
+        let n = states.len();
+        if n == 0 {
+            return Ok(());
+        }
+        let y_n: Vec<f64> = states.to_vec();
+        self.tmp.copy_from_slice(&y_n);
+        for _ in 0..self.max_iter {
+            system.evaluate(time + dt, &mut self.tmp, &mut self.derivs)?;
+            let mut max_change = 0.0_f64;
+            for i in 0..n {
+                let y_new = y_n[i] + dt * self.derivs[i];
+                let change = (y_new - self.tmp[i]).abs();
+                if change > max_change {
+                    max_change = change;
+                }
+                self.tmp[i] = y_new;
+            }
+            if max_change <= self.tol {
+                states.copy_from_slice(&self.tmp);
+                return Ok(());
+            }
+        }
+        states.copy_from_slice(&self.tmp);
+        Ok(())
+    }
+}
+
 pub struct RungeKutta4Solver {
     k1: Vec<f64>,
     k2: Vec<f64>,
