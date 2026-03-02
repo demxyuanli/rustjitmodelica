@@ -1,0 +1,5 @@
+// INT-2: load model, setParameter, simulate. Run: rustmodlica --script=scripts/init_with_param_setparam.txt
+load TestLib/InitWithParam
+setParameter a 5
+simulate
+quit
