@@ -145,7 +145,7 @@ pub fn compile_equation(
                 builder.ins().jump(header_block, &[]);
                 builder.switch_to_block(header_block);
                 let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-                let max_iter = builder.ins().f64const(50.0);
+                let max_iter = builder.ins().f64const(150.0);
                 let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
                 builder.ins().brif(iter_cond, body_block, &[], error_block, &[]);
                 builder.switch_to_block(error_block);
@@ -257,7 +257,7 @@ pub fn compile_equation(
                 builder.ins().jump(header_block, &[]);
                 builder.switch_to_block(header_block);
                 let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-                let max_iter = builder.ins().f64const(50.0);
+                let max_iter = builder.ins().f64const(150.0);
                 let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
                 builder.ins().brif(iter_cond, body_block, &[], error_block, &[]);
                 builder.switch_to_block(error_block);
@@ -412,11 +412,12 @@ pub fn compile_equation(
                 builder.seal_block(exit_block);
             } else if residuals.len() >= 4 && residuals.len() <= 32 && unknowns.len() >= residuals.len() {
                 compile_solvable_block_general_n(unknowns, residuals, ctx, builder)?;
-            } else if residuals.len() == 1 {
-            if let Some(t_var) = tearing_var {
-                 ctx.var_map.remove(t_var);
-                 let t_slot = *ctx.stack_slots.get(t_var).expect("Tearing var must have stack slot");
-                 if let Some(idx) = ctx.output_index(t_var) {
+            } else if (residuals.len() == 1 && tearing_var.is_some()) || (residuals.len() >= 2 && residuals.len() <= 32 && unknowns.len() == 1) {
+            let t_var = tearing_var.as_ref().cloned().unwrap_or_else(|| unknowns[0].clone());
+            {
+                 ctx.var_map.remove(&t_var);
+                 let t_slot = *ctx.stack_slots.get(&t_var).expect("Tearing var must have stack slot");
+                 if let Some(idx) = ctx.output_index(&t_var) {
                      let offset = (idx * 8) as i32;
                      let init_val = builder.ins().load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset);
                      builder.ins().stack_store(init_val, t_slot, 0);
@@ -434,7 +435,7 @@ pub fn compile_equation(
                  builder.ins().jump(header_block, &[]);
                  builder.switch_to_block(header_block);
                  let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-                 let max_iter = builder.ins().f64const(50.0);
+                 let max_iter = builder.ins().f64const(150.0);
                  let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
                  let error_block = builder.create_block();
                  builder.ins().brif(iter_cond, body_block, &[], error_block, &[]);
@@ -496,10 +497,19 @@ pub fn compile_equation(
                  }
                  let error_code2 = builder.ins().iconst(cl_types::I32, 2);
                  builder.ins().return_(&[error_code2]);
-                 builder.seal_block(jac_error_block);
-                 builder.switch_to_block(update_block);
-                 let step = builder.ins().fdiv(res_val, j_val);
-                 let x_new = builder.ins().fsub(x, step);
+                builder.seal_block(jac_error_block);
+                builder.switch_to_block(update_block);
+                let eps = builder.ins().f64const(1e-12);
+                let j_abs = builder.ins().fabs(j_val);
+                let is_small = builder.ins().fcmp(FloatCC::LessThan, j_abs, eps);
+                let pos_eps = builder.ins().f64const(1e-12);
+                let neg_eps = builder.ins().f64const(-1e-12);
+                let zero = builder.ins().f64const(0.0);
+                let sign_non_neg = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, j_val, zero);
+                let eps_signed = builder.ins().select(sign_non_neg, pos_eps, neg_eps);
+                let j_safe = builder.ins().select(is_small, eps_signed, j_val);
+                let step = builder.ins().fdiv(res_val, j_safe);
+                let x_new = builder.ins().fsub(x, step);
                  builder.ins().stack_store(x_new, t_slot, 0);
                  if let (Some(pr), Some(px)) = (ctx.diag_residual_ptr, ctx.diag_x_ptr) {
                      builder.ins().store(MemFlags::new(), res_val, pr, 0);
@@ -529,7 +539,7 @@ pub fn compile_equation(
                          }
                      }
                  }
-                 if let Some(idx) = ctx.output_index(t_var) {
+                 if let Some(idx) = ctx.output_index(&t_var) {
                      let val = builder.ins().stack_load(cl_types::F64, t_slot, 0);
                      let offset = (idx * 8) as i32;
                      builder.ins().store(MemFlags::new(), val, ctx.outputs_ptr, offset);
@@ -602,7 +612,7 @@ fn compile_solvable_block_general_n(
     builder.ins().jump(header_block, &[]);
     builder.switch_to_block(header_block);
     let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-    let max_iter = builder.ins().f64const(50.0);
+    let max_iter = builder.ins().f64const(150.0);
     let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
     builder.ins().brif(iter_cond, body_block, &[], error_block, &[]);
     builder.switch_to_block(error_block);

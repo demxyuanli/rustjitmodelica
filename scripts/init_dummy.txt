@@ -1,0 +1,4 @@
+// INT-2 script example: load model, simulate, quit. Run: rustmodlica --script=scripts/init_dummy.txt
+load TestLib/InitDummy
+simulate
+quit

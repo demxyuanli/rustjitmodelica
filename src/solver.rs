@@ -13,6 +13,37 @@ pub struct System<'a> {
     pub t_end: f64,
     pub diag_residual: *mut f64,
     pub diag_x: *mut f64,
+    /// Step-internal diag: write current eval call index before each evaluate (solver increments).
+    pub eval_call_index: *mut u32,
+    /// Time of the evaluate call (solver sets before each call).
+    pub last_eval_time: *mut f64,
+    /// State vector at the evaluate call (solver copies before each call).
+    pub last_eval_state: *mut f64,
+    pub last_eval_state_len: usize,
+    /// When set, evaluate_scratch uses this as outputs buffer (initial guess from caller; JIT overwrites with solution).
+    /// Enables using previous step/stage algebraic values as Newton initial guess across a step.
+    pub scratch_outputs: Option<&'a mut [f64]>,
+}
+
+impl<'a> System<'a> {
+    /// Call before each evaluate inside a step so that on status 2 we know which call, time, and state.
+    pub fn record_eval(&mut self, time: f64, state: &[f64]) {
+        if !self.eval_call_index.is_null() {
+            unsafe {
+                *self.eval_call_index += 1;
+            }
+        }
+        if !self.last_eval_time.is_null() {
+            unsafe {
+                *self.last_eval_time = time;
+            }
+        }
+        if !self.last_eval_state.is_null() && self.last_eval_state_len >= state.len() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(state.as_ptr(), self.last_eval_state, state.len());
+            }
+        }
+    }
 }
 
 impl<'a> System<'a> {
@@ -75,26 +106,34 @@ impl<'a> System<'a> {
         Ok(())
     }
 
-    /// Evaluate with temporary buffers to avoid side effects on event indicators
+    /// Evaluate with temporary buffers to avoid side effects on event indicators.
+    /// When scratch_outputs is Some, uses it as outputs buffer (caller must fill with prev step/stage values for Newton init).
     pub fn evaluate_scratch(
         &mut self,
         time: f64,
         states: &mut [f64],
         derivs: &mut [f64],
     ) -> Result<(), i32> {
-        // Create scratch buffers for event outputs
-        let mut scratch_outputs = vec![0.0; self.outputs.len()];
         let mut scratch_when = vec![0.0; self.when_states.len()];
         let mut scratch_crossings = vec![0.0; self.crossings.len()];
+        let mut _fallback_outputs = None::<Vec<f64>>;
+        let out_ptr = if let Some(scratch) = self.scratch_outputs.as_mut() {
+            scratch.as_mut_ptr()
+        } else {
+            let mut buf = vec![0.0; self.outputs.len()];
+            let p = buf.as_mut_ptr();
+            _fallback_outputs = Some(buf);
+            p
+        };
 
         unsafe {
             let status = (self.calc_derivs)(
                 time,
                 states.as_mut_ptr(),
-                self.discrete.as_mut_ptr(), // Discrete vars are input (constant during step)
+                self.discrete.as_mut_ptr(),
                 derivs.as_mut_ptr(),
                 self.params.as_ptr(),
-                scratch_outputs.as_mut_ptr(),
+                out_ptr,
                 scratch_when.as_mut_ptr(),
                 scratch_crossings.as_mut_ptr(),
                 self.pre_states.as_ptr(),
@@ -150,12 +189,10 @@ impl Solver for EulerSolver {
         dt: f64,
         states: &mut [f64],
     ) -> Result<(), i32> {
-        // 1. Evaluate f(t, y)
-        // For Euler, we use the main evaluate because we want the outputs/events at t
-        // But usually integration step is separate from event detection.
-        // The simulation loop handles event detection at `time`.
-        // The integration step moves from `time` to `time + dt`.
-        // So we evaluate at `time`.
+        if !system.eval_call_index.is_null() {
+            unsafe { *system.eval_call_index = 0; }
+        }
+        system.record_eval(time, states);
         system.evaluate(time, states, &mut self.derivs)?;
 
         // 2. y_{n+1} = y_n + h * f(t, y_n)
@@ -202,9 +239,13 @@ impl Solver for BackwardEulerSolver {
         if n == 0 {
             return Ok(());
         }
+        if !system.eval_call_index.is_null() {
+            unsafe { *system.eval_call_index = 0; }
+        }
         let y_n: Vec<f64> = states.to_vec();
         self.tmp.copy_from_slice(&y_n);
         for _ in 0..self.max_iter {
+            system.record_eval(time + dt, &self.tmp);
             system.evaluate(time + dt, &mut self.tmp, &mut self.derivs)?;
             let mut max_change = 0.0_f64;
             for i in 0..n {
@@ -258,26 +299,29 @@ impl Solver for RungeKutta4Solver {
         states: &mut [f64],
     ) -> Result<(), i32> {
         let n = states.len();
+        if !system.eval_call_index.is_null() {
+            unsafe { *system.eval_call_index = 0; }
+        }
 
-        // k1 = f(t, y)
+        system.record_eval(time, states);
         system.evaluate_scratch(time, states, &mut self.k1)?;
 
-        // k2 = f(t + h/2, y + h*k1/2)
         for i in 0..n {
             self.tmp_states[i] = states[i] + 0.5 * dt * self.k1[i];
         }
+        system.record_eval(time + 0.5 * dt, &self.tmp_states);
         system.evaluate_scratch(time + 0.5 * dt, &mut self.tmp_states, &mut self.k2)?;
 
-        // k3 = f(t + h/2, y + h*k2/2)
         for i in 0..n {
             self.tmp_states[i] = states[i] + 0.5 * dt * self.k2[i];
         }
+        system.record_eval(time + 0.5 * dt, &self.tmp_states);
         system.evaluate_scratch(time + 0.5 * dt, &mut self.tmp_states, &mut self.k3)?;
 
-        // k4 = f(t + h, y + h*k3)
         for i in 0..n {
             self.tmp_states[i] = states[i] + dt * self.k3[i];
         }
+        system.record_eval(time + dt, &self.tmp_states);
         system.evaluate_scratch(time + dt, &mut self.tmp_states, &mut self.k4)?;
 
         // y_{n+1} = y_n + h/6 * (k1 + 2k2 + 2k3 + k4)
@@ -337,25 +381,27 @@ impl Solver for AdaptiveRK45Solver {
 
         let t = time;
         loop {
+            if !system.eval_call_index.is_null() {
+                unsafe { *system.eval_call_index = 0; }
+            }
             let y = states.to_vec();
 
-            // Coefficients for classic Dormand–Prince RK45
             self.tmp.copy_from_slice(&y);
+            system.record_eval(t, &self.tmp);
             system.evaluate_scratch(t, &mut self.tmp, &mut self.k1)?;
 
-            // k2
             for i in 0..n {
                 self.tmp[i] = y[i] + dt * (1.0 / 5.0) * self.k1[i];
             }
+            system.record_eval(t + dt * (1.0 / 5.0), &self.tmp);
             system.evaluate_scratch(t + dt * (1.0 / 5.0), &mut self.tmp, &mut self.k2)?;
 
-            // k3
             for i in 0..n {
                 self.tmp[i] = y[i] + dt * (3.0 / 40.0 * self.k1[i] + 9.0 / 40.0 * self.k2[i]);
             }
+            system.record_eval(t + dt * (3.0 / 10.0), &self.tmp);
             system.evaluate_scratch(t + dt * (3.0 / 10.0), &mut self.tmp, &mut self.k3)?;
 
-            // k4
             for i in 0..n {
                 self.tmp[i] = y[i]
                     + dt
@@ -363,9 +409,9 @@ impl Solver for AdaptiveRK45Solver {
                             - 56.0 / 15.0 * self.k2[i]
                             + 32.0 / 9.0 * self.k3[i]);
             }
+            system.record_eval(t + dt * (4.0 / 5.0), &self.tmp);
             system.evaluate_scratch(t + dt * (4.0 / 5.0), &mut self.tmp, &mut self.k4)?;
 
-            // k5
             for i in 0..n {
                 self.tmp[i] = y[i]
                     + dt
@@ -374,9 +420,9 @@ impl Solver for AdaptiveRK45Solver {
                             + 64448.0 / 6561.0 * self.k3[i]
                             - 212.0 / 729.0 * self.k4[i]);
             }
+            system.record_eval(t + dt * (8.0 / 9.0), &self.tmp);
             system.evaluate_scratch(t + dt * (8.0 / 9.0), &mut self.tmp, &mut self.k5)?;
 
-            // k6
             for i in 0..n {
                 self.tmp[i] = y[i]
                     + dt
@@ -386,6 +432,7 @@ impl Solver for AdaptiveRK45Solver {
                             + 49.0 / 176.0 * self.k4[i]
                             - 5103.0 / 18656.0 * self.k5[i]);
             }
+            system.record_eval(t + dt, &self.tmp);
             system.evaluate_scratch(t + dt, &mut self.tmp, &mut self.k6)?;
 
             // 5th order solution y5 and 4th order y4

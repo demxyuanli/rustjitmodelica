@@ -97,7 +97,18 @@ pub fn compile_expression(
                 Operator::Add => Ok(builder.ins().fadd(l, r)),
                 Operator::Sub => Ok(builder.ins().fsub(l, r)),
                 Operator::Mul => Ok(builder.ins().fmul(l, r)),
-                Operator::Div => Ok(builder.ins().fdiv(l, r)),
+                Operator::Div => {
+                    let eps = builder.ins().f64const(1e-12);
+                    let r_abs = builder.ins().fabs(r);
+                    let is_small = builder.ins().fcmp(FloatCC::LessThan, r_abs, eps);
+                    let pos_eps = builder.ins().f64const(1e-12);
+                    let neg_eps = builder.ins().f64const(-1e-12);
+                    let zero = builder.ins().f64const(0.0);
+                    let sign_non_neg = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, r, zero);
+                    let eps_signed = builder.ins().select(sign_non_neg, pos_eps, neg_eps);
+                    let r_safe = builder.ins().select(is_small, eps_signed, r);
+                    Ok(builder.ins().fdiv(l, r_safe))
+                }
                 Operator::Less | Operator::Greater | Operator::LessEq | Operator::GreaterEq | Operator::Equal | Operator::NotEqual => {
                     let cc = match op {
                         Operator::Less => FloatCC::LessThan,
@@ -354,7 +365,18 @@ fn compile_pre_expression(
                 Operator::Add => Ok(builder.ins().fadd(l, r)),
                 Operator::Sub => Ok(builder.ins().fsub(l, r)),
                 Operator::Mul => Ok(builder.ins().fmul(l, r)),
-                Operator::Div => Ok(builder.ins().fdiv(l, r)),
+                Operator::Div => {
+                    let eps = builder.ins().f64const(1e-12);
+                    let r_abs = builder.ins().fabs(r);
+                    let is_small = builder.ins().fcmp(FloatCC::LessThan, r_abs, eps);
+                    let pos_eps = builder.ins().f64const(1e-12);
+                    let neg_eps = builder.ins().f64const(-1e-12);
+                    let zero = builder.ins().f64const(0.0);
+                    let sign_non_neg = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, r, zero);
+                    let eps_signed = builder.ins().select(sign_non_neg, pos_eps, neg_eps);
+                    let r_safe = builder.ins().select(is_small, eps_signed, r);
+                    Ok(builder.ins().fdiv(l, r_safe))
+                }
                 Operator::Less | Operator::Greater | Operator::LessEq | Operator::GreaterEq | Operator::Equal | Operator::NotEqual => {
                     let cc = match op {
                         Operator::Less => FloatCC::LessThan,

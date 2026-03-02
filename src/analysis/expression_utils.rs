@@ -1,0 +1,121 @@
+use crate::ast::{Expression, Operator};
+
+use super::variable_collection::contains_var;
+
+pub fn make_num(n: f64) -> Expression {
+    Expression::Number(n)
+}
+
+pub fn make_mul(lhs: Expression, rhs: Expression) -> Expression {
+    Expression::BinaryOp(Box::new(lhs), Operator::Mul, Box::new(rhs))
+}
+
+#[allow(dead_code)]
+pub fn make_div(lhs: Expression, rhs: Expression) -> Expression {
+    Expression::BinaryOp(Box::new(lhs), Operator::Div, Box::new(rhs))
+}
+
+#[allow(dead_code)]
+pub fn make_add(lhs: Expression, rhs: Expression) -> Expression {
+    Expression::BinaryOp(Box::new(lhs), Operator::Add, Box::new(rhs))
+}
+
+pub fn make_binary(lhs: Expression, op: Operator, rhs: Expression) -> Expression {
+    Expression::BinaryOp(Box::new(lhs), op, Box::new(rhs))
+}
+
+pub fn expression_is_zero(expr: &Expression) -> bool {
+    match expr {
+        Expression::Number(n) => n.abs() < 1e-15,
+        _ => false,
+    }
+}
+
+pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
+    use crate::ast::Operator;
+    match expr {
+        Expression::Variable(name) => {
+            if name == var {
+                Expression::Number(1.0)
+            } else {
+                Expression::Number(0.0)
+            }
+        }
+        Expression::Number(_) => Expression::Number(0.0),
+        Expression::BinaryOp(lhs, op, rhs) => {
+            let dl = partial_derivative(lhs, var);
+            let dr = partial_derivative(rhs, var);
+            match op {
+                Operator::Add | Operator::Sub => {
+                    let r = if *op == Operator::Add {
+                        Operator::Add
+                    } else {
+                        Operator::Sub
+                    };
+                    Expression::BinaryOp(Box::new(dl), r, Box::new(dr))
+                }
+                Operator::Mul => {
+                    let term1 =
+                        Expression::BinaryOp(Box::new(dl.clone()), Operator::Mul, rhs.clone());
+                    let term2 = Expression::BinaryOp(
+                        Box::new((**lhs).clone()),
+                        Operator::Mul,
+                        Box::new(dr),
+                    );
+                    Expression::BinaryOp(Box::new(term1), Operator::Add, Box::new(term2))
+                }
+                Operator::Div => {
+                    let num = Expression::BinaryOp(
+                        Box::new(Expression::BinaryOp(
+                            Box::new(dl.clone()),
+                            Operator::Mul,
+                            rhs.clone(),
+                        )),
+                        Operator::Sub,
+                        Box::new(Expression::BinaryOp(
+                            Box::new((**lhs).clone()),
+                            Operator::Mul,
+                            Box::new(dr.clone()),
+                        )),
+                    );
+                    let r = (**rhs).clone();
+                    let den = Expression::BinaryOp(Box::new(r.clone()), Operator::Mul, Box::new(r));
+                    Expression::BinaryOp(Box::new(num), Operator::Div, Box::new(den))
+                }
+                _ => Expression::Number(0.0),
+            }
+        }
+        Expression::Der(inner) => {
+            if contains_var(inner, var) {
+                Expression::Der(Box::new(partial_derivative(inner, var)))
+            } else {
+                Expression::Number(0.0)
+            }
+        }
+        Expression::Call(_, _)
+        | Expression::If(_, _, _)
+        | Expression::ArrayAccess(_, _)
+        | Expression::Dot(_, _)
+        | Expression::Range(_, _, _)
+        | Expression::ArrayLiteral(_) => Expression::Number(0.0),
+    }
+}
+
+pub fn time_derivative(expr: &Expression, state_vars: &[String]) -> Expression {
+    let mut sum: Option<Expression> = None;
+    for x in state_vars {
+        let pd = partial_derivative(expr, x);
+        if let Expression::Number(n) = &pd {
+            if n.abs() < 1e-15 {
+                continue;
+            }
+        }
+        let der_x = Expression::Variable(format!("der_{}", x));
+        let term = Expression::BinaryOp(Box::new(pd), Operator::Mul, Box::new(der_x));
+        sum = Some(match sum {
+            None => term,
+            Some(s) => Expression::BinaryOp(Box::new(s), Operator::Add, Box::new(term)),
+        });
+    }
+    sum.unwrap_or_else(|| Expression::Number(0.0))
+}

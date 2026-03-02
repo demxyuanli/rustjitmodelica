@@ -33,6 +33,11 @@ pub fn run_simulation(
     let mut time = 0.0;
     let mut derivs = vec![0.0; states.len()];
     let mut outputs = vec![0.0; output_vars.len()];
+    if states.is_empty() && !output_vars.is_empty() {
+        for o in outputs.iter_mut() {
+            *o = 1.0;
+        }
+    }
     let mut when_states = vec![0.0; when_count * 2];
     let mut crossings = vec![0.0; crossings_count];
     let mut pre_states = vec![0.0; states.len()]; 
@@ -86,6 +91,27 @@ pub fn run_simulation(
         } else {
             (&mut diag_residual as *mut f64, &mut diag_x as *mut f64)
         };
+        let mut diag_call_index = 0u32;
+        let mut diag_time = 0.0_f64;
+        let mut diag_state = vec![0.0_f64; states.len()];
+        let (eval_call_index_ptr, last_eval_time_ptr, last_eval_state_ptr, last_eval_state_len) =
+            if newton_tearing_var_names.is_empty() {
+                (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0)
+            } else {
+                (
+                    &mut diag_call_index as *mut u32,
+                    &mut diag_time as *mut f64,
+                    diag_state.as_mut_ptr(),
+                    diag_state.len(),
+                )
+            };
+        let mut scratch_outputs_for_step = vec![0.0_f64; output_vars.len()];
+
+        const ALG_FIXED_POINT_MAX: u32 = 15;
+        let do_alg_iter = states.is_empty() && !output_vars.is_empty() && newton_tearing_var_names.len() > 0;
+        let mut alg_iter = 0u32;
+        let mut prev_outputs = vec![0.0; output_vars.len()];
+
         loop {
             unsafe {
                 let status = (calc_derivs)(
@@ -116,6 +142,23 @@ pub fn run_simulation(
                         }
                     }
                     return Err(format!("Simulation failed at t={:.4} with status {}", time, status));
+                }
+            }
+
+            if do_alg_iter && alg_iter < ALG_FIXED_POINT_MAX {
+                let max_diff = if alg_iter == 0 {
+                    1.0
+                } else {
+                    prev_outputs.iter().zip(outputs.iter())
+                        .map(|(a, b)| (a - b).abs()).fold(0.0_f64, f64::max)
+                };
+                if alg_iter > 0 && max_diff < 1e-10 {
+                    break;
+                }
+                prev_outputs.copy_from_slice(&outputs);
+                alg_iter += 1;
+                if alg_iter < ALG_FIXED_POINT_MAX {
+                    continue;
                 }
             }
 
@@ -168,6 +211,11 @@ pub fn run_simulation(
                     t_end,
                     diag_residual: diag_res_ptr,
                     diag_x: diag_x_ptr,
+                    eval_call_index: std::ptr::null_mut(),
+                    last_eval_time: std::ptr::null_mut(),
+                    last_eval_state: std::ptr::null_mut(),
+                    last_eval_state_len: 0,
+                    scratch_outputs: None,
                 };
                 let mut jac = vec![0.0_f64; n * n];
                 if let Err(code) = system.compute_ode_jacobian_numeric(time, &states, &mut jac, 1e-6) {
@@ -232,8 +280,8 @@ pub fn run_simulation(
         let state_at_t = states.clone();
         let discrete_at_t = discrete_vals.clone();
         let crossings_at_t = crossings.clone();
-        // let derivs_at_t = derivs.clone(); // Not needed for solver
-        
+        scratch_outputs_for_step.copy_from_slice(&outputs);
+
         // Trial Step
         {
             let mut system = System {
@@ -248,14 +296,44 @@ pub fn run_simulation(
                 t_end,
                 diag_residual: diag_res_ptr,
                 diag_x: diag_x_ptr,
+                eval_call_index: eval_call_index_ptr,
+                last_eval_time: last_eval_time_ptr,
+                last_eval_state: last_eval_state_ptr,
+                last_eval_state_len,
+                scratch_outputs: Some(&mut scratch_outputs_for_step),
             };
-            if use_adaptive {
-                rk45_solver.step(&mut system, time, dt, &mut states).unwrap();
-                adaptive_step_count += 1;
+            let step_res = if use_adaptive {
+                let r = rk45_solver.step(&mut system, time, dt, &mut states);
+                if r.is_ok() {
+                    adaptive_step_count += 1;
+                }
+                r
             } else if use_implicit {
-                backward_euler_solver.step(&mut system, time, dt, &mut states).unwrap();
+                backward_euler_solver.step(&mut system, time, dt, &mut states)
             } else {
-                rk4_solver.step(&mut system, time, dt, &mut states).unwrap();
+                rk4_solver.step(&mut system, time, dt, &mut states)
+            };
+            if let Err(status) = step_res {
+                eprintln!("{}", i18n::msg("simulation_failed_at", &[&format!("{:.4}", time) as &dyn std::fmt::Display, &status]));
+                if status == 2 {
+                    eprintln!("{}", i18n::msg0("newton_failure"));
+                    let state_display = if newton_tearing_var_names.is_empty() {
+                        format!("{:?}", states)
+                    } else {
+                        format!("{:?}", diag_state)
+                    };
+                    eprintln!(
+                        "[step] calc_derivs call #{} at time={:.6}, state={}, diag_residual={:.6e}, diag_x={:.6e}",
+                        diag_call_index, diag_time, state_display, diag_residual, diag_x
+                    );
+                    if !newton_tearing_var_names.is_empty() {
+                        let names = newton_tearing_var_names.join(", ");
+                        let res_fmt = format!("{:.6e}", diag_residual);
+                        let val_fmt = format!("{:.6e}", diag_x);
+                        eprintln!("{}", i18n::msg("tearing_vars_residual", &[&names as &dyn std::fmt::Display, &res_fmt as &dyn std::fmt::Display, &val_fmt as &dyn std::fmt::Display]));
+                    }
+                }
+                return Err(format!("Solver step failed with status {}", status));
             }
         }
         let t_trial = time + dt;
@@ -280,6 +358,19 @@ pub fn run_simulation(
             if status != 0 {
                 let t_fmt = format!("{:.4}", t_trial);
                 eprintln!("{}", i18n::msg("simulation_failed_trial", &[&t_fmt as &dyn std::fmt::Display, &status]));
+                if status == 2 {
+                    eprintln!("{}", i18n::msg0("newton_failure"));
+                    eprintln!(
+                        "[trial] time={:.6}, state={:?}, diag_residual={:.6e}, diag_x={:.6e}",
+                        t_trial, states, diag_residual, diag_x
+                    );
+                    if !newton_tearing_var_names.is_empty() {
+                        let names = newton_tearing_var_names.join(", ");
+                        let res_fmt = format!("{:.6e}", diag_residual);
+                        let val_fmt = format!("{:.6e}", diag_x);
+                        eprintln!("{}", i18n::msg("tearing_vars_residual", &[&names as &dyn std::fmt::Display, &res_fmt as &dyn std::fmt::Display, &val_fmt as &dyn std::fmt::Display]));
+                    }
+                }
                 return Err(format!("Simulation failed at t={:.4} (trial step) with status {}", t_trial, status));
             }
         }
@@ -315,7 +406,8 @@ pub fn run_simulation(
                 // Restore and advance
                 states = state_at_t;
                 discrete_vals = discrete_at_t; // Discrete vars constant during step
-                
+                scratch_outputs_for_step.copy_from_slice(&outputs);
+
                 {
                     let mut system = System {
                         calc_derivs,
@@ -329,14 +421,44 @@ pub fn run_simulation(
                         t_end,
                         diag_residual: diag_res_ptr,
                         diag_x: diag_x_ptr,
+                        eval_call_index: eval_call_index_ptr,
+                        last_eval_time: last_eval_time_ptr,
+                        last_eval_state: last_eval_state_ptr,
+                        last_eval_state_len,
+                        scratch_outputs: Some(&mut scratch_outputs_for_step),
                     };
-                    if use_adaptive {
-                        rk45_solver.step(&mut system, time, dt_event, &mut states).unwrap();
-                        adaptive_step_count += 1;
+                    let step_res = if use_adaptive {
+                        let r = rk45_solver.step(&mut system, time, dt_event, &mut states);
+                        if r.is_ok() {
+                            adaptive_step_count += 1;
+                        }
+                        r
                     } else if use_implicit {
-                        backward_euler_solver.step(&mut system, time, dt_event, &mut states).unwrap();
+                        backward_euler_solver.step(&mut system, time, dt_event, &mut states)
                     } else {
-                        rk4_solver.step(&mut system, time, dt_event, &mut states).unwrap();
+                        rk4_solver.step(&mut system, time, dt_event, &mut states)
+                    };
+                    if let Err(status) = step_res {
+                        eprintln!("{}", i18n::msg("simulation_failed_at", &[&format!("{:.4}", time) as &dyn std::fmt::Display, &status]));
+                        if status == 2 {
+                            eprintln!("{}", i18n::msg0("newton_failure"));
+                            let state_display = if newton_tearing_var_names.is_empty() {
+                                format!("{:?}", states)
+                            } else {
+                                format!("{:?}", diag_state)
+                            };
+                            eprintln!(
+                                "[step] calc_derivs call #{} at time={:.6}, state={}, diag_residual={:.6e}, diag_x={:.6e}",
+                                diag_call_index, diag_time, state_display, diag_residual, diag_x
+                            );
+                            if !newton_tearing_var_names.is_empty() {
+                                let names = newton_tearing_var_names.join(", ");
+                                let res_fmt = format!("{:.6e}", diag_residual);
+                                let val_fmt = format!("{:.6e}", diag_x);
+                                eprintln!("{}", i18n::msg("tearing_vars_residual", &[&names as &dyn std::fmt::Display, &res_fmt as &dyn std::fmt::Display, &val_fmt as &dyn std::fmt::Display]));
+                            }
+                        }
+                        return Err(format!("Solver step failed with status {}", status));
                     }
                 }
                 time += dt_event;
@@ -347,7 +469,7 @@ pub fn run_simulation(
             time = t_trial;
         }
     }
-    if when_count == 0 && crossings_count == 0 {
+    if use_adaptive {
         println!("{}", i18n::msg("adaptive_rk45_steps", &[&adaptive_step_count]));
     }
     Ok(())

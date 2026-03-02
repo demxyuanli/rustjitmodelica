@@ -1,14 +1,16 @@
 mod c_codegen;
+mod equation_convert;
+mod initial_conditions;
 mod inline;
 mod jacobian;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Equation, Expression, AlgorithmStatement};
+use crate::ast::{Equation, Expression};
 use crate::backend_dae::{build_simulation_dae, SimulationDae};
 use crate::loader::ModelLoader;
 use crate::flatten::{Flattener, eval_const_expr};
-use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, order_initial_equations_for_application, AnalysisOptions};
+use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, AnalysisOptions};
 use crate::diag::WarningInfo;
 use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
 use crate::expr_eval;
@@ -253,7 +255,7 @@ impl Compiler {
         let param_var_index: HashMap<String, usize> = param_vars.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
 
         // Apply simple constant initial equations / algorithms to override defaults
-        apply_initial_conditions(
+        initial_conditions::apply_initial_conditions(
             &flat_model,
             &mut states,
             &mut discrete_vals,
@@ -346,7 +348,7 @@ impl Compiler {
                 output_var_index.insert(der_var.clone(), pos);
             }
             
-            if let Some((base, _idx)) = parse_array_index(var) {
+            if let Some((base, _idx)) = equation_convert::parse_array_index(var) {
                 if let Some(info) = array_info.get(&base).cloned() {
                     if let ArrayType::State = info.array_type {
                          let der_base = format!("der_{}", base);
@@ -382,7 +384,7 @@ impl Compiler {
         // Second pass: Generate diff equations
         for var in &state_vars_sorted {
             // Check if var is part of an array
-             let rhs_expr = if let Some((base, idx)) = parse_array_index(var) {
+             let rhs_expr = if let Some((base, idx)) = equation_convert::parse_array_index(var) {
                   // Check if base is in array_info (as State)
                   if array_info.contains_key(&base) {
                       let der_base = format!("der_{}", base);
@@ -608,6 +610,13 @@ impl Compiler {
             }
         }
 
+        // F2-1: Fail at compile time with clear message if unsupported der(expr) is present
+        for eq in alg_equations.iter().chain(diff_equations.iter()) {
+            if let Some(hint) = crate::analysis::find_unsupported_der_in_eq(eq) {
+                return Err(format!("Unsupported nested der(): {}. (F2-1)", hint).into());
+            }
+        }
+
         // 5. JIT Compile
         println!("{}", i18n::msg0("jit_compiling"));
         println!("{}", i18n::msg("equations_after_sorting", &[&alg_equations.len()]));
@@ -623,20 +632,20 @@ impl Compiler {
                  Equation::When(c, b, e) => {
                      let nb: Vec<Equation> = b.iter().map(|x| match x { Equation::Simple(l,r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)), _ => x.clone() }).collect();
                      let norm_eq = Equation::When(crate::analysis::normalize_der(c), nb, e.clone());
-                     algorithms.push(convert_eq_to_alg_stmt(norm_eq));
+                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_eq));
                  },
                  Equation::Reinit(v, e) => {
                      let norm_eq = Equation::Reinit(v.clone(), crate::analysis::normalize_der(e));
-                     algorithms.push(convert_eq_to_alg_stmt(norm_eq));
+                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_eq));
                  }
                  Equation::Assert(cond, msg) => {
-                     algorithms.push(convert_eq_to_alg_stmt(Equation::Assert(
+                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(Equation::Assert(
                          crate::analysis::normalize_der(cond),
                          crate::analysis::normalize_der(msg),
                      )));
                  }
                  Equation::Terminate(msg) => {
-                     algorithms.push(convert_eq_to_alg_stmt(Equation::Terminate(
+                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(Equation::Terminate(
                          crate::analysis::normalize_der(msg),
                      )));
                  }
@@ -659,7 +668,7 @@ impl Compiler {
                              _ => e.clone(),
                          }).collect()),
                      );
-                     algorithms.push(convert_eq_to_alg_stmt(norm_if));
+                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_if));
                  }
                 _ => {}
             }
@@ -734,351 +743,3 @@ impl Compiler {
     }
 }
 
-fn convert_eq_to_alg_stmt(eq: Equation) -> AlgorithmStatement {
-    match eq {
-        Equation::Simple(lhs, rhs) => AlgorithmStatement::Assignment(lhs, rhs),
-        Equation::Reinit(var, val) => AlgorithmStatement::Reinit(var, val),
-        Equation::For(var, start, end, body) => {
-            let alg_body = body.into_iter().map(convert_eq_to_alg_stmt).collect();
-            let range = Expression::Range(start, Box::new(Expression::Number(1.0)), end);
-            AlgorithmStatement::For(var, Box::new(range), alg_body)
-        }
-        Equation::When(cond, body, else_whens) => {
-             let alg_body = body.into_iter().map(convert_eq_to_alg_stmt).collect();
-             let alg_else = else_whens.into_iter().map(|(c, b)| (c, b.into_iter().map(convert_eq_to_alg_stmt).collect())).collect();
-             AlgorithmStatement::When(cond, alg_body, alg_else)
-        }
-        Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
-            let then_alg = then_eqs.into_iter().map(convert_eq_to_alg_stmt).collect();
-            let elseif_alg = elseif_list.into_iter()
-                .map(|(c, eb)| (c, eb.into_iter().map(convert_eq_to_alg_stmt).collect()))
-                .collect();
-            let else_alg = else_eqs.map(|eqs| eqs.into_iter().map(convert_eq_to_alg_stmt).collect());
-            AlgorithmStatement::If(cond, then_alg, elseif_alg, else_alg)
-        }
-        Equation::Assert(cond, msg) => AlgorithmStatement::Assert(cond, msg),
-        Equation::Terminate(msg) => AlgorithmStatement::Terminate(msg),
-        Equation::Connect(_, _) => panic!("connect() inside when/algorithm is not supported; use equation section"),
-        Equation::SolvableBlock { .. } => panic!("SolvableBlock (algebraic loop) inside when/algorithm is not supported; put equations in the equation section instead"),
-        Equation::MultiAssign(_, _) => panic!("(a,b,...)=f(x) in when/algorithm is not supported; use equation section"),
-    }
-}
-
-fn parse_array_index(name: &str) -> Option<(String, usize)> {
-    if let Some((base, idx_str)) = name.rsplit_once('_') {
-        if let Ok(idx) = idx_str.parse::<usize>() {
-            return Some((base.to_string(), idx));
-        }
-    }
-    None
-}
-
-/// Apply a very small subset of Modelica initialization semantics:
-/// - Handle `initial equation` and `initial algorithm` that are simple assignments
-///   to scalar variables with constant right-hand sides.
-/// - RHS is evaluated with `eval_const_expr` and can depend only on literals
-///   (no state/discrete/parameter references for now).
-fn apply_initial_conditions(
-    flat_model: &crate::flatten::FlattenedModel,
-    states: &mut [f64],
-    discrete_vals: &mut [f64],
-    params: &mut [f64],
-    state_var_index: &HashMap<String, usize>,
-    discrete_var_index: &HashMap<String, usize>,
-    param_var_index: &HashMap<String, usize>,
-) {
-    use crate::flatten::eval_const_expr;
-    use crate::ast::Expression;
-
-    // Helper: assign value to state / discrete / param vector if name matches.
-    fn assign_var(
-        name: &str,
-        value: f64,
-        states: &mut [f64],
-        discrete_vals: &mut [f64],
-        params: &mut [f64],
-        state_var_index: &HashMap<String, usize>,
-        discrete_var_index: &HashMap<String, usize>,
-        param_var_index: &HashMap<String, usize>,
-    ) {
-        if let Some(&idx) = state_var_index.get(name) {
-            if idx < states.len() {
-                states[idx] = value;
-                return;
-            }
-        }
-        if let Some(&idx) = discrete_var_index.get(name) {
-            if idx < discrete_vals.len() {
-                discrete_vals[idx] = value;
-                return;
-            }
-        }
-        if let Some(&idx) = param_var_index.get(name) {
-            if idx < params.len() {
-                params[idx] = value;
-                return;
-            }
-        }
-    }
-
-    // IR3-3: Apply initial equations in dependency order (fewest unknowns first).
-    let mut known_at_initial = HashSet::new();
-    known_at_initial.insert("time".to_string());
-    for name in param_var_index.keys() {
-        known_at_initial.insert(name.clone());
-    }
-    let initial_order = order_initial_equations_for_application(&flat_model.initial_equations, &known_at_initial);
-    let mut applied = true;
-    let mut pass_limit = 20;
-    while applied && pass_limit > 0 {
-        pass_limit -= 1;
-        applied = false;
-        for &idx in &initial_order {
-            let eq = &flat_model.initial_equations[idx];
-            if let Equation::Simple(lhs, rhs) = eq {
-                if let Expression::Variable(name) = lhs {
-                    let rhs_sub = substitute_initial_values(
-                        rhs,
-                        state_var_index,
-                        discrete_var_index,
-                        param_var_index,
-                        states,
-                        discrete_vals,
-                        params,
-                    );
-                    if let Some(v) = eval_const_expr(&rhs_sub) {
-                        let prev = state_var_index.get(name).and_then(|&i| Some(states[i]))
-                            .or_else(|| discrete_var_index.get(name).and_then(|&i| Some(discrete_vals[i])))
-                            .or_else(|| param_var_index.get(name).and_then(|&i| Some(params[i])));
-                        let changed = prev.map(|p| (p - v).abs() > 1e-15).unwrap_or(true);
-                        if changed {
-                            assign_var(
-                                name,
-                                v,
-                                states,
-                                discrete_vals,
-                                params,
-                                state_var_index,
-                                discrete_var_index,
-                                param_var_index,
-                            );
-                            applied = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // initial algorithm section: apply with substitution of state/discrete/param (consistent init).
-    for stmt in &flat_model.initial_algorithms {
-        if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
-            if let Expression::Variable(name) = lhs {
-                let rhs_sub = substitute_initial_values(
-                    rhs,
-                    state_var_index,
-                    discrete_var_index,
-                    param_var_index,
-                    states,
-                    discrete_vals,
-                    params,
-                );
-                if let Some(v) = eval_const_expr(&rhs_sub) {
-                    assign_var(
-                        name,
-                        v,
-                        states,
-                        discrete_vals,
-                        params,
-                        state_var_index,
-                        discrete_var_index,
-                        param_var_index,
-                    );
-                } else {
-                    eprintln!(
-                        "Warning: initial assignment for '{}' ignored (non-constant rhs: {:?})",
-                        name,
-                        rhs
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Replace occurrences of state, discrete, and parameter variables with current values (for initial system).
-fn substitute_initial_values(
-    expr: &Expression,
-    state_var_index: &HashMap<String, usize>,
-    discrete_var_index: &HashMap<String, usize>,
-    param_var_index: &HashMap<String, usize>,
-    states: &[f64],
-    discrete_vals: &[f64],
-    params: &[f64],
-) -> Expression {
-    use Expression::*;
-    match expr {
-        Variable(name) => {
-            if let Some(&idx) = state_var_index.get(name) {
-                if idx < states.len() {
-                    return Number(states[idx]);
-                }
-            }
-            if let Some(&idx) = discrete_var_index.get(name) {
-                if idx < discrete_vals.len() {
-                    return Number(discrete_vals[idx]);
-                }
-            }
-            if let Some(&idx) = param_var_index.get(name) {
-                if idx < params.len() {
-                    return Number(params[idx]);
-                }
-            }
-            if name == "time" {
-                return Number(0.0);
-            }
-            Variable(name.clone())
-        }
-        Number(n) => Number(*n),
-        BinaryOp(lhs, op, rhs) => BinaryOp(
-            Box::new(substitute_initial_values(
-                lhs, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-            *op,
-            Box::new(substitute_initial_values(
-                rhs, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-        ),
-        Call(func, args) => Call(
-            func.clone(),
-            args.iter()
-                .map(|a| substitute_initial_values(
-                    a, state_var_index, discrete_var_index, param_var_index,
-                    states, discrete_vals, params,
-                ))
-                .collect(),
-        ),
-        Der(inner) => Der(Box::new(substitute_initial_values(
-            inner, state_var_index, discrete_var_index, param_var_index,
-            states, discrete_vals, params,
-        ))),
-        ArrayAccess(arr, idx) => ArrayAccess(
-            Box::new(substitute_initial_values(
-                arr, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-            Box::new(substitute_initial_values(
-                idx, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-        ),
-        If(cond, t, f) => If(
-            Box::new(substitute_initial_values(
-                cond, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-            Box::new(substitute_initial_values(
-                t, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-            Box::new(substitute_initial_values(
-                f, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-        ),
-        Range(start, step, end) => Range(
-            Box::new(substitute_initial_values(
-                start, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-            Box::new(substitute_initial_values(
-                step, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-            Box::new(substitute_initial_values(
-                end, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-        ),
-        ArrayLiteral(items) => ArrayLiteral(
-            items
-                .iter()
-                .map(|e| substitute_initial_values(
-                    e, state_var_index, discrete_var_index, param_var_index,
-                    states, discrete_vals, params,
-                ))
-                .collect(),
-        ),
-        Dot(base, member) => Dot(
-            Box::new(substitute_initial_values(
-                base, state_var_index, discrete_var_index, param_var_index,
-                states, discrete_vals, params,
-            )),
-            member.clone(),
-        ),
-    }
-}
-
-/// Replace occurrences of parameter variables in an expression with their
-/// numeric values from `params`. Used for initial algorithm RHS when no state yet.
-#[allow(dead_code)]
-fn substitute_params(
-    expr: &Expression,
-    param_var_index: &HashMap<String, usize>,
-    params: &[f64],
-) -> Expression {
-    use Expression::*;
-    match expr {
-        Variable(name) => {
-            if let Some(&idx) = param_var_index.get(name) {
-                if idx < params.len() {
-                    return Number(params[idx]);
-                }
-            }
-            Variable(name.clone())
-        }
-        Number(n) => Number(*n),
-        BinaryOp(lhs, op, rhs) => BinaryOp(
-            Box::new(substitute_params(lhs, param_var_index, params)),
-            *op,
-            Box::new(substitute_params(rhs, param_var_index, params)),
-        ),
-        Call(func, args) => Call(
-            func.clone(),
-            args.iter()
-                .map(|a| substitute_params(a, param_var_index, params))
-                .collect(),
-        ),
-        Der(inner) => Der(Box::new(substitute_params(
-            inner,
-            param_var_index,
-            params,
-        ))),
-        ArrayAccess(arr, idx) => ArrayAccess(
-            Box::new(substitute_params(arr, param_var_index, params)),
-            Box::new(substitute_params(idx, param_var_index, params)),
-        ),
-        If(cond, t, f) => If(
-            Box::new(substitute_params(cond, param_var_index, params)),
-            Box::new(substitute_params(t, param_var_index, params)),
-            Box::new(substitute_params(f, param_var_index, params)),
-        ),
-        Range(start, step, end) => Range(
-            Box::new(substitute_params(start, param_var_index, params)),
-            Box::new(substitute_params(step, param_var_index, params)),
-            Box::new(substitute_params(end, param_var_index, params)),
-        ),
-        ArrayLiteral(items) => ArrayLiteral(
-            items
-                .iter()
-                .map(|e| substitute_params(e, param_var_index, params))
-                .collect(),
-        ),
-        Dot(base, member) => Dot(
-            Box::new(substitute_params(base, param_var_index, params)),
-            member.clone(),
-        ),
-    }
-}
