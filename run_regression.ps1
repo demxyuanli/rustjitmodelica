@@ -95,6 +95,7 @@ foreach ($c in $cases) {
     $results += "$sym $name  expect=$expect  actual=$actual (exit $exit)"
 }
 # INT-2 script mode: run script file (load/setParameter/simulate/quit)
+<<<<<<< HEAD
 $scriptTests = @(
     @{ name = "ScriptMode/init_dummy"; path = "scripts/init_dummy.txt"; expect = "pass" },
     @{ name = "ScriptMode/init_with_param_setparam"; path = "scripts/init_with_param_setparam.txt"; expect = "pass" }
@@ -103,6 +104,16 @@ foreach ($t in $scriptTests) {
     $name = $t.name
     $scriptPath = $t.path
     $expect = $t.expect
+=======
+$scriptCases = @(
+    ,@("ScriptMode/init_dummy", "scripts/init_dummy.txt", "pass"),
+    ,@("ScriptMode/init_with_param_setparam", "scripts/init_with_param_setparam.txt", "pass")
+)
+foreach ($c in $scriptCases) {
+    $name = $c[0]
+    $scriptPath = $c[1]
+    $expect = $c[2]
+>>>>>>> 3bdd698a0f593718d53d89abc3876a1b22e30646
     $null = & cargo run --release -- --script=$scriptPath 2>&1
     $exit = $LASTEXITCODE
     $actual = if ($exit -eq 0) { "pass" } else { "fail" }
