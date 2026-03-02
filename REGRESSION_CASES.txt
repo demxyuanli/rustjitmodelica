@@ -1,0 +1,132 @@
+# Regression cases: model_name  status  [notes]
+# status: pass | fail
+# Run: rustmodlica <model_name> (with appropriate TestLib/ or path)
+
+# --- Initialization ---
+TestLib/InitDummy          pass
+TestLib/InitWithParam      pass
+TestLib/InitTwoVars        pass    (IR3: initial eq dependency order y=1, x=2*y)
+TestLib/InitAlg            pass
+TestLib/InitWhen           pass
+
+# --- Jacobian ---
+TestLib/JacobianTest       pass
+
+# --- Algebraic loop / SolvableBlock ---
+TestLib/AlgebraicLoop2Eq   pass
+TestLib/SolvableBlock4Res  pass
+TestLib/AlgebraicLoopWarn  pass    (SolvableBlock single residual tearing)
+TestLib/SolvableBlockMultiRes  pass    (SolvableBlock with 2 residuals supported; IR4-1 supports N=4..32)
+
+# --- noEvent ---
+TestLib/NoEventTest        pass
+TestLib/NoEventInWhen      pass
+TestLib/NoEventInAlg       pass
+
+# --- terminal() ---
+TestLib/TerminalWhen       pass
+
+# --- function entry (F3-1: run once with default inputs 0.0) ---
+TestLib/SimpleFunctionDef  pass    (function evaluated once, result printed)
+
+# --- function inlining (user function call inlined at flatten) ---
+TestLib/FuncInline         pass    (addOne(x) inlined to x+1; y may be alias-eliminated)
+
+# --- Adaptive RK45 ---
+TestLib/AdaptiveRKTest     pass
+
+# --- For flatten ---
+TestLib/SmallFor           pass    (each start = 1 supported)
+TestLib/ForBound1          pass
+TestLib/BigFor             pass
+
+# --- Connect error (expect fail on incompatible types) ---
+TestLib/BadConnect         fail    (incompatible connector types ConnA vs ConnB)
+
+# --- Alias removal (IR2-3: x=y; y=1; der(z)=-z -> 2 aliases eliminated, 1 diff eq) ---
+TestLib/AliasRemoval      pass
+
+# --- Backend DAE (IR1: minimal 1-state model; use --backend-dae-info <model> for DAE stats) ---
+TestLib/BackendDaeInfo    pass
+
+# --- Index reduction / constraint (use --index-reduction-method=debugPrint for time_derivative print) ---
+TestLib/ConstraintEq      pass
+
+# --- Built-in math (abs, sign, sqrt, min, max, mod, rem, div, ceil, floor, integer) ---
+TestLib/MathBuiltins       pass
+
+# --- F2-1: Nested der() in expression ---
+TestLib/NestedDerTest      pass    (y = der(x) + 2; der(x) in RHS)
+
+# --- Annotation (parse-only, stored in AST; ignored in backend) ---
+TestLib/AnnotationParse    pass
+
+# --- record / block / pre/edge/change (F1-1, F1-2, F2-2) ---
+TestLib/SimpleRecord       pass
+TestLib/SimpleBlockTest    pass
+TestLib/SimpleBlock        pass    (block as top-level; F1-2)
+TestLib/PreEdgeChange      pass
+# --- F4-6: record equation flatten ---
+TestLib/RecordEqTest       pass    (p2 = p1 flattened to p2_x = p1_x, p2_y = p1_y)
+# --- F4-1: connect() inside when ---
+TestLib/ConnectInWhen      pass    (conditional connections -> When(cond, eqs, []))
+# --- F3-3: multi-output function (a,b)=f(x) ---
+TestLib/MultiOutputFunc    pass    (TwoOutputs, (a,b)=f(x) expanded to a=y1, b=y2)
+
+# --- Basic / structure ---
+TestLib/SimpleTest         pass
+TestLib/MathTest           pass
+TestLib/ForTest            pass
+TestLib/WhenTest           pass
+TestLib/BouncingBall       pass
+TestLib/Pendulum           fail    (index-2 DAE; solver fails without index reduction)
+TestLib/BLTTest            pass    (SolvableBlock with 2 residuals supported)
+TestLib/TearingTest        pass
+TestLib/ArrayTest          pass
+TestLib/DiscreteTest       pass
+TestLib/IfTest             pass
+TestLib/WhileTest          pass
+TestLib/AlgTest            pass
+TestLib/LoopTest           pass
+TestLib/LibraryTest        pass
+TestLib/HierarchicalMod    pass
+TestLib/NestedConnect      pass
+TestLib/LoopConnect        pass
+TestLib/ArrayConnect       pass
+TestLib/Circuit            pass
+TestLib/Sub                pass
+TestLib/Parent             pass
+TestLib/Child              pass
+TestLib/Base               pass
+TestLib/Component          pass
+TestLib/Container          pass
+TestLib/ChildWithMod       pass
+TestLib/MainPin            pass
+TestLib/Pin                pass
+TestLib/SubPin             pass
+TestLib/VoltageSource      pass
+TestLib/Resistor           pass
+TestLib/TwoPin             pass
+TestLib/Ground             pass
+
+# --- if-equation (F4-3) / assert-terminate (F4-4) / package namespace (F1-3) ---
+TestLib/IfEqTest           pass    (if-equation in equation section)
+TestLib/AssertTerminateTest pass   (assert + terminate in when)
+TestLib/PkgA.PkgB.Inner    pass    (nested package PkgA.PkgB.Inner)
+TestLib/TypeAliasTest      pass    (F1-4 type MyReal = Real)
+TestLib/ReplaceableTest    pass    (MSL-5 replaceable component)
+
+# --- MSL (Modelica Standard Library subset, see MSL_SUBSET.md) ---
+TestLib/LibraryTest        pass    (Sine, Integrator, connect, Modelica.Math.min/max/mod/sign)
+TestLib/MSLBlocksTest       pass    (Constant, Step; MSL-2 Blocks.Sources)
+TestLib/MSLTransferFunctionTest pass (Constant + TransferFunction; MSL-2 Blocks.Continuous)
+TestLib/SIunitsTest       pass    (MSL-4: Modelica.SIunits.Time as Real)
+
+# --- INT-2 script mode (load/setParameter/simulate/quit; run_regression.ps1 runs --script=) ---
+ScriptMode/init_dummy      pass    (scripts/init_dummy.txt: load TestLib/InitDummy, simulate, quit)
+ScriptMode/init_with_param_setparam  pass  (scripts/init_with_param_setparam.txt: load, setParameter a 5, simulate)
+
+# --- Expect fail / known issues ---
+TestLib/BadSyntax          fail    (syntax error)
+TestLib/UnknownTypeError   fail    (type error)
+TestLib/OverdeterminedIndex2Warn  fail    (index-2, Newton fails at t=0)

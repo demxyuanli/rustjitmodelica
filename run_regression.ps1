@@ -7,7 +7,7 @@ $cases = @(
     @("TestLib/InitTwoVars", "pass"),
     @("TestLib/JacobianTest", "pass"),
     @("TestLib/AlgebraicLoop2Eq", "pass"),
-    @("TestLib/SolvableBlock4Res", "fail"),  # 2-block case Newton may fail; 150 iter, alg iteration added
+    @("TestLib/SolvableBlock4Res", "pass"),
     @("TestLib/AlgebraicLoopWarn", "pass"),
     @("TestLib/SolvableBlockMultiRes", "pass"),
     @("TestLib/NoEventTest", "pass"),
@@ -94,6 +94,24 @@ foreach ($c in $cases) {
     $sym = if ($match) { "OK" } else { "!!" }
     $results += "$sym $name  expect=$expect  actual=$actual (exit $exit)"
 }
+# INT-2 script mode: run script file (load/setParameter/simulate/quit)
+$scriptCases = @(
+    ,@("ScriptMode/init_dummy", "scripts/init_dummy.txt", "pass"),
+    ,@("ScriptMode/init_with_param_setparam", "scripts/init_with_param_setparam.txt", "pass")
+)
+foreach ($c in $scriptCases) {
+    $name = $c[0]
+    $scriptPath = $c[1]
+    $expect = $c[2]
+    $null = & cargo run --release -- --script=$scriptPath 2>&1
+    $exit = $LASTEXITCODE
+    $actual = if ($exit -eq 0) { "pass" } else { "fail" }
+    $match = ($actual -eq $expect)
+    if ($match) { $ok++ } else { $bad++ }
+    $sym = if ($match) { "OK" } else { "!!" }
+    $results += "$sym $name  expect=$expect  actual=$actual (exit $exit)"
+}
+
 $results | ForEach-Object { Write-Host $_ }
 Write-Host ""
 Write-Host "Summary: $ok passed (match expected), $bad mismatch"
