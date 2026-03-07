@@ -412,6 +412,7 @@ impl ScriptRunner {
                     &arts.solver,
                     arts.output_interval,
                     arts.result_file.as_deref(),
+                    None,
                 )?;
                 Ok(true)
             }

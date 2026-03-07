@@ -396,6 +396,19 @@ impl Compiler {
         std::mem::take(&mut self.warnings)
     }
 
+    /// Compile a model from source code in memory (for IDE / single-file). Caller may add_path
+    /// for StandardLib/TestLib before this if the model has dependencies.
+    pub fn compile_from_source(
+        &mut self,
+        model_name: &str,
+        code: &str,
+    ) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
+        self.loader
+            .load_model_from_source(model_name, code)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        self.compile(model_name)
+    }
+
     /// Run a function once with given inputs (or 0.0 per input if not provided) and return the output (F3-1).
     fn run_function_once(&mut self, model_name: &str) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
         let root_model = self.loader.load_model(model_name)
