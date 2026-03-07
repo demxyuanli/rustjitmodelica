@@ -122,6 +122,7 @@ pub fn eval_expr(expr: &Expression, vars: &HashMap<String, f64>) -> Result<f64, 
         ArrayAccess(..) | Dot(..) | Range(..) | ArrayLiteral(..) => {
             Err("array/dot/range not supported in function entry eval".into())
         }
+        StringLiteral(_) => Err("string literal not supported in function entry eval (use JIT or C)".into()),
         If(cond, t, f) => {
             let c = eval_expr(cond, vars)?;
             if c != 0.0 {
@@ -130,5 +131,6 @@ pub fn eval_expr(expr: &Expression, vars: &HashMap<String, f64>) -> Result<f64, 
                 eval_expr(f, vars)
             }
         }
+        Sample(_) | Interval(_) | Hold(_) | Previous(_) | SubSample(_, _) | SuperSample(_, _) | ShiftSample(_, _) => Err("sample()/interval()/hold()/previous()/subSample/superSample/shiftSample not supported in eval (SYNC)".into()),
     }
 }

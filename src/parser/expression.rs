@@ -155,7 +155,26 @@ fn parse_factor(pair: Pair<Rule>) -> Expression {
                     _ => {}
                 }
             }
-            Expression::Call(func_name, args)
+            if func_name == "sample" && args.len() == 1 {
+                Expression::Sample(Box::new(args.into_iter().next().unwrap()))
+            } else if func_name == "interval" && args.len() == 1 {
+                Expression::Interval(Box::new(args.into_iter().next().unwrap()))
+            } else if func_name == "hold" && args.len() == 1 {
+                Expression::Hold(Box::new(args.into_iter().next().unwrap()))
+            } else if func_name == "previous" && args.len() == 1 {
+                Expression::Previous(Box::new(args.into_iter().next().unwrap()))
+            } else if func_name == "subsample" && args.len() == 2 {
+                let mut a = args.into_iter();
+                Expression::SubSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
+            } else if func_name == "supersample" && args.len() == 2 {
+                let mut a = args.into_iter();
+                Expression::SuperSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
+            } else if func_name == "shiftsample" && args.len() == 2 {
+                let mut a = args.into_iter();
+                Expression::ShiftSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
+            } else {
+                Expression::Call(func_name, args)
+            }
         }
         Rule::initial_call => Expression::Call("initial".to_string(), Vec::new()),
         Rule::terminal_call => Expression::Call("terminal".to_string(), Vec::new()),
@@ -176,6 +195,14 @@ fn parse_factor(pair: Pair<Rule>) -> Expression {
             let inner_exprs = inner.into_inner();
             let exprs: Vec<Expression> = inner_exprs.map(parse_expression).collect();
             Expression::ArrayLiteral(exprs)
+        }
+        Rule::string_literal => {
+            let s = inner.as_str();
+            let content = s.strip_prefix('"').and_then(|t| t.strip_suffix('"')).unwrap_or(s);
+            let unescaped = content
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
+            Expression::StringLiteral(unescaped)
         }
         _ => unreachable!("Unexpected factor rule: {:?}", inner.as_rule()),
     }

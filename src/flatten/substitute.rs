@@ -94,6 +94,14 @@ impl super::Flattener {
                     .map(|e| self.substitute_stack(e, context_stack))
                     .collect(),
             ),
+            Expression::Sample(inner) => Expression::Sample(Box::new(self.substitute_stack(inner, context_stack))),
+            Expression::Interval(inner) => Expression::Interval(Box::new(self.substitute_stack(inner, context_stack))),
+            Expression::Hold(inner) => Expression::Hold(Box::new(self.substitute_stack(inner, context_stack))),
+            Expression::Previous(inner) => Expression::Previous(Box::new(self.substitute_stack(inner, context_stack))),
+            Expression::SubSample(c, n) => Expression::SubSample(Box::new(self.substitute_stack(c, context_stack)), Box::new(self.substitute_stack(n, context_stack))),
+            Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(self.substitute_stack(c, context_stack)), Box::new(self.substitute_stack(n, context_stack))),
+            Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(self.substitute_stack(c, context_stack)), Box::new(self.substitute_stack(n, context_stack))),
+            Expression::StringLiteral(s) => Expression::StringLiteral(s.clone()),
         }
     }
 
@@ -176,6 +184,14 @@ impl super::Flattener {
                     .map(|e| self.substitute(e, context))
                     .collect(),
             ),
+            Expression::Sample(inner) => Expression::Sample(Box::new(self.substitute(inner, context))),
+            Expression::Interval(inner) => Expression::Interval(Box::new(self.substitute(inner, context))),
+            Expression::Hold(inner) => Expression::Hold(Box::new(self.substitute(inner, context))),
+            Expression::Previous(inner) => Expression::Previous(Box::new(self.substitute(inner, context))),
+            Expression::SubSample(c, n) => Expression::SubSample(Box::new(self.substitute(c, context)), Box::new(self.substitute(n, context))),
+            Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(self.substitute(c, context)), Box::new(self.substitute(n, context))),
+            Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(self.substitute(c, context)), Box::new(self.substitute(n, context))),
+            Expression::StringLiteral(s) => Expression::StringLiteral(s.clone()),
         }
     }
 

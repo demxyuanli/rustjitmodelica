@@ -1,0 +1,4 @@
+// SCRIPT: loadClass (alias for load)
+loadClass TestLib/InitWithParam
+simulate
+quit

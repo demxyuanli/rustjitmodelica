@@ -222,6 +222,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             let mut start_value = None;
                             let mut modifications = Vec::new();
                             let mut decl_annotation: Option<String> = None;
+                            let mut is_rest = false;
 
                             for token in decl_inner {
                                 match token.as_rule() {
@@ -233,6 +234,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                         let expr_pair = token.into_inner().next().unwrap();
                                         start_value =
                                             Some(expression::parse_expression(expr_pair));
+                                    }
+                                    Rule::rest_param => {
+                                        is_rest = true;
                                     }
                                     Rule::modification_part => {
                                         let mod_list = token
@@ -313,6 +317,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 start_value,
                                 array_size,
                                 modifications,
+                                is_rest,
                                 annotation: decl_annotation,
                             });
                         }

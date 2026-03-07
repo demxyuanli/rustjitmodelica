@@ -94,6 +94,13 @@ impl DaeVariableSets {
     }
 }
 
+/// SYNC-2: One clock partition for solver/event handling (vars updated on same clock).
+#[derive(Debug, Clone, Default)]
+pub struct ClockPartition {
+    pub id: String,
+    pub var_names: HashSet<String>,
+}
+
 /// Explicit DAE system: variable sets + equation counts + blocks (IR1-1, IR1-3).
 /// Residual form: 0 = F(x, x', z, u, t).
 #[derive(Debug, Clone)]
@@ -111,6 +118,8 @@ pub struct DaeSystem {
     pub constraint_equation_count: usize,
     /// Partitioning: strongly connected components with block type (IR1-3).
     pub blocks: Vec<BlockInfo>,
+    /// SYNC-2: Clocked variable partitions for solver/event handling.
+    pub clock_partitions: Vec<ClockPartition>,
 }
 
 /// Initial equation system: same structure as DaeSystem but for initial equations only.
@@ -163,6 +172,7 @@ pub fn build_simulation_dae(
     when_equation_count: usize,
     differential_index: u32,
     constraint_equation_count: usize,
+    clock_partitions: &[ClockPartition],
 ) -> SimulationDae {
     let state_set: HashSet<&str> = state_vars.iter().map(String::as_str).collect();
     let discrete_set: HashSet<&str> = discrete_vars.iter().map(String::as_str).collect();
@@ -245,6 +255,7 @@ pub fn build_simulation_dae(
         differential_index,
         constraint_equation_count,
         blocks,
+        clock_partitions: clock_partitions.to_vec(),
     };
 
     SimulationDae { dae, initial }

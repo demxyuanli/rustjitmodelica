@@ -16,6 +16,7 @@ $cases = @(
     @("TestLib/TerminalWhen", "pass"),
     @("TestLib/SimpleFunctionDef", "pass"),
     @("TestLib/FuncInline", "pass"),
+    @("TestLib/RecursiveFunc", "pass"),
     @("TestLib/AdaptiveRKTest", "pass"),
     @("TestLib/SmallFor", "pass"),
     @("TestLib/ForBound1", "pass"),
@@ -36,6 +37,7 @@ $cases = @(
     @("TestLib/BLTTest", "pass"),
     @("TestLib/TearingTest", "pass"),
     @("TestLib/ArrayTest", "pass"),
+    @("TestLib/ArrayLoopTest", "pass"),
     @("TestLib/DiscreteTest", "pass"),
     @("TestLib/IfTest", "pass"),
     @("TestLib/WhileTest", "pass"),
@@ -78,7 +80,16 @@ $cases = @(
     @("TestLib/AssertTerminateTest", "pass"),
     @("TestLib/PkgA.PkgB.Inner", "pass"),
     @("TestLib/TypeAliasTest", "pass"),
-    @("TestLib/ReplaceableTest", "pass")
+    @("TestLib/ReplaceableTest", "pass"),
+    @("TestLib/ClockedPartitionTest", "pass"),
+    @("TestLib/HoldPreviousTest", "pass"),
+    @("TestLib/IntervalClockTest", "pass"),
+    @("TestLib/DefaultArgTest", "pass"),
+    @("TestLib/ReinitTest", "pass"),
+    @("TestLib/ExtLibAnnotationTest", "pass"),
+    @("TestLib/ArrayArgTest", "pass"),
+    @("TestLib/SubSuperShiftSampleTest", "fail"),
+    @("TestLib/RestParamTest", "pass")
 )
 $ok = 0
 $bad = 0
@@ -95,25 +106,24 @@ foreach ($c in $cases) {
     $results += "$sym $name  expect=$expect  actual=$actual (exit $exit)"
 }
 # INT-2 script mode: run script file (load/setParameter/simulate/quit)
-<<<<<<< HEAD
 $scriptTests = @(
     @{ name = "ScriptMode/init_dummy"; path = "scripts/init_dummy.txt"; expect = "pass" },
-    @{ name = "ScriptMode/init_with_param_setparam"; path = "scripts/init_with_param_setparam.txt"; expect = "pass" }
+    @{ name = "ScriptMode/init_with_param_setparam"; path = "scripts/init_with_param_setparam.txt"; expect = "pass" },
+    @{ name = "ScriptMode/multi_model_use"; path = "scripts/multi_model_use.txt"; expect = "pass" },
+    @{ name = "ScriptMode/setStartValue"; path = "scripts/setStartValue.txt"; expect = "pass" },
+    @{ name = "ScriptMode/getParameter"; path = "scripts/getParameter.txt"; expect = "pass" },
+    @{ name = "ScriptMode/setStopTime"; path = "scripts/setStopTime.txt"; expect = "pass" },
+    @{ name = "ScriptMode/setTolerance"; path = "scripts/setTolerance.txt"; expect = "pass" },
+    @{ name = "ScriptMode/saveResult"; path = "scripts/saveResult.txt"; expect = "pass" },
+    @{ name = "ScriptMode/plot"; path = "scripts/plot.txt"; expect = "pass" },
+    @{ name = "ScriptMode/eval"; path = "scripts/eval.txt"; expect = "pass" },
+    @{ name = "ScriptMode/loadClass"; path = "scripts/loadClass.txt"; expect = "pass" },
+    @{ name = "ScriptMode/switchModel"; path = "scripts/switchModel.txt"; expect = "pass" }
 )
 foreach ($t in $scriptTests) {
     $name = $t.name
     $scriptPath = $t.path
     $expect = $t.expect
-=======
-$scriptCases = @(
-    ,@("ScriptMode/init_dummy", "scripts/init_dummy.txt", "pass"),
-    ,@("ScriptMode/init_with_param_setparam", "scripts/init_with_param_setparam.txt", "pass")
-)
-foreach ($c in $scriptCases) {
-    $name = $c[0]
-    $scriptPath = $c[1]
-    $expect = $c[2]
->>>>>>> 3bdd698a0f593718d53d89abc3876a1b22e30646
     $null = & cargo run --release -- --script=$scriptPath 2>&1
     $exit = $LASTEXITCODE
     $actual = if ($exit -eq 0) { "pass" } else { "fail" }
@@ -122,6 +132,48 @@ foreach ($c in $scriptCases) {
     $sym = if ($match) { "OK" } else { "!!" }
     $results += "$sym $name  expect=$expect  actual=$actual (exit $exit)"
 }
+# FUNC-6: emit-c with user function (static C body)
+$emitCTests = @(
+    @{ name = "EmitC/RecursiveFunc"; opts = "--emit-c=build_regress_emit"; model = "TestLib/RecursiveFunc"; expect = "pass" }
+)
+if (-not (Test-Path build_regress_emit)) { New-Item -ItemType Directory -Path build_regress_emit | Out-Null }
+foreach ($t in $emitCTests) {
+    $name = $t.name
+    $expect = $t.expect
+    $null = & cargo run --release -- $t.opts $t.model 2>&1
+    $exit = $LASTEXITCODE
+    $actual = if ($exit -eq 0) { "pass" } else { "fail" }
+    $match = ($actual -eq $expect)
+    if ($match) { $ok++ } else { $bad++ }
+    $sym = if ($match) { "OK" } else { "!!" }
+    $results += "$sym $name  expect=$expect  actual=$actual (exit $exit)"
+}
+# FUNC-7: emit-c with external string arg; JIT fails but C must be emitted with const char* and string literal
+if (-not (Test-Path build_regress_emit_string)) { New-Item -ItemType Directory -Path build_regress_emit_string | Out-Null }
+$null = & cargo run --release -- --emit-c=build_regress_emit_string TestLib/StringArgExtFunc 2>&1
+$exitString = $LASTEXITCODE
+$cPath = "build_regress_emit_string\model.c"
+$func7Ok = ($exitString -ne 0) -and (Test-Path $cPath)
+if ($func7Ok) {
+    $cContent = Get-Content -Raw $cPath
+    $func7Ok = ($cContent -match "const char\*") -and ($cContent -match "extLog") -and ($cContent -match "test")
+}
+if ($func7Ok) { $ok++ } else { $bad++ }
+$sym = if ($func7Ok) { "OK" } else { "!!" }
+$results += "$sym FUNC-7/EmitC/StringArgExtFunc  expect=emit C with string ABI  actual=$(if ($func7Ok) { 'pass' } else { 'fail' })"
+# SYNC-2: clocked semantics (when sample(...)); run with backend-dae-info and check clocked line present
+$sync2Out = & cargo run --release -- --backend-dae-info TestLib/ClockedPartitionTest 2>&1
+$sync2Ok = ($LASTEXITCODE -eq 0) -and ($sync2Out -match "clocked")
+if ($sync2Ok) { $ok++ } else { $bad++ }
+$sym = if ($sync2Ok) { "OK" } else { "!!" }
+$results += "$sym SYNC-2/ClockedPartitionTest  expect=backend clocked output  actual=$(if ($sync2Ok) { 'pass' } else { 'fail' })"
+# FMI emit: --emit-fmu produces modelDescription.xml and fmi2_cs.c
+if (-not (Test-Path build_regress_fmu)) { New-Item -ItemType Directory -Path build_regress_fmu | Out-Null }
+$null = & cargo run --release -- --emit-fmu=build_regress_fmu TestLib/SimpleTest 2>&1
+$fmiOk = ($LASTEXITCODE -eq 0) -and (Test-Path "build_regress_fmu\modelDescription.xml") -and (Test-Path "build_regress_fmu\fmi2_cs.c")
+if ($fmiOk) { $ok++ } else { $bad++ }
+$sym = if ($fmiOk) { "OK" } else { "!!" }
+$results += "$sym FMI/emit-fmu  expect=modelDescription.xml and fmi2_cs.c  actual=$(if ($fmiOk) { 'pass' } else { 'fail' })"
 
 $results | ForEach-Object { Write-Host $_ }
 Write-Host ""

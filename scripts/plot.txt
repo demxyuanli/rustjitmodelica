@@ -1,0 +1,5 @@
+// SCRIPT: plot (stub)
+load TestLib/InitWithParam
+plot x
+simulate
+quit

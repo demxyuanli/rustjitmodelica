@@ -313,6 +313,55 @@ pub fn substitute_initial_values(
             )),
             member.clone(),
         ),
+        Hold(inner) => Hold(Box::new(substitute_initial_values(
+            inner,
+            state_var_index,
+            discrete_var_index,
+            param_var_index,
+            states,
+            discrete_vals,
+            params,
+        ))),
+        Previous(inner) => Previous(Box::new(substitute_initial_values(
+            inner,
+            state_var_index,
+            discrete_var_index,
+            param_var_index,
+            states,
+            discrete_vals,
+            params,
+        ))),
+        SubSample(c, n) => SubSample(
+            Box::new(substitute_initial_values(c, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+            Box::new(substitute_initial_values(n, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+        ),
+        SuperSample(c, n) => SuperSample(
+            Box::new(substitute_initial_values(c, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+            Box::new(substitute_initial_values(n, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+        ),
+        ShiftSample(c, n) => ShiftSample(
+            Box::new(substitute_initial_values(c, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+            Box::new(substitute_initial_values(n, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+        ),
+        Sample(inner) => Sample(Box::new(substitute_initial_values(
+            inner,
+            state_var_index,
+            discrete_var_index,
+            param_var_index,
+            states,
+            discrete_vals,
+            params,
+        ))),
+        Interval(inner) => Interval(Box::new(substitute_initial_values(
+            inner,
+            state_var_index,
+            discrete_var_index,
+            param_var_index,
+            states,
+            discrete_vals,
+            params,
+        ))),
+        StringLiteral(s) => StringLiteral(s.clone()),
     }
 }
 
@@ -373,5 +422,13 @@ pub fn substitute_params(
             Box::new(substitute_params(base, param_var_index, params)),
             member.clone(),
         ),
+        Sample(inner) => Sample(Box::new(substitute_params(inner, param_var_index, params))),
+        Interval(inner) => Interval(Box::new(substitute_params(inner, param_var_index, params))),
+        Hold(inner) => Hold(Box::new(substitute_params(inner, param_var_index, params))),
+        Previous(inner) => Previous(Box::new(substitute_params(inner, param_var_index, params))),
+        SubSample(c, n) => SubSample(Box::new(substitute_params(c, param_var_index, params)), Box::new(substitute_params(n, param_var_index, params))),
+        SuperSample(c, n) => SuperSample(Box::new(substitute_params(c, param_var_index, params)), Box::new(substitute_params(n, param_var_index, params))),
+        ShiftSample(c, n) => ShiftSample(Box::new(substitute_params(c, param_var_index, params)), Box::new(substitute_params(n, param_var_index, params))),
+        StringLiteral(s) => StringLiteral(s.clone()),
     }
 }

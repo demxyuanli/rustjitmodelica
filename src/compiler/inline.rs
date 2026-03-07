@@ -36,7 +36,61 @@ fn substitute_expr(expr: &Expression, subst: &HashMap<String, Expression>) -> Ex
         ),
         ArrayLiteral(items) => ArrayLiteral(items.iter().map(|e| substitute_expr(e, subst)).collect()),
         Dot(base, member) => Dot(Box::new(substitute_expr(base, subst)), member.clone()),
+        Sample(inner) => Sample(Box::new(substitute_expr(inner, subst))),
+        Interval(inner) => Interval(Box::new(substitute_expr(inner, subst))),
+        Hold(inner) => Hold(Box::new(substitute_expr(inner, subst))),
+        Previous(inner) => Previous(Box::new(substitute_expr(inner, subst))),
+        SubSample(c, n) => SubSample(Box::new(substitute_expr(c, subst)), Box::new(substitute_expr(n, subst))),
+        SuperSample(c, n) => SuperSample(Box::new(substitute_expr(c, subst)), Box::new(substitute_expr(n, subst))),
+        ShiftSample(c, n) => ShiftSample(Box::new(substitute_expr(c, subst)), Box::new(substitute_expr(n, subst))),
+        StringLiteral(s) => StringLiteral(s.clone()),
     }
+}
+
+/// FUNC-4: Returns true if function body has side effects (reinit/assert/terminate or assign to non-local).
+fn function_has_side_effects(model: &Model, output_names: &[String], local_names: &std::collections::HashSet<String>) -> bool {
+    let allowed: std::collections::HashSet<&String> = output_names.iter().chain(local_names.iter()).collect();
+    stmts_has_side_effects_one(&model.algorithms, output_names, local_names, &allowed)
+}
+
+fn stmts_has_side_effects_one(
+    stmts: &[AlgorithmStatement],
+    output_names: &[String],
+    local_names: &std::collections::HashSet<String>,
+    allowed: &std::collections::HashSet<&String>,
+) -> bool {
+    use crate::ast::AlgorithmStatement;
+    for stmt in stmts {
+        match stmt {
+            AlgorithmStatement::Reinit(_, _) | AlgorithmStatement::Assert(_, _) | AlgorithmStatement::Terminate(_) => return true,
+            AlgorithmStatement::Assignment(lhs, _) => {
+                if let Expression::Variable(name) = lhs {
+                    if !allowed.contains(&name) {
+                        return true;
+                    }
+                }
+            }
+            AlgorithmStatement::If(_, then_s, else_if, else_s) => {
+                if stmts_has_side_effects_one(then_s, output_names, local_names, allowed) { return true; }
+                for (_, s) in else_if {
+                    if stmts_has_side_effects_one(s, output_names, local_names, allowed) { return true; }
+                }
+                if let Some(s) = else_s {
+                    if stmts_has_side_effects_one(s, output_names, local_names, allowed) { return true; }
+                }
+            }
+            AlgorithmStatement::For(_, _, s) | AlgorithmStatement::While(_, s) => {
+                if stmts_has_side_effects_one(s, output_names, local_names, allowed) { return true; }
+            }
+            AlgorithmStatement::When(_, s, elsewhen_list) => {
+                if stmts_has_side_effects_one(s, output_names, local_names, allowed) { return true; }
+                for (_, s) in elsewhen_list {
+                    if stmts_has_side_effects_one(s, output_names, local_names, allowed) { return true; }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Returns (input_names, outputs) where outputs is (name, expr) per output in declaration order.
@@ -51,6 +105,13 @@ pub(crate) fn get_function_body(model: &Model) -> Option<(Vec<String>, Vec<(Stri
     let input_names: Vec<String> = model.declarations.iter().filter(|d| d.is_input).map(|d| d.name.clone()).collect();
     let output_names: Vec<String> = model.declarations.iter().filter(|d| d.is_output).map(|d| d.name.clone()).collect();
     if output_names.is_empty() {
+        return None;
+    }
+    let local_names: std::collections::HashSet<String> = model.declarations.iter()
+        .filter(|d| !d.is_input && !d.is_output)
+        .map(|d| d.name.clone())
+        .collect();
+    if function_has_side_effects(model, &output_names, &local_names) {
         return None;
     }
     let mut out_exprs: HashMap<String, Expression> = HashMap::new();
@@ -73,7 +134,8 @@ pub(crate) fn get_function_body(model: &Model) -> Option<(Vec<String>, Vec<(Stri
     Some((input_names, ordered))
 }
 
-fn is_builtin_function(name: &str) -> bool {
+/// FUNC-2: Exposed so compiler can detect remaining user calls that were not inlined.
+pub(crate) fn is_builtin_function(name: &str) -> bool {
     matches!(name,
         "abs" | "sign" | "sqrt" | "min" | "max" | "mod" | "rem" | "div" | "integer"
         | "ceil" | "floor" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
@@ -82,11 +144,24 @@ fn is_builtin_function(name: &str) -> bool {
     ) || name.starts_with("Modelica.Math.")
 }
 
-fn inline_expr(expr: &Expression, loader: &mut ModelLoader, cache: &mut HashMap<String, Arc<Model>>) -> Expression {
+const MAX_INLINE_RECURSION_DEPTH: u32 = 64;
+
+fn inline_expr(
+    expr: &Expression,
+    loader: &mut ModelLoader,
+    cache: &mut HashMap<String, Arc<Model>>,
+    depth: u32,
+) -> Expression {
     use Expression::*;
     match expr {
         Call(name, args) => {
             let name = name.as_str();
+            if depth > MAX_INLINE_RECURSION_DEPTH {
+                return Call(
+                    name.to_string(),
+                    args.iter().map(|a| inline_expr(a, loader, cache, depth + 1)).collect(),
+                );
+            }
             let func = if is_builtin_function(name) {
                 None
             } else {
@@ -96,7 +171,7 @@ fn inline_expr(expr: &Expression, loader: &mut ModelLoader, cache: &mut HashMap<
                 if let Some((input_names, outputs)) = get_function_body(func_model.as_ref()) {
                     if input_names.len() == args.len() && outputs.len() == 1 {
                         cache.insert(name.to_string(), Arc::clone(&func_model));
-                        let args_inlined: Vec<Expression> = args.iter().map(|a| inline_expr(a, loader, cache)).collect();
+                        let args_inlined: Vec<Expression> = args.iter().map(|a| inline_expr(a, loader, cache, depth + 1)).collect();
                         let mut subst = HashMap::new();
                         for (i, in_name) in input_names.iter().enumerate() {
                             if i < args_inlined.len() {
@@ -107,73 +182,81 @@ fn inline_expr(expr: &Expression, loader: &mut ModelLoader, cache: &mut HashMap<
                     }
                 }
             }
-            Call(name.to_string(), args.iter().map(|a| inline_expr(a, loader, cache)).collect())
+            Call(name.to_string(), args.iter().map(|a| inline_expr(a, loader, cache, depth + 1)).collect())
         }
         Variable(_) | Number(_) => expr.clone(),
         BinaryOp(lhs, op, rhs) => BinaryOp(
-            Box::new(inline_expr(lhs, loader, cache)),
+            Box::new(inline_expr(lhs, loader, cache, depth + 1)),
             *op,
-            Box::new(inline_expr(rhs, loader, cache)),
+            Box::new(inline_expr(rhs, loader, cache, depth + 1)),
         ),
-        Der(inner) => Der(Box::new(inline_expr(inner, loader, cache))),
+        Der(inner) => Der(Box::new(inline_expr(inner, loader, cache, depth + 1))),
         ArrayAccess(arr, idx) => ArrayAccess(
-            Box::new(inline_expr(arr, loader, cache)),
-            Box::new(inline_expr(idx, loader, cache)),
+            Box::new(inline_expr(arr, loader, cache, depth + 1)),
+            Box::new(inline_expr(idx, loader, cache, depth + 1)),
         ),
         If(cond, t, f) => If(
-            Box::new(inline_expr(cond, loader, cache)),
-            Box::new(inline_expr(t, loader, cache)),
-            Box::new(inline_expr(f, loader, cache)),
+            Box::new(inline_expr(cond, loader, cache, depth + 1)),
+            Box::new(inline_expr(t, loader, cache, depth + 1)),
+            Box::new(inline_expr(f, loader, cache, depth + 1)),
         ),
         Range(start, step, end) => Range(
-            Box::new(inline_expr(start, loader, cache)),
-            Box::new(inline_expr(step, loader, cache)),
-            Box::new(inline_expr(end, loader, cache)),
+            Box::new(inline_expr(start, loader, cache, depth + 1)),
+            Box::new(inline_expr(step, loader, cache, depth + 1)),
+            Box::new(inline_expr(end, loader, cache, depth + 1)),
         ),
-        ArrayLiteral(items) => ArrayLiteral(items.iter().map(|e| inline_expr(e, loader, cache)).collect()),
-        Dot(base, member) => Dot(Box::new(inline_expr(base, loader, cache)), member.clone()),
+        ArrayLiteral(items) => ArrayLiteral(items.iter().map(|e| inline_expr(e, loader, cache, depth + 1)).collect()),
+        Dot(base, member) => Dot(Box::new(inline_expr(base, loader, cache, depth + 1)), member.clone()),
+        Sample(inner) => Sample(Box::new(inline_expr(inner, loader, cache, depth + 1))),
+        Interval(inner) => Interval(Box::new(inline_expr(inner, loader, cache, depth + 1))),
+        Hold(inner) => Hold(Box::new(inline_expr(inner, loader, cache, depth + 1))),
+        Previous(inner) => Previous(Box::new(inline_expr(inner, loader, cache, depth + 1))),
+        SubSample(c, n) => SubSample(Box::new(inline_expr(c, loader, cache, depth + 1)), Box::new(inline_expr(n, loader, cache, depth + 1))),
+        SuperSample(c, n) => SuperSample(Box::new(inline_expr(c, loader, cache, depth + 1)), Box::new(inline_expr(n, loader, cache, depth + 1))),
+        ShiftSample(c, n) => ShiftSample(Box::new(inline_expr(c, loader, cache, depth + 1)), Box::new(inline_expr(n, loader, cache, depth + 1))),
+        StringLiteral(s) => StringLiteral(s.clone()),
     }
 }
 
 fn inline_equation(eq: &Equation, loader: &mut ModelLoader, cache: &mut HashMap<String, Arc<Model>>) -> Equation {
     match eq {
         Equation::Simple(lhs, rhs) => Equation::Simple(
-            inline_expr(lhs, loader, cache),
-            inline_expr(rhs, loader, cache),
+            inline_expr(lhs, loader, cache, 0),
+            inline_expr(rhs, loader, cache, 0),
         ),
         Equation::For(var, start, end, body) => Equation::For(
             var.clone(),
-            Box::new(inline_expr(start, loader, cache)),
-            Box::new(inline_expr(end, loader, cache)),
+            Box::new(inline_expr(start, loader, cache, 0)),
+            Box::new(inline_expr(end, loader, cache, 0)),
             body.iter().map(|e| inline_equation(e, loader, cache)).collect(),
         ),
         Equation::When(cond, body, elses) => Equation::When(
-            inline_expr(cond, loader, cache),
+            inline_expr(cond, loader, cache, 0),
             body.iter().map(|e| inline_equation(e, loader, cache)).collect(),
-            elses.iter().map(|(c, b)| (inline_expr(c, loader, cache), b.iter().map(|e| inline_equation(e, loader, cache)).collect())).collect(),
+            elses.iter().map(|(c, b)| (inline_expr(c, loader, cache, 0), b.iter().map(|e| inline_equation(e, loader, cache)).collect())).collect(),
         ),
-        Equation::Reinit(var, e) => Equation::Reinit(var.clone(), inline_expr(e, loader, cache)),
-        Equation::Connect(a, b) => Equation::Connect(inline_expr(a, loader, cache), inline_expr(b, loader, cache)),
-        Equation::Assert(cond, msg) => Equation::Assert(inline_expr(cond, loader, cache), inline_expr(msg, loader, cache)),
-        Equation::Terminate(msg) => Equation::Terminate(inline_expr(msg, loader, cache)),
+        Equation::Reinit(var, e) => Equation::Reinit(var.clone(), inline_expr(e, loader, cache, 0)),
+        Equation::Connect(a, b) => Equation::Connect(inline_expr(a, loader, cache, 0), inline_expr(b, loader, cache, 0)),
+        Equation::Assert(cond, msg) => Equation::Assert(inline_expr(cond, loader, cache, 0), inline_expr(msg, loader, cache, 0)),
+        Equation::Terminate(msg) => Equation::Terminate(inline_expr(msg, loader, cache, 0)),
         Equation::SolvableBlock { unknowns, tearing_var, equations, residuals } => Equation::SolvableBlock {
             unknowns: unknowns.clone(),
             tearing_var: tearing_var.clone(),
             equations: equations.iter().map(|e| inline_equation(e, loader, cache)).collect(),
-            residuals: residuals.iter().map(|r| inline_expr(r, loader, cache)).collect(),
+            residuals: residuals.iter().map(|r| inline_expr(r, loader, cache, 0)).collect(),
         },
         Equation::If(cond, then_eqs, elseif_list, else_eqs) => Equation::If(
-            inline_expr(cond, loader, cache),
+            inline_expr(cond, loader, cache, 0),
             then_eqs.iter().map(|e| inline_equation(e, loader, cache)).collect(),
             elseif_list.iter().map(|(c, eb)| (
-                inline_expr(c, loader, cache),
+                inline_expr(c, loader, cache, 0),
                 eb.iter().map(|e| inline_equation(e, loader, cache)).collect(),
             )).collect(),
             else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| inline_equation(e, loader, cache)).collect()),
         ),
         Equation::MultiAssign(lhss, rhs) => Equation::MultiAssign(
-            lhss.iter().map(|e| inline_expr(e, loader, cache)).collect(),
-            inline_expr(rhs, loader, cache),
+            lhss.iter().map(|e| inline_expr(e, loader, cache, 0)).collect(),
+            inline_expr(rhs, loader, cache, 0),
         ),
     }
 }
@@ -182,33 +265,33 @@ fn inline_algorithm(stmt: &AlgorithmStatement, loader: &mut ModelLoader, cache: 
     match stmt {
         AlgorithmStatement::Assignment(lhs, rhs) => AlgorithmStatement::Assignment(
             lhs.clone(),
-            inline_expr(rhs, loader, cache),
+            inline_expr(rhs, loader, cache, 0),
         ),
-        AlgorithmStatement::Reinit(var, e) => AlgorithmStatement::Reinit(var.clone(), inline_expr(e, loader, cache)),
+        AlgorithmStatement::Reinit(var, e) => AlgorithmStatement::Reinit(var.clone(), inline_expr(e, loader, cache, 0)),
         AlgorithmStatement::Assert(cond, msg) => AlgorithmStatement::Assert(
-            inline_expr(cond, loader, cache),
-            inline_expr(msg, loader, cache),
+            inline_expr(cond, loader, cache, 0),
+            inline_expr(msg, loader, cache, 0),
         ),
-        AlgorithmStatement::Terminate(msg) => AlgorithmStatement::Terminate(inline_expr(msg, loader, cache)),
+        AlgorithmStatement::Terminate(msg) => AlgorithmStatement::Terminate(inline_expr(msg, loader, cache, 0)),
         AlgorithmStatement::If(cond, t, eifs, els) => AlgorithmStatement::If(
-            inline_expr(cond, loader, cache),
+            inline_expr(cond, loader, cache, 0),
             t.iter().map(|s| inline_algorithm(s, loader, cache)).collect(),
-            eifs.iter().map(|(c, b)| (inline_expr(c, loader, cache), b.iter().map(|s| inline_algorithm(s, loader, cache)).collect())).collect(),
+            eifs.iter().map(|(c, b)| (inline_expr(c, loader, cache, 0), b.iter().map(|s| inline_algorithm(s, loader, cache)).collect())).collect(),
             els.as_ref().map(|b| b.iter().map(|s| inline_algorithm(s, loader, cache)).collect()),
         ),
         AlgorithmStatement::For(var, range, body) => AlgorithmStatement::For(
             var.clone(),
-            Box::new(inline_expr(&*range, loader, cache)),
+            Box::new(inline_expr(&*range, loader, cache, 0)),
             body.iter().map(|s| inline_algorithm(s, loader, cache)).collect(),
         ),
         AlgorithmStatement::While(cond, body) => AlgorithmStatement::While(
-            inline_expr(cond, loader, cache),
+            inline_expr(cond, loader, cache, 0),
             body.iter().map(|s| inline_algorithm(s, loader, cache)).collect(),
         ),
         AlgorithmStatement::When(cond, body, elses) => AlgorithmStatement::When(
-            inline_expr(cond, loader, cache),
+            inline_expr(cond, loader, cache, 0),
             body.iter().map(|s| inline_algorithm(s, loader, cache)).collect(),
-            elses.iter().map(|(c, b)| (inline_expr(c, loader, cache), b.iter().map(|s| inline_algorithm(s, loader, cache)).collect())).collect(),
+            elses.iter().map(|(c, b)| (inline_expr(c, loader, cache, 0), b.iter().map(|s| inline_algorithm(s, loader, cache)).collect())).collect(),
         ),
     }
 }

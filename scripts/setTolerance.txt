@@ -1,0 +1,5 @@
+// SCRIPT: setTolerance
+load TestLib/InitWithParam
+setTolerance 1e-6 1e-5
+simulate
+quit

@@ -1,0 +1,5 @@
+// SCRIPT: saveResult / setResultFile
+load TestLib/InitWithParam
+setResultFile build_regress_script_result.csv
+simulate
+quit

@@ -1,0 +1,7 @@
+// SCRIPT: switchModel
+load TestLib/InitWithParam
+load TestLib/SimpleTest
+switchModel TestLib/InitWithParam
+setParameter a 4
+simulate
+quit

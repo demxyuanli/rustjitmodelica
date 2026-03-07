@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
+use cranelift_module::FuncId;
 use cranelift::codegen::ir::StackSlot;
 use super::types::ArrayInfo;
 
@@ -38,6 +39,9 @@ pub struct TranslationContext<'a> {
     /// When set, JIT writes residual and tearing value on Newton failure (status 2) for diagnostics.
     pub diag_residual_ptr: Option<Value>,
     pub diag_x_ptr: Option<Value>,
+
+    /// FUNC-7: Cache of declared import func_id by name so array-arg calls use consistent signature.
+    pub declared_imports: Option<&'a mut HashMap<String, FuncId>>,
 }
 
 impl<'a> TranslationContext<'a> {
@@ -65,6 +69,7 @@ impl<'a> TranslationContext<'a> {
         output_var_index: &'a HashMap<String, usize>,
         diag_residual_ptr: Option<Value>,
         diag_x_ptr: Option<Value>,
+        declared_imports: Option<&'a mut HashMap<String, FuncId>>,
     ) -> Self {
         Self {
             module,
@@ -90,6 +95,7 @@ impl<'a> TranslationContext<'a> {
             output_var_index,
             diag_residual_ptr,
             diag_x_ptr,
+            declared_imports,
         }
     }
 

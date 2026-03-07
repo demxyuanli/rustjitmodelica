@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.102"
+libloading = "0.8"
 cranelift = "0.128.3"
 cranelift-frontend = "0.128.3"
 cranelift-jit = "0.128.3"

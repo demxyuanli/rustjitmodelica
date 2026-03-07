@@ -108,6 +108,14 @@ pub(crate) fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
         Expression::Dot(b, _) => {
             collect_vars_expr(b, vars);
         }
+        Expression::Sample(inner) => collect_vars_expr(inner, vars),
+        Expression::Interval(inner) => collect_vars_expr(inner, vars),
+        Expression::Hold(inner) => collect_vars_expr(inner, vars),
+        Expression::Previous(inner) => collect_vars_expr(inner, vars),
+        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+            collect_vars_expr(c, vars);
+            collect_vars_expr(n, vars);
+        }
         _ => {}
     }
 }
@@ -132,6 +140,13 @@ pub fn contains_var(expr: &Expression, var_name: &str) -> bool {
         Expression::ArrayLiteral(es) => es.iter().any(|e| contains_var(e, var_name)),
         Expression::Range(start, step, end) => {
             contains_var(start, var_name) || contains_var(step, var_name) || contains_var(end, var_name)
+        }
+        Expression::Sample(inner) => contains_var(inner, var_name),
+        Expression::Interval(inner) => contains_var(inner, var_name),
+        Expression::Hold(inner) => contains_var(inner, var_name),
+        Expression::Previous(inner) => contains_var(inner, var_name),
+        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+            contains_var(c, var_name) || contains_var(n, var_name)
         }
         _ => false,
     }

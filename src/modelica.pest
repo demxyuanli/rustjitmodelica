@@ -31,7 +31,8 @@ modification_part = { "(" ~ modification_list ~ ")" }
 modification_list = { modification ~ ("," ~ modification)* }
 modification = { ("redeclare" ~ WHITESPACE? ~ (type_name ~ WHITESPACE?)?)? ~ ("each" ~ WHITESPACE?)? ~ component_ref ~ "=" ~ expression }
 
-declaration = { (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ (replaceable_kw)? ~ type_name ~ identifier ~ array_subscript? ~ modification_part? ~ value_assignment? ~ string_comment? ~ annotation? ~ ";" }
+declaration = { (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ (replaceable_kw)? ~ type_name ~ identifier ~ array_subscript? ~ rest_param? ~ modification_part? ~ value_assignment? ~ string_comment? ~ annotation? ~ ";" }
+rest_param = { "..." }
 replaceable_kw = { "replaceable" }
 
 string_comment = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
@@ -111,7 +112,8 @@ and_op = { "and" }
 arithmetic_expression = { term ~ (add_sub ~ term)* }
 term = { unary_minus? ~ factor ~ (mul_div ~ factor)* }
 // Order matters: try der_call/function_call/initial_call/terminal_call before component_ref
-factor = { der_call | function_call | initial_call | terminal_call | assert_call | terminate_call | component_ref | number | "(" ~ expression ~ ")" | array_literal }
+factor = { der_call | function_call | initial_call | terminal_call | assert_call | terminate_call | component_ref | number | string_literal | "(" ~ expression ~ ")" | array_literal }
+string_literal = @{ "\"" ~ (("\\" ~ "\"") | ("\\" ~ "\\") | (!("\\" | "\"") ~ ANY))* ~ "\"" }
 assert_call = { "assert" ~ "(" ~ expression ~ "," ~ expression ~ ")" }
 terminate_call = { "terminate" ~ "(" ~ expression ~ ")" }
 

@@ -15,6 +15,7 @@ pub mod analysis;
 pub use self::types::{ArrayType, ArrayInfo, CalcDerivsFunc};
 use self::context::TranslationContext;
 use self::translator::{compile_algorithm_stmt, compile_equation};
+use self::translator::expr::compile_expression;
 use self::analysis::{collect_modified, collect_modified_equations};
 use self::native::register_symbols;
 
@@ -28,12 +29,22 @@ pub struct Jit {
 
 impl Jit {
     pub fn new() -> Self {
+        Self::new_with_extra_symbols(None)
+    }
+
+    /// EXT-2: Create JIT with optional extra symbols (e.g. from --external-lib loaded libraries).
+    pub fn new_with_extra_symbols(extra: Option<&std::collections::HashMap<String, *const u8>>) -> Self {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
-        
+
         register_symbols(&mut builder);
+        if let Some(map) = extra {
+            for (name, ptr) in map {
+                builder.symbol(name, *ptr);
+            }
+        }
 
         let module = JITModule::new(builder);
-        
+
         Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
@@ -152,6 +163,7 @@ impl Jit {
 
             let mut when_idx = 0;
             let mut crossings_idx = 0;
+            let mut declared_imports = HashMap::new();
             let mut t_ctx = TranslationContext::new(
                 &mut self.module,
                 &mut var_map,
@@ -176,6 +188,7 @@ impl Jit {
                 &output_var_index,
                 diag_res,
                 diag_x,
+                Some(&mut declared_imports),
             );
 
             for stmt in algorithms {
@@ -213,5 +226,96 @@ impl Jit {
         let code = self.module.get_finalized_function(func_id);
         let func: CalcDerivsFunc = unsafe { mem::transmute(code) };
         Ok((func, when_count, crossings_count))
+    }
+
+    /// FUNC-2: Compile a single-output user function to a JIT stub (f64, ...) -> f64 and return its pointer.
+    /// The stub is defined in this module; call finalize_definitions and get_finalized_function after this.
+    pub fn compile_user_function_stub(
+        &mut self,
+        name: &str,
+        input_names: &[String],
+        output_expr: &Expression,
+    ) -> Result<*const u8, String> {
+        let n = input_names.len();
+        let mut sig = self.module.make_signature();
+        for _ in 0..n {
+            sig.params.push(AbiParam::new(cl_types::F64));
+        }
+        sig.returns.push(AbiParam::new(cl_types::F64));
+
+        let func_id = self.module
+            .declare_function(name, Linkage::Export, &sig)
+            .map_err(|e| e.to_string())?;
+
+        self.ctx.func.signature = sig;
+        self.ctx.func.name = UserFuncName::user(0, func_id.as_u32());
+
+        let mut var_map = HashMap::new();
+        let stack_slots = HashMap::new();
+        let array_info = HashMap::new();
+        let state_var_index = HashMap::new();
+        let discrete_var_index = HashMap::new();
+        let output_var_index = HashMap::new();
+        let state_vars: &[String] = &[];
+        let discrete_vars: &[String] = &[];
+        let output_vars: &[String] = &[];
+        let mut when_idx = 0usize;
+        let mut crossings_idx = 0usize;
+
+        {
+            let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+            let entry_block = builder.create_block();
+            builder.append_block_params_for_function_params(entry_block);
+            builder.switch_to_block(entry_block);
+            builder.seal_block(entry_block);
+
+            let params = builder.block_params(entry_block);
+            for (i, in_name) in input_names.iter().enumerate() {
+                if i < params.len() {
+                    var_map.insert(in_name.clone(), params[i]);
+                }
+            }
+
+            let null_ptr = builder.ins().iconst(cl_types::I64, 0);
+            let ptr_val = null_ptr;
+
+            let mut t_ctx = TranslationContext::new(
+                &mut self.module,
+                &mut var_map,
+                &stack_slots,
+                &array_info,
+                ptr_val,
+                ptr_val,
+                ptr_val,
+                ptr_val,
+                ptr_val,
+                ptr_val,
+                ptr_val,
+                ptr_val,
+                ptr_val,
+                &mut when_idx,
+                &mut crossings_idx,
+                state_vars,
+                discrete_vars,
+                output_vars,
+                &state_var_index,
+                &discrete_var_index,
+                &output_var_index,
+                None,
+                None,
+                None,
+            );
+
+            let result = compile_expression(output_expr, &mut t_ctx, &mut builder)?;
+            builder.ins().return_(&[result]);
+            builder.finalize();
+        }
+
+        self.module.define_function(func_id, &mut self.ctx).map_err(|e| e.to_string())?;
+        self.module.clear_context(&mut self.ctx);
+        self.module.finalize_definitions().map_err(|e| e.to_string())?;
+
+        let code = self.module.get_finalized_function(func_id);
+        Ok(code)
     }
 }

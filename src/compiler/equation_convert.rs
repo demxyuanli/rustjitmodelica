@@ -1,5 +1,117 @@
 use crate::ast::{Equation, Expression, AlgorithmStatement};
 
+/// CG1-4: Substitute all array indices in expr: every Variable(base_j) becomes Variable(base_{j+shift}).
+/// Used for run detection when RHS involves multiple arrays (e.g. x_i = p_i or y_i = x_i).
+pub fn expr_substitute_all_array_indices(expr: &Expression, shift: usize) -> Expression {
+    use Expression::*;
+    match expr {
+        Variable(name) => {
+            if let Some((b, idx)) = parse_array_index(name) {
+                return Variable(format!("{}_{}", b, idx + shift));
+            }
+            expr.clone()
+        }
+        Number(_) => expr.clone(),
+        BinaryOp(l, op, r) => BinaryOp(
+            Box::new(expr_substitute_all_array_indices(l, shift)),
+            *op,
+            Box::new(expr_substitute_all_array_indices(r, shift)),
+        ),
+        Call(n, args) => Call(
+            n.clone(),
+            args.iter()
+                .map(|a| expr_substitute_all_array_indices(a, shift))
+                .collect(),
+        ),
+        Der(inner) => Der(Box::new(expr_substitute_all_array_indices(inner, shift))),
+        Sample(inner) => Sample(Box::new(expr_substitute_all_array_indices(inner, shift))),
+        Interval(inner) => Interval(Box::new(expr_substitute_all_array_indices(inner, shift))),
+        Hold(inner) => Hold(Box::new(expr_substitute_all_array_indices(inner, shift))),
+        Previous(inner) => Previous(Box::new(expr_substitute_all_array_indices(inner, shift))),
+        SubSample(c, n) => SubSample(Box::new(expr_substitute_all_array_indices(c, shift)), Box::new(expr_substitute_all_array_indices(n, shift))),
+        SuperSample(c, n) => SuperSample(Box::new(expr_substitute_all_array_indices(c, shift)), Box::new(expr_substitute_all_array_indices(n, shift))),
+        ShiftSample(c, n) => ShiftSample(Box::new(expr_substitute_all_array_indices(c, shift)), Box::new(expr_substitute_all_array_indices(n, shift))),
+        ArrayAccess(arr, idx) => ArrayAccess(
+            Box::new(expr_substitute_all_array_indices(arr, shift)),
+            Box::new(expr_substitute_all_array_indices(idx, shift)),
+        ),
+        If(c, t, e) => If(
+            Box::new(expr_substitute_all_array_indices(c, shift)),
+            Box::new(expr_substitute_all_array_indices(t, shift)),
+            Box::new(expr_substitute_all_array_indices(e, shift)),
+        ),
+        Dot(e, s) => Dot(Box::new(expr_substitute_all_array_indices(e, shift)), s.clone()),
+        Range(a, b, c) => Range(
+            Box::new(expr_substitute_all_array_indices(a, shift)),
+            Box::new(expr_substitute_all_array_indices(b, shift)),
+            Box::new(expr_substitute_all_array_indices(c, shift)),
+        ),
+        ArrayLiteral(es) => ArrayLiteral(
+            es.iter()
+                .map(|e| expr_substitute_all_array_indices(e, shift))
+                .collect(),
+        ),
+        StringLiteral(s) => StringLiteral(s.clone()),
+    }
+}
+
+/// CG1-4: Substitute array index in expr: Variable(base_j) becomes Variable(base_{j+shift}) for the given base.
+#[allow(dead_code)]
+pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) -> Expression {
+    use Expression::*;
+    match expr {
+        Variable(name) => {
+            if let Some((b, idx)) = parse_array_index(name) {
+                if b == base {
+                    return Variable(format!("{}_{}", base, idx + shift));
+                }
+            }
+            expr.clone()
+        }
+        Number(_) => expr.clone(),
+        BinaryOp(l, op, r) => BinaryOp(
+            Box::new(expr_substitute_array_shift(l, base, shift)),
+            *op,
+            Box::new(expr_substitute_array_shift(r, base, shift)),
+        ),
+        Call(n, args) => Call(
+            n.clone(),
+            args.iter()
+                .map(|a| expr_substitute_array_shift(a, base, shift))
+                .collect(),
+        ),
+        Der(inner) => Der(Box::new(expr_substitute_array_shift(inner, base, shift))),
+        Sample(inner) => Sample(Box::new(expr_substitute_array_shift(inner, base, shift))),
+        Interval(inner) => Interval(Box::new(expr_substitute_array_shift(inner, base, shift))),
+        Hold(inner) => Hold(Box::new(expr_substitute_array_shift(inner, base, shift))),
+        Previous(inner) => Previous(Box::new(expr_substitute_array_shift(inner, base, shift))),
+        SubSample(c, n) => SubSample(Box::new(expr_substitute_array_shift(c, base, shift)), Box::new(expr_substitute_array_shift(n, base, shift))),
+        SuperSample(c, n) => SuperSample(Box::new(expr_substitute_array_shift(c, base, shift)), Box::new(expr_substitute_array_shift(n, base, shift))),
+        ShiftSample(c, n) => ShiftSample(Box::new(expr_substitute_array_shift(c, base, shift)), Box::new(expr_substitute_array_shift(n, base, shift))),
+        ArrayAccess(arr, idx) => ArrayAccess(
+            Box::new(expr_substitute_array_shift(arr, base, shift)),
+            Box::new(expr_substitute_array_shift(idx, base, shift)),
+        ),
+        If(c, t, e) => If(
+            Box::new(expr_substitute_array_shift(c, base, shift)),
+            Box::new(expr_substitute_array_shift(t, base, shift)),
+            Box::new(expr_substitute_array_shift(e, base, shift)),
+        ),
+        Dot(e, s) => Dot(Box::new(expr_substitute_array_shift(e, base, shift)), s.clone()),
+        Range(a, b, c) => Range(
+            Box::new(expr_substitute_array_shift(a, base, shift)),
+            Box::new(expr_substitute_array_shift(b, base, shift)),
+            Box::new(expr_substitute_array_shift(c, base, shift)),
+        ),
+        ArrayLiteral(es) => ArrayLiteral(
+            es.iter()
+                .map(|e| expr_substitute_array_shift(e, base, shift))
+                .collect(),
+        ),
+        StringLiteral(s) => StringLiteral(s.clone()),
+    }
+}
+
 pub fn convert_eq_to_alg_stmt(eq: Equation) -> AlgorithmStatement {
     match eq {
         Equation::Simple(lhs, rhs) => AlgorithmStatement::Assignment(lhs, rhs),

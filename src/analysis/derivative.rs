@@ -60,6 +60,13 @@ pub fn normalize_der(expr: &Expression) -> Expression {
             Box::new(normalize_der(t)),
             Box::new(normalize_der(f)),
         ),
+        Expression::Sample(inner) => Expression::Sample(Box::new(normalize_der(inner))),
+        Expression::Interval(inner) => Expression::Interval(Box::new(normalize_der(inner))),
+        Expression::Hold(inner) => Expression::Hold(Box::new(normalize_der(inner))),
+        Expression::Previous(inner) => Expression::Previous(Box::new(normalize_der(inner))),
+        Expression::SubSample(c, n) => Expression::SubSample(Box::new(normalize_der(c)), Box::new(normalize_der(n))),
+        Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(normalize_der(c)), Box::new(normalize_der(n))),
+        Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(normalize_der(c)), Box::new(normalize_der(n))),
         _ => expr.clone(),
     }
 }
@@ -84,6 +91,14 @@ fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
             collect_vars_in_expr(f, out);
         }
         Expression::Der(inner) => collect_vars_in_expr(inner, out),
+        Expression::Sample(inner) => collect_vars_in_expr(inner, out),
+        Expression::Interval(inner) => collect_vars_in_expr(inner, out),
+        Expression::Hold(inner) => collect_vars_in_expr(inner, out),
+        Expression::Previous(inner) => collect_vars_in_expr(inner, out),
+        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+            collect_vars_in_expr(c, out);
+            collect_vars_in_expr(n, out);
+        }
         _ => {}
     }
 }
@@ -111,6 +126,14 @@ fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
             collect_states_from_expr(c, states);
             collect_states_from_expr(t, states);
             collect_states_from_expr(f, states);
+        }
+        Expression::Sample(inner) => collect_states_from_expr(inner, states),
+        Expression::Interval(inner) => collect_states_from_expr(inner, states),
+        Expression::Hold(inner) => collect_states_from_expr(inner, states),
+        Expression::Previous(inner) => collect_states_from_expr(inner, states),
+        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+            collect_states_from_expr(c, states);
+            collect_states_from_expr(n, states);
         }
         _ => {}
     }

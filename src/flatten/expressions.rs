@@ -64,6 +64,14 @@ pub fn prefix_expression(expr: &Expression, prefix: &str) -> Expression {
         Expression::ArrayLiteral(exprs) => {
             Expression::ArrayLiteral(exprs.iter().map(|e| prefix_expression(e, prefix)).collect())
         }
+        Expression::Sample(inner) => Expression::Sample(Box::new(prefix_expression(inner, prefix))),
+        Expression::Interval(inner) => Expression::Interval(Box::new(prefix_expression(inner, prefix))),
+        Expression::Hold(inner) => Expression::Hold(Box::new(prefix_expression(inner, prefix))),
+        Expression::Previous(inner) => Expression::Previous(Box::new(prefix_expression(inner, prefix))),
+        Expression::SubSample(c, n) => Expression::SubSample(Box::new(prefix_expression(c, prefix)), Box::new(prefix_expression(n, prefix))),
+        Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(prefix_expression(c, prefix)), Box::new(prefix_expression(n, prefix))),
+        Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(prefix_expression(c, prefix)), Box::new(prefix_expression(n, prefix))),
+        Expression::StringLiteral(s) => Expression::StringLiteral(s.clone()),
     }
 }
 

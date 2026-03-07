@@ -1,5 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::ast::{Declaration, Equation, AlgorithmStatement, Expression};
+
+/// SYNC-2: One clock partition: variables that are updated on the same clock (e.g. same when sample(...) branch).
+#[derive(Debug, Clone, Default)]
+pub struct ClockPartition {
+    /// Stable id for this partition (e.g. "default", or derived from clock condition).
+    pub id: String,
+    /// Variable names (flattened) in this partition.
+    pub var_names: HashSet<String>,
+}
 
 pub struct FlattenedModel {
     pub declarations: Vec<Declaration>,
@@ -12,4 +21,9 @@ pub struct FlattenedModel {
     pub conditional_connections: Vec<(Expression, (String, String))>,
     pub instances: HashMap<String, String>, // full_path -> type_name
     pub array_sizes: HashMap<String, usize>, // full_path -> size
+    /// SYNC-2: Union of all clocked variable names (for backward compat and quick lookup).
+    #[allow(dead_code)]
+    pub clocked_var_names: HashSet<String>,
+    /// SYNC-2: Per-clock partitions; used by solver/jacobian for clocked state handling.
+    pub clock_partitions: Vec<ClockPartition>,
 }

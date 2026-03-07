@@ -278,17 +278,63 @@ pub fn compile_expression(
                     func_name
                 ));
             }
+            // FUNC-7: Build signature and args; array args pass (ptr, size) per ABI.
+            let has_array_arg = args.iter().any(|a| {
+                if let Expression::Variable(n) = a {
+                    ctx.array_info.contains_key(n)
+                } else {
+                    false
+                }
+            });
+            if has_array_arg && ctx.declared_imports.is_none() {
+                return Err(format!(
+                    "Array argument in function call '{}' not supported in this context (FUNC-7).",
+                    func_name
+                ));
+            }
+            let ptr_type = ctx.module.target_config().pointer_type();
+            let mut sig = ctx.module.make_signature();
             let mut arg_vals = Vec::new();
             for arg in args {
-                arg_vals.push(compile_expression(arg, ctx, builder)?);
-            }
-            let mut sig = ctx.module.make_signature();
-            for _ in 0..args.len() {
+                if let Expression::Variable(name) = arg {
+                    if let Some(info) = ctx.array_info.get(name) {
+                        let base_ptr = match info.array_type {
+                            ArrayType::State => ctx.states_ptr,
+                            ArrayType::Discrete => ctx.discrete_ptr,
+                            ArrayType::Parameter => ctx.params_ptr,
+                            ArrayType::Output => ctx.outputs_ptr,
+                            ArrayType::Derivative => ctx.derivs_ptr,
+                        };
+                        let offset = builder.ins().iconst(cl_types::I64, (info.start_index * 8) as i64);
+                        let addr = builder.ins().iadd(base_ptr, offset);
+                        let size_val = builder.ins().iconst(cl_types::I64, info.size as i64);
+                        sig.params.push(AbiParam::new(ptr_type));
+                        sig.params.push(AbiParam::new(cl_types::I64));
+                        arg_vals.push(addr);
+                        arg_vals.push(size_val);
+                        continue;
+                    }
+                }
+                if let Expression::StringLiteral(_) = arg {
+                    return Err("String argument in function call not supported in JIT (FUNC-7). Use C codegen or scalar args.".to_string());
+                }
+                let val = compile_expression(arg, ctx, builder)?;
                 sig.params.push(AbiParam::new(cl_types::F64));
+                arg_vals.push(val);
             }
             sig.returns.push(AbiParam::new(cl_types::F64));
-            let func_id = ctx.module.declare_function(func_name, Linkage::Import, &sig)
-                .map_err(|e| e.to_string())?;
+            let func_id = match &mut ctx.declared_imports {
+                Some(map) => {
+                    if let Some(&id) = map.get(func_name) {
+                        id
+                    } else {
+                        let id = ctx.module.declare_function(func_name, Linkage::Import, &sig).map_err(|e| e.to_string())?;
+                        map.insert(func_name.to_string(), id);
+                        id
+                    }
+                }
+                None => ctx.module.declare_function(func_name, Linkage::Import, &sig).map_err(|e| e.to_string())?,
+            };
             let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
             let call_inst = builder.ins().call(func_ref, &arg_vals);
             Ok(builder.inst_results(call_inst)[0])
@@ -305,6 +351,28 @@ pub fn compile_expression(
         Expression::Range(_, _, _) => Err("Range expression not supported as a scalar value. It should be handled by For loop structure.".to_string()),
         Expression::Dot(_, _) => Err("Dot expression should have been flattened before JIT compilation".to_string()),
         Expression::ArrayLiteral(_) => Err("ArrayLiteral should have been flattened before JIT compilation".to_string()),
+        Expression::StringLiteral(_) => Err("StringLiteral not supported in JIT (use as function arg only in C codegen, FUNC-7).".to_string()),
+        Expression::Sample(interval_expr) => {
+            let interval_val = compile_expression(interval_expr, ctx, builder)?;
+            let time_val = ctx.var_map.get("time").copied().ok_or("sample() requires time in context".to_string())?;
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(cl_types::F64));
+            sig.params.push(AbiParam::new(cl_types::F64));
+            sig.returns.push(AbiParam::new(cl_types::F64));
+            let func_id = ctx.module.declare_function("rustmodlica_sample", Linkage::Import, &sig)
+                .map_err(|e| e.to_string())?;
+            let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+            let call_inst = builder.ins().call(func_ref, &[time_val, interval_val]);
+            Ok(builder.inst_results(call_inst)[0])
+        }
+        Expression::Interval(clock_expr) => {
+            compile_expression(clock_expr, ctx, builder)
+        }
+        Expression::Hold(inner) => compile_expression(inner, ctx, builder),
+        Expression::Previous(inner) => compile_pre_expression(inner, ctx, builder),
+        Expression::SubSample(clock_expr, _n) | Expression::SuperSample(clock_expr, _n) | Expression::ShiftSample(clock_expr, _n) => {
+            compile_expression(clock_expr, ctx, builder)
+        }
     }
 }
 
@@ -423,17 +491,57 @@ fn compile_pre_expression(
                 if args.len() != 1 { return Err("pre() expects 1 arg".to_string()); }
                 return compile_pre_expression(&args[0], ctx, builder);
             }
+            let has_array_arg = args.iter().any(|a| {
+                if let Expression::Variable(n) = a { ctx.array_info.contains_key(n) } else { false }
+            });
+            if has_array_arg && ctx.declared_imports.is_none() {
+                return Err(format!(
+                    "Array argument in function call '{}' not supported in this context (FUNC-7).",
+                    func_name
+                ));
+            }
+            let ptr_type = ctx.module.target_config().pointer_type();
+            let mut sig = ctx.module.make_signature();
             let mut arg_vals = Vec::new();
             for arg in args {
-                arg_vals.push(compile_pre_expression(arg, ctx, builder)?);
-            }
-            let mut sig = ctx.module.make_signature();
-            for _ in 0..args.len() {
+                if let Expression::Variable(name) = arg {
+                    if let Some(info) = ctx.array_info.get(name) {
+                        let base_ptr = match info.array_type {
+                            ArrayType::State => ctx.pre_states_ptr,
+                            ArrayType::Discrete => ctx.pre_discrete_ptr,
+                            ArrayType::Parameter => ctx.params_ptr,
+                            ArrayType::Output => ctx.outputs_ptr,
+                            ArrayType::Derivative => ctx.derivs_ptr,
+                        };
+                        let offset = builder.ins().iconst(cl_types::I64, (info.start_index * 8) as i64);
+                        let addr = builder.ins().iadd(base_ptr, offset);
+                        let size_val = builder.ins().iconst(cl_types::I64, info.size as i64);
+                        sig.params.push(AbiParam::new(ptr_type));
+                        sig.params.push(AbiParam::new(cl_types::I64));
+                        arg_vals.push(addr);
+                        arg_vals.push(size_val);
+                        continue;
+                    }
+                }
+                if let Expression::StringLiteral(_) = arg {
+                    return Err("String argument in function call not supported in JIT (FUNC-7).".to_string());
+                }
+                let val = compile_pre_expression(arg, ctx, builder)?;
                 sig.params.push(AbiParam::new(cl_types::F64));
+                arg_vals.push(val);
             }
             sig.returns.push(AbiParam::new(cl_types::F64));
-            let func_id = ctx.module.declare_function(func_name, Linkage::Import, &sig)
-                .map_err(|e| e.to_string())?;
+            let func_id = match &mut ctx.declared_imports {
+                Some(map) => {
+                    if let Some(&id) = map.get(func_name) { id }
+                    else {
+                        let id = ctx.module.declare_function(func_name, Linkage::Import, &sig).map_err(|e| e.to_string())?;
+                        map.insert(func_name.to_string(), id);
+                        id
+                    }
+                }
+                None => ctx.module.declare_function(func_name, Linkage::Import, &sig).map_err(|e| e.to_string())?,
+            };
             let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
             let call_inst = builder.ins().call(func_ref, &arg_vals);
             Ok(builder.inst_results(call_inst)[0])
@@ -442,5 +550,11 @@ fn compile_pre_expression(
         Expression::Range(_, _, _) => Err("Range expression not supported as a scalar value. It should be handled by For loop structure.".to_string()),
         Expression::Dot(_, _) => Err("Array access (nested) and Dot should have been flattened before JIT compilation".to_string()),
         Expression::ArrayLiteral(_) => Err("ArrayLiteral should have been flattened before JIT compilation".to_string()),
+        Expression::StringLiteral(_) => Err("StringLiteral not supported in pre() (FUNC-7).".to_string()),
+        Expression::Sample(_) => Err("sample() not supported in pre() (SYNC-1)".to_string()),
+        Expression::Interval(_) => Err("interval() not supported in pre() (SYNC-1)".to_string()),
+        Expression::Hold(inner) => compile_pre_expression(inner, ctx, builder),
+        Expression::Previous(inner) => compile_pre_expression(inner, ctx, builder),
+        Expression::SubSample(c, _) | Expression::SuperSample(c, _) | Expression::ShiftSample(c, _) => compile_pre_expression(c, ctx, builder),
     }
 }

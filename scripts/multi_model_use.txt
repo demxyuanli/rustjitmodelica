@@ -1,0 +1,7 @@
+// SCRIPT-5: multi-model session; load two models, use first, setParameter, simulate
+load TestLib/InitWithParam
+load TestLib/SimpleTest
+use TestLib/InitWithParam
+setParameter a 5
+simulate
+quit

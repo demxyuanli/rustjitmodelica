@@ -93,6 +93,8 @@ impl Flattener {
             conditional_connections: Vec::new(),
             instances: HashMap::new(),
             array_sizes: HashMap::new(),
+            clocked_var_names: std::collections::HashSet::new(),
+            clock_partitions: Vec::new(),
         };
         self.expand_declarations(model, "", &mut flat, Some(root_name))?;
         self.expand_equations(model, "", &mut flat);
@@ -100,6 +102,7 @@ impl Flattener {
         self.expand_initial_equations(model, "", &mut flat);
         self.expand_initial_algorithms(model, "", &mut flat);
         resolve_connections(&mut flat, Some(root_name), &self.loader)?;
+        self.infer_clocked_variables(&mut flat);
         Ok(flat)
     }
 
@@ -183,6 +186,7 @@ impl Flattener {
                         },
                         array_size: None,
                         modifications: Vec::new(),
+                        is_rest: decl.is_rest,
                         annotation: None,
                     });
                 } else {
@@ -290,6 +294,98 @@ impl Flattener {
             array_sizes: &flat.array_sizes,
         };
         self.expand_algorithm_list(&model.initial_algorithms, prefix, &mut target, &mut context_stack);
+    }
+
+    fn infer_clocked_variables(&self, flat: &mut FlattenedModel) {
+        fn expr_contains_clock(e: &Expression) -> bool {
+            match e {
+                Expression::Sample(inner)
+                | Expression::Interval(inner)
+                | Expression::Hold(inner)
+                | Expression::Previous(inner) => expr_contains_clock(inner),
+                Expression::SubSample(c, n)
+                | Expression::SuperSample(c, n)
+                | Expression::ShiftSample(c, n) => expr_contains_clock(c) || expr_contains_clock(n),
+                Expression::BinaryOp(l, _, r) => expr_contains_clock(l) || expr_contains_clock(r),
+                Expression::Call(_, args) => args.iter().any(expr_contains_clock),
+                Expression::ArrayAccess(base, idx) => expr_contains_clock(base) || expr_contains_clock(idx),
+                Expression::Dot(base, _) => expr_contains_clock(base),
+                Expression::If(c, t, f) => expr_contains_clock(c) || expr_contains_clock(t) || expr_contains_clock(f),
+                Expression::Range(a, b, c) => expr_contains_clock(a) || expr_contains_clock(b) || expr_contains_clock(c),
+                Expression::ArrayLiteral(items) => items.iter().any(expr_contains_clock),
+                _ => false,
+            }
+        }
+
+        fn collect_lhs_vars(expr: &Expression, out: &mut std::collections::HashSet<String>) {
+            match expr {
+                Expression::Variable(name) => {
+                    out.insert(name.clone());
+                }
+                Expression::Der(inner) => collect_lhs_vars(inner, out),
+                Expression::ArrayAccess(base, _) => collect_lhs_vars(base, out),
+                Expression::Dot(base, _) => collect_lhs_vars(base, out),
+                Expression::ArrayLiteral(items) => {
+                    for e in items {
+                        collect_lhs_vars(e, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn walk_algorithms(stmts: &[AlgorithmStatement], clocked: bool, out: &mut std::collections::HashSet<String>) {
+            for stmt in stmts {
+                match stmt {
+                    AlgorithmStatement::Assignment(lhs, _) => {
+                        if clocked {
+                            collect_lhs_vars(lhs, out);
+                        }
+                    }
+                    AlgorithmStatement::If(_, then_stmts, else_ifs, else_stmts) => {
+                        walk_algorithms(then_stmts, clocked, out);
+                        for (_, s) in else_ifs {
+                            walk_algorithms(s, clocked, out);
+                        }
+                        if let Some(s) = else_stmts {
+                            walk_algorithms(s, clocked, out);
+                        }
+                    }
+                    AlgorithmStatement::While(_, body) => {
+                        walk_algorithms(body, clocked, out);
+                    }
+                    AlgorithmStatement::For(_, _, body) => {
+                        walk_algorithms(body, clocked, out);
+                    }
+                    AlgorithmStatement::When(cond, body, else_whens) => {
+                        let is_clock = expr_contains_clock(cond);
+                        let new_clocked = clocked || is_clock;
+                        walk_algorithms(body, new_clocked, out);
+                        for (c, s) in else_whens {
+                            let else_clocked = clocked || expr_contains_clock(c);
+                            walk_algorithms(s, else_clocked, out);
+                        }
+                    }
+                    AlgorithmStatement::Reinit(var, _) => {
+                        if clocked {
+                            out.insert(var.clone());
+                        }
+                    }
+                    AlgorithmStatement::Assert(_, _) | AlgorithmStatement::Terminate(_) => {}
+                }
+            }
+        }
+
+        let mut clocked = std::collections::HashSet::new();
+        walk_algorithms(&flat.algorithms, false, &mut clocked);
+        walk_algorithms(&flat.initial_algorithms, false, &mut clocked);
+        flat.clocked_var_names = clocked.clone();
+        if !clocked.is_empty() {
+            flat.clock_partitions.push(self::structures::ClockPartition {
+                id: "default".to_string(),
+                var_names: clocked,
+            });
+        }
     }
 
 }

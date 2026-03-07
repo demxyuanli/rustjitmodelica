@@ -1,0 +1,6 @@
+// SCRIPT: getParameter
+load TestLib/InitWithParam
+setParameter a 5
+getParameter a
+simulate
+quit

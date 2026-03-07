@@ -123,6 +123,8 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut warnings_level = "all".to_string();
     let mut emit_c_dir: Option<String> = None;
     let mut emit_fmu_dir: Option<String> = None;
+    let mut emit_fmu_me_dir: Option<String> = None;
+    let mut external_libs: Vec<String> = Vec::new();
     let mut repl = false;
     let mut script_path: Option<String> = None;
     let mut model_name = None;
@@ -192,6 +194,12 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if let Some(v) = a.strip_prefix("--emit-fmu=") {
             emit_fmu_dir = Some(v.to_string());
             i += 1;
+        } else if let Some(v) = a.strip_prefix("--emit-fmu-me=") {
+            emit_fmu_me_dir = Some(v.to_string());
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--external-lib=") {
+            external_libs.push(v.to_string());
+            i += 1;
         } else if !a.starts_with('-') {
             model_name = Some(a.clone());
             i += 1;
@@ -219,6 +227,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         compiler.options.result_file = result_file;
         compiler.options.warnings_level = warnings_level;
         compiler.options.emit_c_dir = emit_c_dir.clone();
+        compiler.options.external_libs = external_libs;
         compiler.loader.add_path(".".into());
         compiler.loader.add_path("StandardLib".into());
         compiler.loader.add_path("TestLib".into());
@@ -236,7 +245,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --solver=rk4|rk45|implicit  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run script file (load, setParameter, simulate, quit); use - for stdin\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --function-args=<f1,f2,...>  function input values",
+                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --solver=rk4|rk45|implicit  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run script file (load, setParameter, simulate, quit); use - for stdin\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --function-args=<f1,f2,...>  function input values",
                 args[0]
             );
             return Err(msg.into());
@@ -259,7 +268,11 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     if emit_fmu_dir.is_some() && emit_c_dir.is_none() {
         emit_c_dir = emit_fmu_dir.clone();
     }
+    if emit_fmu_me_dir.is_some() && emit_c_dir.is_none() {
+        emit_c_dir = emit_fmu_me_dir.clone();
+    }
     compiler.options.emit_c_dir = emit_c_dir;
+    compiler.options.external_libs = external_libs;
     let run_repl = repl;
     compiler.loader.add_path(".".into());
     compiler.loader.add_path("StandardLib".into());
@@ -306,13 +319,35 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 ) {
                     Ok(files) => {
                         let paths: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
-                        println!("FMI: emitted {}", paths.join(", "));
+                        println!("FMI CS: emitted {}", paths.join(", "));
                     }
-                    Err(e) => return Err(format!("FMI emit failed: {}", e).into()),
+                    Err(e) => return Err(format!("FMI CS emit failed: {}", e).into()),
+                }
+            }
+            if let Some(ref dir) = emit_fmu_me_dir {
+                let path = std::path::Path::new(dir);
+                match fmi::emit_fmu_me_artifacts(
+                    path,
+                    &model_name,
+                    &artifacts.state_vars,
+                    &artifacts.param_vars,
+                    &artifacts.output_vars,
+                    0.0,
+                    artifacts.t_end,
+                    artifacts.dt,
+                ) {
+                    Ok(files) => {
+                        let paths: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
+                        println!("FMI ME: emitted {}", paths.join(", "));
+                    }
+                    Err(e) => return Err(format!("FMI ME emit failed: {}", e).into()),
                 }
             }
             if run_repl {
                 run_repl_loop(artifacts)?;
+                return Ok(());
+            }
+            if emit_fmu_dir.is_some() || emit_fmu_me_dir.is_some() {
                 return Ok(());
             }
             println!("{}", i18n::msg0("starting_simulation"));

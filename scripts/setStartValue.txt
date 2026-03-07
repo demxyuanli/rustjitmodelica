@@ -1,0 +1,5 @@
+// SCRIPT: setStartValue
+load TestLib/InitWithParam
+setStartValue x 1.0
+simulate
+quit

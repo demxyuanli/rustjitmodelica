@@ -229,6 +229,7 @@ pub fn print_backend_dae_info(
     discrete_vars: &[String],
     param_vars: &[String],
     output_vars: &[String],
+    clocked_vars: &HashSet<String>,
     _continuous_eqs: &[Equation],
     sorted_eqs: &[Equation],
     all_equations: &[Equation],
@@ -313,6 +314,16 @@ pub fn print_backend_dae_info(
     } else {
         format!(" ({})", discrete_vars.join(","))
     };
+    let clocked_state_names: Vec<String> = state_vars
+        .iter()
+        .filter(|v| clocked_vars.contains(*v))
+        .cloned()
+        .collect();
+    let clocked_list = if clocked_state_names.is_empty() {
+        " ()".to_string()
+    } else {
+        format!(" ({})", clocked_state_names.join(","))
+    };
 
     println!("\n{}", i18n::msg0("notification_frontend"));
     println!("{}", i18n::msg("number_of_equations", &[&total_equations]));
@@ -345,7 +356,22 @@ pub fn print_backend_dae_info(
     println!("{}", i18n::msg0("independent_subsystems"));
     println!("{}", i18n::msg("number_of_states", &[&state_vars.len(), &states_list]));
     println!("{}", i18n::msg("number_of_discrete", &[&discrete_vars.len(), &discrete_list]));
-    println!("{}", i18n::msg0("clocked_states"));
+    println!("{}", i18n::msg("clocked_states", &[&clocked_state_names.len(), &clocked_list]));
+    if let Some(dae) = simulation_dae {
+        if !dae.dae.clock_partitions.is_empty() {
+            println!("{}", i18n::msg("clock_partitions_count", &[&dae.dae.clock_partitions.len()]));
+            for p in &dae.dae.clock_partitions {
+                let mut names: Vec<&String> = p.var_names.iter().collect();
+                names.sort();
+                let list = if names.is_empty() {
+                    " ()".to_string()
+                } else {
+                    format!(" ({})", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","))
+                };
+                println!("{}", i18n::msg("clock_partition_vars", &[&p.id, &list]));
+            }
+        }
+    }
     println!("{}", i18n::msg0("top_level_inputs"));
 
     let strong_total = sorted_simple + sorted_for + sorted_block;

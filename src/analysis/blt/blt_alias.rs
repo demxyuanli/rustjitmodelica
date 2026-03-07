@@ -208,6 +208,13 @@ fn substitute_aliases_in_expr(
             Box::new(substitute_aliases_in_expr(step, map)),
             Box::new(substitute_aliases_in_expr(end, map)),
         ),
+        Expression::Sample(inner) => Expression::Sample(Box::new(substitute_aliases_in_expr(inner, map))),
+        Expression::Interval(inner) => Expression::Interval(Box::new(substitute_aliases_in_expr(inner, map))),
+        Expression::Hold(inner) => Expression::Hold(Box::new(substitute_aliases_in_expr(inner, map))),
+        Expression::Previous(inner) => Expression::Previous(Box::new(substitute_aliases_in_expr(inner, map))),
+        Expression::SubSample(c, n) => Expression::SubSample(Box::new(substitute_aliases_in_expr(c, map)), Box::new(substitute_aliases_in_expr(n, map))),
+        Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(substitute_aliases_in_expr(c, map)), Box::new(substitute_aliases_in_expr(n, map))),
+        Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(substitute_aliases_in_expr(c, map)), Box::new(substitute_aliases_in_expr(n, map))),
         _ => expr.clone(),
     }
 }

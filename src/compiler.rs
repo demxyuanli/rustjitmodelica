@@ -6,8 +6,8 @@ mod jacobian;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Equation, Expression};
-use crate::backend_dae::{build_simulation_dae, SimulationDae};
+use crate::ast::{Equation, Expression, AlgorithmStatement};
+use crate::backend_dae::{build_simulation_dae, SimulationDae, ClockPartition as BackendClockPartition};
 use crate::loader::ModelLoader;
 use crate::flatten::{Flattener, eval_const_expr};
 use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, AnalysisOptions};
@@ -38,6 +38,8 @@ pub struct CompilerOptions {
     pub warnings_level: String,
     /// CG1-1: When set, emit C source (model.c, model.h) to this directory.
     pub emit_c_dir: Option<String>,
+    /// EXT-1: Paths to shared libraries for external function symbols (e.g. .dll, .so).
+    pub external_libs: Vec<String>,
 }
 
 impl Default for CompilerOptions {
@@ -57,15 +59,289 @@ impl Default for CompilerOptions {
             result_file: None,
             warnings_level: "all".to_string(),
             emit_c_dir: None,
+            external_libs: Vec::new(),
         }
     }
 }
 
+/// EXT-1/EXT-2: Keeps loaded libraries alive; resolved symbol pointers for JIT.
+pub(crate) struct ExternalLibs(pub Vec<libloading::Library>);
+
 pub struct Compiler {
     pub loader: ModelLoader,
-    pub jit: Jit,
     pub options: CompilerOptions,
     pub(crate) warnings: Vec<WarningInfo>,
+    pub(crate) external_libraries: ExternalLibs,
+    /// EXT-2: Resolved external function symbols (modelica_name -> ptr); valid while external_libraries is alive.
+    pub(crate) external_symbol_ptrs: HashMap<String, *const u8>,
+}
+
+impl Default for ExternalLibs {
+    fn default() -> Self {
+        ExternalLibs(Vec::new())
+    }
+}
+
+/// EXT-4: Parse annotation string for Library="..." (e.g. annotation(Library="mylib")).
+fn parse_annotation_library(annotation: Option<&String>) -> Option<String> {
+    let s = annotation.as_ref()?.as_str();
+    let s = s.trim();
+    let idx = s.find("Library")?;
+    let rest = s[idx + 7..].trim_start();
+    let rest = rest.strip_prefix('=').map(|r| r.trim_start()).unwrap_or(rest);
+    let start = rest.find('"')?;
+    let rest = &rest[start + 1..];
+    let end = rest.find('"')?;
+    let lib = rest[..end].trim();
+    if lib.is_empty() {
+        None
+    } else {
+        Some(lib.to_string())
+    }
+}
+
+/// FUNC-2: Collect all function names called from equations and algorithms (after inlining).
+fn collect_all_called_names(
+    alg_equations: &[Equation],
+    diff_equations: &[Equation],
+    algorithms: &[AlgorithmStatement],
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+    fn collect_calls_expr(expr: &Expression, out: &mut HashSet<String>) {
+        match expr {
+            Expression::Call(name, _) => {
+                out.insert(name.clone());
+            }
+            Expression::BinaryOp(l, _, r) => {
+                collect_calls_expr(l, out);
+                collect_calls_expr(r, out);
+            }
+            Expression::Der(inner) => collect_calls_expr(inner, out),
+            Expression::If(c, t, e) => {
+                collect_calls_expr(c, out);
+                collect_calls_expr(t, out);
+                collect_calls_expr(e, out);
+            }
+            Expression::ArrayAccess(a, i) => {
+                collect_calls_expr(a, out);
+                collect_calls_expr(i, out);
+            }
+            Expression::Sample(inner) | Expression::Interval(inner) | Expression::Hold(inner) | Expression::Previous(inner) => collect_calls_expr(inner, out),
+            Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+                collect_calls_expr(c, out);
+                collect_calls_expr(n, out);
+            }
+            _ => {}
+        }
+    }
+    fn collect_calls_eq(eq: &Equation, out: &mut HashSet<String>) {
+        match eq {
+            Equation::Simple(lhs, rhs) => {
+                collect_calls_expr(lhs, out);
+                collect_calls_expr(rhs, out);
+            }
+            Equation::SolvableBlock { equations, residuals, .. } => {
+                for e in equations {
+                    if let Equation::Simple(l, r) = e {
+                        collect_calls_expr(l, out);
+                        collect_calls_expr(r, out);
+                    }
+                }
+                for r in residuals {
+                    collect_calls_expr(r, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn collect_calls_alg(stmt: &AlgorithmStatement, out: &mut HashSet<String>) {
+        match stmt {
+            AlgorithmStatement::Assignment(_, rhs) => collect_calls_expr(rhs, out),
+            AlgorithmStatement::If(cond, t, eifs, els) => {
+                collect_calls_expr(cond, out);
+                for s in t {
+                    collect_calls_alg(s, out);
+                }
+                for (c, b) in eifs {
+                    collect_calls_expr(c, out);
+                    for s in b {
+                        collect_calls_alg(s, out);
+                    }
+                }
+                if let Some(b) = els {
+                    for s in b {
+                        collect_calls_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::For(_, range, body) => {
+                collect_calls_expr(range, out);
+                for s in body {
+                    collect_calls_alg(s, out);
+                }
+            }
+            AlgorithmStatement::When(cond, body, elses) => {
+                collect_calls_expr(cond, out);
+                for s in body {
+                    collect_calls_alg(s, out);
+                }
+                for (c, b) in elses {
+                    collect_calls_expr(c, out);
+                    for s in b {
+                        collect_calls_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::Reinit(_, e) => collect_calls_expr(e, out),
+            AlgorithmStatement::Assert(cond, msg) => {
+                collect_calls_expr(cond, out);
+                collect_calls_expr(msg, out);
+            }
+            AlgorithmStatement::Terminate(msg) => collect_calls_expr(msg, out),
+            AlgorithmStatement::While(cond, body) => {
+                collect_calls_expr(cond, out);
+                for s in body {
+                    collect_calls_alg(s, out);
+                }
+            }
+        }
+    }
+    for eq in alg_equations.iter().chain(diff_equations) {
+        collect_calls_eq(eq, &mut names);
+    }
+    for stmt in algorithms {
+        collect_calls_alg(stmt, &mut names);
+    }
+    names
+}
+
+/// EXT-2: Collect (modelica_name, c_name, library_hint) for functions that have external_info and are called from eqs/alg.
+/// EXT-4: library_hint is from annotation(Library="...").
+fn collect_external_calls(
+    loader: &mut ModelLoader,
+    alg_equations: &[Equation],
+    diff_equations: &[Equation],
+    algorithms: &[AlgorithmStatement],
+) -> Vec<(String, String, Option<String>)> {
+    let mut names = HashSet::new();
+    fn collect_calls_expr(expr: &Expression, out: &mut HashSet<String>) {
+        match expr {
+            Expression::Call(name, _) => {
+                out.insert(name.clone());
+            }
+            Expression::BinaryOp(l, _, r) => {
+                collect_calls_expr(l, out);
+                collect_calls_expr(r, out);
+            }
+            Expression::Der(inner) => collect_calls_expr(inner, out),
+            Expression::If(c, t, e) => {
+                collect_calls_expr(c, out);
+                collect_calls_expr(t, out);
+                collect_calls_expr(e, out);
+            }
+            Expression::ArrayAccess(a, i) => {
+                collect_calls_expr(a, out);
+                collect_calls_expr(i, out);
+            }
+            Expression::Sample(inner) | Expression::Interval(inner) | Expression::Hold(inner) | Expression::Previous(inner) => collect_calls_expr(inner, out),
+            Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+                collect_calls_expr(c, out);
+                collect_calls_expr(n, out);
+            }
+            _ => {}
+        }
+    }
+    fn collect_calls_eq(eq: &Equation, out: &mut HashSet<String>) {
+        match eq {
+            Equation::Simple(lhs, rhs) => {
+                collect_calls_expr(lhs, out);
+                collect_calls_expr(rhs, out);
+            }
+            Equation::SolvableBlock { equations, residuals, .. } => {
+                for e in equations {
+                    if let Equation::Simple(l, r) = e {
+                        collect_calls_expr(l, out);
+                        collect_calls_expr(r, out);
+                    }
+                }
+                for r in residuals {
+                    collect_calls_expr(r, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    for eq in alg_equations.iter().chain(diff_equations) {
+        collect_calls_eq(eq, &mut names);
+    }
+    fn collect_calls_alg(stmt: &AlgorithmStatement, out: &mut HashSet<String>) {
+        match stmt {
+            AlgorithmStatement::Assignment(_, rhs) => collect_calls_expr(rhs, out),
+            AlgorithmStatement::If(cond, t, eifs, els) => {
+                collect_calls_expr(cond, out);
+                for s in t {
+                    collect_calls_alg(s, out);
+                }
+                for (c, b) in eifs {
+                    collect_calls_expr(c, out);
+                    for s in b {
+                        collect_calls_alg(s, out);
+                    }
+                }
+                if let Some(b) = els {
+                    for s in b {
+                        collect_calls_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::For(_, range, body) => {
+                collect_calls_expr(range, out);
+                for s in body {
+                    collect_calls_alg(s, out);
+                }
+            }
+            AlgorithmStatement::When(cond, body, elses) => {
+                collect_calls_expr(cond, out);
+                for s in body {
+                    collect_calls_alg(s, out);
+                }
+                for (c, b) in elses {
+                    collect_calls_expr(c, out);
+                    for s in b {
+                        collect_calls_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::Reinit(_, e) => collect_calls_expr(e, out),
+            AlgorithmStatement::Assert(cond, msg) => {
+                collect_calls_expr(cond, out);
+                collect_calls_expr(msg, out);
+            }
+            AlgorithmStatement::Terminate(msg) => collect_calls_expr(msg, out),
+            AlgorithmStatement::While(cond, body) => {
+                collect_calls_expr(cond, out);
+                for s in body {
+                    collect_calls_alg(s, out);
+                }
+            }
+        }
+    }
+    for stmt in algorithms {
+        collect_calls_alg(stmt, &mut names);
+    }
+    let mut out = Vec::new();
+    for name in names {
+        if let Ok(model) = loader.load_model(&name) {
+            if model.is_function {
+                if let Some(ref ext) = model.external_info {
+                    let c_name = ext.c_name.as_deref().unwrap_or(&name).to_string();
+                    let lib_hint = parse_annotation_library(model.annotation.as_ref());
+                    out.push((name, c_name, lib_hint));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Result of compilation: either simulation artifacts or a single function result (F3-1).
@@ -84,6 +360,9 @@ pub struct Artifacts {
     pub discrete_vars: Vec<String>,
     pub output_vars: Vec<String>,
     pub state_var_index: HashMap<String, usize>,
+    /// SYNC-2: Clock partitions for event/solver (e.g. clocked state handling).
+    #[allow(dead_code)]
+    pub clock_partitions: Vec<BackendClockPartition>,
     pub when_count: usize,
     pub crossings_count: usize,
     pub t_end: f64,
@@ -97,15 +376,19 @@ pub struct Artifacts {
     pub solver: String,
     pub output_interval: f64,
     pub result_file: Option<String>,
+    /// FUNC-2: Keep user function stub JITs alive so calc_derivs call targets remain valid.
+    #[allow(dead_code)]
+    pub user_stub_jits: Vec<Jit>,
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Compiler {
             loader: ModelLoader::new(),
-            jit: Jit::new(),
             options: CompilerOptions::default(),
             warnings: Vec::new(),
+            external_libraries: ExternalLibs::default(),
+            external_symbol_ptrs: HashMap::new(),
         }
     }
 
@@ -545,6 +828,14 @@ impl Compiler {
             .iter()
             .filter(|e| matches!(e, Equation::When(_, _, _)))
             .count();
+        let backend_clock_partitions: Vec<BackendClockPartition> = flat_model
+            .clock_partitions
+            .iter()
+            .map(|p| BackendClockPartition {
+                id: p.id.clone(),
+                var_names: p.var_names.clone(),
+            })
+            .collect();
         let simulation_dae: SimulationDae = build_simulation_dae(
             &state_vars_sorted,
             &discrete_vars_sorted,
@@ -558,7 +849,49 @@ impl Compiler {
             when_equation_count,
             differential_index,
             constraint_equation_count,
+            &backend_clock_partitions,
         );
+
+        let external_list = collect_external_calls(
+            &mut self.loader,
+            &alg_equations,
+            &diff_equations,
+            &flat_model.algorithms,
+        );
+
+        let all_called = collect_all_called_names(&alg_equations, &diff_equations, &flat_model.algorithms);
+        let external_names: HashSet<String> = external_list.iter().map(|(n, _, _)| n.clone()).collect();
+        let mut user_stub_jits: Vec<Jit> = Vec::new();
+        let mut user_stub_ptrs: HashMap<String, *const u8> = HashMap::new();
+        let mut user_function_bodies: HashMap<String, (Vec<String>, Expression)> = HashMap::new();
+        for name in &all_called {
+            if inline::is_builtin_function(name) || external_names.contains(name) {
+                continue;
+            }
+            let func_model = self.loader.load_model(name)
+                .map_err(|e| format!("Cannot load function '{}': {}", name, e))?;
+            let (input_names, outputs) = inline::get_function_body(func_model.as_ref())
+                .ok_or_else(|| format!(
+                    "Function '{}' cannot be used as JIT callable: not inlinable (side effects, multi-output, or no body). Use single-output pure function (FUNC-2).",
+                    name
+                ))?;
+            if outputs.len() != 1 {
+                return Err(format!(
+                    "Function '{}' has {} outputs; JIT callable supports single-output only (FUNC-2).",
+                    name, outputs.len()
+                ).into());
+            }
+            let mut stub_jit = Jit::new();
+            let ptr = stub_jit.compile_user_function_stub(name, &input_names, &outputs[0].1)
+                .map_err(|e| format!("JIT stub for '{}': {}", name, e))?;
+            user_stub_ptrs.insert(name.clone(), ptr);
+            user_stub_jits.push(stub_jit);
+            user_function_bodies.insert(name.clone(), (input_names.clone(), outputs[0].1.clone()));
+        }
+        let mut all_symbols = self.external_symbol_ptrs.clone();
+        for (k, v) in user_stub_ptrs {
+            all_symbols.insert(k, v);
+        }
 
         if opts.backend_dae_info {
             jacobian::print_backend_dae_info(
@@ -570,6 +903,7 @@ impl Compiler {
                 &discrete_vars_sorted,
                 &param_vars,
                 &output_vars,
+                &flat_model.clocked_var_names,
                 &continuous_eqs,
                 &alg_equations,
                 &flat_model.equations,
@@ -594,12 +928,43 @@ impl Compiler {
                     state_var_index.get(&first).copied().map(|start| (name.clone(), start, size))
                 })
                 .collect();
-            let array_layout_opt = if state_array_layout.is_empty() {
-                None
-            } else {
-                Some(state_array_layout.as_slice())
-            };
-            match c_codegen::emit_c_files(path, &state_vars_sorted, &param_vars, &output_vars, &alg_equations, jac, array_layout_opt) {
+            let output_array_layout: Vec<(String, usize, usize)> = flat_model
+                .array_sizes
+                .iter()
+                .filter_map(|(name, &size)| {
+                    let first = format!("{}_1", name);
+                    output_var_index.get(&first).copied().map(|start| (name.clone(), start, size))
+                })
+                .collect();
+            let param_array_layout: Vec<(String, usize, usize)> = flat_model
+                .array_sizes
+                .iter()
+                .filter_map(|(name, &size)| {
+                    let first = format!("{}_1", name);
+                    param_var_index.get(&first).copied().map(|start| (name.clone(), start, size))
+                })
+                .collect();
+            let state_layout_opt = if state_array_layout.is_empty() { None } else { Some(state_array_layout.as_slice()) };
+            let output_layout_opt = if output_array_layout.is_empty() { None } else { Some(output_array_layout.as_slice()) };
+            let param_layout_opt = if param_array_layout.is_empty() { None } else { Some(param_array_layout.as_slice()) };
+            let external_c_names: HashMap<String, String> = external_list.iter().map(|(m, c, _)| (m.clone(), c.clone())).collect();
+            let external_c_names_opt = if external_c_names.is_empty() { None } else { Some(external_c_names) };
+            let external_names_set: HashSet<String> = external_list.iter().map(|(n, _, _)| n.clone()).collect();
+            let user_fn_bodies_opt = if user_function_bodies.is_empty() { None } else { Some(&user_function_bodies) };
+            match c_codegen::emit_c_files(
+                path,
+                &state_vars_sorted,
+                &param_vars,
+                &output_vars,
+                &alg_equations,
+                jac,
+                state_layout_opt,
+                output_layout_opt,
+                param_layout_opt,
+                external_c_names_opt,
+                Some(&external_names_set),
+                user_fn_bodies_opt,
+            ) {
                 Ok(files) => {
                     let paths: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
                     println!("{}", i18n::msg("c_codegen_emitted", &[&paths.join(", ")]));
@@ -689,9 +1054,55 @@ impl Compiler {
             })
             .collect();
 
+        let lib_paths: Vec<std::path::PathBuf> = if !self.options.external_libs.is_empty() {
+            self.options.external_libs.iter().map(|p| std::path::PathBuf::from(p)).collect()
+        } else {
+            let mut from_annotation: Vec<std::path::PathBuf> = external_list.iter()
+                .filter_map(|(_, _, hint)| hint.as_ref())
+                .map(|lib_name| {
+                    let ext = std::env::consts::DLL_EXTENSION;
+                    std::path::PathBuf::from(format!("{}.{}", lib_name, ext))
+                })
+                .collect();
+            from_annotation.sort();
+            from_annotation.dedup();
+            from_annotation
+        };
+        if !lib_paths.is_empty() {
+            self.external_libraries.0.clear();
+            self.external_symbol_ptrs.clear();
+            for path in &lib_paths {
+                let lib = unsafe { libloading::Library::new(path.as_path()) }
+                    .map_err(|e| format!("Failed to load external lib '{}': {}", path.display(), e))?;
+                for (modelica_name, c_name, _) in &external_list {
+                    if self.external_symbol_ptrs.contains_key(modelica_name) {
+                        continue;
+                    }
+                    if let Ok(sym) = unsafe { lib.get::<extern "C" fn()>(c_name.as_bytes()) } {
+                        let ptr = *sym as *const u8;
+                        self.external_symbol_ptrs.insert(modelica_name.clone(), ptr);
+                    }
+                }
+                self.external_libraries.0.push(lib);
+            }
+            for (modelica_name, _c_name, _) in &external_list {
+                if !self.external_symbol_ptrs.contains_key(modelica_name) {
+                    return Err(format!(
+                        "EXT-2: external function '{}' not found in any loaded library (--external-lib or annotation Library)",
+                        modelica_name
+                    ).into());
+                }
+            }
+        }
+
         let t_end = self.options.t_end;
         let dt = self.options.dt;
-        let res = self.jit.compile(
+        let mut jit = if all_symbols.is_empty() {
+            Jit::new()
+        } else {
+            Jit::new_with_extra_symbols(Some(&all_symbols))
+        };
+        let res = jit.compile(
             &state_vars_sorted,
             &discrete_vars_sorted,
             &param_vars,
@@ -715,6 +1126,7 @@ impl Compiler {
                 discrete_vars: discrete_vars_sorted,
                 output_vars,
                 state_var_index,
+                clock_partitions: backend_clock_partitions,
                 when_count,
                 crossings_count,
                 t_end,
@@ -727,6 +1139,7 @@ impl Compiler {
                 solver: self.options.solver.clone(),
                 output_interval: self.options.output_interval,
                 result_file: self.options.result_file.clone(),
+                user_stub_jits,
             })),
             Err(e) => {
                 Err(format!("JIT compilation failed: {}{}", e, self.source_loc_suffix(model_name)).into())

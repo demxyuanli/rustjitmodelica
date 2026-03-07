@@ -518,5 +518,13 @@ fn eval_jac_expr_at_state(expr: &Expression, state_var_index: &HashMap<String, u
         Expression::Dot(base, _member) => eval_jac_expr_at_state(base, state_var_index, states),
         Expression::Range(_, _, _) => 0.0,
         Expression::Call(_, _) => 0.0,
+        Expression::Sample(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
+        Expression::Interval(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
+        Expression::Hold(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
+        Expression::Previous(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
+        Expression::SubSample(c, _) | Expression::SuperSample(c, _) | Expression::ShiftSample(c, _) => {
+            eval_jac_expr_at_state(c, state_var_index, states)
+        }
+        Expression::StringLiteral(_) => 0.0,
     }
 }

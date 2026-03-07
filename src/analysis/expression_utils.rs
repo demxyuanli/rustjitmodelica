@@ -97,7 +97,15 @@ pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
         | Expression::ArrayAccess(_, _)
         | Expression::Dot(_, _)
         | Expression::Range(_, _, _)
-        | Expression::ArrayLiteral(_) => Expression::Number(0.0),
+        | Expression::ArrayLiteral(_)
+        | Expression::Sample(_)
+        | Expression::Interval(_)
+        | Expression::Hold(_)
+        | Expression::Previous(_)
+        | Expression::SubSample(_, _)
+        | Expression::SuperSample(_, _)
+        | Expression::ShiftSample(_, _)
+        | Expression::StringLiteral(_) => Expression::Number(0.0),
     }
 }
 

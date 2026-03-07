@@ -1,0 +1,7 @@
+// SCRIPT: eval expr
+load TestLib/InitWithParam
+setParameter a 3
+simulate
+eval x
+eval a + 1
+quit

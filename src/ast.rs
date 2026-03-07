@@ -116,9 +116,14 @@ pub struct Declaration {
     pub is_discrete: bool,
     pub is_input: bool,
     pub is_output: bool,
+    /// FUNC-5: default argument (e.g. input Real y = 1.0); already parsed as start_value.
+    /// Optional/rest: is_rest true when parameter is variadic (e.g. input Real z...).
     pub start_value: Option<Expression>,
     pub array_size: Option<Expression>,
     pub modifications: Vec<Modification>,
+    /// FUNC-5: when true, parameter is variadic (parsed from "..." in function).
+    #[allow(dead_code)]
+    pub is_rest: bool,
     /// Parsed annotation; ignored in backend (F1-5).
     #[allow(dead_code)]
     pub annotation: Option<String>,
@@ -150,12 +155,28 @@ pub enum Expression {
     Number(f64),
     BinaryOp(Box<Expression>, Operator, Box<Expression>),
     Call(String, Vec<Expression>),
-    Der(Box<Expression>), 
+    Der(Box<Expression>),
+    /// SYNC-1: sample(interval) for clock/synchronous semantics.
+    Sample(Box<Expression>),
+    /// SYNC-1: interval(clock) for clock/synchronous semantics.
+    Interval(Box<Expression>),
+    /// SYNC-4: hold(x) - value of x at current clock tick (identity in minimal impl).
+    Hold(Box<Expression>),
+    /// SYNC-4: previous(x) - value of x at previous clock tick (same as pre(x) in minimal impl).
+    Previous(Box<Expression>),
+    /// SYNC-5: subSample(clock, n) - clock that ticks every n-th tick of clock.
+    SubSample(Box<Expression>, Box<Expression>),
+    /// SYNC-5: superSample(clock, n) - clock that ticks n times per base clock.
+    SuperSample(Box<Expression>, Box<Expression>),
+    /// SYNC-5: shiftSample(clock, n) - clock shifted by n ticks.
+    ShiftSample(Box<Expression>, Box<Expression>),
     ArrayAccess(Box<Expression>, Box<Expression>), // expr[i]
     Dot(Box<Expression>, String), // expr.name
     If(Box<Expression>, Box<Expression>, Box<Expression>), // if cond then true_expr else false_expr
     Range(Box<Expression>, Box<Expression>, Box<Expression>), // start:step:end
     ArrayLiteral(Vec<Expression>), // {e1, e2, ...}
+    /// FUNC-7: String literal for external function args (ABI: const char*).
+    StringLiteral(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

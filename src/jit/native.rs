@@ -116,7 +116,26 @@ extern "C" fn rustmodlica_solve_linear_n(n: i32, jac: *const f64, r: *const f64,
     0
 }
 
+/// SYNC-3: sample(interval) - returns 1.0 at sample instants (0, interval, 2*interval, ...), else 0.0.
+/// Approximates "at sample point" by fmod(t, interval) near zero or t near zero.
+extern "C" fn rustmodlica_sample(t: f64, interval: f64) -> f64 {
+    if interval <= 0.0 {
+        return 0.0;
+    }
+    let phase = t / interval;
+    let k = phase.floor();
+    let frac = phase - k;
+    if frac < 1e-12 || (1.0 - frac) < 1e-12 {
+        1.0
+    } else if t < 1e-12 {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 pub fn register_symbols(builder: &mut JITBuilder) {
+    builder.symbol("rustmodlica_sample", rustmodlica_sample as *const u8);
     // Register symbols for math functions
     builder.symbol("sin", f64::sin as *const u8);
     builder.symbol("cos", f64::cos as *const u8);

@@ -1,0 +1,5 @@
+// SCRIPT: setStopTime
+load TestLib/InitWithParam
+setStopTime 2.0
+simulate
+quit
