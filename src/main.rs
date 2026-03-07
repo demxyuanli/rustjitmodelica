@@ -67,6 +67,7 @@ fn run_repl_loop(artifacts: compiler::Artifacts) -> Result<(), RunError> {
                 &artifacts.solver,
                 artifacts.output_interval,
                 artifacts.result_file.as_deref(),
+                None,
             )?;
             println!("{}", i18n::msg0("simulation_completed"));
             continue;
@@ -372,6 +373,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 &artifacts.solver,
                 artifacts.output_interval,
                 artifacts.result_file.as_deref(),
+                None,
             )?;
             println!("{}", i18n::msg0("simulation_completed"));
         }

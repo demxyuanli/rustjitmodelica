@@ -8,6 +8,16 @@ use crate::i18n;
 use crate::solver::{Solver, System, RungeKutta4Solver, AdaptiveRK45Solver, BackwardEulerSolver};
 use crate::ast::Expression;
 
+/// Serializable simulation time series for IDE/Plotly (time + series per variable).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SimulationResult {
+    pub time: Vec<f64>,
+    pub series: HashMap<String, Vec<f64>>,
+}
+
+/// Row collector for run_simulation when collecting in-memory (time, states, discrete, outputs).
+pub type ResultCollector = Vec<(f64, Vec<f64>, Vec<f64>, Vec<f64>)>;
+
 pub fn run_simulation(
     calc_derivs: CalcDerivsFunc,
     when_count: usize,
@@ -29,6 +39,7 @@ pub fn run_simulation(
     solver: &str,
     output_interval: f64,
     result_file: Option<&str>,
+    mut result_collector: Option<&mut ResultCollector>,
 ) -> Result<(), String> {
     let mut time = 0.0;
     let mut derivs = vec![0.0; states.len()];
@@ -50,7 +61,9 @@ pub fn run_simulation(
     let mut rk45_solver = AdaptiveRK45Solver::new(states.len(), atol, rtol);
     let mut backward_euler_solver = BackwardEulerSolver::new(states.len());
 
-    let mut out: Box<dyn Write> = if let Some(path) = result_file {
+    let mut out: Box<dyn Write> = if result_collector.is_some() {
+        Box::new(io::sink())
+    } else if let Some(path) = result_file {
         let f = File::create(path).map_err(|e| format!("Failed to create result file {}: {}", path, e))?;
         Box::new(std::io::BufWriter::new(f))
     } else {
@@ -271,6 +284,9 @@ pub fn run_simulation(
             for val in &discrete_vals { row.push_str(&format!(", {:.4}", val)); }
             for val in &outputs { row.push_str(&format!(", {:.4}", val)); }
             write_row(&row)?;
+            if let Some(ref mut c) = result_collector {
+                c.push((time, states.clone(), discrete_vals.clone(), outputs.clone()));
+            }
             next_print += print_interval;
         }
 
@@ -473,6 +489,83 @@ pub fn run_simulation(
         println!("{}", i18n::msg("adaptive_rk45_steps", &[&adaptive_step_count]));
     }
     Ok(())
+}
+
+/// Run simulation and return time series in memory (for IDE/Plotly). Does not write to file/stdout.
+pub fn run_simulation_collect(
+    calc_derivs: CalcDerivsFunc,
+    when_count: usize,
+    crossings_count: usize,
+    states: Vec<f64>,
+    discrete_vals: Vec<f64>,
+    params: Vec<f64>,
+    state_vars: &[String],
+    discrete_vars: &[String],
+    output_vars: &[String],
+    state_var_index: &HashMap<String, usize>,
+    t_end: f64,
+    dt: f64,
+    numeric_ode_jacobian: bool,
+    symbolic_ode_jacobian: Option<&Vec<Vec<Expression>>>,
+    newton_tearing_var_names: &[String],
+    atol: f64,
+    rtol: f64,
+    solver: &str,
+    output_interval: f64,
+) -> Result<SimulationResult, String> {
+    let mut collector = ResultCollector::new();
+    run_simulation(
+        calc_derivs,
+        when_count,
+        crossings_count,
+        states,
+        discrete_vals,
+        params,
+        state_vars,
+        discrete_vars,
+        output_vars,
+        state_var_index,
+        t_end,
+        dt,
+        numeric_ode_jacobian,
+        symbolic_ode_jacobian,
+        newton_tearing_var_names,
+        atol,
+        rtol,
+        solver,
+        output_interval,
+        None,
+        Some(&mut collector),
+    )?;
+    let mut time = Vec::with_capacity(collector.len());
+    let mut series: HashMap<String, Vec<f64>> = HashMap::new();
+    series.insert("time".to_string(), Vec::with_capacity(collector.len()));
+    for name in state_vars {
+        series.insert(name.clone(), Vec::with_capacity(collector.len()));
+    }
+    for name in discrete_vars {
+        series.insert(name.clone(), Vec::with_capacity(collector.len()));
+    }
+    for name in output_vars {
+        series.insert(name.clone(), Vec::with_capacity(collector.len()));
+    }
+    for (t, st, disc, out) in collector {
+        time.push(t);
+        series.get_mut("time").unwrap().push(t);
+        for (i, name) in state_vars.iter().enumerate() {
+            let v = st.get(i).copied().unwrap_or(0.0);
+            series.get_mut(name).unwrap().push(v);
+        }
+        for (i, name) in discrete_vars.iter().enumerate() {
+            let v = disc.get(i).copied().unwrap_or(0.0);
+            series.get_mut(name).unwrap().push(v);
+        }
+        for (i, name) in output_vars.iter().enumerate() {
+            let v = out.get(i).copied().unwrap_or(0.0);
+            series.get_mut(name).unwrap().push(v);
+        }
+    }
+    Ok(SimulationResult { time, series })
 }
 
 fn eval_jac_expr_at_state(expr: &Expression, state_var_index: &HashMap<String, usize>, states: &[f64]) -> f64 {

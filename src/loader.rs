@@ -132,6 +132,39 @@ impl ModelLoader {
         Err(LoadError::NotFound(name.to_string()))
     }
 
+    /// Load a model from source code in memory (for IDE / single-file compile).
+    /// Registers the parsed model under `model_name` and uses a virtual path for diagnostics.
+    pub fn load_model_from_source(
+        &mut self,
+        model_name: &str,
+        code: &str,
+    ) -> Result<Arc<Model>, LoadError> {
+        if let Some(arc) = self.loaded_models.get(model_name) {
+            return Ok(Arc::clone(arc));
+        }
+        let item = parser::parse(code).map_err(|e| {
+            let (line, column) = crate::diag::line_col_from_pest(&e.line_col);
+            let message = crate::diag::short_message_from_pest_string(&e.to_string());
+            LoadError::ParseFailedAt(ParseErrorInfo {
+                path: format!("<{}>", model_name),
+                source: code.to_string(),
+                line,
+                column,
+                message,
+            })
+        })?;
+        let model = match item {
+            crate::ast::ClassItem::Model(m) => m,
+            crate::ast::ClassItem::Function(f) => crate::ast::Model::from(f),
+        };
+        let arc = Arc::new(model);
+        self.loaded_models.insert(model_name.to_string(), Arc::clone(&arc));
+        self.loaded_paths
+            .insert(model_name.to_string(), PathBuf::from(format!("<{}>", model_name)));
+        self.register_inner_classes(model_name, arc.as_ref());
+        Ok(arc)
+    }
+
     fn register_inner_classes(&mut self, prefix: &str, model: &Model) {
         for inner in &model.inner_classes {
             let full_name = format!("{}.{}", prefix, inner.name);

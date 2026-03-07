@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: ui-monospace, Monaco, Consolas, monospace;
+  --primary: #3b82f6;
+  --radius: 10px;
+  --surface: #1e1e1e;
+  --surface-alt: #252526;
+  --border: #3c3c3c;
+  --text: #d4d4d4;
+  --text-muted: #9d9d9d;
+}
+
+.light {
+  --surface: #f3f4f6;
+  --surface-alt: #e5e7eb;
+  --border: #d1d5db;
+  --text: #1f2937;
+  --text-muted: #6b7280;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.resize-handle {
+  width: 4px;
+  background: transparent;
+  cursor: col-resize;
+}
+.resize-handle:hover {
+  background: var(--primary);
+}
+
+.titlebar .titlebar-btn {
+  cursor: pointer;
+}
