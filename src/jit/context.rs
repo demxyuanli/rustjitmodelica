@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
-use cranelift_module::FuncId;
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift::codegen::ir::StackSlot;
 use super::types::ArrayInfo;
 
@@ -42,6 +42,42 @@ pub struct TranslationContext<'a> {
 
     /// FUNC-7: Cache of declared import func_id by name so array-arg calls use consistent signature.
     pub declared_imports: Option<&'a mut HashMap<String, FuncId>>,
+
+    /// FUNC-7: String literal -> DataId for JIT external calls (const char*).
+    pub string_literal_cache: Option<&'a mut HashMap<String, DataId>>,
+    /// Reusable DataDescription and counter for creating string data.
+    pub string_literal_data_ctx: Option<&'a mut DataDescription>,
+    pub string_data_counter: Option<&'a mut usize>,
+}
+
+impl<'a> TranslationContext<'a> {
+    /// FUNC-7: Get or create DataId for string literal (null-terminated); returns None if string args not enabled.
+    pub fn get_or_create_string_data(&mut self, s: &str) -> Result<Option<DataId>, String> {
+        let (cache, data_ctx, ctr) = match (
+            self.string_literal_cache.as_deref_mut(),
+            self.string_literal_data_ctx.as_deref_mut(),
+            self.string_data_counter.as_deref_mut(),
+        ) {
+            (Some(c), Some(d), Some(n)) => (c, d, n),
+            _ => return Ok(None),
+        };
+        if let Some(&id) = cache.get(s) {
+            return Ok(Some(id));
+        }
+        let mut bytes = s.as_bytes().to_vec();
+        bytes.push(0u8);
+        data_ctx.define(bytes.into_boxed_slice());
+        *ctr += 1;
+        let name = format!("jit_str_{}", *ctr);
+        let id = self
+            .module
+            .declare_data(&name, Linkage::Local, false, false)
+            .map_err(|e| e.to_string())?;
+        self.module.define_data(id, data_ctx).map_err(|e| e.to_string())?;
+        data_ctx.clear();
+        cache.insert(s.to_string(), id);
+        Ok(Some(id))
+    }
 }
 
 impl<'a> TranslationContext<'a> {
@@ -70,6 +106,9 @@ impl<'a> TranslationContext<'a> {
         diag_residual_ptr: Option<Value>,
         diag_x_ptr: Option<Value>,
         declared_imports: Option<&'a mut HashMap<String, FuncId>>,
+        string_literal_cache: Option<&'a mut HashMap<String, DataId>>,
+        string_literal_data_ctx: Option<&'a mut DataDescription>,
+        string_data_counter: Option<&'a mut usize>,
     ) -> Self {
         Self {
             module,
@@ -96,6 +135,9 @@ impl<'a> TranslationContext<'a> {
             diag_residual_ptr,
             diag_x_ptr,
             declared_imports,
+            string_literal_cache,
+            string_literal_data_ctx,
+            string_data_counter,
         }
     }
 

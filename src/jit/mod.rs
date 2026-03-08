@@ -164,6 +164,8 @@ impl Jit {
             let mut when_idx = 0;
             let mut crossings_idx = 0;
             let mut declared_imports = HashMap::new();
+            let mut string_literal_cache = HashMap::new();
+            let mut string_data_counter = 0usize;
             let mut t_ctx = TranslationContext::new(
                 &mut self.module,
                 &mut var_map,
@@ -189,6 +191,9 @@ impl Jit {
                 diag_res,
                 diag_x,
                 Some(&mut declared_imports),
+                Some(&mut string_literal_cache),
+                Some(&mut self.data_ctx),
+                Some(&mut string_data_counter),
             );
 
             for stmt in algorithms {
@@ -261,6 +266,8 @@ impl Jit {
         let output_vars: &[String] = &[];
         let mut when_idx = 0usize;
         let mut crossings_idx = 0usize;
+        let mut string_literal_cache = HashMap::new();
+        let mut string_data_counter = 0usize;
 
         {
             let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
@@ -304,6 +311,9 @@ impl Jit {
                 None,
                 None,
                 None,
+                Some(&mut string_literal_cache),
+                Some(&mut self.data_ctx),
+                Some(&mut string_data_counter),
             );
 
             let result = compile_expression(output_expr, &mut t_ctx, &mut builder)?;

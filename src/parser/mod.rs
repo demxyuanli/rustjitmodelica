@@ -213,9 +213,12 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 if token.as_rule() == Rule::array_subscript {
                                     let mut sub_inner =
                                         decl_inner.next().unwrap().into_inner();
-                                    let size_expr =
-                                        expression::parse_expression(sub_inner.next().unwrap());
-                                    array_size = Some(size_expr);
+                                    let dim_inner = sub_inner.next().unwrap();
+                                    if dim_inner.as_rule() == Rule::expression {
+                                        array_size =
+                                            Some(expression::parse_expression(dim_inner));
+                                    }
+                                    // Rule::array_dim_unspecified ([:]) => leave array_size None
                                 }
                             }
 

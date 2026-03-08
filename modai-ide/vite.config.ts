@@ -8,6 +8,21 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("monaco-editor") || id.includes("@monaco-editor")) return "monaco";
+            if (id.includes("plotly") || id.includes("react-plotly")) return "plotly";
+            if (id.includes("react/") || id.includes("react-dom") || id.includes("scheduler") || id.includes("@tauri-apps")) return "vendor";
+          }
+        },
+      },
+    },
+    chunkSizeWarningLimit: 5000,
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

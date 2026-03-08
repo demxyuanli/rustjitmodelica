@@ -196,3 +196,27 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("Boolean", modelica_boolean as *const u8);
     builder.symbol("String", modelica_string as *const u8);
 }
+
+/// Names of symbols registered by register_symbols(); used to avoid JIT panic when external is missing.
+pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
+    let mut set = std::collections::HashSet::new();
+    set.insert("rustmodlica_sample");
+    set.insert("sin"); set.insert("cos"); set.insert("tan");
+    set.insert("asin"); set.insert("acos"); set.insert("atan"); set.insert("atan2");
+    set.insert("sinh"); set.insert("cosh"); set.insert("tanh");
+    set.insert("sqrt"); set.insert("exp"); set.insert("log"); set.insert("log10");
+    set.insert("abs"); set.insert("ceil"); set.insert("floor");
+    set.insert("mod"); set.insert("rem"); set.insert("sign"); set.insert("min"); set.insert("max");
+    set.insert("div"); set.insert("integer");
+    set.insert("Modelica.Math.sin"); set.insert("Modelica.Math.cos"); set.insert("Modelica.Math.tan");
+    set.insert("Modelica.Math.asin"); set.insert("Modelica.Math.acos"); set.insert("Modelica.Math.atan");
+    set.insert("Modelica.Math.atan2"); set.insert("Modelica.Math.sinh"); set.insert("Modelica.Math.cosh");
+    set.insert("Modelica.Math.tanh"); set.insert("Modelica.Math.exp"); set.insert("Modelica.Math.log");
+    set.insert("Modelica.Math.log10"); set.insert("Modelica.Math.sqrt"); set.insert("Modelica.Math.ceil");
+    set.insert("Modelica.Math.floor"); set.insert("Modelica.Math.mod"); set.insert("Modelica.Math.rem");
+    set.insert("Modelica.Math.sign"); set.insert("Modelica.Math.min"); set.insert("Modelica.Math.max");
+    set.insert("Modelica.Math.div"); set.insert("Modelica.Math.integer");
+    set.insert("rustmodlica_solve_linear_n");
+    set.insert("assert"); set.insert("terminate"); set.insert("Boolean"); set.insert("String");
+    set
+}

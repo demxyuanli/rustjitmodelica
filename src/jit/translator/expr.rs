@@ -315,8 +315,17 @@ pub fn compile_expression(
                         continue;
                     }
                 }
-                if let Expression::StringLiteral(_) = arg {
-                    return Err("String argument in function call not supported in JIT (FUNC-7). Use C codegen or scalar args.".to_string());
+                if let Expression::StringLiteral(s) = arg {
+                    let data_id = match ctx.get_or_create_string_data(s)? {
+                        Some(id) => id,
+                        None => {
+                            return Err("String argument in function call not supported in JIT (FUNC-7). Use C codegen or scalar args.".to_string());
+                        }
+                    };
+                    sig.params.push(AbiParam::new(ptr_type));
+                    let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
+                    arg_vals.push(builder.ins().global_value(ptr_type, gv));
+                    continue;
                 }
                 let val = compile_expression(arg, ctx, builder)?;
                 sig.params.push(AbiParam::new(cl_types::F64));
@@ -523,8 +532,17 @@ fn compile_pre_expression(
                         continue;
                     }
                 }
-                if let Expression::StringLiteral(_) = arg {
-                    return Err("String argument in function call not supported in JIT (FUNC-7).".to_string());
+                if let Expression::StringLiteral(s) = arg {
+                    let data_id = match ctx.get_or_create_string_data(s)? {
+                        Some(id) => id,
+                        None => {
+                            return Err("String argument in function call not supported in JIT (FUNC-7).".to_string());
+                        }
+                    };
+                    sig.params.push(AbiParam::new(ptr_type));
+                    let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
+                    arg_vals.push(builder.ins().global_value(ptr_type, gv));
+                    continue;
                 }
                 let val = compile_pre_expression(arg, ctx, builder)?;
                 sig.params.push(AbiParam::new(cl_types::F64));

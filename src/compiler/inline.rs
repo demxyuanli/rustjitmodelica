@@ -141,6 +141,7 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
         | "ceil" | "floor" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
         | "sinh" | "cosh" | "tanh" | "exp" | "log" | "log10"
         | "pre" | "edge" | "change" | "noEvent" | "initial" | "terminal"
+        | "subSample" | "superSample" | "shiftSample"
     ) || name.starts_with("Modelica.Math.")
 }
 

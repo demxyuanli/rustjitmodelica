@@ -24,7 +24,7 @@ class_prefixes = { "partial"? ~ ("operator"? ~ "record" | "model" | "connector" 
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 dotted_identifier = { identifier ~ ("." ~ identifier)* }
 declaration_section = { (extends_clause | declaration | model_definition | type_definition)* }
-type_definition = { "type" ~ identifier ~ "=" ~ type_name ~ array_subscript? ~ ";" }
+type_definition = { "type" ~ identifier ~ "=" ~ type_name ~ array_subscript? ~ modification_part? ~ ";" }
 
 extends_clause = { "extends" ~ dotted_identifier ~ modification_part? ~ ";" }
 modification_part = { "(" ~ modification_list ~ ")" }
@@ -37,7 +37,8 @@ replaceable_kw = { "replaceable" }
 
 string_comment = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
-array_subscript = { "[" ~ expression ~ "]" }
+array_subscript = { "[" ~ (expression | array_dim_unspecified) ~ "]" }
+array_dim_unspecified = { ":" }
 parameter_kw = { "parameter" }
 constant_kw = { "constant" }
 flow_kw = { "flow" }

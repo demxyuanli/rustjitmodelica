@@ -5,12 +5,14 @@
 :root {
   font-family: ui-monospace, Monaco, Consolas, monospace;
   --primary: #3b82f6;
-  --radius: 10px;
+  --radius: 8;
   --surface: #1e1e1e;
   --surface-alt: #252526;
   --border: #3c3c3c;
   --text: #d4d4d4;
   --text-muted: #9d9d9d;
+  --status-error: #f14c4c;
+  --status-warning: #e2c08d;
 }
 
 .light {
@@ -19,7 +21,12 @@
   --border: #d1d5db;
   --text: #1f2937;
   --text-muted: #6b7280;
+  --status-error: #c72e2e;
+  --status-warning: #bc8f2e;
 }
+
+.status-bar-error { color: var(--status-error); }
+.status-bar-warning { color: var(--status-warning); }
 
 body {
   margin: 0;
@@ -27,15 +34,197 @@ body {
   color: var(--text);
 }
 
+/* VS Code / Monaco-like: semi-transparent, thin, same as editor - apply to all scrollable areas */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(121, 121, 121, 0.35) transparent;
+}
+
+.light * {
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(121, 121, 121, 0.3) !important;
+  border-radius: 4px !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(121, 121, 121, 0.6) !important;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+
+.light *::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2) !important;
+}
+
+.light *::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.4) !important;
+}
+
 .resize-handle {
   width: 4px;
   background: transparent;
   cursor: col-resize;
+  user-select: none;
 }
 .resize-handle:hover {
   background: var(--primary);
 }
 
+.resize-handle-h {
+  height: 4px;
+  background: transparent;
+  cursor: row-resize;
+  user-select: none;
+}
+.resize-handle-h:hover {
+  background: var(--primary);
+}
+
 .titlebar .titlebar-btn {
   cursor: pointer;
+}
+
+/* react-diff-view dark theme */
+.diff-view-container .diff {
+  --diff-background-color: var(--surface-alt);
+  --diff-text-color: var(--text);
+  --diff-gutter-insert-background-color: rgba(34, 139, 34, 0.25);
+  --diff-gutter-delete-background-color: rgba(139, 34, 34, 0.25);
+  --diff-code-insert-background-color: rgba(34, 139, 34, 0.15);
+  --diff-code-delete-background-color: rgba(139, 34, 34, 0.15);
+}
+.light .diff-view-container .diff {
+  --diff-gutter-insert-background-color: rgba(34, 139, 34, 0.2);
+  --diff-gutter-delete-background-color: rgba(139, 34, 34, 0.2);
+  --diff-code-insert-background-color: rgba(34, 139, 34, 0.1);
+  --diff-code-delete-background-color: rgba(139, 34, 34, 0.1);
+}
+
+/* Global tree layout: fixed row height, indent, icon size */
+:root {
+  --tree-row-height: 22px;
+  --tree-indent: 14px;
+  --tree-base: 8px;
+  --tree-icon-size: 16px;
+  --tree-gap: 6px;
+}
+.tree-row {
+  min-height: var(--tree-row-height);
+  padding-left: var(--tree-base);
+  padding-right: 4px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: var(--tree-gap);
+  font-size: 12px;
+}
+.tree-row[data-depth="0"] { padding-left: var(--tree-base); }
+.tree-row[data-depth="1"] { padding-left: calc(var(--tree-base) + var(--tree-indent)); }
+.tree-row[data-depth="2"] { padding-left: calc(var(--tree-base) + 2 * var(--tree-indent)); }
+.tree-row[data-depth="3"] { padding-left: calc(var(--tree-base) + 3 * var(--tree-indent)); }
+.tree-row[data-depth="4"] { padding-left: calc(var(--tree-base) + 4 * var(--tree-indent)); }
+.tree-row[data-depth="5"] { padding-left: calc(var(--tree-base) + 5 * var(--tree-indent)); }
+.tree-row[data-depth="6"] { padding-left: calc(var(--tree-base) + 6 * var(--tree-indent)); }
+.tree-row[data-depth="7"] { padding-left: calc(var(--tree-base) + 7 * var(--tree-indent)); }
+.tree-row[data-depth="8"] { padding-left: calc(var(--tree-base) + 8 * var(--tree-indent)); }
+.tree-row[data-depth="9"] { padding-left: calc(var(--tree-base) + 9 * var(--tree-indent)); }
+.tree-icon-box {
+  width: var(--tree-icon-size);
+  height: var(--tree-icon-size);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+}
+.tree-arrow {
+  width: var(--tree-icon-size);
+  height: var(--tree-icon-size);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.tree-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* Source control tree: git status highlight */
+.scm-tree-row {
+  border-left: 3px solid transparent;
+}
+.scm-tree-row.scm-status-M { border-left-color: var(--scm-modified); }
+.scm-tree-row.scm-status-U { border-left-color: var(--scm-untracked); }
+.scm-tree-row.scm-status-D { border-left-color: var(--scm-deleted); }
+.scm-tree-row.scm-status-R { border-left-color: var(--scm-renamed); }
+.scm-tree-row.scm-status-A { border-left-color: var(--scm-added); }
+.scm-tree-row.scm-staged.scm-status-M { border-left-color: var(--scm-staged-modified); }
+.scm-tree-row.scm-staged.scm-status-A { border-left-color: var(--scm-staged-added); }
+.scm-tree-row.scm-staged.scm-status-R { border-left-color: var(--scm-staged-renamed); }
+.scm-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.scm-status-dot.modified { background: var(--scm-modified); }
+.scm-status-dot.untracked { background: var(--scm-untracked); }
+.scm-status-dot.deleted { background: var(--scm-deleted); }
+.scm-status-dot.renamed { background: var(--scm-renamed); }
+.scm-status-dot.added { background: var(--scm-added); }
+.scm-status-dot.staged { background: var(--scm-staged-added); }
+.scm-status-badge {
+  width: 14px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  border-radius: 2px;
+}
+.scm-status-badge.modified { color: var(--scm-modified); }
+.scm-status-badge.untracked { color: var(--scm-untracked); }
+.scm-status-badge.deleted { color: var(--scm-deleted); }
+.scm-status-badge.renamed { color: var(--scm-renamed); }
+.scm-status-badge.added { color: var(--scm-added); }
+.scm-status-badge.staged { color: var(--scm-staged-added); }
+:root {
+  --scm-modified: #e2c08d;
+  --scm-untracked: #75beff;
+  --scm-deleted: #f14c4c;
+  --scm-renamed: #75beff;
+  --scm-added: #89d185;
+  --scm-staged-modified: #89d185;
+  --scm-staged-added: #89d185;
+  --scm-staged-renamed: #89d185;
+}
+.light {
+  --scm-modified: #bc8f2e;
+  --scm-untracked: #006ab3;
+  --scm-deleted: #c72e2e;
+  --scm-renamed: #006ab3;
+  --scm-added: #2ea043;
+  --scm-staged-modified: #2ea043;
+  --scm-staged-added: #2ea043;
+  --scm-staged-renamed: #2ea043;
 }
