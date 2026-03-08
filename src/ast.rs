@@ -194,3 +194,34 @@ pub enum Operator {
     And,
     Or,
 }
+
+/// Converts a connector reference expression to a path string for diagram/connect.
+/// e.g. Variable("r") -> "r", Dot(box Variable("r"), "p") -> "r.p".
+/// Returns None for expressions that are not a simple variable or dot chain.
+pub fn expr_to_connector_path(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Variable(s) => Some(s.clone()),
+        Expression::Dot(inner, name) => {
+            let prefix = expr_to_connector_path(inner)?;
+            Some(format!("{}.{}", prefix, name))
+        }
+        _ => None,
+    }
+}
+
+/// Builds an Expression for a connector path string, e.g. "r.p" -> Dot(box Variable("r"), "p").
+pub fn connector_path_to_expr(path: &str) -> Expression {
+    let mut parts = path.split('.');
+    let first = parts
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("x")
+        .to_string();
+    let mut expr = Expression::Variable(first);
+    for segment in parts {
+        if !segment.is_empty() {
+            expr = Expression::Dot(Box::new(expr), segment.to_string());
+        }
+    }
+    expr
+}

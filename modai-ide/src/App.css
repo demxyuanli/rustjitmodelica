@@ -76,6 +76,77 @@ body {
   background: rgba(0, 0, 0, 0.4) !important;
 }
 
+/* Monaco editor git diff (VS Code style: thin gutter bar + line background) */
+.diff-gutter-added {
+  border-left: 3px solid rgba(34, 139, 34, 0.9) !important;
+  background-color: transparent !important;
+}
+.diff-gutter-removed {
+  border-left: 3px solid rgba(139, 34, 34, 0.9) !important;
+  background-color: transparent !important;
+}
+/* Full line (code area): Monaco applies className to the decoration overlay */
+.monaco-editor .diff-line-added,
+.diff-line-added {
+  background-color: rgba(34, 139, 34, 0.22) !important;
+  display: block !important;
+  width: 100% !important;
+  min-height: 1em !important;
+}
+.monaco-editor .diff-line-removed,
+.diff-line-removed {
+  background-color: rgba(139, 34, 34, 0.22) !important;
+  display: block !important;
+  width: 100% !important;
+  min-height: 1em !important;
+}
+.light .diff-gutter-added {
+  border-left-color: rgba(46, 160, 67, 0.9) !important;
+}
+.light .diff-gutter-removed {
+  border-left-color: rgba(199, 46, 46, 0.9) !important;
+}
+.light .diff-line-added {
+  background-color: rgba(46, 160, 67, 0.12) !important;
+}
+.light .diff-line-removed {
+  background-color: rgba(199, 46, 46, 0.12) !important;
+}
+
+/* Editor workbench layout: flex chain so split columns and Monaco get valid height */
+.editor-workbench {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+.editor-group-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.editor-group-toolbar {
+  flex-shrink: 0;
+}
+.editor-group-body {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.editor-workbench-resize {
+  flex-shrink: 0;
+}
+.editor-empty-state {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
 .resize-handle {
   width: 4px;
   background: transparent;

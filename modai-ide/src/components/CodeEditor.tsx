@@ -1,7 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type monaco from "monaco-editor";
+import { t } from "../i18n";
 import type { JitValidateResult } from "../types";
+import { useEditorDiffDecorations } from "../hooks/useEditorDiffDecorations";
 
 interface CodeEditorProps {
   value: string;
@@ -12,6 +14,9 @@ interface CodeEditorProps {
   editorRef: React.MutableRefObject<monaco.editor.IStandaloneCodeEditor | null>;
   monacoRef: React.MutableRefObject<typeof monaco | null>;
   onCursorPositionChange?: (lineNumber: number, column: number) => void;
+  openFilePath?: string | null;
+  projectDir?: string | null;
+  onSave?: () => void;
 }
 
 export function CodeEditor({
@@ -23,7 +28,11 @@ export function CodeEditor({
   editorRef,
   monacoRef,
   onCursorPositionChange,
+  openFilePath,
+  projectDir,
+  onSave,
 }: CodeEditorProps) {
+  const [editorReady, setEditorReady] = useState(false);
   useEffect(() => {
     const editor = editorRef.current;
     const monacoInstance = monacoRef.current;
@@ -57,6 +66,9 @@ export function CodeEditor({
     };
   }, [jitResult, editorRef, monacoRef]);
 
+  const pathNorm = openFilePath != null ? openFilePath.replace(/\\/g, "/") : null;
+  useEditorDiffDecorations(editorRef, monacoRef, projectDir, pathNorm, value, editorReady);
+
   return (
     <section className="flex-1 min-w-0 flex flex-col">
       <div className="flex items-center gap-2 px-2 py-1 border-b border-border">
@@ -67,16 +79,29 @@ export function CodeEditor({
           onChange={(e) => onModelNameChange(e.target.value)}
           className="bg-[#3c3c3c] border border-gray-600 px-2 py-1 text-sm w-40 rounded"
         />
+        {openFilePath != null && onSave != null && (
+          <button
+            type="button"
+            className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[var(--text)]"
+            onClick={onSave}
+          >
+            {t("save")}
+          </button>
+        )}
       </div>
       <div className="flex-1 min-h-0">
         <Editor
           height="100%"
           defaultLanguage="modelica"
-          value={value}
+          path={openFilePath != null ? `file:///${openFilePath.replace(/\\/g, "/")}` : undefined}
+          value={openFilePath != null ? undefined : value}
+          defaultValue={openFilePath != null ? value : undefined}
           onChange={(v) => onChange(v ?? "")}
+          saveViewState
           onMount={(editor, monacoInstance) => {
             editorRef.current = editor;
             monacoRef.current = monacoInstance;
+            setEditorReady(true);
             const pos = editor.getPosition();
             if (pos && onCursorPositionChange) onCursorPositionChange(pos.lineNumber, pos.column);
             editor.onDidChangeCursorPosition((e) => {
@@ -89,6 +114,7 @@ export function CodeEditor({
             fontSize: 14,
             wordWrap: "on",
             padding: { top: 8 },
+            glyphMargin: true,
           }}
           beforeMount={(monaco) => {
             monaco.languages.register({ id: "modelica" });

@@ -2,6 +2,7 @@
 
 mod ai;
 mod db;
+mod diagram;
 mod git;
 mod iterate;
 
@@ -378,6 +379,54 @@ fn read_project_file(project_dir: String, relative_path: String) -> Result<Strin
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_diagram_data(project_dir: String, relative_path: String) -> Result<diagram::DiagramModel, String> {
+    diagram::get_diagram_data(&project_dir, &relative_path)
+}
+
+#[tauri::command]
+fn get_diagram_data_from_source(source: String) -> Result<diagram::DiagramModel, String> {
+    diagram::get_diagram_data_from_source(&source)
+}
+
+#[tauri::command]
+fn apply_diagram_edits(
+    source: String,
+    components: Vec<diagram::ComponentInstance>,
+    connections: Vec<diagram::Connection>,
+    layout: Option<std::collections::HashMap<String, diagram::LayoutPoint>>,
+) -> Result<ApplyDiagramEditsResult, String> {
+    let new_source = diagram::apply_diagram_edits(
+        &source,
+        &components,
+        &connections,
+        layout.as_ref(),
+    )?;
+    Ok(ApplyDiagramEditsResult { new_source: new_source })
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ApplyDiagramEditsResult {
+    #[serde(rename = "newSource")]
+    pub new_source: String,
+}
+
+#[tauri::command]
+fn write_project_file(project_dir: String, relative_path: String, content: String) -> Result<(), String> {
+    let project_canonical = Path::new(&project_dir).canonicalize().map_err(|e| e.to_string())?;
+    let full = project_canonical.join(&relative_path);
+    if let Some(parent) = full.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let parent_canonical = parent.canonicalize().map_err(|e| e.to_string())?;
+        if !parent_canonical.starts_with(&project_canonical) {
+            return Err("Path is outside project directory".to_string());
+        }
+    }
+    fs::write(&full, content).map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct MoTreeEntry {
     pub name: String,
@@ -404,6 +453,58 @@ fn parse_mo_deps(content: &str) -> Option<(String, Vec<String>)> {
         ),
     };
     Some((class_name, extends))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstantiableClass {
+    pub name: String,
+    pub path: Option<String>,
+}
+
+fn list_instantiable_classes_impl(
+    dir: &Path,
+    project_dir: &Path,
+    prefix: &str,
+    out: &mut Vec<InstantiableClass>,
+) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for e in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let e = e.map_err(|e| e.to_string())?;
+        let p = e.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        if p.is_dir() {
+            list_instantiable_classes_impl(&p, project_dir, &format!("{}{}/", prefix, name), out)?;
+        } else if p.extension().map_or(false, |e| e == "mo") {
+            let rel = format!("{}{}", prefix, name);
+            let full = project_dir.join(&rel);
+            let content = fs::read_to_string(&full).map_err(|e| e.to_string())?;
+            if let Ok(item) = parser::parse(&content) {
+                if let ClassItem::Model(m) = item {
+                    if !m.is_connector && !m.is_function {
+                        out.push(InstantiableClass {
+                            name: m.name,
+                            path: Some(rel),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn list_instantiable_classes(project_dir: String) -> Result<Vec<InstantiableClass>, String> {
+    let dir = Path::new(&project_dir);
+    let mut out = Vec::new();
+    if dir.is_dir() {
+        list_instantiable_classes_impl(dir, dir, "", &mut out)?;
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
 }
 
 fn list_mo_tree_impl(dir: &Path, project_dir: &Path, prefix: &str) -> Result<Vec<MoTreeEntry>, String> {
@@ -618,6 +719,11 @@ pub fn run() {
             list_mo_files,
             list_mo_tree,
             read_project_file,
+            write_project_file,
+            get_diagram_data,
+            get_diagram_data_from_source,
+            apply_diagram_edits,
+            list_instantiable_classes,
             ai_generate_compiler_patch,
             list_iteration_history,
             save_iteration,

@@ -26,6 +26,7 @@ export interface GitCommitFile {
 interface SourceControlViewProps {
   projectDir: string | null;
   onOpenDiff: (relativePath: string, isStaged: boolean) => void;
+  onOpenInEditor?: (relativePath: string) => void;
   onRefreshStatus?: () => void;
 }
 
@@ -88,6 +89,7 @@ const TREE_BASE = 8;
 export function SourceControlView({
   projectDir,
   onOpenDiff,
+  onOpenInEditor,
   onRefreshStatus,
 }: SourceControlViewProps) {
   const [isRepo, setIsRepo] = useState(false);
@@ -328,10 +330,18 @@ export function SourceControlView({
                     <button
                       type="button"
                       className="tree-label text-left text-[var(--text)] hover:underline"
-                      onClick={() => onOpenDiff(child.fullPath!, staged)}
+                      onClick={() => onOpenInEditor ? onOpenInEditor(child.fullPath!) : onOpenDiff(child.fullPath!, staged)}
                       title={child.fullPath}
                     >
                       {seg}
+                    </button>
+                    <button
+                      type="button"
+                      className="tree-icon-box text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10 rounded opacity-0 group-hover:opacity-100"
+                      onClick={(e) => { e.stopPropagation(); onOpenDiff(child.fullPath!, staged); }}
+                      title={t("viewDiff")}
+                    >
+                      {"\u2194"}
                     </button>
                     <span className={statusBadgeClass} title={status === "U" ? "Untracked" : status === "M" ? "Modified" : status === "D" ? "Deleted" : "Renamed"}>
                       {status}
