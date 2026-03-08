@@ -155,21 +155,21 @@ fn parse_factor(pair: Pair<Rule>) -> Expression {
                     _ => {}
                 }
             }
-            if func_name == "sample" && args.len() == 1 {
+            if func_name.eq_ignore_ascii_case("sample") && args.len() == 1 {
                 Expression::Sample(Box::new(args.into_iter().next().unwrap()))
-            } else if func_name == "interval" && args.len() == 1 {
+            } else if func_name.eq_ignore_ascii_case("interval") && args.len() == 1 {
                 Expression::Interval(Box::new(args.into_iter().next().unwrap()))
-            } else if func_name == "hold" && args.len() == 1 {
+            } else if func_name.eq_ignore_ascii_case("hold") && args.len() == 1 {
                 Expression::Hold(Box::new(args.into_iter().next().unwrap()))
-            } else if func_name == "previous" && args.len() == 1 {
+            } else if func_name.eq_ignore_ascii_case("previous") && args.len() == 1 {
                 Expression::Previous(Box::new(args.into_iter().next().unwrap()))
-            } else if func_name == "subsample" && args.len() == 2 {
+            } else if func_name.eq_ignore_ascii_case("subsample") && args.len() == 2 {
                 let mut a = args.into_iter();
                 Expression::SubSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
-            } else if func_name == "supersample" && args.len() == 2 {
+            } else if func_name.eq_ignore_ascii_case("supersample") && args.len() == 2 {
                 let mut a = args.into_iter();
                 Expression::SuperSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
-            } else if func_name == "shiftsample" && args.len() == 2 {
+            } else if func_name.eq_ignore_ascii_case("shiftsample") && args.len() == 2 {
                 let mut a = args.into_iter();
                 Expression::ShiftSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
             } else {
@@ -215,7 +215,13 @@ pub(super) fn parse_component_ref(pair: Pair<Rule>) -> Expression {
     for part in pairs {
         match part.as_rule() {
             Rule::array_subscript => {
-                let idx = parse_expression(part.into_inner().next().unwrap());
+                let dim_inner = part.into_inner().next().unwrap();
+                let idx = if dim_inner.as_rule() == Rule::expression {
+                    parse_expression(dim_inner)
+                } else {
+                    // array_dim_unspecified ([:]) in expression context; use placeholder
+                    Expression::Number(0.0)
+                };
                 expr = Expression::ArrayAccess(Box::new(expr), Box::new(idx));
             }
             Rule::member_access => {

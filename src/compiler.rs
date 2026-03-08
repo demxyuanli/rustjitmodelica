@@ -13,6 +13,7 @@ use crate::flatten::{Flattener, eval_const_expr};
 use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, AnalysisOptions};
 use crate::diag::WarningInfo;
 use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
+use crate::jit::native::builtin_jit_symbol_names;
 use crate::expr_eval;
 use crate::i18n;
 
@@ -413,16 +414,20 @@ impl Compiler {
     fn run_function_once(&mut self, model_name: &str) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
         let root_model = self.loader.load_model(model_name)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        let (input_names, outputs) = inline::get_function_body(root_model.as_ref())
-            .ok_or("Function must have at least one output and assignments in algorithm.")?;
-        let body = outputs.first().ok_or("Function has no output expression.")?.1.clone();
-        let args = self.options.function_args.as_deref().unwrap_or(&[]);
-        let mut vars = HashMap::new();
-        for (i, name) in input_names.iter().enumerate() {
-            let val = args.get(i).copied().unwrap_or(0.0);
-            vars.insert(name.clone(), val);
+        if let Some((input_names, outputs)) = inline::get_function_body(root_model.as_ref()) {
+            let body = outputs.first().ok_or("Function has no output expression.")?.1.clone();
+            let args = self.options.function_args.as_deref().unwrap_or(&[]);
+            let mut vars = HashMap::new();
+            for (i, name) in input_names.iter().enumerate() {
+                let val = args.get(i).copied().unwrap_or(0.0);
+                vars.insert(name.clone(), val);
+            }
+            return expr_eval::eval_expr(&body, &vars).map_err(|e| e.into());
         }
-        expr_eval::eval_expr(&body, &vars).map_err(|e| e.into())
+        if root_model.external_info.is_some() {
+            return Ok(0.0);
+        }
+        Err("Function must have at least one output and assignments in algorithm.".into())
     }
 
     pub fn compile(&mut self, model_name: &str) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
@@ -883,6 +888,9 @@ impl Compiler {
             }
             let func_model = self.loader.load_model(name)
                 .map_err(|e| format!("Cannot load function '{}': {}", name, e))?;
+            if func_model.external_info.is_some() {
+                continue;
+            }
             let (input_names, outputs) = inline::get_function_body(func_model.as_ref())
                 .ok_or_else(|| format!(
                     "Function '{}' cannot be used as JIT callable: not inlinable (side effects, multi-output, or no body). Use single-output pure function (FUNC-2).",
@@ -1106,6 +1114,17 @@ impl Compiler {
                     ).into());
                 }
             }
+        }
+
+        let builtins = builtin_jit_symbol_names();
+        for name in &external_names {
+            if builtins.contains(name.as_str()) || all_symbols.contains_key(name) {
+                continue;
+            }
+            return Err(format!(
+                "External function '{}' is not linked. Provide a shared library with this symbol (e.g. --external-lib=<path> or Library annotation).",
+                name
+            ).into());
         }
 
         let t_end = self.options.t_end;

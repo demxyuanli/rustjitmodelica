@@ -2,15 +2,37 @@
 
 mod ai;
 mod db;
+mod git;
 mod iterate;
 
 use std::fs;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
 
+const COMPILE_STACK_SIZE: usize = 32 * 1024 * 1024;
+
+fn run_with_large_stack<R, F>(f: F) -> R
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    thread::Builder::new()
+        .stack_size(COMPILE_STACK_SIZE)
+        .spawn(f)
+        .expect("compile thread spawn")
+        .join()
+        .expect("compile thread join")
+}
+
+use rustmodlica::ast::ClassItem;
+use rustmodlica::parser;
 use rustmodlica::{Compiler, CompilerOptions, CompileOutput, run_simulation_collect, SimulationResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JitValidateOptions {
     pub t_end: Option<f64>,
     pub dt: Option<f64>,
@@ -62,91 +84,133 @@ fn options_to_compiler_options(opts: Option<JitValidateOptions>) -> CompilerOpti
     c
 }
 
-#[tauri::command]
-fn jit_validate(
+fn add_compiler_library_paths(compiler: &mut Compiler, project_dir: Option<&str>) {
+    if let Some(dir) = project_dir {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            let path = PathBuf::from(dir);
+            let path = if path.exists() {
+                path.canonicalize().unwrap_or(path)
+            } else {
+                path
+            };
+            compiler.loader.add_path(path.clone());
+            if path.is_dir() {
+                if let Ok(entries) = fs::read_dir(&path) {
+                    for e in entries.flatten() {
+                        let p = e.path();
+                        if p.is_dir() {
+                            let canonical = p.canonicalize().unwrap_or(p);
+                            compiler.loader.add_path(canonical);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    compiler.loader.add_path(PathBuf::from("."));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent().unwrap_or(&manifest_dir);
+    compiler.loader.add_path(repo_root.to_path_buf());
+    compiler.loader.add_path(repo_root.join("StandardLib"));
+    compiler.loader.add_path(repo_root.join("TestLib"));
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JitValidateRequest {
     code: String,
     model_name: String,
     options: Option<JitValidateOptions>,
-) -> Result<JitValidateResult, String> {
-    let mut compiler = Compiler::new();
-    compiler.options = options_to_compiler_options(options);
-    compiler.loader.add_path(std::path::PathBuf::from("."));
-    compiler.loader.add_path(std::path::PathBuf::from("StandardLib"));
-    compiler.loader.add_path(std::path::PathBuf::from("TestLib"));
-
-    let out = match compiler.compile_from_source(&model_name, &code) {
-        Ok(o) => o,
-        Err(e) => {
-            let err_msg = e.to_string();
-            let warnings = compiler
-                .take_warnings()
-                .into_iter()
-                .map(|w| WarningItem {
-                    path: w.path,
-                    line: w.line,
-                    column: w.column,
-                    message: w.message,
-                })
-                .collect();
-            return Ok(JitValidateResult {
-                success: false,
-                warnings,
-                errors: vec![err_msg],
-                state_vars: vec![],
-                output_vars: vec![],
-            });
-        }
-    };
-
-    let warnings = compiler
-        .take_warnings()
-        .into_iter()
-        .map(|w| WarningItem {
-            path: w.path,
-            line: w.line,
-            column: w.column,
-            message: w.message,
-        })
-        .collect();
-
-    match out {
-        CompileOutput::Simulation(artifacts) => Ok(JitValidateResult {
-            success: true,
-            warnings,
-            errors: vec![],
-            state_vars: artifacts.state_vars.clone(),
-            output_vars: artifacts.output_vars.clone(),
-        }),
-        CompileOutput::FunctionRun(_) => Ok(JitValidateResult {
-            success: true,
-            warnings,
-            errors: vec![],
-            state_vars: vec![],
-            output_vars: vec![],
-        }),
-    }
+    project_dir: Option<String>,
 }
 
 #[tauri::command]
-fn run_simulation_cmd(
+fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, String> {
+    run_with_large_stack(move || {
+        let mut compiler = Compiler::new();
+        compiler.options = options_to_compiler_options(request.options);
+        add_compiler_library_paths(&mut compiler, request.project_dir.as_deref());
+
+        let out = match compiler.compile_from_source(&request.model_name, &request.code) {
+            Ok(o) => o,
+            Err(e) => {
+                let err_msg = e.to_string();
+                let warnings = compiler
+                    .take_warnings()
+                    .into_iter()
+                    .map(|w| WarningItem {
+                        path: w.path,
+                        line: w.line,
+                        column: w.column,
+                        message: w.message,
+                    })
+                    .collect();
+                return Ok(JitValidateResult {
+                    success: false,
+                    warnings,
+                    errors: vec![err_msg],
+                    state_vars: vec![],
+                    output_vars: vec![],
+                });
+            }
+        };
+
+        let warnings = compiler
+            .take_warnings()
+            .into_iter()
+            .map(|w| WarningItem {
+                path: w.path,
+                line: w.line,
+                column: w.column,
+                message: w.message,
+            })
+            .collect();
+
+        match out {
+            CompileOutput::Simulation(artifacts) => Ok(JitValidateResult {
+                success: true,
+                warnings,
+                errors: vec![],
+                state_vars: artifacts.state_vars.clone(),
+                output_vars: artifacts.output_vars.clone(),
+            }),
+            CompileOutput::FunctionRun(_) => Ok(JitValidateResult {
+                success: true,
+                warnings,
+                errors: vec![],
+                state_vars: vec![],
+                output_vars: vec![],
+            }),
+        }
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunSimulationRequest {
     code: String,
     model_name: String,
     options: Option<JitValidateOptions>,
-) -> Result<SimulationResult, String> {
-    let mut compiler = Compiler::new();
-    compiler.options = options_to_compiler_options(options);
-    compiler.loader.add_path(std::path::PathBuf::from("."));
-    compiler.loader.add_path(std::path::PathBuf::from("StandardLib"));
-    compiler.loader.add_path(std::path::PathBuf::from("TestLib"));
+    project_dir: Option<String>,
+}
 
-    let out = compiler
-        .compile_from_source(&model_name, &code)
-        .map_err(|e| e.to_string())?;
+#[tauri::command]
+fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationResult, String> {
+    let artifacts = run_with_large_stack(move || {
+        let mut compiler = Compiler::new();
+        compiler.options = options_to_compiler_options(request.options);
+        add_compiler_library_paths(&mut compiler, request.project_dir.as_deref());
 
-    let artifacts = match out {
-        CompileOutput::Simulation(a) => a,
-        CompileOutput::FunctionRun(_) => return Err("Model is a function, not a simulation.".to_string()),
-    };
+        let out = compiler
+            .compile_from_source(&request.model_name, &request.code)
+            .map_err(|e| e.to_string())?;
+
+        match out {
+            CompileOutput::Simulation(a) => Ok(a),
+            CompileOutput::FunctionRun(_) => Err("Model is a function, not a simulation.".to_string()),
+        }
+    })?;
 
     run_simulation_collect(
         artifacts.calc_derivs,
@@ -187,14 +251,65 @@ async fn ai_code_gen(prompt: String) -> Result<String, String> {
     ai::deepseek_call(prompt, api_key).await
 }
 
-#[tauri::command]
-fn self_iterate(diff: Option<String>) -> Result<iterate::IterationResult, String> {
-    let repo_root = std::env::current_dir()
+fn repo_root() -> Result<PathBuf, String> {
+    Ok(std::env::current_dir()
         .map_err(|e| e.to_string())?
         .parent()
         .ok_or("no parent dir")?
-        .to_path_buf();
-    iterate::self_iterate_impl(&repo_root, diff.as_deref())
+        .to_path_buf())
+}
+
+#[tauri::command]
+fn self_iterate(diff: Option<String>) -> Result<iterate::IterationResult, String> {
+    let root = repo_root()?;
+    iterate::self_iterate_impl(&root, diff.as_deref())
+}
+
+#[tauri::command]
+fn apply_patch_to_workspace(diff: String) -> Result<(), String> {
+    let work_dir = repo_root()?;
+    let mut child = Command::new("patch")
+        .args(["-p1"])
+        .current_dir(&work_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("patch command failed (install patch?): {}", e))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(diff.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Err(format!("Patch apply failed: {}", stderr))
+    }
+}
+
+#[tauri::command]
+fn commit_patch(message: String) -> Result<(), String> {
+    let work_dir = repo_root()?;
+    let add = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(&work_dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !add.status.success() {
+        let stderr = String::from_utf8_lossy(&add.stderr);
+        return Err(format!("git add failed: {}", stderr));
+    }
+    let commit = Command::new("git")
+        .args(["commit", "-m", &message])
+        .current_dir(&work_dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !commit.status.success() {
+        let stderr = String::from_utf8_lossy(&commit.stderr);
+        return Err(format!("git commit failed: {}", stderr));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -263,6 +378,112 @@ fn read_project_file(project_dir: String, relative_path: String) -> Result<Strin
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct MoTreeEntry {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<MoTreeEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extends: Option<Vec<String>>,
+}
+
+fn parse_mo_deps(content: &str) -> Option<(String, Vec<String>)> {
+    let item = parser::parse(content).ok()?;
+    let (class_name, extends) = match &item {
+        ClassItem::Model(m) => (
+            m.name.clone(),
+            m.extends.iter().map(|e| e.model_name.clone()).collect(),
+        ),
+        ClassItem::Function(f) => (
+            f.name.clone(),
+            f.extends.iter().map(|e| e.model_name.clone()).collect(),
+        ),
+    };
+    Some((class_name, extends))
+}
+
+fn list_mo_tree_impl(dir: &Path, project_dir: &Path, prefix: &str) -> Result<Vec<MoTreeEntry>, String> {
+    let mut entries = Vec::new();
+    if !dir.is_dir() {
+        return Ok(entries);
+    }
+    let mut read_dir: Vec<_> = fs::read_dir(dir).map_err(|e| e.to_string())?.collect();
+    read_dir.sort_by(|a, b| {
+        let a = a.as_ref().map(|e| e.path()).unwrap_or_default();
+        let b = b.as_ref().map(|e| e.path()).unwrap_or_default();
+        let a_is_dir = a.is_dir();
+        let b_is_dir = b.is_dir();
+        match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.file_name().cmp(&b.file_name()),
+        }
+    });
+    for e in read_dir {
+        let e = e.map_err(|e| e.to_string())?;
+        let p = e.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        if p.is_dir() {
+            let sub = list_mo_tree_impl(&p, project_dir, &format!("{}{}/", prefix, name))?;
+            if !sub.is_empty() {
+                entries.push(MoTreeEntry {
+                    name,
+                    path: None,
+                    children: Some(sub),
+                    class_name: None,
+                    extends: None,
+                });
+            }
+        } else if p.extension().map_or(false, |e| e == "mo") {
+            let rel = format!("{}{}", prefix, name);
+            let full = project_dir.join(&rel);
+            let (class_name, extends) = fs::read_to_string(&full)
+                .ok()
+                .and_then(|c| parse_mo_deps(&c))
+                .unwrap_or((String::new(), Vec::new()));
+            let (class_name, extends) = if class_name.is_empty() {
+                (None, None)
+            } else {
+                (Some(class_name), if extends.is_empty() { None } else { Some(extends) })
+            };
+            entries.push(MoTreeEntry {
+                name: name.clone(),
+                path: Some(rel),
+                children: None,
+                class_name,
+                extends,
+            });
+        }
+    }
+    Ok(entries)
+}
+
+#[tauri::command]
+fn list_mo_tree(project_dir: String) -> Result<MoTreeEntry, String> {
+    let dir = Path::new(&project_dir);
+    if !dir.is_dir() {
+        return Ok(MoTreeEntry {
+            name: String::new(),
+            path: None,
+            children: Some(Vec::new()),
+            class_name: None,
+            extends: None,
+        });
+    }
+    let children = list_mo_tree_impl(dir, dir, "")?;
+    Ok(MoTreeEntry {
+        name: String::new(),
+        path: None,
+        children: Some(children),
+        class_name: None,
+        extends: None,
+    })
+}
+
 #[tauri::command]
 async fn ai_generate_compiler_patch(target: String) -> Result<String, String> {
     ai::generate_compiler_patch(target).await
@@ -288,6 +509,97 @@ fn save_iteration(
     )
 }
 
+fn project_dir_canonical(project_dir: &str) -> Result<PathBuf, String> {
+    let path = Path::new(project_dir).canonicalize().map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+#[tauri::command]
+fn git_is_repo(project_dir: String) -> bool {
+    let Ok(dir) = project_dir_canonical(&project_dir) else {
+        return false;
+    };
+    git::git_is_repo_impl(&dir)
+}
+
+#[tauri::command]
+fn git_init(project_dir: String) -> Result<(), String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_init_impl(&dir)
+}
+
+#[tauri::command]
+fn git_status(project_dir: String) -> Result<git::GitStatus, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_status_impl(&dir)
+}
+
+#[tauri::command]
+fn git_diff_file(
+    project_dir: String,
+    relative_path: String,
+    base: Option<String>,
+) -> Result<String, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_diff_file_impl(&dir, &relative_path, base.as_deref())
+}
+
+#[tauri::command]
+fn git_diff_file_staged(project_dir: String, relative_path: String) -> Result<String, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_diff_file_staged_impl(&dir, &relative_path)
+}
+
+#[tauri::command]
+fn git_show_file(
+    project_dir: String,
+    revision: String,
+    relative_path: String,
+) -> Result<String, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_show_file_impl(&dir, &revision, &relative_path)
+}
+
+#[tauri::command]
+fn git_log(
+    project_dir: String,
+    relative_path: Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<git::GitLogEntry>, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_log_impl(&dir, relative_path.as_deref(), limit.unwrap_or(50))
+}
+
+#[tauri::command]
+fn git_stage(project_dir: String, paths: Vec<String>) -> Result<(), String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_stage_impl(&dir, &paths)
+}
+
+#[tauri::command]
+fn git_unstage(project_dir: String, paths: Vec<String>) -> Result<(), String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_unstage_impl(&dir, &paths)
+}
+
+#[tauri::command]
+fn git_commit(project_dir: String, message: String) -> Result<(), String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_commit_impl(&dir, &message)
+}
+
+#[tauri::command]
+fn git_commit_files(project_dir: String, hash: String) -> Result<Vec<git::GitCommitFile>, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_commit_files_impl(&dir, &hash)
+}
+
+#[tauri::command]
+fn git_log_graph(project_dir: String, limit: Option<u32>) -> Result<Vec<git::GitLogGraphEntry>, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_log_graph_impl(&dir, limit.unwrap_or(50))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -300,12 +612,27 @@ pub fn run() {
             set_api_key,
             ai_code_gen,
             self_iterate,
+            apply_patch_to_workspace,
+            commit_patch,
             open_project_dir,
             list_mo_files,
+            list_mo_tree,
             read_project_file,
             ai_generate_compiler_patch,
             list_iteration_history,
             save_iteration,
+            git_is_repo,
+            git_init,
+            git_status,
+            git_diff_file,
+            git_diff_file_staged,
+            git_show_file,
+            git_log,
+            git_stage,
+            git_unstage,
+            git_commit,
+            git_commit_files,
+            git_log_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

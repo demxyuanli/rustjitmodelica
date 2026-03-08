@@ -11,6 +11,7 @@ interface CodeEditorProps {
   jitResult: JitValidateResult | null;
   editorRef: React.MutableRefObject<monaco.editor.IStandaloneCodeEditor | null>;
   monacoRef: React.MutableRefObject<typeof monaco | null>;
+  onCursorPositionChange?: (lineNumber: number, column: number) => void;
 }
 
 export function CodeEditor({
@@ -21,6 +22,7 @@ export function CodeEditor({
   jitResult,
   editorRef,
   monacoRef,
+  onCursorPositionChange,
 }: CodeEditorProps) {
   useEffect(() => {
     const editor = editorRef.current;
@@ -75,6 +77,11 @@ export function CodeEditor({
           onMount={(editor, monacoInstance) => {
             editorRef.current = editor;
             monacoRef.current = monacoInstance;
+            const pos = editor.getPosition();
+            if (pos && onCursorPositionChange) onCursorPositionChange(pos.lineNumber, pos.column);
+            editor.onDidChangeCursorPosition((e) => {
+              if (onCursorPositionChange) onCursorPositionChange(e.position.lineNumber, e.position.column);
+            });
           }}
           theme="vs-dark"
           options={{
