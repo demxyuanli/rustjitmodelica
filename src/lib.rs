@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod backend_dae;
+pub mod unparse;
 pub mod expr_eval;
 pub mod i18n;
 pub mod diag;

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
 import type monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { setLang } from "./i18n";
@@ -21,7 +21,7 @@ import { FileTree } from "./components/FileTree";
 import { OutlineSection } from "./components/OutlineSection";
 import { TimelineSection } from "./components/TimelineSection";
 import { SourceControlView } from "./components/SourceControlView";
-import { CodeEditor } from "./components/CodeEditor";
+import { EditorWorkbench, type EditorWorkbenchRef } from "./components/EditorWorkbench";
 import { StatusBar } from "./components/StatusBar";
 import { AIPanel } from "./components/AIPanel";
 
@@ -74,17 +74,21 @@ end BouncingBall;
 `;
 
 function App() {
-  const [code, setCode] = useState(DEFAULT_MODEL);
   const [modelName, setModelName] = useState("BouncingBall");
   const [tEnd, setTEnd] = useState(2);
   const [dt, setDt] = useState(0.01);
   const [solver, setSolver] = useState("rk45");
+  const [outputInterval, setOutputInterval] = useState(0.05);
+  const [atol, setAtol] = useState(1e-6);
+  const [rtol, setRtol] = useState(1e-3);
   const [jitResult, setJitResult] = useState<JitValidateResult | null>(null);
   const [simResult, setSimResult] = useState<SimulationResult | null>(null);
+  const [selectedPlotVars, setSelectedPlotVars] = useState<string[]>([]);
   const [simLoading, setSimLoading] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
+  const workbenchRef = useRef<EditorWorkbenchRef>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -119,8 +123,11 @@ function App() {
   const [graphExpanded, setGraphExpanded] = useState(false);
   const [diffTarget, setDiffTarget] = useState<{ projectDir: string; relativePath: string; isStaged: boolean; revision?: string } | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<"ai" | "diff">("ai");
+  const [contentByPath, setContentByPath] = useState<Record<string, string>>({});
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
+  const [code, setCode] = useState(DEFAULT_MODEL);
   const [gitBranch, setGitBranch] = useState<string | null>(null);
+  const [gitStatus, setGitStatus] = useState<{ modified: string[]; staged: string[] } | null>(null);
   const [cursorPosition, setCursorPosition] = useState<{ lineNumber: number; column: number } | null>(null);
   const [testAllLoading, setTestAllLoading] = useState(false);
   const [testAllResults, setTestAllResults] = useState<{ path: string; success: boolean; errors: string[] }[] | null>(null);
@@ -138,6 +145,7 @@ function App() {
   useEffect(() => {
     if (!projectDir) {
       setGitBranch(null);
+      setGitStatus(null);
       return;
     }
     let cancelled = false;
@@ -147,12 +155,19 @@ function App() {
         if (cancelled) return;
         if (!isRepo) {
           setGitBranch(null);
+          setGitStatus(null);
           return;
         }
-        const status = (await invoke("git_status", { projectDir })) as { branch: string };
-        if (!cancelled) setGitBranch(status.branch ?? null);
+        const status = (await invoke("git_status", { projectDir })) as { branch: string; modified: string[]; staged: string[] };
+        if (!cancelled) {
+          setGitBranch(status.branch ?? null);
+          setGitStatus({ modified: status.modified ?? [], staged: status.staged ?? [] });
+        }
       } catch {
-        if (!cancelled) setGitBranch(null);
+        if (!cancelled) {
+          setGitBranch(null);
+          setGitStatus(null);
+        }
       }
     })();
     return () => {
@@ -255,22 +270,39 @@ function App() {
     }
   }, []);
 
-  const handleOpenMoFile = useCallback(
-    async (relativePath: string) => {
-      if (!projectDir) return;
-      try {
-        const content = (await invoke("read_project_file", {
-          projectDir,
-          relativePath,
-        })) as string;
-        setCode(content);
-        setOpenFilePath(relativePath);
-        const name = relativePath.replace(/\.mo$/i, "").split(/[/\\]/).pop() ?? "model";
-        setModelName(name);
-      } catch {}
-    },
-    [projectDir]
-  );
+  const handleOpenMoFile = useCallback((relativePath: string, groupIndex?: number) => {
+    workbenchRef.current?.openFile(relativePath, groupIndex);
+  }, []);
+
+  const log = useCallback((msg: string) => {
+    setLogLines((prev) => [...prev, `${new Date().toISOString().slice(11, 19)} ${msg}`]);
+  }, []);
+
+  const refreshGitStatus = useCallback(async () => {
+    if (!projectDir) return;
+    try {
+      const isRepo = (await invoke("git_is_repo", { projectDir })) as boolean;
+      if (!isRepo) {
+        setGitStatus(null);
+        return;
+      }
+      const status = (await invoke("git_status", { projectDir })) as { modified: string[]; staged: string[] };
+      setGitStatus({ modified: status.modified ?? [], staged: status.staged ?? [] });
+    } catch {
+      setGitStatus(null);
+    }
+  }, [projectDir]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        workbenchRef.current?.save();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     const closeMenus = () => setShowProjectMenu(false);
@@ -283,17 +315,15 @@ function App() {
     }
   }, [showProjectMenu]);
 
-  const log = useCallback((msg: string) => {
-    setLogLines((prev) => [...prev, `${new Date().toISOString().slice(11, 19)} ${msg}`]);
-  }, []);
-
   const handleValidate = useCallback(async () => {
     try {
       const opts: JitValidateOptions = {
         t_end: tEnd,
         dt,
         solver,
-        output_interval: 0.05,
+        output_interval: outputInterval,
+        atol,
+        rtol,
       };
       const result = (await invoke("jit_validate", {
         request: {
@@ -307,6 +337,7 @@ function App() {
       if (result.success) {
         log("JIT validation OK");
         setShowJitFailModal(false);
+        setSelectedPlotVars((prev) => (prev.length ? prev : [...new Set([...(result.state_vars ?? []), ...(result.output_vars ?? [])])]));
       } else {
         log("JIT validation failed: " + result.errors.join("; "));
         setJitFailErrors(result.errors);
@@ -317,7 +348,7 @@ function App() {
       setJitResult(null);
       setShowJitFailModal(false);
     }
-  }, [code, modelName, tEnd, dt, solver, log, projectDir]);
+  }, [code, modelName, tEnd, dt, solver, outputInterval, atol, rtol, log, projectDir]);
 
   const handleRunSimulation = useCallback(async () => {
     setSimLoading(true);
@@ -328,7 +359,9 @@ function App() {
         t_end: tEnd,
         dt,
         solver,
-        output_interval: 0.05,
+        output_interval: outputInterval,
+        atol,
+        rtol,
       };
       const result = (await invoke("run_simulation_cmd", {
         request: {
@@ -339,20 +372,21 @@ function App() {
         },
       })) as SimulationResult;
       setSimResult(result);
+      setSelectedPlotVars(Object.keys(result.series).filter((k) => k !== "time"));
       log("Simulation done. Points: " + (result.time?.length ?? 0));
     } catch (e) {
       log("Simulation error: " + String(e));
     } finally {
       setSimLoading(false);
     }
-  }, [code, modelName, tEnd, dt, solver, log, projectDir]);
+  }, [code, modelName, tEnd, dt, solver, outputInterval, atol, rtol, log, projectDir]);
 
   const handleTestAllMoFiles = useCallback(async () => {
     if (!projectDir || moFiles.length === 0) return;
     setTestAllLoading(true);
     setTestAllResults(null);
     log(t("testAllRunning"));
-    const opts: JitValidateOptions = { t_end: tEnd, dt, solver, output_interval: 0.05 };
+    const opts: JitValidateOptions = { t_end: tEnd, dt, solver, output_interval: outputInterval, atol, rtol };
     const results: { path: string; success: boolean; errors: string[] }[] = [];
     for (const path of moFiles) {
       try {
@@ -371,7 +405,7 @@ function App() {
     const passed = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
     log(t("testAllSummary").replace("{passed}", String(passed)).replace("{failed}", String(failed)));
-  }, [projectDir, moFiles, tEnd, dt, solver, log]);
+  }, [projectDir, moFiles, tEnd, dt, solver, outputInterval, atol, rtol, log]);
 
   const handleSaveApiKey = useCallback(
     async (key: string) => {
@@ -433,20 +467,29 @@ function App() {
   }, [aiResponse]);
 
   const plotTraces = simResult
-    ? Object.entries(simResult.series)
-        .filter(([key]) => key !== "time")
-        .map(([name, values]) => ({
+    ? selectedPlotVars
+        .filter((name) => simResult.series[name] != null)
+        .map((name) => ({
           x: simResult.time,
-          y: values,
+          y: simResult.series[name],
           type: "scatter" as const,
           mode: "lines" as const,
           name,
         }))
     : [];
+  const allPlotVarNames =
+    simResult != null
+      ? Object.keys(simResult.series).filter((k) => k !== "time")
+      : jitResult != null
+        ? [...new Set([...(jitResult.state_vars ?? []), ...(jitResult.output_vars ?? [])])]
+        : [];
 
   const [simViewMode, setSimViewMode] = useState<"chart" | "table">("chart");
   const [tableSortKey, setTableSortKey] = useState<string>("time");
   const [tableSortAsc, setTableSortAsc] = useState(true);
+  const [tablePage, setTablePage] = useState(0);
+  const [tablePageSize, setTablePageSize] = useState(100);
+  const [visibleTableColumns, setVisibleTableColumns] = useState<string[]>([]);
   const tableColumns = simResult
     ? ["time", ...Object.keys(simResult.series).filter((k) => k !== "time")]
     : [];
@@ -466,6 +509,15 @@ function App() {
     const cmp = va < vb ? -1 : va > vb ? 1 : 0;
     return tableSortAsc ? cmp : -cmp;
   });
+
+  useEffect(() => {
+    if (tableColumns.length > 0) {
+      setVisibleTableColumns([...tableColumns]);
+      setTablePage(0);
+    } else {
+      setVisibleTableColumns([]);
+    }
+  }, [tableColumns.join(",")]);
 
   const handleExportCSV = useCallback(() => {
     if (!simResult || tableColumns.length === 0) return;
@@ -591,6 +643,8 @@ function App() {
                               setShowRightPanel(true);
                             }
                           }}
+                          onOpenInEditor={handleOpenMoFile}
+                          onRefreshStatus={refreshGitStatus}
                         />
                       </div>
                       <div className="shrink-0 border-t border-border flex flex-col min-h-0">
@@ -618,15 +672,23 @@ function App() {
               <div className="resize-handle shrink-0" onMouseDown={startResizeLeft} aria-hidden />
             </>
           )}
-        <CodeEditor
-          value={code}
-          onChange={setCode}
-          modelName={modelName}
-          onModelNameChange={setModelName}
+        <EditorWorkbench
+          ref={workbenchRef}
+          projectDir={projectDir}
+          gitStatus={gitStatus}
           jitResult={jitResult}
+          modelName={modelName}
+          setModelName={setModelName}
           editorRef={editorRef}
           monacoRef={monacoRef}
-          onCursorPositionChange={(lineNumber, column) => setCursorPosition({ lineNumber, column })}
+          onFocusedChange={({ path, content }) => {
+            setOpenFilePath(path);
+            setCode(content);
+          }}
+          onCursorPositionChange={(ln, col) => setCursorPosition({ lineNumber: ln, column: col })}
+          onGitStatusChange={setGitStatus}
+          onContentByPathChange={setContentByPath}
+          log={log}
         />
         {showRightPanel && (
           <>
@@ -673,9 +735,12 @@ function App() {
                   <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
                     <DiffView
                       diffTarget={diffTarget}
-                      currentFileContent={diffTarget && openFilePath && diffTarget.relativePath.replace(/\\/g, "/") === openFilePath.replace(/\\/g, "/") ? code : null}
+                      currentFileContent={
+                        diffTarget ? (contentByPath[diffTarget.relativePath.replace(/\\/g, "/")] ?? null) : null
+                      }
                       currentFilePath={openFilePath}
                       onClose={() => { setDiffTarget(null); setRightPanelTab("ai"); }}
+                      onOpenInEditor={(path) => handleOpenMoFile(path)}
                     />
                   </Suspense>
                 )}
@@ -697,6 +762,12 @@ function App() {
                   setDt={setDt}
                   solver={solver}
                   setSolver={setSolver}
+                  outputInterval={outputInterval}
+                  setOutputInterval={setOutputInterval}
+                  atol={atol}
+                  setAtol={setAtol}
+                  rtol={rtol}
+                  setRtol={setRtol}
                   onValidate={handleValidate}
                   onTestAllMoFiles={handleTestAllMoFiles}
                   testAllLoading={testAllLoading}
@@ -715,10 +786,20 @@ function App() {
                   setTableSortAsc={setTableSortAsc}
                   tableColumns={tableColumns}
                   sortedTableRows={sortedTableRows}
+                  tablePage={tablePage}
+                  setTablePage={setTablePage}
+                  tablePageSize={tablePageSize}
+                  setTablePageSize={setTablePageSize}
+                  visibleTableColumns={visibleTableColumns}
+                  setVisibleTableColumns={setVisibleTableColumns}
                   onExportCSV={handleExportCSV}
                   onExportJSON={handleExportJSON}
                   plotTraces={plotTraces}
                   onSuggestFixWithAi={setAiPrompt}
+                  selectedPlotVars={selectedPlotVars}
+                  setSelectedPlotVars={setSelectedPlotVars}
+                  allPlotVarNames={allPlotVarNames}
+                  theme={theme}
                 />
               </Suspense>
             </div>

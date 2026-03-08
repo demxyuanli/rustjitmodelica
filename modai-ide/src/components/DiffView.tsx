@@ -17,6 +17,7 @@ interface DiffViewProps {
   currentFileContent: string | null;
   currentFilePath: string | null;
   onClose: () => void;
+  onOpenInEditor?: (relativePath: string) => void;
 }
 
 type ViewType = "split" | "unified";
@@ -45,6 +46,7 @@ export function DiffView({
   currentFileContent,
   currentFilePath,
   onClose,
+  onOpenInEditor,
 }: DiffViewProps) {
   const [diffText, setDiffText] = useState<string | null>(null);
   const [original, setOriginal] = useState("");
@@ -158,6 +160,16 @@ export function DiffView({
       <span className="text-xs text-[var(--text-muted)] truncate flex-1 min-w-0" title={diffTarget.relativePath}>
         {diffTarget.relativePath}
       </span>
+      {onOpenInEditor && (
+        <button
+          type="button"
+          className="shrink-0 text-xs px-1.5 py-0.5 rounded text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text)]"
+          onClick={() => onOpenInEditor(diffTarget.relativePath)}
+          title={t("openInEditor")}
+        >
+          {t("openInEditor")}
+        </button>
+      )}
       {!useMonacoFallback && (
         <div className="shrink-0 flex items-center gap-1">
           <button
