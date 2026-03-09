@@ -164,6 +164,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
         );
         const status = (await invoke("git_status", { projectDir })) as { modified: string[]; staged: string[] };
         onGitStatusChange?.({ modified: status.modified ?? [], staged: status.staged ?? [] });
+        invoke("index_update_file", { projectDir, filePath: pathNorm }).catch(() => {});
       } catch (e) {
         log("Save error: " + String(e));
       }

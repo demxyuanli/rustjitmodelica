@@ -8,14 +8,17 @@ model_file = { SOI ~ model_definition ~ EOI }
 model_definition = {
     class_prefixes
     ~ identifier
+    ~ (";" ~ WHITESPACE?)?
+    ~ WHITESPACE?
     ~ declaration_section
-    ~ initial_equation_section?
-    ~ initial_algorithm_section?
-    ~ (equation_section | algorithm_section)*
+    ~ WHITESPACE?
+    ~ (initial_equation_section | initial_algorithm_section | equation_section | algorithm_section)*
+    ~ WHITESPACE?
     ~ external_section?
+    ~ WHITESPACE?
     ~ end_part
 }
-end_part = { "end" ~ identifier ~ annotation? ~ ";" }
+end_part = { "end" ~ WHITESPACE? ~ identifier ~ annotation? ~ ";" }
 external_section = { "external" ~ (string_comment ~ WHITESPACE?)? ~ (identifier ~ "(" ~ (component_ref ~ ("," ~ component_ref)*)? ~ ")")? ~ annotation? ~ ";" }
 
 function_prefix = { "function" }

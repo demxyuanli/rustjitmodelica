@@ -9,101 +9,73 @@ export interface TestAllResultItem {
   errors: string[];
 }
 
+export interface SimParams {
+  tEnd: number;
+  dt: number;
+  solver: string;
+  outputInterval: number;
+  atol: number;
+  rtol: number;
+}
+
+export interface SimTableState {
+  simViewMode: "chart" | "table";
+  tableSortKey: string;
+  tableSortAsc: boolean;
+  tablePage: number;
+  tablePageSize: number;
+  visibleTableColumns: string[];
+}
+
+export interface SimActions {
+  onValidate: () => void;
+  onRunSimulation: () => void;
+  onTestAll: () => void;
+  onExportCSV: () => void;
+  onExportJSON: () => void;
+  onSuggestFixWithAi: (msg: string) => void;
+}
+
+export interface SimResultData {
+  jitResult: JitValidateResult | null;
+  simResult: SimulationResult | null;
+  simLoading: boolean;
+  testAllLoading: boolean;
+  testAllResults: TestAllResultItem[] | null;
+  moFilesCount: number;
+  logLines: string[];
+  plotTraces: PlotTrace[];
+  allPlotVarNames: string[];
+  selectedPlotVars: string[];
+  tableColumns: string[];
+  sortedTableRows: Record<string, number>[];
+}
+
+type PlotTrace = { x: number[]; y: number[]; type: "scatter"; mode: "lines"; name: string };
+
 type BottomTab = "verify" | "run" | "log";
 
 const inputClass = "w-14 bg-[var(--surface)] border border-border px-1 text-sm rounded text-[var(--text)]";
 
 interface SimulationPanelProps {
-  tEnd: number;
-  setTEnd: (v: number) => void;
-  dt: number;
-  setDt: (v: number) => void;
-  solver: string;
-  setSolver: (v: string) => void;
-  outputInterval: number;
-  setOutputInterval: (v: number) => void;
-  atol: number;
-  setAtol: (v: number) => void;
-  rtol: number;
-  setRtol: (v: number) => void;
-  onValidate: () => void;
-  onTestAllMoFiles: () => void;
-  testAllLoading: boolean;
-  testAllResults: TestAllResultItem[] | null;
-  moFilesCount: number;
-  onRunSimulation: () => void;
-  simLoading: boolean;
-  jitResult: JitValidateResult | null;
-  logLines: string[];
-  simResult: SimulationResult | null;
-  simViewMode: "chart" | "table";
-  setSimViewMode: (v: "chart" | "table") => void;
-  tableSortKey: string;
-  setTableSortKey: (v: string) => void;
-  tableSortAsc: boolean;
-  setTableSortAsc: (v: boolean) => void;
-  tableColumns: string[];
-  sortedTableRows: Record<string, number>[];
-  tablePage: number;
-  setTablePage: (v: number) => void;
-  tablePageSize: number;
-  setTablePageSize: (v: number) => void;
-  visibleTableColumns: string[];
-  setVisibleTableColumns: (v: string[] | ((prev: string[]) => string[])) => void;
-  onExportCSV: () => void;
-  onExportJSON: () => void;
-  plotTraces: { x: number[]; y: number[]; type: "scatter"; mode: "lines"; name: string }[];
-  onSuggestFixWithAi: (msg: string) => void;
-  selectedPlotVars: string[];
+  params: SimParams;
+  onParamChange: <K extends keyof SimParams>(key: K, value: SimParams[K]) => void;
+  tableState: SimTableState;
+  onTableChange: <K extends keyof SimTableState>(key: K, value: SimTableState[K]) => void;
+  actions: SimActions;
+  data: SimResultData;
   setSelectedPlotVars: (v: string[] | ((prev: string[]) => string[])) => void;
-  allPlotVarNames: string[];
   theme?: "dark" | "light";
 }
 
 export function SimulationPanel({
-  tEnd,
-  setTEnd,
-  dt,
-  setDt,
-  solver,
-  setSolver,
-  outputInterval,
-  setOutputInterval,
-  atol,
-  setAtol,
-  rtol,
-  setRtol,
-  onValidate,
-  onTestAllMoFiles,
-  testAllLoading,
-  testAllResults,
-  moFilesCount,
-  onRunSimulation,
-  simLoading,
-  jitResult,
-  logLines,
-  simResult,
-  simViewMode,
-  setSimViewMode,
-  tableSortKey,
-  setTableSortKey,
-  tableSortAsc,
-  setTableSortAsc,
-  tableColumns,
-  sortedTableRows,
-  tablePage,
-  setTablePage,
-  tablePageSize,
-  setTablePageSize,
-  visibleTableColumns,
-  setVisibleTableColumns,
-  onExportCSV,
-  onExportJSON,
-  plotTraces,
-  onSuggestFixWithAi,
-  selectedPlotVars,
+  params,
+  onParamChange,
+  tableState,
+  onTableChange,
+  actions,
+  data,
   setSelectedPlotVars,
-  allPlotVarNames,
   theme = "dark",
 }: SimulationPanelProps) {
   const [showSettings, setShowSettings] = useState(false);
@@ -116,15 +88,17 @@ export function SimulationPanel({
   const togglePlotVar = (name: string) => {
     setSelectedPlotVars((prev) => (prev.includes(name) ? prev.filter((v) => v !== name) : [...prev, name]));
   };
-  const selectAllPlotVars = () => setSelectedPlotVars([...allPlotVarNames]);
+  const selectAllPlotVars = () => setSelectedPlotVars([...data.allPlotVarNames]);
   const clearPlotVars = () => setSelectedPlotVars([]);
 
-  const totalTablePages = sortedTableRows.length > 0 ? Math.ceil(sortedTableRows.length / tablePageSize) : 0;
-  const paginatedRows = sortedTableRows.slice(tablePage * tablePageSize, (tablePage + 1) * tablePageSize);
+  const totalTablePages = data.sortedTableRows.length > 0 ? Math.ceil(data.sortedTableRows.length / tableState.tablePageSize) : 0;
+  const paginatedRows = data.sortedTableRows.slice(tableState.tablePage * tableState.tablePageSize, (tableState.tablePage + 1) * tableState.tablePageSize);
   const toggleTableColumn = (col: string) => {
-    setVisibleTableColumns((prev) =>
-      prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col].sort((a, b) => tableColumns.indexOf(a) - tableColumns.indexOf(b))
-    );
+    const prev = tableState.visibleTableColumns;
+    const next = prev.includes(col)
+      ? prev.filter((c) => c !== col)
+      : [...prev, col].sort((a, b) => data.tableColumns.indexOf(a) - data.tableColumns.indexOf(b));
+    onTableChange("visibleTableColumns", next);
   };
   const [showColumnsDropdown, setShowColumnsDropdown] = useState(false);
   const [logSearch, setLogSearch] = useState("");
@@ -133,24 +107,24 @@ export function SimulationPanel({
     <div className="h-full border-t border-border flex flex-col shrink-0 overflow-hidden bg-surface-alt">
       <div className="border-b border-border flex flex-col">
         <div className="flex items-center gap-2 px-2 py-1 flex-wrap">
-          <button type="button" onClick={onValidate} className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-sm rounded">{t("jitValidate")}</button>
-          <button type="button" onClick={onTestAllMoFiles} disabled={testAllLoading || moFilesCount === 0} className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-sm rounded disabled:opacity-50" title={moFilesCount === 0 ? "" : undefined}>{testAllLoading ? t("testAllRunning") : t("testAllMoFiles")}</button>
-          <button type="button" onClick={onRunSimulation} disabled={simLoading} className="px-2 py-1 bg-primary hover:bg-blue-600 text-sm disabled:opacity-50 rounded">{simLoading ? "..." : t("run")}</button>
+          <button type="button" onClick={actions.onValidate} className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-sm rounded">{t("jitValidate")}</button>
+          <button type="button" onClick={actions.onTestAll} disabled={data.testAllLoading || data.moFilesCount === 0} className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-sm rounded disabled:opacity-50">{data.testAllLoading ? t("testAllRunning") : t("testAllMoFiles")}</button>
+          <button type="button" onClick={actions.onRunSimulation} disabled={data.simLoading} className="px-2 py-1 bg-primary hover:bg-blue-600 text-sm disabled:opacity-50 rounded">{data.simLoading ? "..." : t("run")}</button>
           <button type="button" onClick={() => setShowSettings((s) => !s)} className={`px-2 py-1 text-sm rounded ${showSettings ? "bg-gray-600 text-white" : "bg-surface text-[var(--text-muted)] hover:bg-gray-600"}`}>{t("simSettings")}</button>
         </div>
         {showSettings && (
           <div className="px-2 py-2 border-t border-border flex flex-wrap gap-x-4 gap-y-2 text-xs">
             <fieldset className="flex flex-wrap items-center gap-2 border border-border rounded px-2 py-1">
               <legend className="text-[var(--text-muted)]">{t("simGroupSimulation")}</legend>
-              <label className="flex items-center gap-1"><span>{t("paramTEnd")}</span><input type="number" value={tEnd} onChange={(e) => setTEnd(Number(e.target.value))} className={inputClass} /></label>
-              <label className="flex items-center gap-1"><span>{t("paramDt")}</span><input type="number" step={0.001} value={dt} onChange={(e) => setDt(Number(e.target.value))} className={inputClass} /></label>
-              <label className="flex items-center gap-1"><span>{t("paramSolver")}</span><select value={solver} onChange={(e) => setSolver(e.target.value)} className={inputClass}><option value="rk4">rk4</option><option value="rk45">rk45</option></select></label>
-              <label className="flex items-center gap-1"><span>{t("paramOutputInterval")}</span><input type="number" step={0.001} value={outputInterval} onChange={(e) => setOutputInterval(Number(e.target.value))} className={inputClass} /></label>
+              <label className="flex items-center gap-1"><span>{t("paramTEnd")}</span><input type="number" value={params.tEnd} onChange={(e) => onParamChange("tEnd", Number(e.target.value))} className={inputClass} /></label>
+              <label className="flex items-center gap-1"><span>{t("paramDt")}</span><input type="number" step={0.001} value={params.dt} onChange={(e) => onParamChange("dt", Number(e.target.value))} className={inputClass} /></label>
+              <label className="flex items-center gap-1"><span>{t("paramSolver")}</span><select value={params.solver} onChange={(e) => onParamChange("solver", e.target.value)} className={inputClass}><option value="rk4">rk4</option><option value="rk45">rk45</option></select></label>
+              <label className="flex items-center gap-1"><span>{t("paramOutputInterval")}</span><input type="number" step={0.001} value={params.outputInterval} onChange={(e) => onParamChange("outputInterval", Number(e.target.value))} className={inputClass} /></label>
             </fieldset>
             <fieldset className="flex flex-wrap items-center gap-2 border border-border rounded px-2 py-1">
               <legend className="text-[var(--text-muted)]">{t("simGroupTolerance")}</legend>
-              <label className="flex items-center gap-1"><span>{t("paramAtol")}</span><input type="number" step={1e-12} value={atol} onChange={(e) => setAtol(Number(e.target.value))} className={inputClass} /></label>
-              <label className="flex items-center gap-1"><span>{t("paramRtol")}</span><input type="number" step={1e-6} value={rtol} onChange={(e) => setRtol(Number(e.target.value))} className={inputClass} /></label>
+              <label className="flex items-center gap-1"><span>{t("paramAtol")}</span><input type="number" step={1e-12} value={params.atol} onChange={(e) => onParamChange("atol", Number(e.target.value))} className={inputClass} /></label>
+              <label className="flex items-center gap-1"><span>{t("paramRtol")}</span><input type="number" step={1e-6} value={params.rtol} onChange={(e) => onParamChange("rtol", Number(e.target.value))} className={inputClass} /></label>
             </fieldset>
           </div>
         )}
@@ -163,11 +137,11 @@ export function SimulationPanel({
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {bottomTab === "verify" && (
         <div className="flex-1 overflow-auto p-2 text-xs font-mono scroll-vscode">
-          {testAllResults != null && (() => {
+          {data.testAllResults != null && (() => {
             const lines: string[] = [];
             let passed = 0;
             let failed = 0;
-            for (const r of testAllResults) {
+            for (const r of data.testAllResults) {
               if (r.success) {
                 lines.push("PASS " + r.path);
                 passed += 1;
@@ -193,7 +167,7 @@ export function SimulationPanel({
                   {t("copyTestAllOutput")}
                 </button>
                 <div className="mt-1">
-                  {testAllResults.map((r, i) => (
+                  {data.testAllResults.map((r, i) => (
                     <div key={i} className={r.success ? "text-green-500" : "text-red-400"}>
                       {r.success ? "\u2713" : "\u2717"} {r.path}
                       {!r.success && r.errors.length > 0 && <div className="pl-3 text-amber-400">{r.errors[0]}</div>}
@@ -203,26 +177,26 @@ export function SimulationPanel({
               </div>
             );
           })()}
-          {jitResult && !jitResult.success && (
+          {data.jitResult && !data.jitResult.success && (
             <div className="text-red-400">
-              {jitResult.errors.map((e, i) => (
+              {data.jitResult.errors.map((e, i) => (
                 <div key={i}>{e}</div>
               ))}
               <button
                 type="button"
-                onClick={() => onSuggestFixWithAi("Fix the following Modelica compile error and suggest corrected code: " + jitResult.errors.join(" "))}
+                onClick={() => actions.onSuggestFixWithAi("Fix the following Modelica compile error and suggest corrected code: " + data.jitResult!.errors.join(" "))}
                 className="mt-1 px-2 py-0.5 bg-primary/80 hover:bg-primary text-white text-xs rounded"
               >
                 {t("suggestFixWithAi")}
               </button>
             </div>
           )}
-          {jitResult?.warnings?.map((w, i) => (
+          {data.jitResult?.warnings?.map((w, i) => (
             <div key={i} className="text-amber-400">
               {w.path}:{w.line}:{w.column} {w.message}
             </div>
           ))}
-          {logLines.slice(-20).map((line, i) => (
+          {data.logLines.slice(-20).map((line, i) => (
             <div key={i} className="text-gray-500">{line}</div>
           ))}
         </div>
@@ -231,16 +205,16 @@ export function SimulationPanel({
         <>
           <div className="w-40 shrink-0 border-r border-border overflow-auto p-1 text-xs flex flex-col">
             <div className="text-[var(--text-muted)] font-medium mb-1">{t("variablesSelect")}</div>
-            {allPlotVarNames.length > 0 ? (
+            {data.allPlotVarNames.length > 0 ? (
               <>
                 <div className="flex gap-1 mb-1">
                   <button type="button" className="px-1 py-0.5 rounded bg-surface hover:bg-gray-600 text-[10px]" onClick={selectAllPlotVars}>All</button>
                   <button type="button" className="px-1 py-0.5 rounded bg-surface hover:bg-gray-600 text-[10px]" onClick={clearPlotVars}>None</button>
                 </div>
                 <div className="space-y-0.5">
-                  {allPlotVarNames.map((name) => (
+                  {data.allPlotVarNames.map((name) => (
                     <label key={name} className="flex items-center gap-1 cursor-pointer truncate" title={name}>
-                      <input type="checkbox" checked={selectedPlotVars.includes(name)} onChange={() => togglePlotVar(name)} className="shrink-0" />
+                      <input type="checkbox" checked={data.selectedPlotVars.includes(name)} onChange={() => togglePlotVar(name)} className="shrink-0" />
                       <span className="truncate">{name}</span>
                     </label>
                   ))}
@@ -252,33 +226,33 @@ export function SimulationPanel({
           </div>
           <div className="flex-1 min-w-0 flex flex-col min-h-0">
             <div className="flex items-center gap-2 px-1 py-0.5 border-b border-border shrink-0 flex-wrap bg-surface-alt z-10">
-              <button type="button" className={`px-2 py-0.5 text-xs rounded ${simViewMode === "chart" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)]"}`} onClick={() => setSimViewMode("chart")}>{t("chartView")}</button>
-              <button type="button" className={`px-2 py-0.5 text-xs rounded ${simViewMode === "table" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)]"}`} onClick={() => setSimViewMode("table")}>{t("tableView")}</button>
-              {simResult && (
+              <button type="button" className={`px-2 py-0.5 text-xs rounded ${tableState.simViewMode === "chart" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)]"}`} onClick={() => onTableChange("simViewMode", "chart")}>{t("chartView")}</button>
+              <button type="button" className={`px-2 py-0.5 text-xs rounded ${tableState.simViewMode === "table" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)]"}`} onClick={() => onTableChange("simViewMode", "table")}>{t("tableView")}</button>
+              {data.simResult && (
                 <>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={onExportCSV}>{t("exportCSV")}</button>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={onExportJSON}>{t("exportJSON")}</button>
+                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={actions.onExportCSV}>{t("exportCSV")}</button>
+                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={actions.onExportJSON}>{t("exportJSON")}</button>
                 </>
               )}
-              {simViewMode === "table" && simResult && (
+              {tableState.simViewMode === "table" && data.simResult && (
                 <>
                   <span className="text-[var(--text-muted)] text-xs">{t("tablePageSize")}</span>
-                  <select value={tablePageSize} onChange={(e) => { setTablePageSize(Number(e.target.value)); setTablePage(0); }} className="w-14 text-xs rounded bg-surface border border-border px-1">
+                  <select value={tableState.tablePageSize} onChange={(e) => { onTableChange("tablePageSize", Number(e.target.value)); onTableChange("tablePage", 0); }} className="w-14 text-xs rounded bg-surface border border-border px-1">
                     <option value={50}>50</option>
                     <option value={100}>100</option>
                     <option value={200}>200</option>
                     <option value={500}>500</option>
                   </select>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50" disabled={tablePage <= 0} onClick={() => setTablePage(Math.max(0, tablePage - 1))}>Prev</button>
-                  <span className="text-xs text-[var(--text-muted)]">{(tablePage + 1) + " / " + (totalTablePages || 1)}</span>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50" disabled={tablePage >= totalTablePages - 1} onClick={() => setTablePage(Math.min(totalTablePages - 1, tablePage + 1))}>Next</button>
+                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50" disabled={tableState.tablePage <= 0} onClick={() => onTableChange("tablePage", Math.max(0, tableState.tablePage - 1))}>Prev</button>
+                  <span className="text-xs text-[var(--text-muted)]">{(tableState.tablePage + 1) + " / " + (totalTablePages || 1)}</span>
+                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50" disabled={tableState.tablePage >= totalTablePages - 1} onClick={() => onTableChange("tablePage", Math.min(totalTablePages - 1, tableState.tablePage + 1))}>Next</button>
                   <div className="relative">
                     <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={() => setShowColumnsDropdown((s) => !s)}>{t("columnsSelect")}</button>
                     {showColumnsDropdown && (
                       <div className="absolute left-0 top-full mt-0.5 z-10 bg-surface-alt border border-border rounded shadow-lg p-1 max-h-48 overflow-auto">
-                        {tableColumns.map((col) => (
+                        {data.tableColumns.map((col) => (
                           <label key={col} className="flex items-center gap-1 cursor-pointer text-xs block whitespace-nowrap">
-                            <input type="checkbox" checked={visibleTableColumns.includes(col)} onChange={() => toggleTableColumn(col)} />
+                            <input type="checkbox" checked={tableState.visibleTableColumns.includes(col)} onChange={() => toggleTableColumn(col)} />
                             {col}
                           </label>
                         ))}
@@ -290,11 +264,11 @@ export function SimulationPanel({
               )}
             </div>
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-              {simViewMode === "chart" ? (
-                plotTraces.length > 0 ? (
+              {tableState.simViewMode === "chart" ? (
+                data.plotTraces.length > 0 ? (
                   <div className="min-h-full flex flex-col">
                     <Plot
-                      data={plotTraces}
+                      data={data.plotTraces}
                       layout={{
                         margin: { t: 40, r: 8, b: 24, l: 40 },
                       paper_bgcolor: plotPaperBg,
@@ -314,30 +288,30 @@ export function SimulationPanel({
                 ) : (
                   <div className="flex items-center justify-center h-full text-[var(--text-muted)] text-sm">{t("runSimulationToSeePlot")}</div>
                 )
-              ) : simResult ? (
+              ) : data.simResult ? (
                 <div className="min-h-0 flex flex-col flex-1 overflow-hidden">
                   <div className="overflow-auto flex-1 min-h-0 scroll-vscode relative">
                     <table className="w-full text-xs border-collapse">
                       <thead className="sticky top-0 z-20 bg-surface-alt shadow-[0_1px_0_0_var(--border)]">
                         <tr>
-                          {(visibleTableColumns.length ? visibleTableColumns : tableColumns).map((col) => (
+                          {(tableState.visibleTableColumns.length ? tableState.visibleTableColumns : data.tableColumns).map((col) => (
                             <th
                               key={col}
                               className="border border-border px-2 py-1 text-left cursor-pointer hover:bg-gray-600 bg-surface-alt"
                             onClick={() => {
-                              setTableSortKey(col);
-                              setTableSortAsc(tableSortKey === col ? !tableSortAsc : true);
+                              onTableChange("tableSortKey", col);
+                              onTableChange("tableSortAsc", tableState.tableSortKey === col ? !tableState.tableSortAsc : true);
                             }}
                           >
-                            {col} {tableSortKey === col ? (tableSortAsc ? "\u2191" : "\u2193") : ""}
+                            {col} {tableState.tableSortKey === col ? (tableState.tableSortAsc ? "\u2191" : "\u2193") : ""}
                           </th>
                         ))}
                         </tr>
                       </thead>
                       <tbody>
                         {paginatedRows.map((row, i) => (
-                          <tr key={tablePage * tablePageSize + i}>
-                            {(visibleTableColumns.length ? visibleTableColumns : tableColumns).map((col) => (
+                          <tr key={tableState.tablePage * tableState.tablePageSize + i}>
+                            {(tableState.visibleTableColumns.length ? tableState.visibleTableColumns : data.tableColumns).map((col) => (
                               <td key={col} className="border border-border px-2 py-0.5 font-mono">
                                 {typeof row[col] === "number" ? (row[col] as number).toExponential(4) : row[col]}
                               </td>
@@ -361,7 +335,7 @@ export function SimulationPanel({
             <input type="text" placeholder={t("tableSearch")} value={logSearch} onChange={(e) => setLogSearch(e.target.value)} className="flex-1 max-w-xs text-xs rounded bg-surface border border-border px-2 py-0.5" />
           </div>
           <div className="flex-1 overflow-auto p-2 text-xs font-mono scroll-vscode">
-            {logLines.length === 0 ? <div className="text-[var(--text-muted)]">{t("tabLog")}</div> : logLines.filter((line) => !logSearch.trim() || line.includes(logSearch.trim())).map((line, i) => (
+            {data.logLines.length === 0 ? <div className="text-[var(--text-muted)]">{t("tabLog")}</div> : data.logLines.filter((line) => !logSearch.trim() || line.includes(logSearch.trim())).map((line, i) => (
               <div key={i} className="text-gray-500">{line}</div>
             ))}
           </div>

@@ -94,3 +94,54 @@ pub async fn generate_compiler_patch(target: String) -> Result<String, String> {
     let prompt = format!("{}\n\nUser goal: {}", COMPILER_PATCH_SYSTEM, target);
     deepseek_call(prompt, api_key).await
 }
+
+pub async fn generate_compiler_patch_with_context(
+    target: String,
+    context_files: Vec<String>,
+    test_cases: Vec<String>,
+) -> Result<String, String> {
+    let api_key = get_api_key()?;
+
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .unwrap_or(&manifest_dir)
+        .parent()
+        .unwrap_or(&manifest_dir);
+
+    let mut context_parts = Vec::new();
+    for file_path in &context_files {
+        let full_path = repo_root.join(file_path);
+        if let Ok(content) = std::fs::read_to_string(&full_path) {
+            let truncated = if content.len() > 8000 {
+                format!("{}...(truncated)", &content[..8000])
+            } else {
+                content
+            };
+            context_parts.push(format!("=== {} ===\n{}", file_path, truncated));
+        }
+    }
+
+    let mut test_parts = Vec::new();
+    for case_name in &test_cases {
+        let mo_path = repo_root.join(format!("{}.mo", case_name.replace('/', std::path::MAIN_SEPARATOR_STR)));
+        if let Ok(content) = std::fs::read_to_string(&mo_path) {
+            test_parts.push(format!("=== {} ===\n{}", case_name, content));
+        }
+    }
+
+    let mut prompt = format!("{}\n\n", COMPILER_PATCH_SYSTEM);
+    if !context_parts.is_empty() {
+        prompt.push_str("### Relevant compiler source files:\n\n");
+        prompt.push_str(&context_parts.join("\n\n"));
+        prompt.push_str("\n\n");
+    }
+    if !test_parts.is_empty() {
+        prompt.push_str("### Related Modelica test cases:\n\n");
+        prompt.push_str(&test_parts.join("\n\n"));
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str(&format!("### User goal:\n{}", target));
+
+    deepseek_call(prompt, api_key).await
+}

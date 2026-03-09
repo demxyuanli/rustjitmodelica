@@ -16,22 +16,78 @@ import {
   Controls,
   MiniMap,
   Panel,
+  type EdgeProps,
+  BaseEdge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
+import {
+  type AnnotationPoint,
+  type IconDiagramAnnotation,
+  type LineAnnotation,
+  IconSvg,
+  connectorHandleStyle,
+  DEFAULT_ICON_SIZE,
+} from "./DiagramSvgRenderer";
+
+// ---------------------------------------------------------------------------
+// Types matching enriched backend DiagramModel
+// ---------------------------------------------------------------------------
 
 export interface LayoutPoint {
   x: number;
   y: number;
 }
 
+interface Transformation {
+  origin?: AnnotationPoint;
+  extent?: { p1: AnnotationPoint; p2: AnnotationPoint };
+  rotation?: number;
+}
+
+interface PlacementData {
+  transformation?: Transformation;
+  iconTransformation?: Transformation;
+  visible?: boolean;
+}
+
+interface ParamValue {
+  name: string;
+  value: string;
+}
+
+interface ComponentData {
+  name: string;
+  typeName: string;
+  placement?: PlacementData;
+  icon?: IconDiagramAnnotation;
+  rotation?: number;
+  origin?: AnnotationPoint;
+  params?: ParamValue[];
+  connectorKind?: string;
+  isInput?: boolean;
+  isOutput?: boolean;
+}
+
+interface ConnectionData {
+  from: string;
+  to: string;
+  line?: LineAnnotation;
+}
+
 export interface DiagramModel {
   modelName: string;
-  components: { name: string; typeName: string }[];
-  connections: { from: string; to: string }[];
+  components: ComponentData[];
+  connections: ConnectionData[];
   layout?: Record<string, LayoutPoint>;
+  diagramAnnotation?: IconDiagramAnnotation;
+  iconAnnotation?: IconDiagramAnnotation;
 }
+
+// ---------------------------------------------------------------------------
+// Path utilities
+// ---------------------------------------------------------------------------
 
 function pathToNodeAndHandle(path: string): { nodeId: string; handleId: string } {
   const dot = path.indexOf(".");
@@ -44,48 +100,133 @@ function nodeAndHandleToPath(nodeId: string, handleId: string): string {
   return `${nodeId}.${handleId}`;
 }
 
-type DiagramNodeData = { typeName: string; portHandles: string[] };
+// ---------------------------------------------------------------------------
+// Component Node (memoized)
+// ---------------------------------------------------------------------------
 
-function ComponentNode(props: NodeProps<Node<DiagramNodeData>>) {
+type DiagramNodeData = {
+  typeName: string;
+  portHandles: string[];
+  icon?: IconDiagramAnnotation;
+  rotation?: number;
+  params?: ParamValue[];
+  connectorKind?: string;
+  onDoubleClick?: (typeName: string) => void;
+};
+
+const ComponentNode = React.memo(function ComponentNode(props: NodeProps<Node<DiagramNodeData>>) {
   const { id, data, selected } = props;
   const safeData = data ?? { typeName: "Block", portHandles: ["p"] };
   const ports = safeData.portHandles?.length ? safeData.portHandles : ["p"];
+  const hasIcon = safeData.icon && safeData.icon.graphics && safeData.icon.graphics.length > 0;
+  const iconSize = DEFAULT_ICON_SIZE;
+
+  const paramStr = safeData.params
+    ?.filter((p) => p.value)
+    .map((p) => (p.name ? `${p.name}=${p.value}` : p.value))
+    .join(", ");
+
+  const portStyles = useMemo(
+    () =>
+      ports.map((_port: string, i: number) => {
+        const pct = ports.length === 1 ? 50 : 20 + (i * 60) / Math.max(1, ports.length - 1);
+        const base = connectorHandleStyle(safeData.connectorKind, "right");
+        const baseL = connectorHandleStyle(safeData.connectorKind, "left");
+        return {
+          pct,
+          right: { ...base, top: `${pct}%`, transform: "translateY(-50%)" } as React.CSSProperties,
+          left: { ...baseL, top: `${pct}%`, transform: "translateY(-50%)" } as React.CSSProperties,
+        };
+      }),
+    [ports.length, safeData.connectorKind]
+  );
+
   return (
     <div
-      className={`px-3 py-2 rounded border bg-[var(--bg-elevated)] border-[var(--border)] min-w-[80px] relative ${selected ? "ring-2 ring-primary" : ""}`}
+      className={`rounded border bg-[var(--bg-elevated)] border-[var(--border)] relative ${selected ? "ring-2 ring-primary" : ""}`}
+      style={{ minWidth: hasIcon ? iconSize + 16 : 80, padding: hasIcon ? 4 : "8px 12px" }}
+      onDoubleClick={() => safeData.onDoubleClick?.(safeData.typeName)}
     >
-      <div className="text-xs font-medium text-[var(--text)]">{id}</div>
-      <div className="text-[10px] text-[var(--text-muted)] truncate">{safeData.typeName}</div>
-      {ports.map((port: string, i: number) => {
-        const pct = ports.length === 1 ? 50 : 20 + (i * 60) / Math.max(1, ports.length - 1);
-        return (
-          <React.Fragment key={port}>
-            <Handle
-              type="source"
-              id={port}
-              position={Position.Right}
-              style={{ right: -4, top: `${pct}%`, transform: "translateY(-50%)" }}
-            />
-            <Handle
-              type="target"
-              id={port}
-              position={Position.Left}
-              style={{ left: -4, top: `${pct}%`, transform: "translateY(-50%)" }}
-            />
-          </React.Fragment>
-        );
-      })}
+      {hasIcon ? (
+        <div className="flex flex-col items-center gap-0.5">
+          <IconSvg
+            icon={safeData.icon!}
+            instanceName={id}
+            rotation={safeData.rotation}
+            size={iconSize}
+          />
+          <div className="text-[9px] font-medium text-[var(--text)] text-center leading-tight truncate max-w-[60px]">
+            {id}
+          </div>
+          {paramStr && (
+            <div className="text-[8px] text-[var(--text-muted)] text-center truncate max-w-[70px]">
+              {paramStr}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="text-xs font-medium text-[var(--text)]">{id}</div>
+          <div className="text-[10px] text-[var(--text-muted)] truncate">{safeData.typeName}</div>
+          {paramStr && (
+            <div className="text-[9px] text-[var(--text-muted)] mt-0.5 truncate max-w-[100px]">
+              {paramStr}
+            </div>
+          )}
+        </>
+      )}
+      {ports.map((port: string, i: number) => (
+        <React.Fragment key={port}>
+          <Handle
+            type="source"
+            id={port}
+            position={Position.Right}
+            style={portStyles[i].right}
+          />
+          <Handle
+            type="target"
+            id={port}
+            position={Position.Left}
+            style={portStyles[i].left}
+          />
+        </React.Fragment>
+      ))}
     </div>
   );
-}
+});
+
+// ---------------------------------------------------------------------------
+// Polyline Edge (memoized)
+// ---------------------------------------------------------------------------
+
+const PolylineEdge = React.memo(function PolylineEdge(props: EdgeProps) {
+  const { sourceX, sourceY, targetX, targetY, style, markerEnd } = props;
+  const edgeData = (props as any).data as { linePoints?: AnnotationPoint[] } | undefined;
+
+  if (edgeData?.linePoints && edgeData.linePoints.length >= 2) {
+    const pts = edgeData.linePoints;
+    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+    return <BaseEdge path={d} style={style} markerEnd={markerEnd} />;
+  }
+
+  const midX = (sourceX + targetX) / 2;
+  const d = `M ${sourceX} ${sourceY} C ${midX} ${sourceY}, ${midX} ${targetY}, ${targetX} ${targetY}`;
+  return <BaseEdge path={d} style={style} markerEnd={markerEnd} />;
+});
 
 const nodeTypes = { component: ComponentNode as React.ComponentType<NodeProps<Node<DiagramNodeData>>> };
+const edgeTypes = { polyline: PolylineEdge };
+
+// ---------------------------------------------------------------------------
+// Conversion helpers
+// ---------------------------------------------------------------------------
 
 const GRID_GAP = 180;
-const ROW_GAP = 100;
+const ROW_GAP = 120;
 
 function diagramToFlow(
-  diagram: DiagramModel
+  diagram: DiagramModel,
+  onDoubleClick?: (typeName: string) => void
 ): { nodes: Node<DiagramNodeData>[]; edges: Edge[] } {
   const portUsage: Record<string, Set<string>> = {};
   for (const c of diagram.connections) {
@@ -99,11 +240,22 @@ function diagramToFlow(
 
   const layout = diagram.layout ?? {};
   const nodes: Node<DiagramNodeData>[] = diagram.components.map((comp, i) => {
-    const pos = layout[comp.name];
-    const position = pos
-      ? { x: pos.x, y: pos.y }
-      : { x: (i % 4) * GRID_GAP, y: Math.floor(i / 4) * ROW_GAP };
+    let position: { x: number; y: number };
+    if (layout[comp.name]) {
+      position = { x: layout[comp.name].x, y: layout[comp.name].y };
+    } else if (comp.placement?.transformation?.extent) {
+      const ext = comp.placement.transformation.extent;
+      const origin = comp.placement.transformation.origin ?? { x: 0, y: 0 };
+      position = {
+        x: (ext.p1.x + ext.p2.x) / 2 + origin.x + 200,
+        y: 200 - ((ext.p1.y + ext.p2.y) / 2 + origin.y),
+      };
+    } else {
+      position = { x: (i % 4) * GRID_GAP, y: Math.floor(i / 4) * ROW_GAP };
+    }
+
     const ports = portUsage[comp.name] ? Array.from(portUsage[comp.name]) : ["p"];
+
     return {
       id: comp.name,
       type: "component",
@@ -111,6 +263,11 @@ function diagramToFlow(
       data: {
         typeName: comp.typeName,
         portHandles: ports,
+        icon: comp.icon,
+        rotation: comp.rotation,
+        params: comp.params,
+        connectorKind: comp.connectorKind,
+        onDoubleClick,
       },
     };
   });
@@ -124,6 +281,8 @@ function diagramToFlow(
       target: b.nodeId,
       sourceHandle: a.handleId,
       targetHandle: b.handleId,
+      type: conn.line ? "polyline" : "default",
+      data: conn.line ? { linePoints: conn.line.points } : undefined,
     };
   });
 
@@ -154,6 +313,7 @@ function flowToDiagram(
 }
 
 const DEBOUNCE_MS = 600;
+const FIT_VIEW_OPTIONS = { padding: 0.2 };
 
 export interface InstantiableClass {
   name: string;
@@ -175,26 +335,48 @@ function uniqueInstanceName(typeName: string, existingIds: string[]): string {
 export interface DiagramViewProps {
   source: string;
   projectDir: string | null;
+  relativeFilePath?: string | null;
   onContentChange?: (newSource: string) => void;
   readOnly?: boolean;
+  onNavigateToType?: (typeName: string) => void;
 }
 
 export function DiagramView({
   source,
   projectDir,
+  relativeFilePath,
   onContentChange,
   readOnly = false,
+  onNavigateToType,
 }: DiagramViewProps) {
   const [diagram, setDiagram] = useState<DiagramModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [conflictPending, setConflictPending] = useState<DiagramModel | null>(null);
+
   const sourceRef = useRef(source);
   sourceRef.current = source;
+  const projectDirRef = useRef(projectDir);
+  projectDirRef.current = projectDir;
+  const filePathRef = useRef(relativeFilePath);
+  filePathRef.current = relativeFilePath;
+  const onContentChangeRef = useRef(onContentChange);
+  onContentChangeRef.current = onContentChange;
+
+  const handleDoubleClick = useCallback(
+    (typeName: string) => {
+      onNavigateToType?.(typeName);
+    },
+    [onNavigateToType]
+  );
+
+  const handleDoubleClickRef = useRef(handleDoubleClick);
+  handleDoubleClickRef.current = handleDoubleClick;
 
   const initial = useMemo(() => {
     const { nodes, edges } = diagramToFlow(
-      diagram ?? { modelName: "", components: [], connections: [] }
+      diagram ?? { modelName: "", components: [], connections: [] },
+      handleDoubleClickRef.current
     );
     return { nodes, edges };
   }, [!!diagram]);
@@ -202,15 +384,24 @@ export function DiagramView({
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
 
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setConflictPending(null);
-    invoke<DiagramModel>("get_diagram_data_from_source", { source })
+    invoke<DiagramModel>("get_diagram_data_from_source", {
+      source,
+      projectDir: projectDir ?? undefined,
+      relativePath: relativeFilePath ?? undefined,
+    })
       .then((data) => {
         if (cancelled) return;
-        const current = flowToDiagram(nodes, edges);
+        const current = flowToDiagram(nodesRef.current, edgesRef.current);
         const hasCurrentState = current.components.length > 0 || current.connections.length > 0;
         const sameComponents =
           current.components.length === data.components.length &&
@@ -231,13 +422,13 @@ export function DiagramView({
         const inSync = sameComponents && sameConnections;
         if (!hasCurrentState || inSync) {
           setDiagram(data);
-          const { nodes: n, edges: e } = diagramToFlow(data);
+          const { nodes: n, edges: e } = diagramToFlow(data, handleDoubleClickRef.current);
           setNodes(n);
           setEdges(e);
           setConflictPending(null);
           lastAppliedRef.current = JSON.stringify({
-            components: data.components,
-            connections: data.connections,
+            components: data.components.map((c) => ({ name: c.name, typeName: c.typeName })),
+            connections: data.connections.map((c) => ({ from: c.from, to: c.to })),
             layout: data.layout ?? {},
           });
         } else {
@@ -282,8 +473,8 @@ export function DiagramView({
   const lastAppliedRef = useRef<string>("");
 
   const syncToSource = useCallback(() => {
-    if (readOnly || !onContentChange) return;
-    const { components, connections, layout } = flowToDiagram(nodes, edges);
+    if (readOnly || !onContentChangeRef.current) return;
+    const { components, connections, layout } = flowToDiagram(nodesRef.current, edgesRef.current);
     const key = JSON.stringify({ components, connections, layout });
     if (key === lastAppliedRef.current) return;
     lastAppliedRef.current = key;
@@ -293,12 +484,14 @@ export function DiagramView({
       components,
       connections,
       layout: layoutForBackend,
+      projectDir: projectDirRef.current ?? undefined,
+      relativePath: filePathRef.current ?? undefined,
     })
       .then(({ newSource }) => {
-        onContentChange(newSource);
+        onContentChangeRef.current?.(newSource);
       })
       .catch(() => {});
-  }, [nodes, edges, readOnly, onContentChange]);
+  }, [readOnly]);
 
   useEffect(() => {
     if (readOnly || !onContentChange || !diagram) return;
@@ -312,13 +505,13 @@ export function DiagramView({
   const onRefreshDiagram = useCallback(
     (data: DiagramModel) => {
       setDiagram(data);
-      const { nodes: n, edges: e } = diagramToFlow(data);
+      const { nodes: n, edges: e } = diagramToFlow(data, handleDoubleClickRef.current);
       setNodes(n);
       setEdges(e);
       setConflictPending(null);
       lastAppliedRef.current = JSON.stringify({
-        components: data.components,
-        connections: data.connections,
+        components: data.components.map((c) => ({ name: c.name, typeName: c.typeName })),
+        connections: data.connections.map((c) => ({ from: c.from, to: c.to })),
         layout: data.layout ?? {},
       });
     },
@@ -336,7 +529,7 @@ export function DiagramView({
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-[var(--text-muted)] p-4">
-        <span>{error.includes("function") ? t("diagramErrorNotModel") : t("diagramErrorParse")}</span>
+        <span>{error.includes("File defines a function, not a model") ? t("diagramErrorNotModel") : t("diagramErrorParse")}</span>
         <span className="text-xs">{error}</span>
       </div>
     );
@@ -368,6 +561,10 @@ export function DiagramView({
     </ReactFlowProvider>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Main flow wrapper with library sidebar
+// ---------------------------------------------------------------------------
 
 const DRAG_TYPE = "application/modelica-type";
 
@@ -426,18 +623,18 @@ function DiagramFlowWithLibrary({
       if (!typeName) return;
       event.preventDefault();
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      const existingIds = nodes.map((n) => n.id);
-      const id = uniqueInstanceName(typeName, existingIds);
-      setNodes((nds) =>
-        nds.concat({
+      setNodes((nds) => {
+        const existingIds = nds.map((n) => n.id);
+        const id = uniqueInstanceName(typeName, existingIds);
+        return nds.concat({
           id,
           type: "component",
           position,
           data: { typeName, portHandles: ["p"] },
-        })
-      );
+        });
+      });
     },
-    [readOnly, nodes, setNodes, screenToFlowPosition]
+    [readOnly, setNodes, screenToFlowPosition]
   );
   const onDragOver = useCallback((event: React.DragEvent) => {
     if (event.dataTransfer.types.includes(DRAG_TYPE)) event.preventDefault();
@@ -494,8 +691,9 @@ function DiagramFlowWithLibrary({
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
+          fitViewOptions={FIT_VIEW_OPTIONS}
           nodesDraggable={!readOnly}
           nodesConnectable={!readOnly}
           elementsSelectable={!readOnly}

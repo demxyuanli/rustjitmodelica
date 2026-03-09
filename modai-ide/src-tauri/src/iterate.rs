@@ -1,12 +1,12 @@
 // Self-iteration: sandbox build/test and optional benchmark for compiler patches.
+// Enhanced with dynamic test suite selection and traceability config integration.
 
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Model name (path) and expected outcome: "pass" (exit 0) or "fail" (non-zero).
-const MO_CASES: &[(&str, &str)] = &[
+const SMOKE_CASES: &[(&str, &str)] = &[
     ("TestLib/InitDummy", "pass"),
     ("TestLib/JacobianTest", "pass"),
     ("TestLib/AlgebraicLoop2Eq", "pass"),
@@ -72,10 +72,74 @@ pub struct IterationResult {
     pub mo_run: Option<MoRunResult>,
 }
 
+fn load_cases_from_config(rustmodlica_path: &Path) -> Vec<(String, String)> {
+    let config_path = rustmodlica_path.join("jit_traceability.json");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(cases) = val.get("cases").and_then(|c| c.as_array()) {
+                return cases
+                    .iter()
+                    .filter_map(|c| {
+                        let name = c.get("name")?.as_str()?.to_string();
+                        let expected = c.get("expected")?.as_str()?.to_string();
+                        Some((name, expected))
+                    })
+                    .collect();
+            }
+        }
+    }
+    SMOKE_CASES
+        .iter()
+        .map(|(n, e)| (n.to_string(), e.to_string()))
+        .collect()
+}
+
+fn run_mo_cases(
+    exe: &Path,
+    work_dir: &Path,
+    cases: &[(String, String)],
+) -> MoRunResult {
+    let mut details = Vec::with_capacity(cases.len());
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    for (model_name, expected) in cases {
+        let out = match Command::new(exe)
+            .args([model_name.as_str(), "--t-end", "1"])
+            .current_dir(work_dir)
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => {
+                details.push(MoRunDetail {
+                    name: model_name.clone(),
+                    expected: expected.clone(),
+                    actual: "fail".to_string(),
+                });
+                failed += 1;
+                continue;
+            }
+        };
+        let actual = if out.status.success() { "pass" } else { "fail" };
+        let ok = actual == expected;
+        if ok {
+            passed += 1;
+        } else {
+            failed += 1;
+        }
+        details.push(MoRunDetail {
+            name: model_name.clone(),
+            expected: expected.clone(),
+            actual: actual.to_string(),
+        });
+    }
+    MoRunResult { passed, failed, details }
+}
+
 pub fn self_iterate_impl(
     rustmodlica_path: &Path,
     diff_content: Option<&str>,
 ) -> Result<IterationResult, String> {
+    let start = std::time::Instant::now();
     let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
     let sandbox = temp.path();
     copy_dir_all(
@@ -114,7 +178,7 @@ pub fn self_iterate_impl(
     }
 
     let build = Command::new("cargo")
-        .args(["build", "--release"])
+        .args(["build", "--release", "--parallel"])
         .current_dir(&work_dir)
         .output()
         .map_err(|e| e.to_string())?;
@@ -149,45 +213,20 @@ pub fn self_iterate_impl(
             .join("target/release/rustmodlica")
             .with_extension(std::env::consts::EXE_EXTENSION);
         if exe.exists() {
-            let mut details = Vec::with_capacity(MO_CASES.len());
-            let mut passed = 0usize;
-            let mut failed = 0usize;
-            for (model_name, expected) in MO_CASES {
-                let out = match Command::new(&exe)
-                    .args([*model_name, "--t-end", "1"])
-                    .current_dir(&work_dir)
-                    .output()
-                {
-                    Ok(o) => o,
-                    Err(_) => {
-                        details.push(MoRunDetail {
-                            name: (*model_name).to_string(),
-                            expected: (*expected).to_string(),
-                            actual: "fail".to_string(),
-                        });
-                        failed += 1;
-                        continue;
-                    }
-                };
-                let actual = if out.status.success() { "pass" } else { "fail" };
-                let ok = actual == *expected;
-                if ok {
-                    passed += 1;
-                } else {
-                    failed += 1;
-                }
-                details.push(MoRunDetail {
-                    name: (*model_name).to_string(),
-                    expected: (*expected).to_string(),
-                    actual: actual.to_string(),
-                });
-            }
-            if failed > 0 {
-                message = format!("Build and test OK; mo cases: {} passed, {} failed.", passed, failed);
+            let cases = load_cases_from_config(rustmodlica_path);
+            let result = run_mo_cases(&exe, &work_dir, &cases);
+            if result.failed > 0 {
+                message = format!(
+                    "Build and test OK; mo cases: {} passed, {} failed. ({}ms)",
+                    result.passed, result.failed, start.elapsed().as_millis()
+                );
             } else {
-                message = format!("Build and test OK; mo cases: {} passed.", passed);
+                message = format!(
+                    "Build and test OK; mo cases: {} passed. ({}ms)",
+                    result.passed, start.elapsed().as_millis()
+                );
             }
-            Some(MoRunResult { passed, failed, details })
+            Some(result)
         } else {
             None
         }

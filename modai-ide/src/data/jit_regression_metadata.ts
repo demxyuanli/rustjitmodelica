@@ -1,7 +1,10 @@
 /**
  * JIT capability catalog and feature-to-case mapping for the self-iteration tool.
- * Aligned with REGRESSION_CASES.txt and OPENMODELICA_ALIGNMENT_COVERAGE.md.
+ * Data is loaded dynamically from jit_traceability.json via Tauri backend.
+ * Static fallback data is kept for offline/build-time usage.
  */
+
+import { invoke } from "@tauri-apps/api/core";
 
 export type FeatureStatus = "covered" | "partial";
 
@@ -19,6 +22,45 @@ export interface RegressionCase {
   notes?: string;
 }
 
+export interface SourceModuleInfo {
+  features: string[];
+  description: string;
+}
+
+export interface TraceabilityConfig {
+  features: JitFeature[];
+  cases: RegressionCase[];
+  featureToCases: Record<string, string[]>;
+  sourceModules: Record<string, SourceModuleInfo>;
+  caseToSourceFiles: Record<string, string[]>;
+  featureDependencies: Record<string, string[]>;
+}
+
+export interface TraceabilityMatrix extends TraceabilityConfig {
+  caseToFeatures: Record<string, string[]>;
+  sourceToFeatures: Record<string, string[]>;
+  featureToSources: Record<string, string[]>;
+  featureDependencies: Record<string, string[]>;
+  featureDependents: Record<string, string[]>;
+}
+
+export interface ImpactAnalysisResult {
+  changedFiles: string[];
+  affectedFeatures: string[];
+  indirectlyAffectedFeatures: string[];
+  affectedCases: string[];
+}
+
+export interface CoverageAnalysisResult {
+  untestedFeatures: string[];
+  uncoveredSources: string[];
+  totalFeatures: number;
+  coveredFeatures: number;
+  totalSources: number;
+  coveredSources: number;
+  totalCases: number;
+}
+
 export const JIT_FEATURE_CATEGORIES = [
   "Language",
   "Flatten",
@@ -29,7 +71,9 @@ export const JIT_FEATURE_CATEGORIES = [
   "Tooling",
 ] as const;
 
-export const features: JitFeature[] = [
+// --- Static fallback data (used before config is loaded) ---
+
+export const STATIC_FEATURES: JitFeature[] = [
   { id: "T1-1", name: "noEvent in equation/algorithm/when", category: "Language", description: "noEvent(expr) compiles in equation, algorithm, and when", status: "covered" },
   { id: "T1-2", name: "initial() / terminal()", category: "Language", description: "terminal() = 1 near t_end, else 0", status: "covered" },
   { id: "T1-3", name: "function parse & AST", category: "Language", description: "Parse function; Model with is_function", status: "partial" },
@@ -61,7 +105,7 @@ export const features: JitFeature[] = [
   { id: "DBG-1", name: "backend-dae-info", category: "Tooling", description: "DAE stats, block counts, backend output", status: "covered" },
 ];
 
-export const cases: RegressionCase[] = [
+export const STATIC_CASES: RegressionCase[] = [
   { name: "TestLib/InitDummy", expected: "pass" },
   { name: "TestLib/InitWithParam", expected: "pass" },
   { name: "TestLib/InitTwoVars", expected: "pass", notes: "IR3 initial eq order" },
@@ -113,7 +157,7 @@ export const cases: RegressionCase[] = [
   { name: "TestLib/SIunitsTest", expected: "pass" },
 ];
 
-const featureToCasesRaw: Record<string, string[]> = {
+const STATIC_FEATURE_TO_CASES: Record<string, string[]> = {
   "T1-1": ["TestLib/NoEventTest", "TestLib/NoEventInWhen", "TestLib/NoEventInAlg"],
   "T1-2": ["TestLib/TerminalWhen"],
   "T1-3": ["TestLib/SimpleFunctionDef"],
@@ -145,20 +189,103 @@ const featureToCasesRaw: Record<string, string[]> = {
   "DBG-1": ["TestLib/BackendDaeInfo"],
 };
 
-export const featureToCases: Record<string, string[]> = featureToCasesRaw;
+// --- Mutable state: starts with static, gets replaced by dynamic load ---
 
-const caseToFeaturesRaw: Record<string, string[]> = {};
-for (const [fid, caseList] of Object.entries(featureToCasesRaw)) {
-  for (const c of caseList) {
-    if (!caseToFeaturesRaw[c]) caseToFeaturesRaw[c] = [];
-    caseToFeaturesRaw[c].push(fid);
+let _features: JitFeature[] = STATIC_FEATURES;
+let _cases: RegressionCase[] = STATIC_CASES;
+let _featureToCases: Record<string, string[]> = STATIC_FEATURE_TO_CASES;
+let _caseToFeatures: Record<string, string[]> = {};
+let _sourceModules: Record<string, SourceModuleInfo> = {};
+let _caseToSourceFiles: Record<string, string[]> = {};
+let _loaded = false;
+
+function rebuildCaseToFeatures() {
+  _caseToFeatures = {};
+  for (const [fid, caseList] of Object.entries(_featureToCases)) {
+    for (const c of caseList) {
+      if (!_caseToFeatures[c]) _caseToFeatures[c] = [];
+      _caseToFeatures[c].push(fid);
+    }
   }
 }
-export const caseToFeatures: Record<string, string[]> = caseToFeaturesRaw;
+
+rebuildCaseToFeatures();
+
+// --- Public accessors ---
+
+export function getFeatures(): JitFeature[] { return _features; }
+export function getCases(): RegressionCase[] { return _cases; }
+export function getFeatureToCases(): Record<string, string[]> { return _featureToCases; }
+export function getCaseToFeatures(): Record<string, string[]> { return _caseToFeatures; }
+export function getSourceModules(): Record<string, SourceModuleInfo> { return _sourceModules; }
+export function getCaseToSourceFiles(): Record<string, string[]> { return _caseToSourceFiles; }
+export function isConfigLoaded(): boolean { return _loaded; }
+
+// Backwards-compatible aliases
+export const features = STATIC_FEATURES;
+export const cases = STATIC_CASES;
+export const featureToCases = STATIC_FEATURE_TO_CASES;
+export const caseToFeatures: Record<string, string[]> = (() => {
+  const m: Record<string, string[]> = {};
+  for (const [fid, cl] of Object.entries(STATIC_FEATURE_TO_CASES)) {
+    for (const c of cl) {
+      if (!m[c]) m[c] = [];
+      m[c].push(fid);
+    }
+  }
+  return m;
+})();
+
+// --- Dynamic loading from Tauri backend ---
+
+export async function loadTraceabilityConfig(): Promise<TraceabilityConfig> {
+  const config = await invoke<TraceabilityConfig>("load_traceability_config");
+  _features = config.features;
+  _cases = config.cases;
+  _featureToCases = config.featureToCases;
+  _sourceModules = config.sourceModules;
+  _caseToSourceFiles = config.caseToSourceFiles;
+  rebuildCaseToFeatures();
+  _loaded = true;
+  return config;
+}
+
+export async function saveTraceabilityConfig(config: TraceabilityConfig): Promise<void> {
+  await invoke("save_traceability_config", { config });
+  _features = config.features;
+  _cases = config.cases;
+  _featureToCases = config.featureToCases;
+  _sourceModules = config.sourceModules;
+  _caseToSourceFiles = config.caseToSourceFiles;
+  rebuildCaseToFeatures();
+}
+
+export async function fetchTraceabilityMatrix(): Promise<TraceabilityMatrix> {
+  return invoke<TraceabilityMatrix>("get_traceability_matrix");
+}
+
+export async function fetchImpactAnalysis(changedFiles: string[]): Promise<ImpactAnalysisResult> {
+  return invoke<ImpactAnalysisResult>("traceability_impact_analysis", { changedFiles });
+}
+
+export async function fetchCoverageAnalysis(): Promise<CoverageAnalysisResult> {
+  return invoke<CoverageAnalysisResult>("traceability_coverage_analysis");
+}
+
+export async function updateTraceabilityLink(
+  linkType: string,
+  source: string,
+  target: string,
+  add: boolean,
+): Promise<void> {
+  await invoke("update_traceability_link", { linkType, source, target, add });
+}
+
+// --- Utility functions ---
 
 export function getFeaturesByCategory(): Map<string, JitFeature[]> {
   const map = new Map<string, JitFeature[]>();
-  for (const f of features) {
+  for (const f of _features) {
     const list = map.get(f.category) ?? [];
     list.push(f);
     map.set(f.category, list);
@@ -167,5 +294,5 @@ export function getFeaturesByCategory(): Map<string, JitFeature[]> {
 }
 
 export function isCaseCoveringFeature(caseName: string, featureId: string): boolean {
-  return (featureToCases[featureId] ?? []).includes(caseName);
+  return (_featureToCases[featureId] ?? []).includes(caseName);
 }
