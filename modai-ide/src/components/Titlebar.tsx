@@ -18,6 +18,7 @@ interface TitlebarProps {
   setShowBottomPanel: (v: boolean) => void;
   lang: "en" | "zh";
   onToggleLang: () => void;
+  onOpenProject?: () => void;
 }
 
 export function Titlebar({
@@ -35,6 +36,7 @@ export function Titlebar({
   setShowBottomPanel,
   lang,
   onToggleLang,
+  onOpenProject,
 }: TitlebarProps) {
   return (
     <header
@@ -60,31 +62,41 @@ export function Titlebar({
             {t("workspaceCompilerIterate")}
           </button>
         </div>
-        {workspaceMode === "modelica" && (
         <div className="relative">
           <button
             type="button"
             className="titlebar-btn h-full px-2 flex items-center gap-0.5 text-[#cccccc] hover:bg-white/10"
             onClick={(e) => { e.stopPropagation(); setShowProjectMenu(!showProjectMenu); }}
           >
-            {modelName}
+            {modelName || t("project")}
             <svg width="10" height="10" viewBox="0 0 10 10" className="ml-0.5"><path fill="currentColor" d="M2 3l3 3 3-3H2z" /></svg>
           </button>
           {showProjectMenu && (
             <div className="absolute left-0 top-full mt-0 bg-[#252526] border border-gray-700 shadow-lg z-50 min-w-[200px] py-1 rounded">
-              <div className="px-3 py-1.5 text-xs text-gray-500 border-b border-gray-700">{t("comingSoon")}</div>
-              <button type="button" disabled className="w-full text-left px-3 py-1.5 text-sm text-gray-500 cursor-default">Open project</button>
-              <button type="button" disabled className="w-full text-left px-3 py-1.5 text-sm text-gray-500 cursor-default">Recent</button>
+              <button
+                type="button"
+                className="w-full text-left px-3 py-1.5 text-sm text-[#cccccc] hover:bg-white/10"
+                onClick={() => { onOpenProject?.(); setShowProjectMenu(false); }}
+              >
+                {t("openProject")}
+              </button>
+              <div className="border-t border-gray-700 my-1" />
+              <button
+                type="button"
+                className="w-full text-left px-3 py-1.5 text-sm text-[#cccccc] hover:bg-white/10"
+                onClick={() => { setShowSettings(true); setShowProjectMenu(false); }}
+              >
+                {t("settings")}
+              </button>
             </div>
           )}
         </div>
-        )}
       </div>
       <div className="flex-1 flex items-center justify-end gap-1 px-2" data-tauri-drag-region>
         <button type="button" className="titlebar-btn px-2 h-6 flex items-center justify-center text-[#cccccc] hover:bg-white/10" onClick={onToggleLang} title={lang === "en" ? "Switch to Chinese" : "Switch to English"}>
           {lang === "en" ? "\u4e2d\u6587" : "EN"}
         </button>
-        <button type="button" className="titlebar-btn w-7 h-7 flex items-center justify-center text-[#cccccc] hover:bg-white/10" onClick={() => setShowSettings(true)} title="Settings">
+        <button type="button" className="titlebar-btn w-7 h-7 flex items-center justify-center text-[#cccccc] hover:bg-white/10" onClick={() => setShowSettings(true)} title={t("settings")}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg>
         </button>
         <button type="button" className={`titlebar-btn w-7 h-7 flex items-center justify-center text-[#cccccc] hover:bg-white/10 ${showLeftSidebar ? "bg-white/5" : ""}`} onClick={() => setShowLeftSidebar(!showLeftSidebar)} title="Left sidebar">

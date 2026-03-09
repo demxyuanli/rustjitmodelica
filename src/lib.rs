@@ -1,5 +1,6 @@
 // Library target for rustmodlica: used by CLI binary and by ModAI IDE (Tauri).
 
+pub mod annotation;
 pub mod ast;
 pub mod backend_dae;
 pub mod unparse;

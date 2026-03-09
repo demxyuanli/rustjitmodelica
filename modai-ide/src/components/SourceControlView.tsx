@@ -1,27 +1,10 @@
-import { useState, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState, useEffect } from "react";
 import { t } from "../i18n";
+import { useGit, type GitStatus } from "../hooks/useGit";
+import { FileIcon } from "./FileIcon";
 
-export interface GitStatus {
-  branch: string;
-  staged: string[];
-  modified: string[];
-  deleted: string[];
-  untracked: string[];
-  renamed: { from: string; to: string }[];
-}
-
-export interface GitLogEntry {
-  hash: string;
-  subject: string;
-  author: string;
-  date: string;
-}
-
-export interface GitCommitFile {
-  status: string;
-  path: string;
-}
+export type { GitStatus };
+export type { GitLogEntry, GitCommitFile } from "../hooks/useGit";
 
 interface SourceControlViewProps {
   projectDir: string | null;
@@ -68,16 +51,6 @@ function sortNodes(nodes: [string, ChangeNode][]): [string, ChangeNode][] {
   });
 }
 
-function fileIcon(seg: string): string {
-  const ext = seg.includes(".") ? seg.split(".").pop()?.toLowerCase() : "";
-  if (ext === "tsx" || ext === "ts") return "T";
-  if (ext === "json") return "J";
-  if (ext === "mo") return "M";
-  if (ext === "h" || ext === "c" || ext === "cpp" || ext === "rs") return "C";
-  if (ext === "md" || ext === "txt") return "T";
-  return "F";
-}
-
 function statusRowClass(status: string, isStaged: boolean): string {
   const s = status === "A" || (status === "M" && isStaged) ? (isStaged ? "A" : "M") : status;
   return `scm-tree-row scm-status-${s}${isStaged ? " scm-staged" : ""}`;
@@ -92,108 +65,20 @@ export function SourceControlView({
   onOpenInEditor,
   onRefreshStatus,
 }: SourceControlViewProps) {
-  const [isRepo, setIsRepo] = useState(false);
-  const [status, setStatus] = useState<GitStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [commitMessage, setCommitMessage] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [initLoading, setInitLoading] = useState(false);
+  const git = useGit(projectDir, onRefreshStatus);
+
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [stagedOpen, setStagedOpen] = useState(true);
   const [changesOpen, setChangesOpen] = useState(true);
 
-  const refresh = useCallback(async () => {
-    if (!projectDir) {
-      setIsRepo(false);
-      setStatus(null);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const repo = (await invoke("git_is_repo", { projectDir })) as boolean;
-      setIsRepo(repo);
-      if (!repo) {
-        setStatus(null);
-        onRefreshStatus?.();
-        return;
-      }
-      const s = (await invoke("git_status", { projectDir })) as GitStatus;
-      setStatus(s);
-      onRefreshStatus?.();
-    } catch (e) {
-      setError(String(e));
-      setStatus(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectDir, onRefreshStatus]);
-
   useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const handleStage = useCallback(
-    async (paths: string[]) => {
-      if (!projectDir || paths.length === 0) return;
-      try {
-        await invoke("git_stage", { projectDir, paths });
-        await refresh();
-      } catch (e) {
-        setError(String(e));
-      }
-    },
-    [projectDir, refresh]
-  );
-
-  const handleUnstage = useCallback(
-    async (paths: string[]) => {
-      if (!projectDir || paths.length === 0) return;
-      try {
-        await invoke("git_unstage", { projectDir, paths });
-        await refresh();
-      } catch (e) {
-        setError(String(e));
-      }
-    },
-    [projectDir, refresh]
-  );
-
-  const handleCommit = useCallback(async () => {
-    if (!projectDir || !commitMessage.trim()) return;
-    try {
-      await invoke("git_commit", { projectDir, message: commitMessage.trim() });
-      setCommitMessage("");
-      await refresh();
-      onRefreshStatus?.();
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [projectDir, commitMessage, refresh, onRefreshStatus]);
-
-  const handleInitGit = useCallback(async () => {
-    if (!projectDir || initLoading) return;
-    setInitLoading(true);
-    setError(null);
-    try {
-      await invoke("git_init", { projectDir });
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setInitLoading(false);
-    }
-  }, [projectDir, initLoading, refresh]);
-
-  useEffect(() => {
-    if (!status) return;
+    if (!git.status) return;
     const paths = [
-      ...status.staged,
-      ...status.modified,
-      ...status.deleted,
-      ...status.untracked,
-      ...status.renamed.map((r) => r.to),
+      ...git.status.staged,
+      ...git.status.modified,
+      ...git.status.deleted,
+      ...git.status.untracked,
+      ...git.status.renamed.map((r) => r.to),
     ];
     const prefixes = new Set<string>();
     paths.forEach((path) => {
@@ -203,17 +88,7 @@ export function SourceControlView({
       }
     });
     setExpandedDirs(prefixes);
-  }, [status]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        if (status && commitMessage.trim() && status.staged.length > 0) handleCommit();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [status, commitMessage, handleCommit]);
+  }, [git.status]);
 
   if (!projectDir) {
     return (
@@ -223,27 +98,29 @@ export function SourceControlView({
     );
   }
 
-  if (loading && !status) {
+  if (git.loading && !git.status) {
     return (
       <div className="p-3 text-sm text-[var(--text-muted)]">{t("running")}</div>
     );
   }
 
-  if (!isRepo || !status) {
+  if (!git.isRepo || !git.status) {
     return (
       <div className="p-3 flex flex-col gap-2">
-        <p className="text-sm text-[var(--text-muted)]">{error || t("notGitRepo")}</p>
+        <p className="text-sm text-[var(--text-muted)]">{git.error || t("notGitRepo")}</p>
         <button
           type="button"
           className="self-start px-3 py-1.5 text-sm bg-primary text-white rounded hover:opacity-90 disabled:opacity-50"
-          onClick={handleInitGit}
-          disabled={initLoading}
+          onClick={git.initRepo}
+          disabled={git.initLoading}
         >
-          {initLoading ? t("running") : t("initGitRepo")}
+          {git.initLoading ? t("running") : t("initGitRepo")}
         </button>
       </div>
     );
   }
+
+  const status = git.status;
 
   const stagedPaths: { path: string; status: string; isStaged: boolean }[] = [
     ...status.staged.map((path) => ({ path, status: "M", isStaged: true })),
@@ -302,13 +179,13 @@ export function SourceControlView({
           const isFile = child.fullPath != null;
           const hasChildren = child.children.size > 0;
           const isExpanded = expandedDirs.has(key);
-          const status = child.status ?? "M";
+          const st = child.status ?? "M";
           const staged = child.isStaged ?? false;
-          const statusBadgeClass = staged ? "scm-status-badge staged" : `scm-status-badge ${status === "M" ? "modified" : status === "U" ? "untracked" : status === "D" ? "deleted" : status === "R" ? "renamed" : "added"}`;
+          const statusBadgeClass = staged ? "scm-status-badge staged" : `scm-status-badge ${st === "M" ? "modified" : st === "U" ? "untracked" : st === "D" ? "deleted" : st === "R" ? "renamed" : "added"}`;
           return (
             <div key={key} className="flex flex-col">
               <div
-                className={`tree-row group rounded ${isFile ? statusRowClass(status, staged) : ""}`}
+                className={`tree-row group rounded ${isFile ? statusRowClass(st, staged) : ""}`}
                 style={{ paddingLeft }}
               >
                 {hasChildren ? (
@@ -321,8 +198,8 @@ export function SourceControlView({
                     {isExpanded ? "\u02C5" : "\u203A"}
                   </button>
                 ) : (
-                  <span className="tree-icon-box text-[10px] font-mono text-[var(--text-muted)] shrink-0">
-                    {fileIcon(seg)}
+                  <span className="tree-icon-box shrink-0">
+                    <FileIcon name={seg} />
                   </span>
                 )}
                 {isFile ? (
@@ -343,8 +220,8 @@ export function SourceControlView({
                     >
                       {"\u2194"}
                     </button>
-                    <span className={statusBadgeClass} title={status === "U" ? "Untracked" : status === "M" ? "Modified" : status === "D" ? "Deleted" : "Renamed"}>
-                      {status}
+                    <span className={statusBadgeClass} title={st === "U" ? "Untracked" : st === "M" ? "Modified" : st === "D" ? "Deleted" : "Renamed"}>
+                      {st}
                     </span>
                     {staged ? (
                       <button
@@ -353,7 +230,7 @@ export function SourceControlView({
                         onClick={(e) => { e.stopPropagation(); onUnstage(child.fullPath!); }}
                         title={t("unstage")}
                       >
-                        −
+                        -
                       </button>
                     ) : (
                       <button
@@ -396,28 +273,28 @@ export function SourceControlView({
         <button
           type="button"
           className="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text)]"
-          onClick={refresh}
+          onClick={git.refresh}
           title={t("refresh")}
         >
           {t("refresh")}
         </button>
       </div>
-      {error && (
-        <div className="shrink-0 px-2 py-1 text-xs text-red-400">{error}</div>
+      {git.error && (
+        <div className="shrink-0 px-2 py-1 text-xs text-red-400">{git.error}</div>
       )}
       <div className="shrink-0 border-b border-border p-2 flex flex-col gap-1.5">
         <textarea
           className="w-full min-h-[3.5rem] px-2 py-1.5 text-sm bg-[#3c3c3c] border border-gray-600 rounded resize-none"
           placeholder={commitPlaceholder}
-          value={commitMessage}
-          onChange={(e) => setCommitMessage(e.target.value)}
+          value={git.commitMessage}
+          onChange={(e) => git.setCommitMessage(e.target.value)}
           rows={2}
         />
         <button
           type="button"
           className="w-full py-1.5 text-sm bg-primary text-white rounded hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1"
-          onClick={handleCommit}
-          disabled={!commitMessage.trim() || !hasStaged}
+          onClick={git.commit}
+          disabled={!git.commitMessage.trim() || !hasStaged}
         >
           <span aria-hidden>{"\u2713"}</span>
           {t("commit")}
@@ -447,7 +324,7 @@ export function SourceControlView({
                   depth={0}
                   pathPrefix=""
                   onStage={() => {}}
-                  onUnstage={(path) => handleUnstage([path])}
+                  onUnstage={(path) => git.unstage([path])}
                 />
               ) : (
                 <div className="text-xs text-[var(--text-muted)] py-1">{t("noStaged")}</div>
@@ -477,7 +354,7 @@ export function SourceControlView({
                   node={changesTree}
                   depth={0}
                   pathPrefix=""
-                  onStage={(path) => handleStage([path])}
+                  onStage={(path) => git.stage([path])}
                   onUnstage={() => {}}
                 />
               ) : (

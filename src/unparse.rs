@@ -394,18 +394,16 @@ pub fn model_to_mo(m: &Model) -> String {
             write_algorithm_statement(&mut buf, a);
         }
     }
-    if let Some(ref ann) = m.annotation {
-        if !ann.trim().is_empty() {
-            buf.push_str("  ");
-            buf.push_str(ann.trim());
-            if !ann.trim().ends_with(';') {
-                buf.push_str(";");
-            }
-            buf.push_str("\n");
-        }
-    }
     buf.push_str("end ");
     buf.push_str(&m.name);
+    if let Some(ref ann) = m.annotation {
+        let trimmed = ann.trim();
+        let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed).trim();
+        if !trimmed.is_empty() {
+            buf.push_str(" ");
+            buf.push_str(trimmed);
+        }
+    }
     buf.push_str(";\n");
     buf
 }

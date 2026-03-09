@@ -163,6 +163,7 @@ export function EditorGroupColumn({
           <DiagramView
             source={groupCode}
             projectDir={projectDir}
+            relativeFilePath={groupPath != null ? groupPath.replace(/\\/g, "/") : null}
             onContentChange={onContentChange}
             readOnly={false}
           />

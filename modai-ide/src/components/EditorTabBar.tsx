@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { FileIcon } from "./FileIcon";
 
 export interface EditorTab {
   path: string;
@@ -36,6 +37,7 @@ export function EditorTabBar({
               isActive ? "bg-surface text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text)]"
             }`}
           >
+            <FileIcon name={label} size={14} />
             <button
               type="button"
               className="truncate flex-1 min-w-0 text-left"

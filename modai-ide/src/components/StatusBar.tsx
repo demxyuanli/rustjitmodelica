@@ -1,5 +1,11 @@
 import { t } from "../i18n";
 
+export interface IndexStatusInfo {
+  fileCount: number;
+  symbolCount: number;
+  state: "idle" | "building" | "ready";
+}
+
 export interface StatusBarProps {
   gitBranch: string | null;
   openFilePath: string | null;
@@ -8,6 +14,7 @@ export interface StatusBarProps {
   errorCount: number;
   warningCount: number;
   onBranchClick?: () => void;
+  indexStatus?: IndexStatusInfo | null;
 }
 
 function Item({
@@ -43,6 +50,7 @@ export function StatusBar({
   errorCount,
   warningCount,
   onBranchClick,
+  indexStatus,
 }: StatusBarProps) {
   return (
     <footer
@@ -67,6 +75,23 @@ export function StatusBar({
         )}
       </div>
       <div className="flex items-center h-full shrink-0">
+        {indexStatus && (
+          <Item
+            title={
+              indexStatus.state === "building"
+                ? t("indexBuilding") || "Building index..."
+                : `${t("indexReady") || "Index"}: ${indexStatus.fileCount} files, ${indexStatus.symbolCount} symbols`
+            }
+          >
+            {indexStatus.state === "building" ? (
+              <span className="text-amber-400">&#x231B; Index...</span>
+            ) : (
+              <span>
+                &#x2691; {indexStatus.fileCount}F / {indexStatus.symbolCount}S
+              </span>
+            )}
+          </Item>
+        )}
         {(errorCount > 0 || warningCount > 0) && (
           <>
             {errorCount > 0 && (

@@ -1,20 +1,11 @@
 import { useState } from "react";
 import { t } from "../i18n";
-import type { MoTreeEntry } from "../App";
+import type { MoTreeEntry } from "../hooks/useProject";
+import { FileIcon } from "./FileIcon";
 
 const TREE_INDENT = 14;
 const TREE_BASE = 8;
 const TREE_ICON = 16;
-
-function fileIcon(name: string): string {
-  const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() : "";
-  if (ext === "tsx" || ext === "ts") return "T";
-  if (ext === "json") return "J";
-  if (ext === "mo") return "M";
-  if (ext === "h" || ext === "c" || ext === "cpp" || ext === "rs") return "C";
-  if (ext === "md" || ext === "txt") return "T";
-  return "F";
-}
 
 interface FileTreeProps {
   projectDir: string | null;
@@ -70,8 +61,8 @@ function TreeNode({
             {expanded ? "\u02C5" : "\u203A"}
           </button>
         ) : (
-          <span className="tree-icon-box text-[10px] font-mono text-[var(--text-muted)] shrink-0">
-            {fileIcon(entry.name)}
+          <span className="tree-icon-box shrink-0">
+            <FileIcon name={entry.name} />
           </span>
         )}
         {isFile ? (
