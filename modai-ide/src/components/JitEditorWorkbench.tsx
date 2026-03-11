@@ -5,6 +5,7 @@ import type monaco from "monaco-editor";
 import { t } from "../i18n";
 import { getSourceModules, getCaseToSourceFiles } from "../data/jit_regression_metadata";
 import type { JitCenterView } from "../hooks/useJitLayout";
+import { useEditorDiffDecorations } from "../hooks/useEditorDiffDecorations";
 import { SettingsContent, type SettingsContentProps } from "./SettingsContent";
 import { AppIcon } from "./Icon";
 
@@ -75,6 +76,7 @@ export interface JitEditorWorkbenchProps {
   onCenterViewChange: (view: JitCenterView | null) => void;
   settingsProps?: SettingsViewProps;
   onSelectionChange?: (params: { path: string | null; text: string | null }) => void;
+  repoRoot?: string | null;
 }
 
 function SettingsInlineView(props: SettingsViewProps) {
@@ -100,6 +102,7 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
     onCenterViewChange,
     settingsProps,
     onSelectionChange,
+    repoRoot,
   }: JitEditorWorkbenchProps,
   ref: React.ForwardedRef<JitEditorWorkbenchRef>
 ) {
@@ -109,12 +112,25 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [banner, setBanner] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
 
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof monaco | null>(null);
 
   const activeFile = openFiles.find((f) => f.path === activeFilePath) ?? null;
   const isRust = activeFile?.type === "rust";
   const isModelica = activeFile?.type === "modelica";
+
+  const pathNorm = activeFilePath != null ? activeFilePath.replace(/\\/g, "/") : null;
+  const activeContent = activeFile?.content ?? "";
+  useEditorDiffDecorations(
+    editorRef,
+    monacoRef,
+    repoRoot ?? undefined,
+    isRust ? pathNorm : null,
+    activeContent,
+    editorReady
+  );
 
   useImperativeHandle(
     ref,
@@ -325,8 +341,10 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
                   scrollBeyondLastLine: false,
                   fontSize: 13,
                 }}
-                onMount={(editorInstance) => {
+                onMount={(editorInstance, monacoInstance) => {
                   editorRef.current = editorInstance;
+                  monacoRef.current = monacoInstance;
+                  setEditorReady(true);
                   if (onSelectionChange) {
                     editorInstance.onDidChangeCursorSelection(() => {
                       const model = editorInstance.getModel();

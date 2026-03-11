@@ -6,6 +6,7 @@ import { FileIcon } from "./FileIcon";
 import type { JitLeftTab } from "../hooks/useJitLayout";
 import { IconButton } from "./IconButton";
 import { AppIcon } from "./Icon";
+import { SourceControlView } from "./SourceControlView";
 
 interface SourceTreeEntry {
   name: string;
@@ -76,11 +77,16 @@ interface JitLeftSidebarProps {
   onCreateTest: () => void;
   onRunSuite?: (names: string[]) => void;
   suiteRunning?: boolean;
+  repoRoot?: string | null;
+  onOpenDiff?: (relativePath: string, isStaged: boolean) => void;
+  onOpenInEditor?: (relativePath: string) => void;
+  onRefreshGitStatus?: () => void;
 }
 
 export function JitLeftSidebar({
   activeTab, onTabChange, selectedSourcePath, selectedTestName,
   onSelectSource, onSelectTest, onCreateTest, onRunSuite, suiteRunning,
+  repoRoot, onOpenDiff, onOpenInEditor, onRefreshGitStatus,
 }: JitLeftSidebarProps) {
   const [tree, setTree] = useState<SourceTreeEntry | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -114,6 +120,7 @@ export function JitLeftSidebar({
     { id: "source", label: t("jitLeftSource" as Parameters<typeof t>[0]) },
     { id: "tests", label: t("jitLeftTests" as Parameters<typeof t>[0]) },
     { id: "links", label: t("jitLeftLinks" as Parameters<typeof t>[0]) },
+    { id: "sourceControl", label: t("sourceControl") },
   ];
 
   return (
@@ -145,6 +152,15 @@ export function JitLeftSidebar({
           onClick={() => onTabChange("links")}
           title={TAB_ITEMS[2]?.label ?? t("jitLeftLinks" as Parameters<typeof t>[0])}
           aria-label={TAB_ITEMS[2]?.label ?? t("jitLeftLinks" as Parameters<typeof t>[0])}
+        />
+        <IconButton
+          icon={<AppIcon name="sourceControl" aria-hidden="true" />}
+          variant="tab"
+          size="xs"
+          active={activeTab === "sourceControl"}
+          onClick={() => onTabChange("sourceControl")}
+          title={t("sourceControl")}
+          aria-label={t("sourceControl")}
         />
       </div>
       <div className="flex-1 min-h-0 overflow-auto scroll-vscode">
@@ -211,6 +227,17 @@ export function JitLeftSidebar({
             <div className="px-3 py-1 border-t border-gray-700 text-[10px] text-[var(--text-muted)] shrink-0">
               {filteredCases.length} / {testCases.length} tests
             </div>
+          </div>
+        )}
+
+        {activeTab === "sourceControl" && (
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <SourceControlView
+              projectDir={repoRoot ?? null}
+              onOpenDiff={onOpenDiff ?? (() => {})}
+              onOpenInEditor={onOpenInEditor}
+              onRefreshStatus={onRefreshGitStatus}
+            />
           </div>
         )}
 

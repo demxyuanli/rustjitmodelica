@@ -81,6 +81,26 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         );
     }
 
+    let has_git_commit: bool = conn
+        .prepare("PRAGMA table_info(iterations)")
+        .and_then(|mut s| {
+            let mut found = false;
+            s.query_map([], |row: &rusqlite::Row| {
+                let name: String = row.get(1)?;
+                if name == "git_commit" {
+                    found = true;
+                }
+                Ok(())
+            })?
+            .for_each(|_| {});
+            Ok(found)
+        })
+        .unwrap_or(false);
+
+    if !has_git_commit {
+        let _ = conn.execute("ALTER TABLE iterations ADD COLUMN git_commit TEXT", []);
+    }
+
     Ok(())
 }
 
@@ -97,6 +117,7 @@ pub struct IterationRecord {
     pub affected_files: Option<String>,
     pub test_results: Option<String>,
     pub duration_ms: Option<i64>,
+    pub git_commit: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -117,11 +138,12 @@ pub fn save_iteration(
     diff: Option<&str>,
     success: bool,
     message: &str,
+    git_commit: Option<&str>,
 ) -> Result<i64, String> {
     with_connection(|conn| {
         conn.execute(
-            "INSERT INTO iterations (target, diff, success, message, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
-            params![target, diff, success as i32, message],
+            "INSERT INTO iterations (target, diff, success, message, created_at, git_commit) VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5)",
+            params![target, diff, success as i32, message, git_commit],
         )
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
@@ -138,11 +160,12 @@ pub fn save_iteration_full(
     affected_files: Option<&str>,
     test_results: Option<&str>,
     duration_ms: Option<i64>,
+    git_commit: Option<&str>,
 ) -> Result<i64, String> {
     with_connection(|conn| {
         conn.execute(
-            "INSERT INTO iterations (target, diff, success, message, created_at, branch_name, parent_iteration_id, affected_files, test_results, duration_ms)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO iterations (target, diff, success, message, created_at, branch_name, parent_iteration_id, affected_files, test_results, duration_ms, git_commit)
+             VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 target,
                 diff,
@@ -152,7 +175,8 @@ pub fn save_iteration_full(
                 parent_id,
                 affected_files,
                 test_results,
-                duration_ms
+                duration_ms,
+                git_commit
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -196,11 +220,41 @@ pub fn save_source_snapshot(
     })
 }
 
+pub fn get_iteration_by_id(id: i64) -> Result<Option<IterationRecord>, String> {
+    with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, target, diff, success, message, created_at,
+                    branch_name, parent_iteration_id, affected_files, test_results, duration_ms, git_commit
+             FROM iterations WHERE id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query_map(params![id], |row| {
+                Ok(IterationRecord {
+                    id: row.get(0)?,
+                    target: row.get(1)?,
+                    diff: row.get(2)?,
+                    success: row.get::<_, i32>(3)? != 0,
+                    message: row.get(4)?,
+                    created_at: row.get(5)?,
+                    branch_name: row.get(6).ok(),
+                    parent_iteration_id: row.get(7).ok(),
+                    affected_files: row.get(8).ok(),
+                    test_results: row.get(9).ok(),
+                    duration_ms: row.get(10).ok(),
+                    git_commit: row.get(11).ok(),
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(rows.next().transpose().map_err(|e| e.to_string())?)
+    })
+}
+
 pub fn list_iteration_history(limit: i32) -> Result<Vec<IterationRecord>, String> {
     with_connection(|conn| {
         let mut stmt = conn.prepare(
             "SELECT id, target, diff, success, message, created_at,
-                    branch_name, parent_iteration_id, affected_files, test_results, duration_ms
+                    branch_name, parent_iteration_id, affected_files, test_results, duration_ms, git_commit
              FROM iterations ORDER BY id DESC LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -218,6 +272,7 @@ pub fn list_iteration_history(limit: i32) -> Result<Vec<IterationRecord>, String
                     affected_files: row.get(8).ok(),
                     test_results: row.get(9).ok(),
                     duration_ms: row.get(10).ok(),
+                    git_commit: row.get(11).ok(),
                 })
             })
             .map_err(|e| e.to_string())?;

@@ -60,6 +60,20 @@ fn ensure_git_repo(project_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub fn git_head_commit_impl(project_dir: &Path) -> Result<String, String> {
+    ensure_git_repo(project_dir)?;
+    let out = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(project_dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git rev-parse HEAD failed: {}", stderr));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 fn validate_path_under(project_dir: &Path, relative_path: &str) -> Result<PathBuf, String> {
     let path = project_dir.join(relative_path);
     let canonical = path.canonicalize().map_err(|e| e.to_string())?;

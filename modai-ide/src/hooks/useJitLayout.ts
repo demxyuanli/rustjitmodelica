@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 
-export type JitLeftTab = "source" | "tests" | "links";
-export type JitRightTab = "iterate" | "ai";
+export type JitLeftTab = "source" | "tests" | "links" | "sourceControl";
+export type JitRightTab = "iterate" | "ai" | "diff";
 export type JitBottomTab = "output" | "testResults";
 export type JitCenterView = "analytics" | "trace" | "overview" | "map" | "settings";
 

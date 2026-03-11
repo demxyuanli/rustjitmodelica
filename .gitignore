@@ -1,0 +1,17 @@
+.modai-ide-data/index.db
+build_regress_emit/model.c
+build_regress_emit/model.h
+build_c/model.c
+build_c/model.h
+build_me/fmi2_me.c
+build_me/model.c
+build_me/model.h
+build_me/modelDescription.xml
+build_regress_emit_string/model.c
+build_regress_emit_string/model.h
+build_regress_fmu/fmi2_cs.c
+build_regress_fmu/model.c
+build_regress_fmu/model.h
+build_regress_fmu/modelDescription.xml
+modai-ide/src-tauri/.modai-ide-data/iterations.db
+jit-compiler/.modai-ide-data/index.db
