@@ -10,11 +10,12 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@xyflow/react": "^12.3.0",
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "@xyflow/react": "^12.3.0",
     "diff": "^8.0.3",
+    "lucide-react": "^0.577.0",
     "plotly.js": "^2.35.2",
     "react": "^19.1.0",
     "react-diff-view": "^3.3.2",

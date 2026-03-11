@@ -137,7 +137,7 @@ pub(crate) fn get_function_body(model: &Model) -> Option<(Vec<String>, Vec<(Stri
 /// FUNC-2: Exposed so compiler can detect remaining user calls that were not inlined.
 pub(crate) fn is_builtin_function(name: &str) -> bool {
     matches!(name,
-        "abs" | "sign" | "sqrt" | "min" | "max" | "mod" | "rem" | "div" | "integer"
+        "abs" | "sign" | "sqrt" | "min" | "max" | "mod" | "rem" | "div" | "integer" | "smooth"
         | "ceil" | "floor" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
         | "sinh" | "cosh" | "tanh" | "exp" | "log" | "log10"
         | "pre" | "edge" | "change" | "noEvent" | "initial" | "terminal"

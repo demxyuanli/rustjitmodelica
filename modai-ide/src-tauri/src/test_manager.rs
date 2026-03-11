@@ -205,7 +205,7 @@ pub fn run_single_test(repo_root: &Path, name: &str) -> Result<TestRunResult, St
     let exe = find_exe(repo_root)?;
     let start = Instant::now();
     let output = Command::new(&exe)
-        .args([name, "--t-end", "1"])
+        .args(["--t-end=1", name])
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("Failed to run test {}: {}", name, e))?;
@@ -234,7 +234,7 @@ pub fn run_test_suite(
     for name in names {
         let t_start = Instant::now();
         let output = Command::new(&exe)
-            .args([name.as_str(), "--t-end", "1"])
+            .args(["--t-end=1", name.as_str()])
             .current_dir(repo_root)
             .output();
         let t_dur = t_start.elapsed();

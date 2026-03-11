@@ -1,6 +1,8 @@
 import { useState } from "react";
 import Plot from "react-plotly.js";
 import { t } from "../i18n";
+import { AppIcon } from "./Icon";
+import { IconButton } from "./IconButton";
 import type { JitValidateResult, SimulationResult } from "../types";
 
 export interface TestAllResultItem {
@@ -107,10 +109,34 @@ export function SimulationPanel({
     <div className="h-full border-t border-border flex flex-col shrink-0 overflow-hidden bg-surface-alt">
       <div className="border-b border-border flex flex-col">
         <div className="flex items-center gap-2 px-2 py-1 flex-wrap">
-          <button type="button" onClick={actions.onValidate} className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-sm rounded">{t("jitValidate")}</button>
-          <button type="button" onClick={actions.onTestAll} disabled={data.testAllLoading || data.moFilesCount === 0} className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-sm rounded disabled:opacity-50">{data.testAllLoading ? t("testAllRunning") : t("testAllMoFiles")}</button>
-          <button type="button" onClick={actions.onRunSimulation} disabled={data.simLoading} className="px-2 py-1 bg-primary hover:bg-blue-600 text-sm disabled:opacity-50 rounded">{data.simLoading ? "..." : t("run")}</button>
-          <button type="button" onClick={() => setShowSettings((s) => !s)} className={`px-2 py-1 text-sm rounded ${showSettings ? "bg-gray-600 text-white" : "bg-surface text-[var(--text-muted)] hover:bg-gray-600"}`}>{t("simSettings")}</button>
+          <IconButton
+            icon={<AppIcon name="validate" aria-hidden="true" />}
+            onClick={actions.onValidate}
+            title={t("jitValidate")}
+            aria-label={t("jitValidate")}
+          />
+          <IconButton
+            icon={<AppIcon name="gitCommit" aria-hidden="true" />}
+            onClick={actions.onTestAll}
+            disabled={data.testAllLoading || data.moFilesCount === 0}
+            title={t("testAllMoFiles")}
+            aria-label={t("testAllMoFiles")}
+          />
+          <IconButton
+            icon={<AppIcon name="run" aria-hidden="true" />}
+            variant="primary"
+            onClick={actions.onRunSimulation}
+            disabled={data.simLoading}
+            title={t("run")}
+            aria-label={t("run")}
+          />
+          <IconButton
+            icon={<AppIcon name="simSettings" aria-hidden="true" />}
+            active={showSettings}
+            onClick={() => setShowSettings((s) => !s)}
+            title={t("simSettings")}
+            aria-label={t("simSettings")}
+          />
         </div>
         {showSettings && (
           <div className="px-2 py-2 border-t border-border flex flex-wrap gap-x-4 gap-y-2 text-xs">
@@ -130,9 +156,33 @@ export function SimulationPanel({
         )}
       </div>
       <div className="flex items-center gap-1 px-2 py-0.5 border-b border-border shrink-0">
-        <button type="button" className={`px-2 py-0.5 text-xs rounded ${bottomTab === "verify" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600"}`} onClick={() => setBottomTab("verify")}>{t("tabVerifyTest")}</button>
-        <button type="button" className={`px-2 py-0.5 text-xs rounded ${bottomTab === "run" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600"}`} onClick={() => setBottomTab("run")}>{t("tabRunResult")}</button>
-        <button type="button" className={`px-2 py-0.5 text-xs rounded ${bottomTab === "log" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600"}`} onClick={() => setBottomTab("log")}>{t("tabLog")}</button>
+        <IconButton
+          icon={<AppIcon name="validate" aria-hidden="true" />}
+          variant="tab"
+          size="xs"
+          active={bottomTab === "verify"}
+          onClick={() => setBottomTab("verify")}
+          title={t("tabVerifyTest")}
+          aria-label={t("tabVerifyTest")}
+        />
+        <IconButton
+          icon={<AppIcon name="chart" aria-hidden="true" />}
+          variant="tab"
+          size="xs"
+          active={bottomTab === "run"}
+          onClick={() => setBottomTab("run")}
+          title={t("tabRunResult")}
+          aria-label={t("tabRunResult")}
+        />
+        <IconButton
+          icon={<AppIcon name="table" aria-hidden="true" />}
+          variant="tab"
+          size="xs"
+          active={bottomTab === "log"}
+          onClick={() => setBottomTab("log")}
+          title={t("tabLog")}
+          aria-label={t("tabLog")}
+        />
       </div>
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {bottomTab === "verify" && (
@@ -208,8 +258,20 @@ export function SimulationPanel({
             {data.allPlotVarNames.length > 0 ? (
               <>
                 <div className="flex gap-1 mb-1">
-                  <button type="button" className="px-1 py-0.5 rounded bg-surface hover:bg-gray-600 text-[10px]" onClick={selectAllPlotVars}>All</button>
-                  <button type="button" className="px-1 py-0.5 rounded bg-surface hover:bg-gray-600 text-[10px]" onClick={clearPlotVars}>None</button>
+                  <IconButton
+                    icon={<AppIcon name="stage" aria-hidden="true" />}
+                    size="xs"
+                    onClick={selectAllPlotVars}
+                    title="Select all variables"
+                    aria-label="Select all variables"
+                  />
+                  <IconButton
+                    icon={<AppIcon name="unstage" aria-hidden="true" />}
+                    size="xs"
+                    onClick={clearPlotVars}
+                    title="Clear variable selection"
+                    aria-label="Clear variable selection"
+                  />
                 </div>
                 <div className="space-y-0.5">
                   {data.allPlotVarNames.map((name) => (
@@ -226,8 +288,22 @@ export function SimulationPanel({
           </div>
           <div className="flex-1 min-w-0 flex flex-col min-h-0">
             <div className="flex items-center gap-2 px-1 py-0.5 border-b border-border shrink-0 flex-wrap bg-surface-alt z-10">
-              <button type="button" className={`px-2 py-0.5 text-xs rounded ${tableState.simViewMode === "chart" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)]"}`} onClick={() => onTableChange("simViewMode", "chart")}>{t("chartView")}</button>
-              <button type="button" className={`px-2 py-0.5 text-xs rounded ${tableState.simViewMode === "table" ? "bg-primary text-white" : "bg-surface-alt text-[var(--text-muted)]"}`} onClick={() => onTableChange("simViewMode", "table")}>{t("tableView")}</button>
+              <IconButton
+                icon={<AppIcon name="chart" aria-hidden="true" />}
+                size="xs"
+                active={tableState.simViewMode === "chart"}
+                onClick={() => onTableChange("simViewMode", "chart")}
+                title={t("chartView")}
+                aria-label={t("chartView")}
+              />
+              <IconButton
+                icon={<AppIcon name="table" aria-hidden="true" />}
+                size="xs"
+                active={tableState.simViewMode === "table"}
+                onClick={() => onTableChange("simViewMode", "table")}
+                title={t("tableView")}
+                aria-label={t("tableView")}
+              />
               {data.simResult && (
                 <>
                   <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={actions.onExportCSV}>{t("exportCSV")}</button>
@@ -243,11 +319,34 @@ export function SimulationPanel({
                     <option value={200}>200</option>
                     <option value={500}>500</option>
                   </select>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50" disabled={tableState.tablePage <= 0} onClick={() => onTableChange("tablePage", Math.max(0, tableState.tablePage - 1))}>Prev</button>
+                  <IconButton
+                    icon={<AppIcon name="prev" aria-hidden="true" />}
+                    size="xs"
+                    className="bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50"
+                    disabled={tableState.tablePage <= 0}
+                    onClick={() => onTableChange("tablePage", Math.max(0, tableState.tablePage - 1))}
+                    title="Previous page"
+                    aria-label="Previous page"
+                  />
                   <span className="text-xs text-[var(--text-muted)]">{(tableState.tablePage + 1) + " / " + (totalTablePages || 1)}</span>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50" disabled={tableState.tablePage >= totalTablePages - 1} onClick={() => onTableChange("tablePage", Math.min(totalTablePages - 1, tableState.tablePage + 1))}>Next</button>
+                  <IconButton
+                    icon={<AppIcon name="next" aria-hidden="true" />}
+                    size="xs"
+                    className="bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50"
+                    disabled={tableState.tablePage >= totalTablePages - 1}
+                    onClick={() => onTableChange("tablePage", Math.min(totalTablePages - 1, tableState.tablePage + 1))}
+                    title="Next page"
+                    aria-label="Next page"
+                  />
                   <div className="relative">
-                    <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={() => setShowColumnsDropdown((s) => !s)}>{t("columnsSelect")}</button>
+                    <IconButton
+                      icon={<AppIcon name="columns" aria-hidden="true" />}
+                      size="xs"
+                      className="bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600"
+                      onClick={() => setShowColumnsDropdown((s) => !s)}
+                      title={t("columnsSelect")}
+                      aria-label={t("columnsSelect")}
+                    />
                     {showColumnsDropdown && (
                       <div className="absolute left-0 top-full mt-0.5 z-10 bg-surface-alt border border-border rounded shadow-lg p-1 max-h-48 overflow-auto">
                         {data.tableColumns.map((col) => (

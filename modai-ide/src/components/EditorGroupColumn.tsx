@@ -35,6 +35,7 @@ interface EditorGroupColumnProps {
   onModelNameChange: (v: string) => void;
   jitResult: JitValidateResult | null;
   onCursorPositionChange?: (lineNumber: number, column: number) => void;
+  onSelectionChange?: (params: { path: string | null; selectedText: string | null }) => void;
 }
 
 const DEFAULT_MODEL = `model BouncingBall
@@ -75,6 +76,7 @@ export function EditorGroupColumn({
   onModelNameChange,
   jitResult,
   onCursorPositionChange,
+  onSelectionChange,
 }: EditorGroupColumnProps) {
   const groupPath = group.tabs[group.activeIndex]?.path ?? null;
   const groupCode = groupPath
@@ -180,6 +182,7 @@ export function EditorGroupColumn({
             openFilePath={groupPath}
             projectDir={projectDir}
             onSave={onSave}
+            onSelectionChange={isFocused ? onSelectionChange : undefined}
           />
         )}
       </div>

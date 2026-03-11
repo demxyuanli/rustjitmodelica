@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 const SERVICE: &str = "modai-ide";
 const ACCOUNT: &str = "deepseek-api-key";
-const DEEPSEEK_URL: &str = "https://api.deepseek.com/v1/chat/completions";
-const MODEL: &str = "deepseek-coder-v2";
+pub const DEEPSEEK_URL: &str = "https://api.deepseek.com/v1/chat/completions";
+pub const DEFAULT_MODEL: &str = "deepseek-coder-v2";
 
 fn entry() -> Result<Entry, keyring::Error> {
     Entry::new(SERVICE, ACCOUNT)
@@ -24,25 +24,60 @@ pub fn set_api_key(api_key: &str) -> Result<(), String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
 }
 
-#[derive(Debug, Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatChoice {
-    message: ChatMessage,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChatRequest {
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatResponse {
-    choices: Option<Vec<ChatChoice>>,
+pub struct ChatChoice {
+    pub message: ChatMessage,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatResponse {
+    pub choices: Option<Vec<ChatChoice>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiContextBlock {
+    pub path: String,
+    pub content: String,
+    #[serde(default)]
+    pub range: Option<AiRange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiOptions {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub stream: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiCodeGenPayload {
+    pub prompt: String,
+    #[serde(default)]
+    pub system: Option<String>,
+    #[serde(default)]
+    pub context_blocks: Option<Vec<AiContextBlock>>,
+    #[serde(default)]
+    pub options: Option<AiOptions>,
 }
 
 pub async fn deepseek_call(prompt: String, api_key: String) -> Result<String, String> {
@@ -52,7 +87,7 @@ pub async fn deepseek_call(prompt: String, api_key: String) -> Result<String, St
         .map_err(|e| e.to_string())?;
 
     let body = ChatRequest {
-        model: MODEL.to_string(),
+        model: DEFAULT_MODEL.to_string(),
         messages: vec![ChatMessage {
             role: "user".to_string(),
             content: prompt,
@@ -87,7 +122,8 @@ pub async fn deepseek_call(prompt: String, api_key: String) -> Result<String, St
 
 const COMPILER_PATCH_SYSTEM: &str = "You are a Rust compiler engineer. The user will describe a change or feature for the rustmodlica Modelica JIT compiler (Rust crate). \
 Reply with ONLY a valid unified diff (patch) that can be applied with `patch -p1`. Do not include markdown code fences or any text before/after the diff. \
-The diff must reference existing source files under src/ (e.g. src/compiler/mod.rs).";
+The diff must reference existing source files under src/ (e.g. src/compiler/mod.rs). \
+The repo has TestLib/ for Modelica regression models (.mo) and jit_traceability.json with a \"cases\" array (name, expected); when adding a compiler feature you may add a new TestLib/*.mo and a new entry in jit_traceability.json cases.";
 
 pub async fn generate_compiler_patch(target: String) -> Result<String, String> {
     let api_key = get_api_key()?;

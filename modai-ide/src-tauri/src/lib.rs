@@ -16,9 +16,8 @@ mod test_manager;
 mod traceability;
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::thread;
 
 const COMPILE_STACK_SIZE: usize = 32 * 1024 * 1024;
@@ -256,9 +255,89 @@ fn set_api_key(api_key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn ai_code_gen(prompt: String) -> Result<String, String> {
+async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
+    use ai::{AiCodeGenPayload, AiOptions, ChatMessage, ChatRequest};
+
     let api_key = ai::get_api_key().map_err(|e| e.to_string())?;
-    ai::deepseek_call(prompt, api_key).await
+
+    // Backwards compatibility: if payload is a plain string, treat it as prompt.
+    if let Some(prompt_str) = payload.as_str() {
+        return ai::deepseek_call(prompt_str.to_string(), api_key).await;
+    }
+
+    // Try structured payload.
+    let parsed: AiCodeGenPayload = serde_json::from_value(payload)
+        .map_err(|e| format!("invalid ai_code_gen payload: {}", e))?;
+
+    let model = parsed
+        .options
+        .as_ref()
+        .and_then(|o: &AiOptions| o.model.clone())
+        .unwrap_or_else(|| ai::DEFAULT_MODEL.to_string());
+
+    let mut messages: Vec<ChatMessage> = Vec::new();
+
+    if let Some(system) = parsed.system.as_ref() {
+        messages.push(ChatMessage {
+            role: "system".to_string(),
+            content: system.clone(),
+        });
+    }
+
+    if let Some(blocks) = parsed.context_blocks.as_ref() {
+        if !blocks.is_empty() {
+            let mut ctx = String::new();
+            for b in blocks {
+                ctx.push_str("=== ");
+                ctx.push_str(&b.path);
+                ctx.push_str(" ===\n");
+                ctx.push_str(&b.content);
+                ctx.push_str("\n\n");
+            }
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: format!("Relevant code/context:\n\n{}", ctx),
+            });
+        }
+    }
+
+    messages.push(ChatMessage {
+        role: "user".to_string(),
+        content: parsed.prompt,
+    });
+
+    let body = ChatRequest { model, messages };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let res = client
+        .post(ai::DEEPSEEK_URL)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = res.status();
+    let text = res.text().await.map_err(|e| e.to_string())?;
+
+    if !status.is_success() {
+        return Err(format!("API error {}: {}", status, text));
+    }
+
+    let parsed: ai::ChatResponse =
+        serde_json::from_str(&text).map_err(|e| format!("parse: {}", e))?;
+    let content = parsed
+        .choices
+        .and_then(|c| c.into_iter().next())
+        .map(|c| c.message.content)
+        .ok_or_else(|| "No choices in response".to_string())?;
+
+    Ok(content)
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -271,32 +350,15 @@ fn repo_root() -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn self_iterate(diff: Option<String>) -> Result<iterate::IterationResult, String> {
+fn self_iterate(diff: Option<String>, quick: Option<bool>) -> Result<iterate::IterationResult, String> {
     let root = repo_root()?;
-    iterate::self_iterate_impl(&root, diff.as_deref())
+    iterate::self_iterate_impl(&root, diff.as_deref(), quick.unwrap_or(true))
 }
 
 #[tauri::command]
 fn apply_patch_to_workspace(diff: String) -> Result<(), String> {
     let work_dir = repo_root()?;
-    let mut child = Command::new("patch")
-        .args(["-p1"])
-        .current_dir(&work_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("patch command failed (install patch?): {}", e))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(diff.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        Err(format!("Patch apply failed: {}", stderr))
-    }
+    iterate::apply_diff_to_dir(&diff, &work_dir)
 }
 
 #[tauri::command]
