@@ -18,6 +18,9 @@ interface DiffViewProps {
   currentFilePath: string | null;
   onClose: () => void;
   onOpenInEditor?: (relativePath: string) => void;
+  /** When set, render this unified diff (e.g. from iteration history) instead of loading from git. */
+  iterationUnifiedDiff?: string | null;
+  iterationTitle?: string;
 }
 
 type ViewType = "split" | "unified";
@@ -47,6 +50,8 @@ export function DiffView({
   currentFilePath,
   onClose,
   onOpenInEditor,
+  iterationUnifiedDiff,
+  iterationTitle,
 }: DiffViewProps) {
   const [diffText, setDiffText] = useState<string | null>(null);
   const [original, setOriginal] = useState("");
@@ -55,6 +60,59 @@ export function DiffView({
   const [error, setError] = useState<string | null>(null);
   const [viewType, setViewType] = useState<ViewType>("split");
   const [useMonacoFallback, setUseMonacoFallback] = useState(false);
+
+  if (iterationUnifiedDiff && iterationUnifiedDiff.trim()) {
+    try {
+      const files = parseDiff(iterationUnifiedDiff, { nearbySequences: "zip" });
+      return (
+        <div className="flex flex-col h-full min-h-0 diff-view-container">
+          <div className="shrink-0 flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border">
+            <span className="text-xs text-[var(--text-muted)] truncate flex-1 min-w-0">
+              {iterationTitle ?? "Iteration patch"}
+            </span>
+            <div className="shrink-0 flex items-center gap-1">
+              <button
+                type="button"
+                className={`text-xs px-1.5 py-0.5 rounded ${viewType === "split" ? "bg-white/15 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
+                onClick={() => setViewType("split")}
+              >
+                {t("diffSplit")}
+              </button>
+              <button
+                type="button"
+                className={`text-xs px-1.5 py-0.5 rounded ${viewType === "unified" ? "bg-white/15 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
+                onClick={() => setViewType("unified")}
+              >
+                {t("diffUnified")}
+              </button>
+            </div>
+            <button type="button" className="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" onClick={onClose}>
+              ×
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-auto p-2 scroll-vscode">
+            <div className="diff" style={{ fontFamily: "var(--font-mono, Consolas, monospace)", fontSize: 12 }}>
+              {files.map((file, i) => (
+                <FileDiffBlock key={i} file={file} viewType={viewType} />
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    } catch {
+      return (
+        <div className="flex flex-col h-full min-h-0">
+          <div className="shrink-0 flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border">
+            <span className="text-xs text-[var(--text-muted)]">{iterationTitle ?? "Iteration patch"}</span>
+            <button type="button" className="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" onClick={onClose}>
+              ×
+            </button>
+          </div>
+          <div className="p-3 text-xs text-red-400">Invalid diff format.</div>
+        </div>
+      );
+    }
+  }
 
   const isCurrentFile =
     diffTarget &&

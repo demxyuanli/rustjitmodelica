@@ -243,7 +243,7 @@ pub fn self_iterate_impl(
     copy_dir_all(
         rustmodlica_path,
         &sandbox.join("rustmodlica"),
-        &["target", ".git", "modai-ide"],
+        &["target", ".git"],
     )?;
 
     let work_dir = sandbox.join("rustmodlica");
@@ -367,7 +367,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap()
-            .to_path_buf()
+            .join("jit-compiler")
     }
 
     /// Full JIT self-iterate pipeline: sandbox copy, release build, test, mo cases.

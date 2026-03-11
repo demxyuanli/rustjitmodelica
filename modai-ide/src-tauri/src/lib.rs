@@ -118,11 +118,11 @@ fn add_compiler_library_paths(compiler: &mut Compiler, project_dir: Option<&str>
         }
     }
     compiler.loader.add_path(PathBuf::from("."));
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir.parent().unwrap_or(&manifest_dir);
-    compiler.loader.add_path(repo_root.to_path_buf());
-    compiler.loader.add_path(repo_root.join("StandardLib"));
-    compiler.loader.add_path(repo_root.join("TestLib"));
+    if let Ok(jit_root) = jit_compiler_root() {
+        compiler.loader.add_path(jit_root.clone());
+        compiler.loader.add_path(jit_root.join("StandardLib"));
+        compiler.loader.add_path(jit_root.join("TestLib"));
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -349,21 +349,26 @@ fn repo_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot determine repository root".to_string())
 }
 
+fn jit_compiler_root() -> Result<PathBuf, String> {
+    let root = repo_root()?;
+    Ok(root.join("jit-compiler"))
+}
+
 #[tauri::command]
 fn self_iterate(diff: Option<String>, quick: Option<bool>) -> Result<iterate::IterationResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     iterate::self_iterate_impl(&root, diff.as_deref(), quick.unwrap_or(true))
 }
 
 #[tauri::command]
 fn apply_patch_to_workspace(diff: String) -> Result<(), String> {
-    let work_dir = repo_root()?;
+    let work_dir = jit_compiler_root()?;
     iterate::apply_diff_to_dir(&diff, &work_dir)
 }
 
 #[tauri::command]
 fn commit_patch(message: String) -> Result<(), String> {
-    let work_dir = repo_root()?;
+    let work_dir = jit_compiler_root()?;
     let add = Command::new("git")
         .args(["add", "-A"])
         .current_dir(&work_dir)
@@ -803,31 +808,31 @@ async fn ai_generate_compiler_patch_with_context(
 
 #[tauri::command]
 fn load_traceability_config() -> Result<traceability::TraceabilityConfig, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::load_config(&root)
 }
 
 #[tauri::command]
 fn save_traceability_config(config: traceability::TraceabilityConfig) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::save_config(&root, &config)
 }
 
 #[tauri::command]
 fn get_traceability_matrix() -> Result<traceability::TraceabilityMatrix, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::get_traceability_matrix(&root)
 }
 
 #[tauri::command]
 fn traceability_impact_analysis(changed_files: Vec<String>) -> Result<traceability::ImpactAnalysisResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::impact_analysis(&root, &changed_files)
 }
 
 #[tauri::command]
 fn traceability_coverage_analysis() -> Result<traceability::CoverageAnalysisResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::coverage_analysis(&root)
 }
 
@@ -838,31 +843,31 @@ fn update_traceability_link(
     target: String,
     add: bool,
 ) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::update_traceability_link(&root, &link_type, &source, &target, add)
 }
 
 #[tauri::command]
 fn traceability_sync_check() -> Result<traceability::SyncCheckResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::sync_check(&root)
 }
 
 #[tauri::command]
 fn traceability_validate() -> Result<traceability::ValidationResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::validate_config(&root)
 }
 
 #[tauri::command]
 fn traceability_apply_sync(request: traceability::ApplySyncRequest) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::apply_sync(&root, &request)
 }
 
 #[tauri::command]
 fn traceability_git_impact() -> Result<traceability::GitImpactResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     traceability::git_changed_impact(&root)
 }
 
@@ -870,55 +875,55 @@ fn traceability_git_impact() -> Result<traceability::GitImpactResult, String> {
 
 #[tauri::command]
 fn list_compiler_source_tree() -> Result<source_manager::SourceTreeEntry, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     source_manager::list_source_tree(&root)
 }
 
 #[tauri::command]
 fn read_compiler_file(path: String) -> Result<String, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     source_manager::read_file(&root, &path)
 }
 
 #[tauri::command]
 fn write_compiler_file(path: String, content: String) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     source_manager::write_file(&root, &path, &content)
 }
 
 #[tauri::command]
 fn compiler_file_git_log(path: String, limit: Option<u32>) -> Result<Vec<git::GitLogEntry>, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     git::git_log_impl(&root, Some(&path), limit.unwrap_or(20))
 }
 
 #[tauri::command]
 fn compiler_file_git_diff(path: String) -> Result<String, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     git::git_diff_file_impl(&root, &path, None)
 }
 
 #[tauri::command]
 fn create_iteration_branch(name: String) -> Result<String, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     source_manager::create_iteration_branch(&root, &name)
 }
 
 #[tauri::command]
 fn list_iteration_branches() -> Result<Vec<String>, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     source_manager::list_iteration_branches(&root)
 }
 
 #[tauri::command]
 fn switch_iteration_branch(name: String) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     source_manager::switch_branch(&root, &name)
 }
 
 #[tauri::command]
 fn merge_iteration_branch(name: String) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     source_manager::merge_branch(&root, &name)
 }
 
@@ -926,43 +931,43 @@ fn merge_iteration_branch(name: String) -> Result<(), String> {
 
 #[tauri::command]
 fn list_test_library() -> Result<Vec<test_manager::TestCaseInfo>, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     test_manager::list_test_library(&root)
 }
 
 #[tauri::command]
 fn read_test_file(name: String) -> Result<String, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     test_manager::read_test_file(&root, &name)
 }
 
 #[tauri::command]
 fn write_test_file(name: String, content: String) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     test_manager::write_test_file(&root, &name, &content)
 }
 
 #[tauri::command]
 fn delete_test_file(name: String) -> Result<(), String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     test_manager::delete_test_file(&root, &name)
 }
 
 #[tauri::command]
 fn run_single_test(name: String) -> Result<test_manager::TestRunResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     test_manager::run_single_test(&root, &name)
 }
 
 #[tauri::command]
 fn run_test_suite(names: Vec<String>, suite: Option<String>) -> Result<test_manager::TestSuiteResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     test_manager::run_test_suite(&root, &names, suite.as_deref())
 }
 
 #[tauri::command]
 fn run_full_regression() -> Result<test_manager::TestSuiteResult, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     test_manager::run_full_regression(&root)
 }
 
@@ -972,18 +977,31 @@ fn list_iteration_history(limit: i32) -> Result<Vec<db::IterationRecord>, String
 }
 
 #[tauri::command]
+fn get_iteration(id: i64) -> Result<Option<db::IterationRecord>, String> {
+    db::get_iteration_by_id(id)
+}
+
+#[tauri::command]
 fn save_iteration(
     target: String,
     diff: Option<String>,
     success: bool,
     message: String,
+    git_commit: Option<String>,
 ) -> Result<i64, String> {
     db::save_iteration(
         &target,
         diff.as_deref(),
         success,
         &message,
+        git_commit.as_deref(),
     )
+}
+
+#[tauri::command]
+fn git_head_commit(project_dir: String) -> Result<String, String> {
+    let dir = project_dir_canonical(&project_dir)?;
+    git::git_head_commit_impl(&dir)
 }
 
 fn project_dir_canonical(project_dir: &str) -> Result<PathBuf, String> {
@@ -1173,7 +1191,7 @@ fn index_rebuild(app_handle: tauri::AppHandle, project_dir: String) -> Result<in
 
 #[tauri::command]
 fn index_refresh_repo(app_handle: tauri::AppHandle) -> Result<index_db::IndexStats, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     let dir_str = root.to_string_lossy().to_string();
     let idx = index_manager::CodeIndex::new(&dir_str);
     idx.build_index_with_progress(|done, total| {
@@ -1183,7 +1201,7 @@ fn index_refresh_repo(app_handle: tauri::AppHandle) -> Result<index_db::IndexSta
 
 #[tauri::command]
 fn index_rebuild_repo(app_handle: tauri::AppHandle) -> Result<index_db::IndexStats, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     let dir_str = root.to_string_lossy().to_string();
     let idx = index_manager::CodeIndex::new(&dir_str);
     idx.rebuild_index_with_progress(|done, total| {
@@ -1193,13 +1211,13 @@ fn index_rebuild_repo(app_handle: tauri::AppHandle) -> Result<index_db::IndexSta
 
 #[tauri::command]
 fn index_repo_root() -> Result<String, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     Ok(root.to_string_lossy().replace('\\', "/"))
 }
 
 #[tauri::command]
 fn index_build_repo() -> Result<index_db::IndexStats, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     let dir_str = root.to_string_lossy().to_string();
     let idx = index_manager::CodeIndex::new(&dir_str);
     idx.build_index()
@@ -1207,7 +1225,7 @@ fn index_build_repo() -> Result<index_db::IndexStats, String> {
 
 #[tauri::command]
 fn index_repo_stats() -> Result<index_db::IndexStats, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     let dir_str = root.to_string_lossy().to_string();
     let idx = index_manager::CodeIndex::new(&dir_str);
     idx.stats()
@@ -1215,7 +1233,7 @@ fn index_repo_stats() -> Result<index_db::IndexStats, String> {
 
 #[tauri::command]
 fn index_repo_file_symbols(file_path: String) -> Result<Vec<index_db::SymbolInfo>, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     let dir_str = root.to_string_lossy().to_string();
     let idx = index_manager::CodeIndex::new(&dir_str);
     idx.file_symbols(&file_path)
@@ -1227,7 +1245,7 @@ fn index_repo_search_symbols(
     kind: Option<String>,
     limit: Option<i64>,
 ) -> Result<Vec<index_db::SymbolInfo>, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     let dir_str = root.to_string_lossy().to_string();
     let idx = index_manager::CodeIndex::new(&dir_str);
     idx.search_symbols(&query, kind.as_deref(), limit.unwrap_or(100))
@@ -1238,7 +1256,7 @@ fn index_repo_get_context(
     query: String,
     max_chunks: Option<i64>,
 ) -> Result<Vec<index_db::ChunkInfo>, String> {
-    let root = repo_root()?;
+    let root = jit_compiler_root()?;
     let dir_str = root.to_string_lossy().to_string();
     let idx = index_manager::CodeIndex::new(&dir_str);
     idx.get_context(&query, max_chunks.unwrap_or(10))
@@ -1271,7 +1289,9 @@ pub fn run() {
             ai_generate_compiler_patch,
             ai_generate_compiler_patch_with_context,
             list_iteration_history,
+            get_iteration,
             save_iteration,
+            git_head_commit,
             git_is_repo,
             git_init,
             git_status,

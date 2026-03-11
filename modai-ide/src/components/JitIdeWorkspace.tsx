@@ -4,7 +4,7 @@ import { useJitLayout } from "../hooks/useJitLayout";
 import { useJitAI } from "../hooks/useAI";
 import { JitLeftSidebar } from "./JitLeftSidebar";
 import { JitEditorWorkbench, type OpenFileTab, type SettingsViewProps, type JitEditorWorkbenchRef } from "./JitEditorWorkbench";
-import { JitRightPanel } from "./JitRightPanel";
+import { JitRightPanel, type JitDiffTarget } from "./JitRightPanel";
 import { JitBottomPanel } from "./JitBottomPanel";
 import { loadTraceabilityConfig } from "../data/jit_regression_metadata";
 
@@ -38,6 +38,8 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
   const [diffOverlay, setDiffOverlay] = useState<string | null>(null);
   const [suiteRunning, setSuiteRunning] = useState(false);
   const [currentSelection, setCurrentSelection] = useState<{ path: string | null; text: string | null }>({ path: null, text: null });
+  const [_gitStatus, setGitStatus] = useState<{ modified: string[]; staged: string[] } | null>(null);
+  const [jitDiffTarget, setJitDiffTarget] = useState<JitDiffTarget | null>(null);
 
   const workbenchRef = useRef<JitEditorWorkbenchRef | null>(null);
   const jitLog = useCallback((msg: string) => {
@@ -63,6 +65,34 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
       onSettingsHandled?.();
     }
   }, [showSettings]);
+
+  const refreshGitStatus = useCallback(async () => {
+    if (!repoRoot) {
+      setGitStatus(null);
+      return;
+    }
+    try {
+      const isRepo = (await invoke("git_is_repo", { projectDir: repoRoot })) as boolean;
+      if (!isRepo) {
+        setGitStatus(null);
+        return;
+      }
+      const status = (await invoke("git_status", { projectDir: repoRoot })) as {
+        modified?: string[];
+        staged?: string[];
+      };
+      setGitStatus({
+        modified: status.modified ?? [],
+        staged: status.staged ?? [],
+      });
+    } catch {
+      setGitStatus(null);
+    }
+  }, [repoRoot]);
+
+  useEffect(() => {
+    refreshGitStatus();
+  }, [refreshGitStatus]);
 
   const openSourceFile = useCallback(async (path: string) => {
     setSelectedSourcePath(path);
@@ -102,7 +132,8 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
     setOpenFiles((prev) => prev.map((f) =>
       f.path === path ? { ...f, originalContent: f.content, dirty: false } : f
     ));
-  }, []);
+    refreshGitStatus();
+  }, [refreshGitStatus]);
 
   const handleFileClose = useCallback((path: string) => {
     const file = openFiles.find((f) => f.path === path);
@@ -157,6 +188,37 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
     setDiffOverlay(diff);
   }, []);
 
+  const handleOpenDiff = useCallback((relativePath: string, isStaged: boolean) => {
+    if (!repoRoot) return;
+    setJitDiffTarget({ projectDir: repoRoot, relativePath, isStaged });
+    layout.setRightTab("diff");
+    layout.setShowRightPanel(true);
+  }, [repoRoot]);
+
+  const handleOpenInEditorFromDiff = useCallback((relativePath: string) => {
+    if (relativePath.replace(/\\/g, "/").startsWith("TestLib/")) {
+      openTestFile(relativePath);
+    } else {
+      openSourceFile(relativePath);
+    }
+  }, [openTestFile, openSourceFile]);
+
+  const handleCloseDiff = useCallback(() => {
+    setJitDiffTarget(null);
+    layout.setRightTab("iterate");
+  }, []);
+
+  const handleViewIterationDiff = useCallback((iterationId: number, unifiedDiff: string, title?: string) => {
+    setJitDiffTarget({ type: "iteration", iterationId, unifiedDiff, title });
+    layout.setRightTab("diff");
+    layout.setShowRightPanel(true);
+  }, []);
+
+  const contentByPath = openFiles.reduce<Record<string, string>>((acc, f) => {
+    acc[f.path.replace(/\\/g, "/")] = f.content;
+    return acc;
+  }, {});
+
   const handleRunResult = useCallback((result: unknown) => {
     const r = result as {
       message?: string;
@@ -205,6 +267,10 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
                 onCreateTest={handleCreateTest}
                 onRunSuite={handleRunSuite}
                 suiteRunning={suiteRunning}
+                repoRoot={repoRoot ?? undefined}
+                onOpenDiff={handleOpenDiff}
+                onOpenInEditor={handleOpenInEditorFromDiff}
+                onRefreshGitStatus={refreshGitStatus}
               />
             </div>
             <div className="resize-handle shrink-0" onMouseDown={layout.startResizeLeft} aria-hidden />
@@ -228,6 +294,7 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
               onCenterViewChange={layout.setActiveCenterView}
               settingsProps={settingsProps}
               onSelectionChange={(sel) => setCurrentSelection(sel)}
+              repoRoot={repoRoot ?? null}
             />
           </div>
 
@@ -263,6 +330,11 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
                 onDiffGenerated={handleDiffGenerated}
                 onRunResult={handleRunResult}
                 openFilePaths={openFiles.filter((f) => f.type === "rust").map((f) => f.path)}
+                jitDiffTarget={jitDiffTarget}
+                onCloseDiff={handleCloseDiff}
+                onOpenInEditor={handleOpenInEditorFromDiff}
+                contentByPath={contentByPath}
+                onViewIterationDiff={handleViewIterationDiff}
                 aiPanelProps={{
                   apiKey: ai.apiKey,
                   setApiKey: ai.setApiKey,

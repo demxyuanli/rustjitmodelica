@@ -52,7 +52,7 @@ export function AIPanel({
   apiKeySaved: _apiKeySaved,
   aiPrompt,
   setAiPrompt,
-  aiLoading,
+  aiLoading: _aiLoading,
   aiResponse,
   onSend,
   onInsert,

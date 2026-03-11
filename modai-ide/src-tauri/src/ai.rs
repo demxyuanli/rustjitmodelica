@@ -139,15 +139,15 @@ pub async fn generate_compiler_patch_with_context(
     let api_key = get_api_key()?;
 
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
+    let jit_root = manifest_dir
         .parent()
-        .unwrap_or(&manifest_dir)
-        .parent()
-        .unwrap_or(&manifest_dir);
+        .and_then(|p| p.parent())
+        .map(|p| p.join("jit-compiler"))
+        .unwrap_or_else(|| manifest_dir.clone());
 
     let mut context_parts = Vec::new();
     for file_path in &context_files {
-        let full_path = repo_root.join(file_path);
+        let full_path = jit_root.join(file_path);
         if let Ok(content) = std::fs::read_to_string(&full_path) {
             let truncated = if content.len() > 8000 {
                 format!("{}...(truncated)", &content[..8000])
@@ -160,7 +160,7 @@ pub async fn generate_compiler_patch_with_context(
 
     let mut test_parts = Vec::new();
     for case_name in &test_cases {
-        let mo_path = repo_root.join(format!("{}.mo", case_name.replace('/', std::path::MAIN_SEPARATOR_STR)));
+        let mo_path = jit_root.join(format!("{}.mo", case_name.replace('/', std::path::MAIN_SEPARATOR_STR)));
         if let Ok(content) = std::fs::read_to_string(&mo_path) {
             test_parts.push(format!("=== {} ===\n{}", case_name, content));
         }

@@ -13,6 +13,7 @@ interface IterationRecord {
   created_at: string;
   branch_name?: string | null;
   duration_ms?: number | null;
+  git_commit?: string | null;
 }
 
 interface MoRunDetail {
@@ -53,6 +54,7 @@ interface SelfIterateUIProps {
   onDiffGenerated?: (diff: string) => void;
   onRunResult?: (result: unknown) => void;
   initialContextFiles?: string[];
+  onViewIterationDiff?: (iterationId: number, unifiedDiff: string, title?: string) => void;
 }
 
 interface RoundState {
@@ -76,7 +78,7 @@ function stepIndex(round: RoundState): number {
   return 1;
 }
 
-export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoRoot: _repoRoot, onDiffGenerated, onRunResult, initialContextFiles }: SelfIterateUIProps) {
+export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoRoot, onDiffGenerated, onRunResult, initialContextFiles, onViewIterationDiff }: SelfIterateUIProps) {
   const [target, setTarget] = useState("");
   const [contextFiles, setContextFiles] = useState<string[]>([]);
   const [testCases, setTestCases] = useState<string[]>([]);
@@ -225,15 +227,57 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
   const handleSaveToHistory = useCallback(async () => {
     if (!runResult) return;
     try {
+      let gitCommit: string | null = null;
+      if (repoRoot) {
+        try {
+          gitCommit = (await invoke("git_head_commit", { projectDir: repoRoot })) as string;
+        } catch {
+          // ignore
+        }
+      }
       await invoke("save_iteration", {
         target: target.trim(),
         diff: diff || null,
         success: runResult.success,
         message: runResult.message,
+        git_commit: gitCommit,
       });
       loadHistory();
     } catch {}
-  }, [target, diff, runResult, loadHistory]);
+  }, [target, diff, runResult, loadHistory, repoRoot]);
+
+  const handleLoadVersionDiff = useCallback(async (id: number) => {
+    try {
+      const record = (await invoke("get_iteration", { id })) as IterationRecord | null;
+      if (!record) return;
+      setTarget(record.target || "");
+      setDiff(record.diff ?? "");
+      setEditableDiff(true);
+      setRunResult(null);
+      setBanner(null);
+    } catch {
+      setBanner({ message: "Failed to load version", type: "error" });
+    }
+  }, []);
+
+  const handleRestoreToVersion = useCallback(async (id: number) => {
+    try {
+      const record = (await invoke("get_iteration", { id })) as IterationRecord | null;
+      if (!record?.diff) {
+        setBanner({ message: "No diff in this version", type: "error" });
+        return;
+      }
+      setAdoptLoading(true);
+      setBanner(null);
+      await invoke("apply_patch_to_workspace", { diff: record.diff });
+      setBanner({ message: t("adoptedSuccess"), type: "success" });
+      loadHistory();
+    } catch (e) {
+      setBanner({ message: String(e), type: "error" });
+    } finally {
+      setAdoptLoading(false);
+    }
+  }, [loadHistory]);
 
   const handleNextRound = useCallback(() => {
     const failedCases = runResult?.mo_run?.details.filter((d) => d.actual !== d.expected).map((d) => d.name) ?? [];
@@ -592,23 +636,48 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
                   <th className="px-3 py-2 font-medium">Target</th>
                   <th className="px-3 py-2 font-medium w-16">Success</th>
                   <th className="px-3 py-2 font-medium w-36">Date</th>
-                  <th className="px-3 py-2 font-medium w-16"></th>
+                  <th className="px-3 py-2 font-medium w-32 text-right">Version</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredHistory.map((r) => (
                   <React.Fragment key={r.id}>
-                    <tr className={`border-b border-gray-700/50 hover:bg-[#3c3c3c]/30 cursor-pointer ${expandedHistoryId === r.id ? "bg-[#3c3c3c]/30" : ""}`}
-                      onClick={() => setExpandedHistoryId((prev) => (prev === r.id ? null : r.id))}>
-                      <td className="px-3 py-2 font-mono text-[var(--text)]">{r.id}</td>
-                      <td className="px-3 py-2 text-[var(--text)] truncate max-w-[200px]" title={r.target}>{r.target || "\u2014"}</td>
-                      <td className="px-3 py-2"><span className={r.success ? "text-green-400" : "text-red-400"}>{r.success ? "Yes" : "No"}</span></td>
-                      <td className="px-3 py-2 text-[var(--text-muted)]">{r.created_at.slice(0, 19)}</td>
-                      <td className="px-3 py-2">{expandedHistoryId === r.id ? "\u25BC" : "\u25B6"}</td>
+                    <tr className={`border-b border-gray-700/50 hover:bg-[#3c3c3c]/30 ${expandedHistoryId === r.id ? "bg-[#3c3c3c]/30" : ""}`}>
+                      <td className="px-3 py-2 font-mono text-[var(--text)] cursor-pointer" onClick={() => setExpandedHistoryId((prev) => (prev === r.id ? null : r.id))}>{r.id}</td>
+                      <td className="px-3 py-2 text-[var(--text)] truncate max-w-[200px] cursor-pointer" title={r.target} onClick={() => setExpandedHistoryId((prev) => (prev === r.id ? null : r.id))}>{r.target || "\u2014"}</td>
+                      <td className="px-3 py-2 cursor-pointer" onClick={() => setExpandedHistoryId((prev) => (prev === r.id ? null : r.id))}><span className={r.success ? "text-green-400" : "text-red-400"}>{r.success ? "Yes" : "No"}</span></td>
+                      <td className="px-3 py-2 text-[var(--text-muted)] cursor-pointer" onClick={() => setExpandedHistoryId((prev) => (prev === r.id ? null : r.id))}>{r.created_at.slice(0, 19)}</td>
+                      <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" onClick={() => handleLoadVersionDiff(r.id)}
+                          className="px-2 py-0.5 mr-1 text-[10px] rounded bg-[#3c3c3c] hover:bg-gray-600 border border-gray-600 text-[var(--text)]">
+                          {t("loadVersionDiff")}
+                        </button>
+                        {r.diff && onViewIterationDiff && (
+                          <button type="button" onClick={() => onViewIterationDiff(r.id, r.diff ?? "", `#${r.id} ${(r.target || "patch").slice(0, 40)}`)}
+                            className="px-2 py-0.5 mr-1 text-[10px] rounded bg-blue-800/50 hover:bg-blue-700/50 border border-blue-700 text-blue-200">
+                            View diff
+                          </button>
+                        )}
+                        {r.diff ? (
+                          <button type="button" onClick={() => handleRestoreToVersion(r.id)} disabled={adoptLoading}
+                            className="px-2 py-0.5 text-[10px] rounded bg-green-800/50 hover:bg-green-700/50 border border-green-700 text-green-200 disabled:opacity-50">
+                            {t("restoreToVersion")}
+                          </button>
+                        ) : null}
+                        <button type="button" onClick={() => setExpandedHistoryId((prev) => (prev === r.id ? null : r.id))}
+                          className="px-1 py-0.5 text-[var(--text-muted)] hover:text-[var(--text)] ml-0.5" title={expandedHistoryId === r.id ? "Collapse" : "Details"}>
+                          {expandedHistoryId === r.id ? "\u25BC" : "\u25B6"}
+                        </button>
+                      </td>
                     </tr>
                     {expandedHistoryId === r.id && (
                       <tr className="border-b border-gray-700/50 bg-[#252526]">
-                        <td colSpan={5} className="px-3 py-2 text-[var(--text-muted)] text-xs whitespace-pre-wrap">{r.message || "\u2014"}</td>
+                        <td colSpan={5} className="px-3 py-2">
+                          {r.git_commit && (
+                            <div className="text-[10px] text-[var(--text-muted)] mb-1 font-mono">Commit: {r.git_commit.slice(0, 12)}</div>
+                          )}
+                          <div className="text-[var(--text-muted)] text-xs whitespace-pre-wrap">{r.message || "\u2014"}</div>
+                        </td>
                       </tr>
                     )}
                   </React.Fragment>
