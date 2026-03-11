@@ -33,6 +33,7 @@ interface RunResult {
   test_ok: boolean;
   message: string;
   mo_run?: MoRunResult | null;
+  quick_run?: boolean;
 }
 
 interface ChunkInfo {
@@ -49,6 +50,9 @@ interface SelfIterateUIProps {
   onClearPrefill?: () => void;
   fullScreen?: boolean;
   repoRoot?: string | null;
+  onDiffGenerated?: (diff: string) => void;
+  onRunResult?: (result: unknown) => void;
+  initialContextFiles?: string[];
 }
 
 interface RoundState {
@@ -72,7 +76,7 @@ function stepIndex(round: RoundState): number {
   return 1;
 }
 
-export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoRoot: _repoRoot }: SelfIterateUIProps) {
+export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoRoot: _repoRoot, onDiffGenerated, onRunResult, initialContextFiles }: SelfIterateUIProps) {
   const [target, setTarget] = useState("");
   const [contextFiles, setContextFiles] = useState<string[]>([]);
   const [testCases, setTestCases] = useState<string[]>([]);
@@ -85,6 +89,13 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
       onClearPrefill?.();
     }
   }, [targetPrefill, onClearPrefill]);
+
+  useEffect(() => {
+    if (initialContextFiles && initialContextFiles.length > 0 && contextFiles.length === 0) {
+      const rustFiles = initialContextFiles.filter((f) => !f.startsWith("TestLib/"));
+      if (rustFiles.length > 0) setContextFiles(rustFiles);
+    }
+  }, [initialContextFiles]);
 
   const [indexChunks, setIndexChunks] = useState<ChunkInfo[]>([]);
   const [indexContextLoading, setIndexContextLoading] = useState(false);
@@ -141,26 +152,45 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
       }
       setDiff(result);
       setEditableDiff(false);
+      setBanner({ message: t("aiPatchReadyRunSandbox"), type: "success" });
+      onDiffGenerated?.(result);
     } catch (e) {
       setDiff("Error: " + String(e));
     } finally {
       setPatchLoading(false);
     }
-  }, [target, contextFiles, testCases]);
+  }, [target, contextFiles, testCases, onDiffGenerated]);
 
   const handleRunInSandbox = useCallback(async () => {
     setRunLoading(true);
     setRunResult(null);
     setBanner(null);
     try {
-      const result = (await invoke("self_iterate", { diff: diff || undefined })) as RunResult;
+      const result = (await invoke("self_iterate", { diff: diff || undefined, quick: true })) as RunResult;
       setRunResult(result);
+      onRunResult?.(result);
     } catch (e) {
-      setRunResult({ success: false, build_ok: false, test_ok: false, message: String(e) });
+      const err = { success: false, build_ok: false, test_ok: false, message: String(e), quick_run: false };
+      setRunResult(err);
+      onRunResult?.(err);
     } finally {
       setRunLoading(false);
     }
-  }, [diff]);
+  }, [diff, onRunResult]);
+
+  const handleRunFullBuild = useCallback(async () => {
+    setRunLoading(true);
+    setBanner(null);
+    try {
+      const result = (await invoke("self_iterate", { diff: diff || undefined, quick: false })) as RunResult;
+      setRunResult(result);
+      onRunResult?.(result);
+    } catch (e) {
+      setRunResult({ success: false, build_ok: false, test_ok: false, message: String(e), quick_run: false });
+    } finally {
+      setRunLoading(false);
+    }
+  }, [diff, onRunResult]);
 
   const handleAdoptToWorkspace = useCallback(async () => {
     if (diff == null) return;
@@ -284,9 +314,10 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
         ))}
       </nav>
 
-      {/* Step 1: Target + Context */}
+      {/* Step 1: Target + Context (AI-first) */}
       <section className={CARD_CLASS}>
-        <h4 className="text-sm font-medium text-[var(--text)] mb-2">1. {t("selectContext")}</h4>
+        <h4 className="text-sm font-medium text-[var(--text)] mb-2">1. {t("step1DescribeGoal")}</h4>
+        <p className="text-xs text-[var(--text-muted)] mb-2">{t("selfIterateStep1Desc")}</p>
         <label className="text-xs text-[var(--text-muted)] block mb-1">{t("selfIterateTarget")}</label>
         <textarea
           value={target}
@@ -329,7 +360,7 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
         <div className="mt-3 flex gap-2 items-center flex-wrap">
           <button type="button" onClick={handleGeneratePatch} disabled={patchLoading}
             className="px-4 py-2 bg-primary hover:bg-blue-600 text-sm font-medium rounded-lg disabled:opacity-50">
-            {patchLoading ? t("running") : t("generatePatch")}
+            {patchLoading ? t("running") : t("generatePatchWithAI")}
           </button>
           <button
             type="button"
@@ -381,6 +412,12 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
             ))}
           </div>
         )}
+        <div className="mt-3 pt-2 border-t border-gray-700/50">
+          <button type="button" onClick={() => { setDiff(""); setEditableDiff(true); }}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:underline">
+            {t("orPasteDiffManually")}
+          </button>
+        </div>
       </section>
 
       {/* Step 2: Diff & Edit */}
@@ -415,9 +452,15 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
           </div>
         </section>
       ) : (
-        <section className={`${CARD_CLASS} opacity-80`}>
+        <section className={`${CARD_CLASS} opacity-90`}>
           <h4 className="text-sm font-medium text-[var(--text-muted)]">2. {t("stepDiff")}</h4>
-          <p className="text-xs text-[var(--text-muted)]">{t("completePreviousStep")}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-2">{t("completePreviousStep")}</p>
+          <div className="mt-2">
+            <button type="button" onClick={() => { setDiff(""); setEditableDiff(true); }}
+              className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:underline">
+              {t("orPasteDiffManually")}
+            </button>
+          </div>
         </section>
       )}
 
@@ -428,6 +471,14 @@ export function SelfIterateUI({ targetPrefill, onClearPrefill, fullScreen, repoR
           <div className={`text-sm p-3 rounded-lg mb-3 ${runResult.success ? "bg-green-900/30 text-green-300" : "bg-red-900/30 text-red-300"}`}>
             {runResult.message}
           </div>
+          {runResult.quick_run && runResult.success && (
+            <div className="mb-3">
+              <button type="button" onClick={handleRunFullBuild} disabled={runLoading}
+                className="px-4 py-2 bg-primary hover:bg-blue-600 text-sm font-medium rounded-lg disabled:opacity-50">
+                {runLoading ? t("running") : t("runFullBuild")}
+              </button>
+            </div>
+          )}
           {runResult.mo_run != null && runResult.mo_run.details.length > 0 && (
             <div className="overflow-hidden rounded-lg border border-gray-700">
               <div className="text-xs text-[var(--text-muted)] px-3 py-2 border-b border-gray-700 bg-[#3c3c3c]">

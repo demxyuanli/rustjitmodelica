@@ -31,6 +31,7 @@ export interface EditorWorkbenchProps {
   monacoRef: React.MutableRefObject<typeof monaco | null>;
   onFocusedChange: (params: { path: string | null; content: string }) => void;
   onCursorPositionChange?: (lineNumber: number, column: number) => void;
+  onSelectionChange?: (params: { path: string | null; selectedText: string | null }) => void;
   onGitStatusChange?: (status: { modified: string[]; staged: string[] }) => void;
   onContentByPathChange?: (contentByPath: Record<string, string>) => void;
   log?: (msg: string) => void;
@@ -46,10 +47,11 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     editorRef,
     monacoRef,
     onFocusedChange,
-  onCursorPositionChange,
-  onGitStatusChange,
-  onContentByPathChange,
-  log = () => {},
+    onCursorPositionChange,
+    onSelectionChange,
+    onGitStatusChange,
+    onContentByPathChange,
+    log = () => {},
 },
   ref
 ) {
@@ -268,6 +270,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
             onModelNameChange={setModelName}
             jitResult={jitResult}
             onCursorPositionChange={onCursorPositionChange}
+            onSelectionChange={onSelectionChange}
           />
         </React.Fragment>
       ))}

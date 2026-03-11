@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { t } from "../i18n";
 import { useGit, type GitStatus } from "../hooks/useGit";
 import { FileIcon } from "./FileIcon";
+import { AppIcon } from "./Icon";
+import { IconButton } from "./IconButton";
 
 export type { GitStatus };
 export type { GitLogEntry, GitCommitFile } from "../hooks/useGit";
@@ -189,14 +191,15 @@ export function SourceControlView({
                 style={{ paddingLeft }}
               >
                 {hasChildren ? (
-                  <button
-                    type="button"
+                  <IconButton
+                    icon={<span aria-hidden>{isExpanded ? "\u02C5" : "\u203A"}</span>}
+                    size="xs"
                     className="tree-arrow text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10 rounded"
                     onClick={() => toggleExpanded(key)}
                     aria-expanded={isExpanded}
-                  >
-                    {isExpanded ? "\u02C5" : "\u203A"}
-                  </button>
+                    aria-label={seg}
+                    title={seg}
+                  />
                 ) : (
                   <span className="tree-icon-box shrink-0">
                     <FileIcon name={seg} />
@@ -212,35 +215,44 @@ export function SourceControlView({
                     >
                       {seg}
                     </button>
-                    <button
-                      type="button"
+                    <IconButton
+                      icon={<AppIcon name="diff" aria-hidden="true" />}
+                      size="xs"
                       className="tree-icon-box text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10 rounded opacity-0 group-hover:opacity-100"
-                      onClick={(e) => { e.stopPropagation(); onOpenDiff(child.fullPath!, staged); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenDiff(child.fullPath!, staged);
+                      }}
                       title={t("viewDiff")}
-                    >
-                      {"\u2194"}
-                    </button>
+                      aria-label={t("viewDiff")}
+                    />
                     <span className={statusBadgeClass} title={st === "U" ? "Untracked" : st === "M" ? "Modified" : st === "D" ? "Deleted" : "Renamed"}>
                       {st}
                     </span>
                     {staged ? (
-                      <button
-                        type="button"
+                      <IconButton
+                        icon={<AppIcon name="unstage" aria-hidden="true" />}
+                        size="xs"
                         className="tree-icon-box text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10 rounded opacity-0 group-hover:opacity-100"
-                        onClick={(e) => { e.stopPropagation(); onUnstage(child.fullPath!); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUnstage(child.fullPath!);
+                        }}
                         title={t("unstage")}
-                      >
-                        -
-                      </button>
+                        aria-label={t("unstage")}
+                      />
                     ) : (
-                      <button
-                        type="button"
+                      <IconButton
+                        icon={<AppIcon name="stage" aria-hidden="true" />}
+                        size="xs"
                         className="tree-icon-box text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10 rounded opacity-0 group-hover:opacity-100"
-                        onClick={(e) => { e.stopPropagation(); onStage(child.fullPath!); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onStage(child.fullPath!);
+                        }}
                         title={t("stage")}
-                      >
-                        +
-                      </button>
+                        aria-label={t("stage")}
+                      />
                     )}
                   </>
                 ) : (
@@ -270,14 +282,14 @@ export function SourceControlView({
         <span className="text-xs font-medium text-[var(--text-muted)] truncate" title={status.branch}>
           {status.branch}
         </span>
-        <button
-          type="button"
-          className="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text)]"
+        <IconButton
+          icon={<AppIcon name="refresh" aria-hidden="true" />}
+          size="xs"
+          className="shrink-0 text-[var(--text-muted)] hover:text-[var(--text)]"
           onClick={git.refresh}
           title={t("refresh")}
-        >
-          {t("refresh")}
-        </button>
+          aria-label={t("refresh")}
+        />
       </div>
       {git.error && (
         <div className="shrink-0 px-2 py-1 text-xs text-red-400">{git.error}</div>
@@ -296,8 +308,8 @@ export function SourceControlView({
           onClick={git.commit}
           disabled={!git.commitMessage.trim() || !hasStaged}
         >
-          <span aria-hidden>{"\u2713"}</span>
-          {t("commit")}
+          <AppIcon name="gitCommit" aria-hidden="true" />
+          <span className="sr-only">{t("commit")}</span>
         </button>
       </div>
       <div className="flex-1 min-h-0 overflow-auto flex flex-col scroll-vscode scm-tree">

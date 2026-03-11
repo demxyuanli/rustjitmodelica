@@ -29,4 +29,8 @@ keyring = "2"
 tempfile = "3"
 rfd = "0.14"
 rusqlite = { version = "0.31", features = ["bundled"] }
+notify = "7"
+notify-debouncer-mini = "0.5"
+sha2 = "0.10"
+patch-apply = "0.8"
 

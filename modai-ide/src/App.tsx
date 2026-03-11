@@ -7,7 +7,7 @@ import { setLang } from "./i18n";
 import { useLayout } from "./hooks/useLayout";
 import { useProject, pathToModelName } from "./hooks/useProject";
 import { useSimulation } from "./hooks/useSimulation";
-import { useAI } from "./hooks/useAI";
+import { useModelicaAI } from "./hooks/useAI";
 
 import { Titlebar } from "./components/Titlebar";
 import { FileTree } from "./components/FileTree";
@@ -16,15 +16,17 @@ import { TimelineSection } from "./components/TimelineSection";
 import { SourceControlView } from "./components/SourceControlView";
 import { EditorWorkbench, type EditorWorkbenchRef } from "./components/EditorWorkbench";
 import { StatusBar, type IndexStatusInfo } from "./components/StatusBar";
-import type { IndexActionState } from "./components/Modals";
 import { AIPanel } from "./components/AIPanel";
 import { SearchPanel } from "./components/SearchPanel";
+import { AppIcon } from "./components/Icon";
+import { IconButton } from "./components/IconButton";
 
 const DiffView = lazy(() => import("./components/DiffView").then((m) => ({ default: m.DiffView })));
 const GitGraphView = lazy(() => import("./components/GitGraphView").then((m) => ({ default: m.GitGraphView })));
 const SimulationPanel = lazy(() => import("./components/SimulationPanel").then((m) => ({ default: m.SimulationPanel })));
 import { Modals } from "./components/Modals";
-import { CompilerIterateWorkspace } from "./components/CompilerIterateWorkspace";
+import { JitIdeWorkspace } from "./components/JitIdeWorkspace";
+import { SettingsContent, type IndexActionState } from "./components/SettingsContent";
 import { t } from "./i18n";
 import "./App.css";
 
@@ -53,6 +55,7 @@ function App() {
   const [showJitFailModal, setShowJitFailModal] = useState(false);
   const [jitFailErrors, setJitFailErrors] = useState<string[]>([]);
   const [selfIterateTargetPrefill, setSelfIterateTargetPrefill] = useState<string | null>(null);
+  const [currentSelection, setCurrentSelection] = useState<{ path: string | null; text: string | null }>({ path: null, text: null });
 
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
@@ -65,7 +68,7 @@ function App() {
   const layout = useLayout();
   const project = useProject();
   const sim = useSimulation(log);
-  const ai = useAI(log);
+  const ai = useModelicaAI(log);
 
   const [indexStatus, setIndexStatus] = useState<IndexStatusInfo | null>(null);
   const [repoRoot, setRepoRoot] = useState<string | null>(null);
@@ -284,250 +287,293 @@ function App() {
           layout.setWorkspaceMode("compiler-iterate");
           setShowJitFailModal(false);
         }}
-        showSettings={layout.showSettings}
-        onSettingsClose={() => layout.setShowSettings(false)}
-        theme={layout.theme}
-        onThemeChange={layout.setTheme}
-        onEnterDevMode={() => layout.setWorkspaceMode("compiler-iterate")}
-        indexFileCount={indexStatus?.fileCount ?? 0}
-        indexSymbolCount={indexStatus?.symbolCount ?? 0}
-        indexState={indexStatus?.state ?? null}
-        indexAction={indexAction}
-        onIndexRefresh={() => runIndexAction("refresh")}
-        onIndexRebuild={() => runIndexAction("rebuild")}
       />
       {layout.workspaceMode === "modelica" ? (
-        <>
-      <div className="flex flex-col flex-1 min-h-0">
-        <div className="flex flex-1 min-h-0">
-          {layout.showLeftSidebar && (
-            <>
-              <div className="shrink-0 border-r border-border bg-surface-alt overflow-hidden flex flex-col" style={{ width: layout.leftSidebarWidth }}>
-                <div className="shrink-0 flex border-b border-border">
-                  <button
-                    type="button"
-                    className={`flex-1 py-1.5 text-xs ${layout.leftSidebarTab === "explorer" ? "bg-white/10 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
-                    onClick={() => layout.setLeftSidebarTab("explorer")}
-                  >
-                    {t("explorer")}
-                  </button>
-                  <button
-                    type="button"
-                    className={`flex-1 py-1.5 text-xs ${layout.leftSidebarTab === "sourceControl" ? "bg-white/10 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
-                    onClick={() => layout.setLeftSidebarTab("sourceControl")}
-                  >
-                    {t("sourceControl")}
-                  </button>
-                  <button
-                    type="button"
-                    className={`flex-1 py-1.5 text-xs ${layout.leftSidebarTab === "search" ? "bg-white/10 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
-                    onClick={() => layout.setLeftSidebarTab("search")}
-                  >
-                    {t("search")}
-                  </button>
-                </div>
-                <div className="flex-1 min-h-0 overflow-auto flex flex-col scroll-vscode">
-                  {layout.leftSidebarTab === "explorer" && (
-                    <>
-                      <FileTree
-                        projectDir={project.projectDir}
-                        moTree={project.moTree}
-                        moFiles={project.moFiles}
-                        onOpenProject={project.openProject}
-                        onOpenFile={handleOpenMoFile}
-                      />
-                      <OutlineSection
-                        code={code}
-                        openFilePath={openFilePath}
-                        editorRef={editorRef}
-                        projectDir={project.projectDir}
-                      />
-                      <TimelineSection
-                        projectDir={project.projectDir}
-                        openFilePath={openFilePath}
-                        onOpenDiffAtRevision={(revision) => {
-                          if (project.projectDir && openFilePath) {
-                            project.setDiffTarget({ projectDir: project.projectDir, relativePath: openFilePath, isStaged: false, revision });
-                            layout.setRightPanelTab("diff");
-                            layout.setShowRightPanel(true);
-                          }
-                        }}
-                      />
-                    </>
-                  )}
-                  {layout.leftSidebarTab === "sourceControl" && (
-                    <div className="flex flex-col flex-1 min-h-0">
-                      <div className="flex-1 min-h-0 overflow-hidden border-b border-border">
-                        <SourceControlView
+        layout.showSettings ? (
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 min-h-0 overflow-auto">
+              <div className="max-w-2xl mx-auto p-6 text-[var(--text)]">
+                <h2 className="text-lg font-semibold text-[var(--text)] mb-6">{t("settings")}</h2>
+                <SettingsContent
+                  theme={layout.theme}
+                  onThemeChange={layout.setTheme}
+                  indexFileCount={indexStatus?.fileCount ?? 0}
+                  indexSymbolCount={indexStatus?.symbolCount ?? 0}
+                  indexState={indexStatus?.state ?? null}
+                  indexAction={indexAction}
+                  onIndexRefresh={() => runIndexAction("refresh")}
+                  onIndexRebuild={() => runIndexAction("rebuild")}
+                  onEnterDevMode={() => layout.setWorkspaceMode("compiler-iterate")}
+                  aiModel={ai.model}
+                  onAiModelChange={ai.setModel}
+                  aiDailyUsed={ai.dailyTokenUsed}
+                  aiDailyLimit={ai.dailyTokenLimit}
+                  onAiDailyReset={ai.resetDailyUsage}
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-1 min-h-0">
+            {layout.showLeftSidebar && (
+              <>
+                <div className="shrink-0 border-r border-border bg-surface-alt overflow-hidden flex flex-col" style={{ width: layout.leftSidebarWidth }}>
+                  <div className="shrink-0 flex border-b border-border justify-around py-0.5">
+                    <IconButton
+                      icon={<AppIcon name="explorer" aria-hidden="true" />}
+                      variant="tab"
+                      size="xs"
+                      active={layout.leftSidebarTab === "explorer"}
+                      onClick={() => layout.setLeftSidebarTab("explorer")}
+                      title={t("explorer")}
+                      aria-label={t("explorer")}
+                    />
+                    <IconButton
+                      icon={<AppIcon name="sourceControl" aria-hidden="true" />}
+                      variant="tab"
+                      size="xs"
+                      active={layout.leftSidebarTab === "sourceControl"}
+                      onClick={() => layout.setLeftSidebarTab("sourceControl")}
+                      title={t("sourceControl")}
+                      aria-label={t("sourceControl")}
+                    />
+                    <IconButton
+                      icon={<AppIcon name="search" aria-hidden="true" />}
+                      variant="tab"
+                      size="xs"
+                      active={layout.leftSidebarTab === "search"}
+                      onClick={() => layout.setLeftSidebarTab("search")}
+                      title={t("search")}
+                      aria-label={t("search")}
+                    />
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-auto flex flex-col scroll-vscode">
+                    {layout.leftSidebarTab === "explorer" && (
+                      <>
+                        <FileTree
                           projectDir={project.projectDir}
-                          onOpenDiff={(relativePath, isStaged) => {
-                            if (project.projectDir) {
-                              project.setDiffTarget({ projectDir: project.projectDir, relativePath, isStaged });
+                          moTree={project.moTree}
+                          moFiles={project.moFiles}
+                          onOpenProject={project.openProject}
+                          onOpenFile={handleOpenMoFile}
+                        />
+                        <OutlineSection
+                          code={code}
+                          openFilePath={openFilePath}
+                          editorRef={editorRef}
+                          projectDir={project.projectDir}
+                        />
+                        <TimelineSection
+                          projectDir={project.projectDir}
+                          openFilePath={openFilePath}
+                          onOpenDiffAtRevision={(revision) => {
+                            if (project.projectDir && openFilePath) {
+                              project.setDiffTarget({ projectDir: project.projectDir, relativePath: openFilePath, isStaged: false, revision });
                               layout.setRightPanelTab("diff");
                               layout.setShowRightPanel(true);
                             }
                           }}
-                          onOpenInEditor={handleOpenMoFile}
-                          onRefreshStatus={project.refreshGitStatus}
+                        />
+                      </>
+                    )}
+                    {layout.leftSidebarTab === "sourceControl" && (
+                      <div className="flex flex-col flex-1 min-h-0">
+                        <div className="flex-1 min-h-0 overflow-hidden border-b border-border">
+                          <SourceControlView
+                            projectDir={project.projectDir}
+                            onOpenDiff={(relativePath, isStaged) => {
+                              if (project.projectDir) {
+                                project.setDiffTarget({ projectDir: project.projectDir, relativePath, isStaged });
+                                layout.setRightPanelTab("diff");
+                                layout.setShowRightPanel(true);
+                              }
+                            }}
+                            onOpenInEditor={handleOpenMoFile}
+                            onRefreshStatus={project.refreshGitStatus}
+                          />
+                        </div>
+                        <div className="shrink-0 border-t border-border flex flex-col min-h-0">
+                          <button
+                            type="button"
+                            className="shrink-0 flex items-center gap-1 py-1.5 px-2 text-xs text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text)] w-full text-left"
+                            onClick={() => layout.setGraphExpanded((e) => !e)}
+                            aria-expanded={layout.graphExpanded}
+                          >
+                            <span className="inline-block w-3 text-center" aria-hidden>{layout.graphExpanded ? "\u25BC" : "\u25B6"}</span>
+                            {t("graph")}
+                          </button>
+                          {layout.graphExpanded && (
+                            <div className="flex-1 min-h-[120px] overflow-hidden">
+                              <Suspense fallback={<div className="p-2 text-[var(--text-muted)] text-xs">{t("loading")}</div>}>
+                                <GitGraphView projectDir={project.projectDir} />
+                              </Suspense>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {layout.leftSidebarTab === "search" && (
+                      <SearchPanel
+                        projectDir={project.projectDir}
+                        onOpenFile={handleOpenMoFile}
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="resize-handle shrink-0" onMouseDown={layout.startResizeLeft} aria-hidden />
+              </>
+            )}
+            <div className="flex flex-col flex-1 min-h-0">
+              <EditorWorkbench
+                ref={workbenchRef}
+                projectDir={project.projectDir}
+                gitStatus={project.gitStatus}
+                jitResult={sim.jitResult}
+                modelName={modelName}
+                setModelName={setModelName}
+                editorRef={editorRef}
+                monacoRef={monacoRef}
+                onFocusedChange={({ path, content }) => {
+                  setOpenFilePath(path);
+                  setCode(content);
+                }}
+                onCursorPositionChange={(ln, col) => setCursorPosition({ lineNumber: ln, column: col })}
+                onSelectionChange={({ path, selectedText }) => setCurrentSelection({ path, text: selectedText })}
+                onGitStatusChange={project.setGitStatus}
+                onContentByPathChange={setContentByPath}
+                log={log}
+              />
+              {layout.showBottomPanel && (
+                <>
+                  <div className="resize-handle-h shrink-0" onMouseDown={layout.startResizeBottom} aria-hidden />
+                  <div className="shrink-0 overflow-hidden flex flex-col border-t border-border bg-surface-alt" style={{ height: layout.bottomPanelHeight }}>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
+                        <SimulationPanel
+                          params={sim.params}
+                          onParamChange={sim.setParam}
+                          tableState={sim.tableState}
+                          onTableChange={sim.setTable}
+                          actions={{
+                            onValidate: handleValidate,
+                            onRunSimulation: handleRunSimulation,
+                            onTestAll: handleTestAll,
+                            onExportCSV: sim.exportCSV,
+                            onExportJSON: sim.exportJSON,
+                            onSuggestFixWithAi: ai.setAiPrompt,
+                          }}
+                          data={{
+                            jitResult: sim.jitResult,
+                            simResult: sim.simResult,
+                            simLoading: sim.simLoading,
+                            testAllLoading: sim.testAllLoading,
+                            testAllResults: sim.testAllResults,
+                            moFilesCount: project.moFiles.length,
+                            logLines,
+                            plotTraces: sim.plotTraces,
+                            allPlotVarNames: sim.allPlotVarNames,
+                            selectedPlotVars: sim.selectedPlotVars,
+                            tableColumns: sim.tableColumns,
+                            sortedTableRows: sim.sortedTableRows,
+                          }}
+                          setSelectedPlotVars={sim.setSelectedPlotVars}
+                          theme={layout.theme}
+                        />
+                      </Suspense>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            {layout.showRightPanel && (
+              <>
+                <div className="resize-handle shrink-0" onMouseDown={layout.startResizeRight} aria-hidden />
+                <aside className="shrink-0 border-l border-border bg-surface-alt overflow-hidden flex flex-col" style={{ width: layout.rightPanelWidth }}>
+                  <div className="shrink-0 flex border-b border-border justify-around py-0.5">
+                    <IconButton
+                      icon={<AppIcon name="ai" aria-hidden="true" />}
+                      variant="tab"
+                      size="xs"
+                      active={layout.rightPanelTab === "ai"}
+                      onClick={() => layout.setRightPanelTab("ai")}
+                      title={t("aiCoding")}
+                      aria-label={t("aiCoding")}
+                    />
+                    <IconButton
+                      icon={<AppIcon name="diff" aria-hidden="true" />}
+                      variant="tab"
+                      size="xs"
+                      active={layout.rightPanelTab === "diff"}
+                      onClick={() => layout.setRightPanelTab("diff")}
+                      title={t("viewDiff")}
+                      aria-label={t("viewDiff")}
+                    />
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                    {layout.rightPanelTab === "ai" && (
+                      <div className="flex-1 overflow-auto p-3 scroll-vscode">
+                        <AIPanel
+                          apiKey={ai.apiKey}
+                          setApiKey={ai.setApiKey}
+                          apiKeySaved={ai.apiKeySaved}
+                          onSaveApiKey={ai.saveApiKey}
+                          aiPrompt={ai.aiPrompt}
+                          setAiPrompt={ai.setAiPrompt}
+                          aiLoading={ai.aiLoading}
+                          aiResponse={ai.aiResponse}
+                          onSend={ai.send}
+                          onInsert={handleInsertAi}
+                          tokenEstimate={ai.tokenEstimate}
+                          dailyTokenUsed={ai.dailyTokenUsed}
+                          dailyTokenLimit={ai.dailyTokenLimit}
+                          sendDisabled={ai.sendDisabled}
+                          projectDir={project.projectDir}
+                          repoRoot={repoRoot}
+                          mode={ai.mode}
+                          setMode={ai.setMode}
+                          model={ai.model}
+                          setModel={ai.setModel}
+                          currentFilePath={openFilePath ?? undefined}
+                          currentSelectionText={currentSelection.text ?? undefined}
+                          lastJitErrorText={sim.jitResult?.errors?.join(" ") ?? undefined}
                         />
                       </div>
-                      <div className="shrink-0 border-t border-border flex flex-col min-h-0">
-                        <button
-                          type="button"
-                          className="shrink-0 flex items-center gap-1 py-1.5 px-2 text-xs text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text)] w-full text-left"
-                          onClick={() => layout.setGraphExpanded((e) => !e)}
-                          aria-expanded={layout.graphExpanded}
-                        >
-                          <span className="inline-block w-3 text-center" aria-hidden>{layout.graphExpanded ? "\u25BC" : "\u25B6"}</span>
-                          {t("graph")}
-                        </button>
-                        {layout.graphExpanded && (
-                          <div className="flex-1 min-h-[120px] overflow-hidden">
-                            <Suspense fallback={<div className="p-2 text-[var(--text-muted)] text-xs">{t("loading")}</div>}>
-                              <GitGraphView projectDir={project.projectDir} />
-                            </Suspense>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {layout.leftSidebarTab === "search" && (
-                    <SearchPanel
-                      projectDir={project.projectDir}
-                      onOpenFile={handleOpenMoFile}
-                    />
-                  )}
-                </div>
-              </div>
-              <div className="resize-handle shrink-0" onMouseDown={layout.startResizeLeft} aria-hidden />
-            </>
-          )}
-        <EditorWorkbench
-          ref={workbenchRef}
-          projectDir={project.projectDir}
-          gitStatus={project.gitStatus}
-          jitResult={sim.jitResult}
-          modelName={modelName}
-          setModelName={setModelName}
-          editorRef={editorRef}
-          monacoRef={monacoRef}
-          onFocusedChange={({ path, content }) => {
-            setOpenFilePath(path);
-            setCode(content);
-          }}
-          onCursorPositionChange={(ln, col) => setCursorPosition({ lineNumber: ln, column: col })}
-          onGitStatusChange={project.setGitStatus}
-          onContentByPathChange={setContentByPath}
-          log={log}
-        />
-        {layout.showRightPanel && (
-          <>
-            <div className="resize-handle shrink-0" onMouseDown={layout.startResizeRight} aria-hidden />
-            <aside className="shrink-0 border-l border-border bg-surface-alt overflow-hidden flex flex-col" style={{ width: layout.rightPanelWidth }}>
-              <div className="shrink-0 flex border-b border-border">
-                <button
-                  type="button"
-                  className={`flex-1 py-1.5 text-xs ${layout.rightPanelTab === "ai" ? "bg-white/10 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
-                  onClick={() => layout.setRightPanelTab("ai")}
-                >
-                  AI
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 py-1.5 text-xs ${layout.rightPanelTab === "diff" ? "bg-white/10 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
-                  onClick={() => layout.setRightPanelTab("diff")}
-                >
-                  {t("viewDiff")}
-                </button>
-              </div>
-              <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                {layout.rightPanelTab === "ai" && (
-                  <div className="flex-1 overflow-auto p-3 scroll-vscode">
-                  <AIPanel
-                    apiKey={ai.apiKey}
-                    setApiKey={ai.setApiKey}
-                    apiKeySaved={ai.apiKeySaved}
-                    onSaveApiKey={ai.saveApiKey}
-                    aiPrompt={ai.aiPrompt}
-                    setAiPrompt={ai.setAiPrompt}
-                    aiLoading={ai.aiLoading}
-                    aiResponse={ai.aiResponse}
-                    onSend={ai.send}
-                    onInsert={handleInsertAi}
-                    tokenEstimate={ai.tokenEstimate}
-                    dailyTokenUsed={ai.dailyTokenUsed}
-                    dailyTokenLimit={ai.dailyTokenLimit}
-                    sendDisabled={ai.sendDisabled}
-                    projectDir={project.projectDir}
-                  />
+                    )}
+                    {layout.rightPanelTab === "diff" && (
+                      <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
+                        <DiffView
+                          diffTarget={project.diffTarget}
+                          currentFileContent={
+                            project.diffTarget ? (contentByPath[project.diffTarget.relativePath.replace(/\\/g, "/")] ?? null) : null
+                          }
+                          currentFilePath={openFilePath}
+                          onClose={() => { project.setDiffTarget(null); layout.setRightPanelTab("ai"); }}
+                          onOpenInEditor={(path) => handleOpenMoFile(path)}
+                        />
+                      </Suspense>
+                    )}
                   </div>
-                )}
-                {layout.rightPanelTab === "diff" && (
-                  <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
-                    <DiffView
-                      diffTarget={project.diffTarget}
-                      currentFileContent={
-                        project.diffTarget ? (contentByPath[project.diffTarget.relativePath.replace(/\\/g, "/")] ?? null) : null
-                      }
-                      currentFilePath={openFilePath}
-                      onClose={() => { project.setDiffTarget(null); layout.setRightPanelTab("ai"); }}
-                      onOpenInEditor={(path) => handleOpenMoFile(path)}
-                    />
-                  </Suspense>
-                )}
-              </div>
-            </aside>
-          </>
-        )}
-      </div>
-      {layout.showBottomPanel && (
-        <>
-          <div className="resize-handle-h shrink-0" onMouseDown={layout.startResizeBottom} aria-hidden />
-          <div className="shrink-0 overflow-hidden flex flex-col border-t border-border bg-surface-alt" style={{ height: layout.bottomPanelHeight }}>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
-                <SimulationPanel
-                  params={sim.params}
-                  onParamChange={sim.setParam}
-                  tableState={sim.tableState}
-                  onTableChange={sim.setTable}
-                  actions={{
-                    onValidate: handleValidate,
-                    onRunSimulation: handleRunSimulation,
-                    onTestAll: handleTestAll,
-                    onExportCSV: sim.exportCSV,
-                    onExportJSON: sim.exportJSON,
-                    onSuggestFixWithAi: ai.setAiPrompt,
-                  }}
-                  data={{
-                    jitResult: sim.jitResult,
-                    simResult: sim.simResult,
-                    simLoading: sim.simLoading,
-                    testAllLoading: sim.testAllLoading,
-                    testAllResults: sim.testAllResults,
-                    moFilesCount: project.moFiles.length,
-                    logLines,
-                    plotTraces: sim.plotTraces,
-                    allPlotVarNames: sim.allPlotVarNames,
-                    selectedPlotVars: sim.selectedPlotVars,
-                    tableColumns: sim.tableColumns,
-                    sortedTableRows: sim.sortedTableRows,
-                  }}
-                  setSelectedPlotVars={sim.setSelectedPlotVars}
-                  theme={layout.theme}
-                />
-              </Suspense>
-            </div>
+                </aside>
+              </>
+            )}
           </div>
-        </>
-      )}
-      </div>
-        </>
-      ) : (
-        <CompilerIterateWorkspace
+      )) : (
+        <JitIdeWorkspace
           targetPrefill={selfIterateTargetPrefill}
           onClearPrefill={() => setSelfIterateTargetPrefill(null)}
           repoRoot={repoRoot}
+          showSettings={layout.showSettings}
+          onSettingsHandled={() => layout.setShowSettings(false)}
+          settingsProps={{
+            theme: layout.theme,
+            onThemeChange: layout.setTheme,
+            indexFileCount: indexStatus?.fileCount ?? 0,
+            indexSymbolCount: indexStatus?.symbolCount ?? 0,
+            indexState: indexStatus?.state ?? null,
+            indexAction,
+            onIndexRefresh: () => runIndexAction("refresh"),
+            onIndexRebuild: () => runIndexAction("rebuild"),
+          }}
         />
       )}
       <StatusBar

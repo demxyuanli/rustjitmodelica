@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { AppIcon } from "./Icon";
 
 export interface IndexStatusInfo {
   fileCount: number;
@@ -60,7 +61,7 @@ export function StatusBar({
       <div className="flex items-center h-full min-w-0">
         {gitBranch != null && gitBranch !== "" && (
           <Item onClick={onBranchClick} title={t("sourceControl")}>
-            <span className="mr-1" aria-hidden>&#xeab8;</span>
+            <AppIcon name="sourceControl" aria-hidden="true" className="mr-1 w-3.5 h-3.5" />
             {gitBranch}
           </Item>
         )}
@@ -84,10 +85,16 @@ export function StatusBar({
             }
           >
             {indexStatus.state === "building" ? (
-              <span className="text-amber-400">&#x231B; Index...</span>
+              <span className="flex items-center gap-1 text-amber-400">
+                <AppIcon name="index" aria-hidden="true" className="w-3.5 h-3.5" />
+                <span>Index...</span>
+              </span>
             ) : (
-              <span>
-                &#x2691; {indexStatus.fileCount}F / {indexStatus.symbolCount}S
+              <span className="flex items-center gap-1">
+                <AppIcon name="index" aria-hidden="true" className="w-3.5 h-3.5" />
+                <span>
+                  {indexStatus.fileCount}F / {indexStatus.symbolCount}S
+                </span>
               </span>
             )}
           </Item>
@@ -96,13 +103,13 @@ export function StatusBar({
           <>
             {errorCount > 0 && (
               <Item title={`${errorCount} Error(s)`}>
-                <span className="status-bar-error mr-0.5" aria-hidden>&#x2716;</span>
+                <AppIcon name="error" aria-hidden="true" className="status-bar-error mr-0.5 w-3.5 h-3.5" />
                 {errorCount}
               </Item>
             )}
             {warningCount > 0 && (
               <Item title={`${warningCount} Warning(s)`}>
-                <span className="status-bar-warning mr-0.5" aria-hidden>&#x26A0;</span>
+                <AppIcon name="warning" aria-hidden="true" className="status-bar-warning mr-0.5 w-3.5 h-3.5" />
                 {warningCount}
               </Item>
             )}

@@ -17,6 +17,7 @@ interface CodeEditorProps {
   openFilePath?: string | null;
   projectDir?: string | null;
   onSave?: () => void;
+  onSelectionChange?: (params: { path: string | null; selectedText: string | null }) => void;
 }
 
 export function CodeEditor({
@@ -31,6 +32,7 @@ export function CodeEditor({
   openFilePath,
   projectDir,
   onSave,
+  onSelectionChange,
 }: CodeEditorProps) {
   const [editorReady, setEditorReady] = useState(false);
   useEffect(() => {
@@ -107,6 +109,21 @@ export function CodeEditor({
             editor.onDidChangeCursorPosition((e) => {
               if (onCursorPositionChange) onCursorPositionChange(e.position.lineNumber, e.position.column);
             });
+            if (onSelectionChange) {
+              editor.onDidChangeCursorSelection((e) => {
+                const sel = e.selection;
+                if (!sel) {
+                  onSelectionChange({ path: openFilePath ?? null, selectedText: null });
+                  return;
+                }
+                const model = editor.getModel();
+                const text =
+                  model && !sel.isEmpty()
+                    ? model.getValueInRange(sel)
+                    : null;
+                onSelectionChange({ path: openFilePath ?? null, selectedText: text });
+              });
+            }
           }}
           theme="vs-dark"
           options={{

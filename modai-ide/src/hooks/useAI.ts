@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 const DAILY_TOKEN_LIMIT = 50000;
+const DEFAULT_MODEL = "deepseek-coder-v2";
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length * 1.2);
@@ -26,13 +27,30 @@ function setDailyUsedStorage(used: number): void {
   } catch { /* ignore */ }
 }
 
-export function useAI(log: (msg: string) => void) {
+export interface AiContextBlock {
+  path: string;
+  content: string;
+  range?: { start: number; end: number };
+}
+
+type AiMode = "chat" | "code";
+
+function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
   const [apiKey, setApiKey] = useState("");
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [dailyTokenUsed, setDailyTokenUsed] = useState(getDailyUsed);
+  const [mode, setMode] = useState<AiMode>("code");
+  const [model, setModel] = useState<string>(() => {
+    try {
+      return localStorage.getItem("modai-ai-model") || DEFAULT_MODEL;
+    } catch {
+      return DEFAULT_MODEL;
+    }
+  });
+  const [contextBlocks, setContextBlocks] = useState<AiContextBlock[]>([]);
 
   useEffect(() => {
     invoke("get_api_key")
@@ -61,7 +79,9 @@ export function useAI(log: (msg: string) => void) {
 
   const send = useCallback(async () => {
     if (!aiPrompt.trim()) return;
-    const est = estimateTokens(aiPrompt.trim());
+    const basePrompt = aiPrompt.trim();
+    const contextText = contextBlocks.map((b) => b.content).join("\n\n");
+    const est = estimateTokens(basePrompt + "\n" + contextText);
     const used = getDailyUsed();
     if (used + est > DAILY_TOKEN_LIMIT) {
       log("Daily token limit reached. Used: " + used + ", limit: " + DAILY_TOKEN_LIMIT);
@@ -70,7 +90,23 @@ export function useAI(log: (msg: string) => void) {
     setAiLoading(true);
     setAiResponse(null);
     try {
-      const result = (await invoke("ai_code_gen", { prompt: aiPrompt.trim() })) as string;
+      const system =
+        mode === "code"
+          ? kind === "jit"
+            ? "You are an expert Rust JIT compiler and test suite coding assistant. Reply with clear, directly usable code or concrete editing instructions."
+            : "You are an expert Modelica and Rust IDE coding assistant. Reply with clear, directly usable code or concrete editing instructions."
+          : undefined;
+
+      const payload = {
+        prompt: basePrompt,
+        system,
+        contextBlocks: contextBlocks.length > 0 ? contextBlocks : undefined,
+        options: {
+          model: model || DEFAULT_MODEL,
+        },
+      };
+
+      const result = (await invoke("ai_code_gen", { payload })) as string;
       setAiResponse(result);
       const newUsed = used + est + estimateTokens(result);
       setDailyUsedStorage(newUsed);
@@ -82,15 +118,31 @@ export function useAI(log: (msg: string) => void) {
     } finally {
       setAiLoading(false);
     }
-  }, [aiPrompt, log]);
+  }, [aiPrompt, contextBlocks, log, mode, model]);
 
-  const tokenEstimate = estimateTokens(aiPrompt);
+  const tokenEstimate = estimateTokens(aiPrompt + (contextBlocks.length ? "\n" + contextBlocks.map((b) => b.content).join("\n") : ""));
   const sendDisabled = aiLoading || !apiKeySaved || dailyTokenUsed + estimateTokens(aiPrompt.trim()) > DAILY_TOKEN_LIMIT;
 
+  const resetDailyUsage = useCallback(() => {
+    setDailyUsedStorage(0);
+    setDailyTokenUsed(0);
+  }, []);
+
+  const updateModel = useCallback((next: string) => {
+    setModel(next);
+    try {
+      localStorage.setItem("modai-ai-model", next);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   return {
-    apiKey, setApiKey,
+    apiKey,
+    setApiKey,
     apiKeySaved,
-    aiPrompt, setAiPrompt,
+    aiPrompt,
+    setAiPrompt,
     aiLoading,
     aiResponse,
     dailyTokenUsed,
@@ -99,5 +151,20 @@ export function useAI(log: (msg: string) => void) {
     sendDisabled,
     saveApiKey,
     send,
+    mode,
+    setMode,
+    model,
+    setModel: updateModel,
+    contextBlocks,
+    setContextBlocks,
+    resetDailyUsage,
   };
+}
+
+export function useModelicaAI(log: (msg: string) => void) {
+  return createAiHook(log, "modelica");
+}
+
+export function useJitAI(log: (msg: string) => void) {
+  return createAiHook(log, "jit");
 }

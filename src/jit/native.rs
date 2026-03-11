@@ -48,6 +48,11 @@ extern "C" fn modelica_integer(x: f64) -> f64 {
     x.trunc()
 }
 
+/// smooth(Real) -> Real: identity for testing; Modelica uses for continuity hint.
+extern "C" fn modelica_smooth(x: f64) -> f64 {
+    x
+}
+
 extern "C" fn modelica_boolean(x: f64) -> f64 {
     if x != 0.0 { 1.0 } else { 0.0 }
 }
@@ -163,6 +168,7 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("max", modelica_max as *const u8);
     builder.symbol("div", modelica_div as *const u8);
     builder.symbol("integer", modelica_integer as *const u8);
+    builder.symbol("smooth", modelica_smooth as *const u8);
 
     // Modelica.Math Aliases
     builder.symbol("Modelica.Math.sin", f64::sin as *const u8);
@@ -207,7 +213,7 @@ pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     set.insert("sqrt"); set.insert("exp"); set.insert("log"); set.insert("log10");
     set.insert("abs"); set.insert("ceil"); set.insert("floor");
     set.insert("mod"); set.insert("rem"); set.insert("sign"); set.insert("min"); set.insert("max");
-    set.insert("div"); set.insert("integer");
+    set.insert("div"); set.insert("integer"); set.insert("smooth");
     set.insert("Modelica.Math.sin"); set.insert("Modelica.Math.cos"); set.insert("Modelica.Math.tan");
     set.insert("Modelica.Math.asin"); set.insert("Modelica.Math.acos"); set.insert("Modelica.Math.atan");
     set.insert("Modelica.Math.atan2"); set.insert("Modelica.Math.sinh"); set.insert("Modelica.Math.cosh");
