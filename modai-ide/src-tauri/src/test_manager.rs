@@ -1,5 +1,6 @@
 // Test library management: list, CRUD, execute, regression suite.
 
+use crate::compiler_config;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -185,26 +186,11 @@ fn resolve_test_path_for_write(repo_root: &Path, name: &str) -> Result<std::path
     Ok(full)
 }
 
-fn find_exe(repo_root: &Path) -> Result<std::path::PathBuf, String> {
-    let release_exe = repo_root
-        .join("target/release/rustmodlica")
-        .with_extension(std::env::consts::EXE_EXTENSION);
-    if release_exe.exists() {
-        return Ok(release_exe);
-    }
-    let debug_exe = repo_root
-        .join("target/debug/rustmodlica")
-        .with_extension(std::env::consts::EXE_EXTENSION);
-    if debug_exe.exists() {
-        return Ok(debug_exe);
-    }
-    Err("rustmodlica executable not found (run cargo build first)".to_string())
-}
-
 pub fn run_single_test(repo_root: &Path, name: &str) -> Result<TestRunResult, String> {
-    let exe = find_exe(repo_root)?;
+    let (exe, extra_args) = compiler_config::resolve_compiler_exe(repo_root)?;
     let start = Instant::now();
     let output = Command::new(&exe)
+        .args(&extra_args)
         .args(["--t-end=1", name])
         .current_dir(repo_root)
         .output()
@@ -226,7 +212,7 @@ pub fn run_test_suite(
     names: &[String],
     _suite: Option<&str>,
 ) -> Result<TestSuiteResult, String> {
-    let exe = find_exe(repo_root)?;
+    let (exe, extra_args) = compiler_config::resolve_compiler_exe(repo_root)?;
     let start = Instant::now();
     let mut results = Vec::new();
     let mut passed = 0usize;
@@ -234,6 +220,7 @@ pub fn run_test_suite(
     for name in names {
         let t_start = Instant::now();
         let output = Command::new(&exe)
+            .args(&extra_args)
             .args(["--t-end=1", name.as_str()])
             .current_dir(repo_root)
             .output();

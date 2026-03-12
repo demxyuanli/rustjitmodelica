@@ -9,7 +9,7 @@ use crate::solver::{Solver, System, RungeKutta4Solver, AdaptiveRK45Solver, Backw
 use crate::ast::Expression;
 
 /// Serializable simulation time series for IDE/Plotly (time + series per variable).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationResult {
     pub time: Vec<f64>,
     pub series: HashMap<String, Vec<f64>>,

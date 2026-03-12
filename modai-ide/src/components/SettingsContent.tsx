@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { getApiKey, setApiKey as setApiKeyCommand } from "../api/tauri";
 import { t } from "../i18n";
 
 export interface IndexActionState {
@@ -65,8 +65,43 @@ export function SettingsContent({
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [apiKeyBanner, setApiKeyBanner] = useState<string | null>(null);
 
+  const [compilerExe, setCompilerExe] = useState("");
+  const [compilerArgs, setCompilerArgs] = useState("");
+  const [compilerConfigBanner, setCompilerConfigBanner] = useState<string | null>(null);
+
   useEffect(() => {
-    invoke<string>("get_api_key")
+    // compiler config is still managed via Tauri; keep existing invoke to avoid changing config shape for now
+    // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+    const { invoke } = require("@tauri-apps/api/core") as typeof import("@tauri-apps/api/core");
+    invoke<{ exe?: string; args?: string[] } | null>("get_compiler_config")
+      .then((c) => {
+        if (c) {
+          setCompilerExe(c.exe ?? "");
+          setCompilerArgs(Array.isArray(c.args) ? c.args.join(" ") : "");
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (compilerConfigBanner) {
+      const tm = setTimeout(() => setCompilerConfigBanner(null), 3000);
+      return () => clearTimeout(tm);
+    }
+  }, [compilerConfigBanner]);
+
+  const handleSaveCompilerConfig = useCallback(async () => {
+    try {
+      const args = compilerArgs.trim() ? compilerArgs.trim().split(/\s+/).filter(Boolean) : [];
+      await invoke("set_compiler_config", { config: { exe: compilerExe.trim(), args } });
+      setCompilerConfigBanner("Saved");
+    } catch (e) {
+      setCompilerConfigBanner(String(e));
+    }
+  }, [compilerExe, compilerArgs]);
+
+  useEffect(() => {
+    getApiKey()
       .then(() => setApiKeySaved(true))
       .catch(() => setApiKeySaved(false));
   }, []);
@@ -81,7 +116,7 @@ export function SettingsContent({
   const handleSaveApiKey = useCallback(async () => {
     if (!apiKeyInput.trim()) return;
     try {
-      await invoke("set_api_key", { apiKey: apiKeyInput.trim() });
+      await setApiKeyCommand(apiKeyInput.trim());
       setApiKeySaved(true);
       setApiKeyInput("");
       setApiKeyBanner(t("apiKeySaveSuccess"));
@@ -92,7 +127,7 @@ export function SettingsContent({
 
   const handleClearApiKey = useCallback(async () => {
     try {
-      await invoke("set_api_key", { apiKey: "" });
+      await setApiKeyCommand("");
       setApiKeySaved(false);
       setApiKeyBanner(t("apiKeyClearSuccess"));
     } catch (e) {
@@ -135,16 +170,46 @@ export function SettingsContent({
         </div>
       </section>
 
+      <section>
+        <h3 className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-1">{t("settingsSectionJitCompiler")}</h3>
+        <div className="space-y-0">
+          {compilerConfigBanner && (
+            <div className="mb-3 px-3 py-2 rounded text-xs bg-green-900/30 text-green-300 border border-green-700">{compilerConfigBanner}</div>
+          )}
+          <SettingsRow title={t("settingsCompilerExePath")} description={t("settingsCompilerExeDesc")}>
+            <div className="flex gap-2 items-center flex-wrap">
+              <input type="text" placeholder="(auto-detect)" value={compilerExe}
+                onChange={(e) => setCompilerExe(e.target.value)}
+                className="min-w-[200px] max-w-[320px] bg-[var(--surface)] border border-border px-2.5 py-1.5 text-sm rounded font-mono" />
+              <button type="button" onClick={handleSaveCompilerConfig}
+                className="px-3 py-1.5 bg-primary hover:bg-blue-600 text-sm rounded text-white">
+                {t("save")}
+              </button>
+            </div>
+          </SettingsRow>
+          <SettingsRow title={t("settingsCompilerArgs")} description={t("settingsCompilerArgsDesc")}>
+            <div className="flex gap-2 items-center flex-wrap">
+              <input type="text" placeholder="e.g. --warnings=none" value={compilerArgs}
+                onChange={(e) => setCompilerArgs(e.target.value)}
+                className="min-w-[200px] max-w-[320px] bg-[var(--surface)] border border-border px-2.5 py-1.5 text-sm rounded font-mono" />
+              <button type="button" onClick={handleSaveCompilerConfig}
+                className="px-3 py-1.5 bg-primary hover:bg-blue-600 text-sm rounded text-white">
+                {t("save")}
+              </button>
+            </div>
+          </SettingsRow>
+        </div>
+      </section>
+
       {onAiModelChange && aiDailyLimit != null && (
         <section>
           <h3 className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-1">{t("settingsSectionDeveloper")}</h3>
           <SettingsRow title="AI model" description="Model and usage for AI coding assistant.">
             <select
-              value={aiModel || "deepseek-coder-v2"}
+              value={aiModel || "deepseek-chat"}
               onChange={(e) => onAiModelChange(e.target.value)}
               className="bg-[var(--surface)] border border-border px-2.5 py-1.5 text-xs rounded text-[var(--text)]"
             >
-              <option value="deepseek-coder-v2">deepseek-coder-v2</option>
               <option value="deepseek-chat">deepseek-chat</option>
             </select>
             <div className="text-xs text-[var(--text-muted)]">

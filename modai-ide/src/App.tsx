@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
 import type monaco from "monaco-editor";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { setLang } from "./i18n";
 
@@ -28,29 +27,27 @@ import { Modals } from "./components/Modals";
 import { JitIdeWorkspace } from "./components/JitIdeWorkspace";
 import { SettingsContent, type IndexActionState } from "./components/SettingsContent";
 import { t } from "./i18n";
+import { DEFAULT_MODEL_BOUNCING_BALL } from "./examples";
+import {
+  indexRepoRoot,
+  indexBuild,
+  indexStats,
+  indexStartWatcher,
+  indexStopWatcher,
+  indexBuildRepo,
+  indexRefresh,
+  indexRebuild,
+  indexRefreshRepo,
+  indexRebuildRepo,
+} from "./api/tauri";
 import "./App.css";
-
-const DEFAULT_MODEL = `model BouncingBall
-  Real h(start = 1);
-  Real v(start = 0);
-  parameter Real g = 9.81;
-  parameter Real c = 0.9;
-equation
-  der(h) = v;
-  der(v) = -g;
-  when h <= 0 then
-    reinit(v, -c * pre(v));
-    reinit(h, 0);
-  end when;
-end BouncingBall;
-`;
 
 function App() {
   const [modelName, setModelName] = useState("BouncingBall");
   const [logLines, setLogLines] = useState<string[]>([]);
   const [contentByPath, setContentByPath] = useState<Record<string, string>>({});
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
-  const [code, setCode] = useState(DEFAULT_MODEL);
+  const [code, setCode] = useState(DEFAULT_MODEL_BOUNCING_BALL);
   const [cursorPosition, setCursorPosition] = useState<{ lineNumber: number; column: number } | null>(null);
   const [showJitFailModal, setShowJitFailModal] = useState(false);
   const [jitFailErrors, setJitFailErrors] = useState<string[]>([]);
@@ -75,7 +72,7 @@ function App() {
   const [indexAction, setIndexAction] = useState<IndexActionState>({ running: false, action: null, done: 0, total: 0 });
 
   useEffect(() => {
-    invoke("index_repo_root").then((r) => setRepoRoot(r as string)).catch(() => {});
+    indexRepoRoot().then((r) => setRepoRoot(r)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -86,7 +83,7 @@ function App() {
       }
       const dir = project.projectDir;
       setIndexStatus({ fileCount: 0, symbolCount: 0, state: "building" });
-      invoke("index_build", { projectDir: dir })
+      indexBuild(dir)
         .then((stats: any) => {
           setIndexStatus({
             fileCount: stats.fileCount ?? 0,
@@ -96,10 +93,10 @@ function App() {
         })
         .catch(() => setIndexStatus(null));
 
-      invoke("index_start_watcher", { projectDir: dir }).catch(() => {});
+      indexStartWatcher(dir).catch(() => {});
 
       const unlisten = listen("index-updated", () => {
-        invoke("index_stats", { projectDir: dir })
+        indexStats(dir)
           .then((stats: any) => {
             setIndexStatus({
               fileCount: stats.fileCount ?? 0,
@@ -111,12 +108,12 @@ function App() {
       });
 
       return () => {
-        invoke("index_stop_watcher").catch(() => {});
+        indexStopWatcher().catch(() => {});
         unlisten.then((fn) => fn());
       };
     } else {
       setIndexStatus({ fileCount: 0, symbolCount: 0, state: "building" });
-      invoke("index_build_repo")
+      indexBuildRepo()
         .then((stats: any) => {
           setIndexStatus({
             fileCount: stats.fileCount ?? 0,
@@ -150,15 +147,15 @@ function App() {
       setIndexAction((prev) => ({ ...prev, done, total }));
     });
     try {
-      let cmd: string;
-      const args: Record<string, string> = {};
+      let stats: any;
       if (layout.workspaceMode === "modelica" && project.projectDir) {
-        cmd = action === "rebuild" ? "index_rebuild" : "index_refresh";
-        args.projectDir = project.projectDir;
+        stats =
+          action === "rebuild"
+            ? await indexRebuild(project.projectDir)
+            : await indexRefresh(project.projectDir);
       } else {
-        cmd = action === "rebuild" ? "index_rebuild_repo" : "index_refresh_repo";
+        stats = action === "rebuild" ? await indexRebuildRepo() : await indexRefreshRepo();
       }
-      const stats: any = await invoke(cmd, args);
       setIndexStatus({
         fileCount: stats.fileCount ?? 0,
         symbolCount: stats.symbolCount ?? 0,
@@ -240,15 +237,19 @@ function App() {
     const model = editorRef.current.getModel();
     if (!model) return;
     const selection = editorRef.current.getSelection();
-    const position = selection
-      ? { lineNumber: selection.endLineNumber, column: selection.endColumn }
-      : editorRef.current.getPosition() || { lineNumber: 1, column: 1 };
-    const range = {
-      startLineNumber: position.lineNumber,
-      startColumn: position.column,
-      endLineNumber: position.lineNumber,
-      endColumn: position.column,
-    };
+    const range = selection ?? editorRef.current.getPosition()
+      ? {
+          startLineNumber: selection?.startLineNumber ?? editorRef.current.getPosition()!.lineNumber,
+          startColumn: selection?.startColumn ?? editorRef.current.getPosition()!.column,
+          endLineNumber: selection?.endLineNumber ?? editorRef.current.getPosition()!.lineNumber,
+          endColumn: selection?.endColumn ?? editorRef.current.getPosition()!.column,
+        }
+      : {
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 1,
+        };
     editorRef.current.executeEdits("insert-ai", [
       { range, text: ai.aiResponse, forceMoveMarkers: true },
     ]);

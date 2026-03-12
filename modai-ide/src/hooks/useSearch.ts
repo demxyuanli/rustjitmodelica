@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { indexSearchInProject } from "../api/tauri";
 
 export interface SearchMatch {
   file: string;
@@ -43,13 +43,13 @@ export function useSearch(projectDir: string | null) {
       setLoading(true);
       setSearched(true);
       try {
-        const matches = (await invoke("search_in_project", {
+        const matches = (await indexSearchInProject(
           projectDir,
-          query: q.trim(),
-          caseSensitive: options.caseSensitive,
-          filePattern: options.filePattern.trim() || null,
-          maxResults: 500,
-        })) as SearchMatch[];
+          q.trim(),
+          options.caseSensitive,
+          options.filePattern.trim() || "",
+          500,
+        )) as SearchMatch[];
         setResults(matches);
       } catch {
         setResults([]);

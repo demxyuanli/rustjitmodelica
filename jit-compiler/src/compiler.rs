@@ -17,7 +17,7 @@ use crate::jit::native::builtin_jit_symbol_names;
 use crate::expr_eval;
 use crate::i18n;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CompilerOptions {
     pub backend_dae_info: bool,
     pub index_reduction_method: String,

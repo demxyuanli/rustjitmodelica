@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { getApiKey, setApiKey as setApiKeyCommand, aiCodeGen } from "../api/tauri";
 
 const DAILY_TOKEN_LIMIT = 50000;
-const DEFAULT_MODEL = "deepseek-coder-v2";
+const DEFAULT_MODEL = "deepseek-chat";
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length * 1.2);
@@ -45,7 +45,10 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
   const [mode, setMode] = useState<AiMode>("code");
   const [model, setModel] = useState<string>(() => {
     try {
-      return localStorage.getItem("modai-ai-model") || DEFAULT_MODEL;
+      const stored = localStorage.getItem("modai-ai-model");
+      if (!stored) return DEFAULT_MODEL;
+      if (stored === "deepseek-coder-v2") return DEFAULT_MODEL;
+      return stored;
     } catch {
       return DEFAULT_MODEL;
     }
@@ -53,10 +56,10 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
   const [contextBlocks, setContextBlocks] = useState<AiContextBlock[]>([]);
 
   useEffect(() => {
-    invoke("get_api_key")
+    getApiKey()
       .then((k) => {
-        setApiKey((k as string) ? "********" : "");
-        setApiKeySaved(!!(k as string));
+        setApiKey(k ? "********" : "");
+        setApiKeySaved(!!k);
       })
       .catch(() => {});
   }, []);
@@ -68,7 +71,7 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
   const saveApiKey = useCallback(async (key: string) => {
     if (!key || key === "********") return;
     try {
-      await invoke("set_api_key", { apiKey: key });
+      await setApiKeyCommand(key);
       setApiKeySaved(true);
       setApiKey("********");
       log("API key saved");
@@ -106,7 +109,7 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
         },
       };
 
-      const result = (await invoke("ai_code_gen", { payload })) as string;
+      const result = await aiCodeGen(payload);
       setAiResponse(result);
       const newUsed = used + est + estimateTokens(result);
       setDailyUsedStorage(newUsed);

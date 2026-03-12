@@ -18,8 +18,9 @@ pub mod fmi;
 pub mod script;
 pub mod solver;
 pub mod sparse_solve;
+pub mod api;
 
-pub use compiler::{Compiler, CompilerOptions, Artifacts, CompileOutput};
+pub use compiler::{Artifacts, CompileOutput, Compiler, CompilerOptions};
 pub use simulation::{run_simulation, run_simulation_collect, SimulationResult};
-pub use loader::{ModelLoader, LoadError};
-pub use diag::{WarningInfo, SourceLocation, ParseErrorInfo};
+pub use loader::{LoadError, ModelLoader};
+pub use diag::{ParseErrorInfo, SourceLocation, WarningInfo};

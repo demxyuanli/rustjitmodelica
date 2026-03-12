@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 const SERVICE: &str = "modai-ide";
 const ACCOUNT: &str = "deepseek-api-key";
 pub const DEEPSEEK_URL: &str = "https://api.deepseek.com/v1/chat/completions";
-pub const DEFAULT_MODEL: &str = "deepseek-coder-v2";
+pub const DEFAULT_MODEL: &str = "deepseek-chat";
 
 fn entry() -> Result<Entry, keyring::Error> {
     Entry::new(SERVICE, ACCOUNT)
