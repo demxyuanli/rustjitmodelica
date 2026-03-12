@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { JitValidateOptions, JitValidateResult, SimulationResult } from "../types";
+import { jitValidate, runSimulation as runSimulationApi, readProjectFile } from "../api/tauri";
 import { t } from "../i18n";
 
 export interface SimulationParams {
@@ -61,9 +61,12 @@ export function useSimulation(log: (msg: string) => void) {
 
   const validate = useCallback(async (code: string, modelName: string, projectDir: string | null) => {
     try {
-      const result = (await invoke("jit_validate", {
-        request: { code, modelName, options: buildOptions(), projectDir: projectDir ?? undefined },
-      })) as JitValidateResult;
+      const result = await jitValidate({
+        code,
+        modelName,
+        options: buildOptions(),
+        projectDir: projectDir ?? undefined,
+      });
       setJitResult(result);
       if (result.success) {
         log("JIT validation OK");
@@ -86,9 +89,12 @@ export function useSimulation(log: (msg: string) => void) {
     setSimResult(null);
     log("Running simulation...");
     try {
-      const result = (await invoke("run_simulation_cmd", {
-        request: { code, modelName, options: buildOptions(), projectDir: projectDir ?? undefined },
-      })) as SimulationResult;
+      const result = await runSimulationApi({
+        code,
+        modelName,
+        options: buildOptions(),
+        projectDir: projectDir ?? undefined,
+      });
       setSimResult(result);
       setSelectedPlotVars(Object.keys(result.series).filter((k) => k !== "time"));
       log("Simulation done. Points: " + (result.time?.length ?? 0));
@@ -111,11 +117,14 @@ export function useSimulation(log: (msg: string) => void) {
     const results: { path: string; success: boolean; errors: string[] }[] = [];
     for (const path of moFiles) {
       try {
-        const content = (await invoke("read_project_file", { projectDir, relativePath: path })) as string;
+        const content = await readProjectFile(projectDir, path);
         const mn = pathToModelName(path);
-        const result = (await invoke("jit_validate", {
-          request: { code: content, modelName: mn, options: opts, projectDir },
-        })) as JitValidateResult;
+        const result = await jitValidate({
+          code: content,
+          modelName: mn,
+          options: opts,
+          projectDir,
+        });
         results.push({ path, success: result.success, errors: result.errors ?? [] });
       } catch (e) {
         results.push({ path, success: false, errors: [String(e)] });

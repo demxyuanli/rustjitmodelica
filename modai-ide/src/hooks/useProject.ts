@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { gitIsRepo, gitStatus, openProjectDir, listMoTree } from "../api/tauri";
 
 export interface MoTreeEntry {
   name: string;
@@ -46,18 +46,14 @@ export function useProject() {
     let cancelled = false;
     (async () => {
       try {
-        const isRepo = (await invoke("git_is_repo", { projectDir })) as boolean;
+        const isRepo = await gitIsRepo(projectDir);
         if (cancelled) return;
         if (!isRepo) {
           setGitBranch(null);
           setGitStatus(null);
           return;
         }
-        const status = (await invoke("git_status", { projectDir })) as {
-          branch: string;
-          modified: string[];
-          staged: string[];
-        };
+        const status = await gitStatus(projectDir);
         if (!cancelled) {
           setGitBranch(status.branch ?? null);
           setGitStatus({ modified: status.modified ?? [], staged: status.staged ?? [] });
@@ -76,10 +72,10 @@ export function useProject() {
 
   const openProject = useCallback(async () => {
     try {
-      const dir = (await invoke("open_project_dir")) as string | null;
+      const dir = await openProjectDir();
       if (!dir) return;
       setProjectDir(dir);
-      const tree = (await invoke("list_mo_tree", { projectDir: dir })) as MoTreeEntry;
+      const tree = (await listMoTree(dir)) as MoTreeEntry;
       setMoTree(tree);
       setMoFiles(flattenMoTree(tree));
     } catch {
@@ -91,15 +87,12 @@ export function useProject() {
   const refreshGitStatus = useCallback(async () => {
     if (!projectDir) return;
     try {
-      const isRepo = (await invoke("git_is_repo", { projectDir })) as boolean;
+      const isRepo = await gitIsRepo(projectDir);
       if (!isRepo) {
         setGitStatus(null);
         return;
       }
-      const status = (await invoke("git_status", { projectDir })) as {
-        modified: string[];
-        staged: string[];
-      };
+      const status = await gitStatus(projectDir);
       setGitStatus({ modified: status.modified ?? [], staged: status.staged ?? [] });
     } catch {
       setGitStatus(null);

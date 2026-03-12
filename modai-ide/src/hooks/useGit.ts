@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { gitIsRepo, gitStatus, gitStage, gitUnstage, gitCommit, gitInit } from "../api/tauri";
 
 export interface GitStatus {
   branch: string;
@@ -40,14 +40,14 @@ export function useGit(projectDir: string | null, onRefreshStatus?: () => void) 
     setLoading(true);
     setError(null);
     try {
-      const repo = (await invoke("git_is_repo", { projectDir })) as boolean;
+      const repo = projectDir ? await gitIsRepo(projectDir) : false;
       setIsRepo(repo);
       if (!repo) {
         setStatus(null);
         onRefreshStatus?.();
         return;
       }
-      const s = (await invoke("git_status", { projectDir })) as GitStatus;
+      const s = projectDir ? await gitStatus(projectDir) : null;
       setStatus(s);
       onRefreshStatus?.();
     } catch (e) {
@@ -66,7 +66,7 @@ export function useGit(projectDir: string | null, onRefreshStatus?: () => void) 
     async (paths: string[]) => {
       if (!projectDir || paths.length === 0) return;
       try {
-        await invoke("git_stage", { projectDir, paths });
+        await gitStage(projectDir, paths);
         await refresh();
       } catch (e) {
         setError(String(e));
@@ -79,7 +79,7 @@ export function useGit(projectDir: string | null, onRefreshStatus?: () => void) 
     async (paths: string[]) => {
       if (!projectDir || paths.length === 0) return;
       try {
-        await invoke("git_unstage", { projectDir, paths });
+        await gitUnstage(projectDir, paths);
         await refresh();
       } catch (e) {
         setError(String(e));
@@ -91,7 +91,7 @@ export function useGit(projectDir: string | null, onRefreshStatus?: () => void) 
   const commit = useCallback(async () => {
     if (!projectDir || !commitMessage.trim()) return;
     try {
-      await invoke("git_commit", { projectDir, message: commitMessage.trim() });
+      await gitCommit(projectDir, commitMessage.trim());
       setCommitMessage("");
       await refresh();
       onRefreshStatus?.();
@@ -105,7 +105,7 @@ export function useGit(projectDir: string | null, onRefreshStatus?: () => void) 
     setInitLoading(true);
     setError(null);
     try {
-      await invoke("git_init", { projectDir });
+      await gitInit(projectDir);
       await refresh();
     } catch (e) {
       setError(String(e));

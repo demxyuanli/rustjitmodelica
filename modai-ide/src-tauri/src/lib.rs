@@ -2,8 +2,10 @@
 
 use tauri::Emitter;
 
+mod app_data;
 mod ai;
 mod chunker;
+mod compiler_config;
 mod db;
 mod diagram;
 mod file_watcher;
@@ -18,27 +20,12 @@ mod traceability;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread;
-
-const COMPILE_STACK_SIZE: usize = 32 * 1024 * 1024;
-
-fn run_with_large_stack<R, F>(f: F) -> R
-where
-    F: FnOnce() -> R + Send + 'static,
-    R: Send + 'static,
-{
-    thread::Builder::new()
-        .stack_size(COMPILE_STACK_SIZE)
-        .spawn(f)
-        .expect("compile thread spawn")
-        .join()
-        .expect("compile thread join")
-}
 
 use rustmodlica::ast::ClassItem;
 use rustmodlica::parser;
-use rustmodlica::{Compiler, CompilerOptions, CompileOutput, run_simulation_collect, SimulationResult};
+use rustmodlica::SimulationResult;
 use serde::{Deserialize, Serialize};
+use std::process::Stdio;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,7 +38,7 @@ pub struct JitValidateOptions {
     pub output_interval: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WarningItem {
     pub path: String,
     pub line: usize,
@@ -59,7 +46,7 @@ pub struct WarningItem {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JitValidateResult {
     pub success: bool,
     pub warnings: Vec<WarningItem>,
@@ -68,105 +55,58 @@ pub struct JitValidateResult {
     pub output_vars: Vec<String>,
 }
 
-fn options_to_compiler_options(opts: Option<JitValidateOptions>) -> CompilerOptions {
-    let mut c = CompilerOptions::default();
-    if let Some(o) = opts {
-        if let Some(v) = o.t_end {
-            c.t_end = v;
-        }
-        if let Some(v) = o.dt {
-            c.dt = v;
-        }
-        if let Some(v) = o.atol {
-            c.atol = v;
-        }
-        if let Some(v) = o.rtol {
-            c.rtol = v;
-        }
-        if let Some(v) = o.solver {
-            c.solver = v;
-        }
-        if let Some(v) = o.output_interval {
-            c.output_interval = v;
-        }
-    }
-    c
-}
-
-fn add_compiler_library_paths(compiler: &mut Compiler, project_dir: Option<&str>) {
-    if let Some(dir) = project_dir {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            let path = PathBuf::from(dir);
-            let path = if path.exists() {
-                path.canonicalize().unwrap_or(path)
-            } else {
-                path
-            };
-            compiler.loader.add_path(path.clone());
-            if path.is_dir() {
-                if let Ok(entries) = fs::read_dir(&path) {
-                    for e in entries.flatten() {
-                        let p = e.path();
-                        if p.is_dir() {
-                            let canonical = p.canonicalize().unwrap_or(p);
-                            compiler.loader.add_path(canonical);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    compiler.loader.add_path(PathBuf::from("."));
-    if let Ok(jit_root) = jit_compiler_root() {
-        compiler.loader.add_path(jit_root.clone());
-        compiler.loader.add_path(jit_root.join("StandardLib"));
-        compiler.loader.add_path(jit_root.join("TestLib"));
-    }
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JitValidateRequest {
     code: String,
-    model_name: String,
     options: Option<JitValidateOptions>,
-    project_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ValidateCliWarning {
+    path: String,
+    line: usize,
+    column: usize,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ValidateCliOutput {
+    success: bool,
+    warnings: Vec<ValidateCliWarning>,
+    errors: Vec<String>,
+    state_vars: Vec<String>,
+    output_vars: Vec<String>,
 }
 
 #[tauri::command]
 fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, String> {
-    run_with_large_stack(move || {
-        let mut compiler = Compiler::new();
-        compiler.options = options_to_compiler_options(request.options);
-        add_compiler_library_paths(&mut compiler, request.project_dir.as_deref());
-
-        let out = match compiler.compile_from_source(&request.model_name, &request.code) {
-            Ok(o) => o,
-            Err(e) => {
-                let err_msg = e.to_string();
-                let warnings = compiler
-                    .take_warnings()
-                    .into_iter()
-                    .map(|w| WarningItem {
-                        path: w.path,
-                        line: w.line,
-                        column: w.column,
-                        message: w.message,
-                    })
-                    .collect();
-                return Ok(JitValidateResult {
-                    success: false,
-                    warnings,
-                    errors: vec![err_msg],
-                    state_vars: vec![],
-                    output_vars: vec![],
-                });
-            }
-        };
-
-        let warnings = compiler
-            .take_warnings()
+    let root = jit_compiler_root()?;
+    let mut args = vec!["--validate".to_string()];
+    args.extend(compiler_options_to_args(request.options.as_ref()));
+    args.push("-".to_string());
+    let (stdout, stderr, code) = run_compiler_with_stdin(args, Some(&request.code), &root)?;
+    let json_line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim().starts_with('{'))
+        .unwrap_or_default()
+        .trim();
+    let parsed: ValidateCliOutput = serde_json::from_str(json_line).unwrap_or(ValidateCliOutput {
+        success: false,
+        warnings: vec![],
+        errors: if stderr.is_empty() {
+            vec!["Invalid JSON from compiler".to_string()]
+        } else {
+            vec![stderr]
+        },
+        state_vars: vec![],
+        output_vars: vec![],
+    });
+    Ok(JitValidateResult {
+        success: parsed.success && code == 0,
+        warnings: parsed
+            .warnings
             .into_iter()
             .map(|w| WarningItem {
                 path: w.path,
@@ -174,24 +114,10 @@ fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, String
                 column: w.column,
                 message: w.message,
             })
-            .collect();
-
-        match out {
-            CompileOutput::Simulation(artifacts) => Ok(JitValidateResult {
-                success: true,
-                warnings,
-                errors: vec![],
-                state_vars: artifacts.state_vars.clone(),
-                output_vars: artifacts.output_vars.clone(),
-            }),
-            CompileOutput::FunctionRun(_) => Ok(JitValidateResult {
-                success: true,
-                warnings,
-                errors: vec![],
-                state_vars: vec![],
-                output_vars: vec![],
-            }),
-        }
+            .collect(),
+        errors: parsed.errors,
+        state_vars: parsed.state_vars,
+        output_vars: parsed.output_vars,
     })
 }
 
@@ -199,49 +125,36 @@ fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, String
 #[serde(rename_all = "camelCase")]
 struct RunSimulationRequest {
     code: String,
-    model_name: String,
     options: Option<JitValidateOptions>,
-    project_dir: Option<String>,
 }
 
 #[tauri::command]
 fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationResult, String> {
-    let artifacts = run_with_large_stack(move || {
-        let mut compiler = Compiler::new();
-        compiler.options = options_to_compiler_options(request.options);
-        add_compiler_library_paths(&mut compiler, request.project_dir.as_deref());
-
-        let out = compiler
-            .compile_from_source(&request.model_name, &request.code)
-            .map_err(|e| e.to_string())?;
-
-        match out {
-            CompileOutput::Simulation(a) => Ok(a),
-            CompileOutput::FunctionRun(_) => Err("Model is a function, not a simulation.".to_string()),
-        }
-    })?;
-
-    run_simulation_collect(
-        artifacts.calc_derivs,
-        artifacts.when_count,
-        artifacts.crossings_count,
-        artifacts.states,
-        artifacts.discrete_vals,
-        artifacts.params,
-        &artifacts.state_vars,
-        &artifacts.discrete_vars,
-        &artifacts.output_vars,
-        &artifacts.state_var_index,
-        artifacts.t_end,
-        artifacts.dt,
-        artifacts.numeric_ode_jacobian,
-        artifacts.symbolic_ode_jacobian.as_ref(),
-        &artifacts.newton_tearing_var_names,
-        artifacts.atol,
-        artifacts.rtol,
-        &artifacts.solver,
-        artifacts.output_interval,
-    )
+    let root = jit_compiler_root()?;
+    let mut args = vec!["--output-format=json".to_string()];
+    args.extend(compiler_options_to_args(request.options.as_ref()));
+    args.push("-".to_string());
+    let (stdout, stderr, code) = run_compiler_with_stdin(args, Some(&request.code), &root)?;
+    if code != 0 {
+        return Err(if stderr.is_empty() {
+            format!("Compiler exited with code {}", code)
+        } else {
+            stderr
+        });
+    }
+    let json_line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim().starts_with('{'))
+        .unwrap_or_default()
+        .trim();
+    serde_json::from_str(json_line).map_err(|e| {
+        format!(
+            "Failed to parse simulation output: {}. stdout: {}",
+            e,
+            json_line.chars().take(200).collect::<String>()
+        )
+    })
 }
 
 #[tauri::command]
@@ -269,11 +182,16 @@ async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
     let parsed: AiCodeGenPayload = serde_json::from_value(payload)
         .map_err(|e| format!("invalid ai_code_gen payload: {}", e))?;
 
-    let model = parsed
+    let requested_model = parsed
         .options
         .as_ref()
         .and_then(|o: &AiOptions| o.model.clone())
         .unwrap_or_else(|| ai::DEFAULT_MODEL.to_string());
+    let mut model = if requested_model.trim() == "deepseek-coder-v2" {
+        ai::DEFAULT_MODEL.to_string()
+    } else {
+        requested_model
+    };
 
     let mut messages: Vec<ChatMessage> = Vec::new();
 
@@ -306,14 +224,17 @@ async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
         content: parsed.prompt,
     });
 
-    let body = ChatRequest { model, messages };
+    let mut body = ChatRequest {
+        model: model.clone(),
+        messages,
+    };
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let res = client
+    let mut res = client
         .post(ai::DEEPSEEK_URL)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
@@ -322,8 +243,27 @@ async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let status = res.status();
-    let text = res.text().await.map_err(|e| e.to_string())?;
+    let mut status = res.status();
+    let mut text = res.text().await.map_err(|e| e.to_string())?;
+
+    if !status.is_success()
+        && status.as_u16() == 400
+        && text.contains("Model Not Exist")
+        && model != ai::DEFAULT_MODEL
+    {
+        model = ai::DEFAULT_MODEL.to_string();
+        body.model = model.clone();
+        res = client
+            .post(ai::DEEPSEEK_URL)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        status = res.status();
+        text = res.text().await.map_err(|e| e.to_string())?;
+    }
 
     if !status.is_success() {
         return Err(format!("API error {}: {}", status, text));
@@ -352,6 +292,56 @@ fn repo_root() -> Result<PathBuf, String> {
 fn jit_compiler_root() -> Result<PathBuf, String> {
     let root = repo_root()?;
     Ok(root.join("jit-compiler"))
+}
+
+fn compiler_options_to_args(opts: Option<&JitValidateOptions>) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(o) = opts {
+        if let Some(v) = o.t_end {
+            args.push(format!("--t-end={}", v));
+        }
+        if let Some(v) = o.dt {
+            args.push(format!("--dt={}", v));
+        }
+        if let Some(v) = o.atol {
+            args.push(format!("--atol={}", v));
+        }
+        if let Some(v) = o.rtol {
+            args.push(format!("--rtol={}", v));
+        }
+        if let Some(ref v) = o.solver {
+            args.push(format!("--solver={}", v));
+        }
+        if let Some(v) = o.output_interval {
+            args.push(format!("--output-interval={}", v));
+        }
+    }
+    args
+}
+
+fn run_compiler_with_stdin(
+    args: Vec<String>,
+    stdin_input: Option<&str>,
+    cwd: &Path,
+) -> Result<(String, String, i32), String> {
+    let (exe, extra_args) = compiler_config::resolve_compiler_exe(cwd)?;
+    let mut cmd = Command::new(&exe);
+    cmd.args(&extra_args).args(&args).current_dir(cwd);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("Failed to run compiler: {}", e))?;
+    if let Some(input) = stdin_input {
+        use std::io::Write;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(input.as_bytes());
+        }
+    }
+    let output = child.wait_with_output().map_err(|e| format!("Compiler process error: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let code = output.status.code().unwrap_or(-1);
+    Ok((stdout, stderr, code))
 }
 
 #[tauri::command]
@@ -972,6 +962,16 @@ fn run_full_regression() -> Result<test_manager::TestSuiteResult, String> {
 }
 
 #[tauri::command]
+fn get_compiler_config() -> Result<Option<compiler_config::CompilerConfig>, String> {
+    compiler_config::load_config()
+}
+
+#[tauri::command]
+fn set_compiler_config(config: compiler_config::CompilerConfig) -> Result<(), String> {
+    compiler_config::save_config(&config)
+}
+
+#[tauri::command]
 fn list_iteration_history(limit: i32) -> Result<Vec<db::IterationRecord>, String> {
     db::list_iteration_history(limit)
 }
@@ -1330,6 +1330,8 @@ pub fn run() {
             run_single_test,
             run_test_suite,
             run_full_regression,
+            get_compiler_config,
+            set_compiler_config,
             index_build,
             index_update_file,
             index_search_symbols,

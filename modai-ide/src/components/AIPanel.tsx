@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { indexRepoGetContext, indexGetContext } from "../api/tauri";
 import { t } from "../i18n";
 import { AppIcon } from "./Icon";
 
@@ -18,6 +18,112 @@ interface ChatMessage {
   id: number;
   role: "user" | "assistant";
   text: string;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .split("&").join("&amp;")
+    .split("<").join("&lt;")
+    .split(">").join("&gt;")
+    .split('"').join("&quot;")
+    .split("'").join("&#039;");
+}
+
+function renderMarkdownToHtml(md: string): string {
+  const lines = md.split("\r\n").join("\n").split("\n");
+  let html = "";
+  let inCode = false;
+  let codeLang = "";
+  let inList = false;
+
+  const closeList = () => {
+    if (inList) {
+      html += "</ul>";
+      inList = false;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine ?? "";
+    const trimmed = line.trimEnd();
+
+    if (trimmed.startsWith("```")) {
+      if (!inCode) {
+        closeList();
+        inCode = true;
+        codeLang = trimmed.slice(3).trim();
+        html += `<pre class="ai-md-pre"><code class="ai-md-code" data-lang="${escapeHtml(codeLang)}">`;
+      } else {
+        inCode = false;
+        codeLang = "";
+        html += "</code></pre>";
+      }
+      continue;
+    }
+
+    if (inCode) {
+      html += escapeHtml(line) + "\n";
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)$/);
+    if (headingMatch) {
+      closeList();
+      const level = headingMatch[1].length;
+      const text = escapeHtml(headingMatch[2] ?? "");
+      html += `<h${level} class="ai-md-h">${text}</h${level}>`;
+      continue;
+    }
+
+    const listMatch = trimmed.match(/^-\s+(.*)$/);
+    if (listMatch) {
+      if (!inList) {
+        html += '<ul class="ai-md-ul">';
+        inList = true;
+      }
+      html += `<li class="ai-md-li">${escapeHtml(listMatch[1] ?? "")}</li>`;
+      continue;
+    }
+
+    if (!trimmed) {
+      closeList();
+      html += '<div class="ai-md-spacer"></div>';
+      continue;
+    }
+
+    closeList();
+    const escaped = escapeHtml(trimmed)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+?)`/g, '<code class="ai-md-inline">$1</code>');
+    html += `<p class="ai-md-p">${escaped}</p>`;
+  }
+
+  closeList();
+  if (inCode) {
+    html += "</code></pre>";
+  }
+  return html;
+}
+
+function splitAnswerAndDiff(text: string | null): { answer: string; diff: string } {
+  const src = (text ?? "").split("\r\n").join("\n");
+  if (!src.trim()) return { answer: "", diff: "" };
+
+  const fenced = src.match(/```diff\s*\n([\s\S]*?)\n```/i);
+  if (fenced && fenced[1]) {
+    const diff = fenced[1].trimEnd();
+    const answer = src.replace(fenced[0], "").trim();
+    return { answer, diff };
+  }
+
+  const idx = src.indexOf("diff --git ");
+  if (idx >= 0) {
+    const answer = src.slice(0, idx).trim();
+    const diff = src.slice(idx).trimEnd();
+    return { answer, diff };
+  }
+
+  return { answer: src.trim(), diff: "" };
 }
 
 export interface AIPanelProps {
@@ -52,7 +158,7 @@ export function AIPanel({
   apiKeySaved: _apiKeySaved,
   aiPrompt,
   setAiPrompt,
-  aiLoading: _aiLoading,
+  aiLoading,
   aiResponse,
   onSend,
   onInsert,
@@ -66,9 +172,6 @@ export function AIPanel({
   setMode,
   model,
   setModel,
-  currentFilePath,
-  currentSelectionText,
-  lastJitErrorText,
 }: AIPanelProps) {
   const [contextChunks, setContextChunks] = useState<ChunkInfo[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
@@ -87,16 +190,9 @@ export function AIPanel({
     try {
       let chunks: ChunkInfo[] = [];
       if (repoRoot) {
-        chunks = (await invoke("index_repo_get_context", {
-          query: aiPrompt.trim(),
-          maxChunks: 8,
-        })) as ChunkInfo[];
+        chunks = (await indexRepoGetContext(aiPrompt.trim(), 8)) as ChunkInfo[];
       } else if (projectDir) {
-        chunks = (await invoke("index_get_context", {
-          projectDir,
-          query: aiPrompt.trim(),
-          maxChunks: 8,
-        })) as ChunkInfo[];
+        chunks = (await indexGetContext(projectDir, aiPrompt.trim(), 8)) as ChunkInfo[];
       } else {
         setContextChunks([]);
         setContextLoading(false);
@@ -146,90 +242,63 @@ export function AIPanel({
     ]);
   }, [aiResponse]);
 
-  return (
-    <div className="flex flex-col h-full text-xs text-[var(--text)] rounded-lg border border-border bg-[#1e1e1e] px-3 py-2">
-      <div className="flex flex-wrap gap-1 mb-2 text-[10px] text-[var(--text-muted)]">
-        {currentSelectionText && (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#2a2a2a] hover:bg-[#333]"
-            onClick={() => {
-              const base = "Explain and improve the following selection.\n\n";
-              setAiPrompt(base + currentSelectionText);
-            }}
-          >
-            <AppIcon name="explorer" aria-hidden="true" className="w-3 h-3" />
-            <span>Explain selection</span>
-          </button>
-        )}
-        {currentSelectionText && (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#2a2a2a] hover:bg-[#333]"
-            onClick={() => {
-              const base = "Refactor the following Modelica code for clarity and robustness. Keep behavior equivalent.\n\n";
-              setAiPrompt(base + currentSelectionText);
-            }}
-          >
-            <AppIcon name="run" aria-hidden="true" className="w-3 h-3" />
-            <span>Refactor selection</span>
-          </button>
-        )}
-        {lastJitErrorText && (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#2a2a2a] hover:bg-[#333]"
-            onClick={() => {
-              const base = "Fix the following Modelica compile error and propose corrected code.\n\n";
-              setAiPrompt(base + lastJitErrorText);
-            }}
-          >
-            <AppIcon name="error" aria-hidden="true" className="w-3 h-3" />
-            <span>Fix compile error</span>
-          </button>
-        )}
-        {currentFilePath && (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#2a2a2a] hover:bg-[#333]"
-            onClick={() => {
-              const base = `Review this file and suggest improvements.\nFile: ${currentFilePath}\n\n`;
-              setAiPrompt(base);
-            }}
-          >
-            <AppIcon name="sourceControl" aria-hidden="true" className="w-3 h-3" />
-            <span>Review file</span>
-          </button>
-        )}
-      </div>
-      <div className="flex-1 min-h-0 overflow-auto mb-2 scroll-vscode">
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`mb-1 flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-full text-xs whitespace-pre-wrap px-2 py-1 rounded ${
-                m.role === "user"
-                  ? "bg-[#2a2a2a]"
-                  : "bg-[#111111] border border-gray-700"
-              }`}
-            >
-              {m.text}
-            </div>
-          </div>
-        ))}
-      </div>
+  const lastAnswerText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === "assistant") return messages[i]?.text ?? "";
+    }
+    return aiResponse ?? "";
+  }, [messages, aiResponse]);
 
-      <div className="mt-2 pt-2 border-t border-gray-700">
-        <textarea
-          placeholder="e.g. Generate a Modelica model: first-order system with time constant 1"
-          value={aiPrompt}
-          onChange={(e) => setAiPrompt(e.target.value)}
-          className="w-full bg-transparent px-1 py-1 text-sm resize-none min-h-[72px] text-[var(--text)] placeholder:text-[var(--text-muted)] outline-none"
-          rows={3}
-        />
-      </div>
+  const { answer, diff } = useMemo(() => splitAnswerAndDiff(lastAnswerText), [lastAnswerText]);
+  const answerHtml = useMemo(() => renderMarkdownToHtml(answer), [answer]);
+  const hasConversation = useMemo(
+    () => !!(lastAnswerText && lastAnswerText.trim()),
+    [lastAnswerText],
+  );
+
+  return (
+    <div className="flex flex-col h-full text-xs text-[var(--text)] px-3 py-2">
+      {hasConversation ? (
+        <div className="flex-1 min-h-0 overflow-auto scroll-vscode space-y-2">
+          <div className="rounded border border-gray-700 bg-[#111111] p-2">
+            <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] mb-1">
+              {t("aiAnswer") || "Answer"}
+            </div>
+            {answer ? (
+              <div
+                className="ai-md text-xs text-[var(--text)]"
+                // rendered from local markdown-to-html (no external scripts)
+                dangerouslySetInnerHTML={{ __html: answerHtml }}
+              />
+            ) : (
+              <div className="text-[var(--text-muted)] text-xs">
+                {aiLoading ? (t("loading") || "Loading") : ""}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded border border-gray-700 bg-[#111111] overflow-hidden">
+            <div className="px-2 py-1 border-b border-gray-700 bg-[#1b1b1b] text-[var(--text)] flex items-center justify-between gap-2">
+              <span>{t("aiCodeDiff") || "code diff"}</span>
+              {diff && (
+                <button
+                  type="button"
+                  onClick={onInsert}
+                  className="inline-flex items-center justify-center h-6 w-6 rounded-full border border-gray-600 hover:bg-white/5 text-[var(--text)]"
+                  title="Insert into editor"
+                >
+                  <AppIcon name="diff" aria-hidden="true" className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <pre className="p-2 text-[10px] text-[var(--text-muted)] whitespace-pre-wrap min-h-[140px]">
+              {diff || ""}
+            </pre>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0" />
+      )}
 
       {projectDir && (
         <div className="flex items-center gap-2 mt-2 text-xs">
@@ -282,83 +351,89 @@ export function AIPanel({
         </div>
       )}
 
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <div className="inline-flex items-center gap-2 rounded bg-[#252526] px-2 py-0.5 text-[var(--text-muted)]">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setModeMenuOpen((v) => !v)}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/5 text-[var(--text)]"
-            >
-              {mode === "code" ? (
-                <AppIcon name="run" aria-hidden="true" className="w-3.5 h-3.5" />
-              ) : (
-                <AppIcon name="ai" aria-hidden="true" className="w-3.5 h-3.5" />
-              )}
-              <span className="text-[10px]">{mode === "code" ? "Code" : "Chat"}</span>
-              <span className="text-[10px]">▾</span>
-            </button>
-            {modeMenuOpen && (
-              <div className="absolute z-10 left-0 bottom-full mb-1 rounded border border-gray-700 bg-[#1e1e1e] shadow-lg min-w-[80px]">
-                <button
-                  type="button"
-                  className="flex items-center gap-1 px-2 py-1 text-[10px] w-full hover:bg-white/10 text-[var(--text)]"
-                  onClick={() => {
-                    setMode("code");
-                    setModeMenuOpen(false);
-                  }}
-                >
-                  <AppIcon name="run" aria-hidden="true" className="w-3 h-3" />
-                  <span>Code</span>
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 px-2 py-1 text-[10px] w-full hover:bg-white/10 text-[var(--text)]"
-                  onClick={() => {
-                    setMode("chat");
-                    setModeMenuOpen(false);
-                  }}
-                >
-                  <AppIcon name="ai" aria-hidden="true" className="w-3 h-3" />
-                  <span>Chat</span>
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            <AppIcon name="language" aria-hidden="true" className="w-3 h-3 text-[var(--text-muted)]" />
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="bg-[#1e1e1e] border border-gray-600 px-1 py-0.5 text-[10px] rounded text-[var(--text)]"
-            >
-              <option value="deepseek-coder-v2">deepseek-coder-v2</option>
-              <option value="deepseek-chat">deepseek-chat</option>
-            </select>
-          </div>
+      <div className="mt-2 border border-gray-700 rounded-lg bg-transparent overflow-hidden">
+        <div className="px-3 py-2">
+          <textarea
+            placeholder={t("aiInputPlaceholder") || "Input text"}
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            className="w-full bg-transparent text-sm resize-none min-h-[84px] text-[var(--text)] placeholder:text-[var(--text-muted)] outline-none"
+            rows={4}
+          />
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSendWithContext}
-            disabled={sendDisabled}
-            className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-white/80 hover:bg-white text-[#111111] disabled:opacity-40 disabled:cursor-default"
-          >
-            <AppIcon name="run" aria-hidden="true" className="w-3 h-3" />
-          </button>
-          {aiResponse && (
+        <div className="px-3 pb-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setModeMenuOpen((v) => !v)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-600 hover:bg-white/5 text-[var(--text)]"
+              >
+                <span className="text-[10px]">{mode === "code" ? "code" : "chat"}</span>
+                <span className="text-[10px]">▾</span>
+              </button>
+              {modeMenuOpen && (
+                <div className="absolute z-10 left-0 bottom-full mb-1 rounded border border-gray-700 bg-[#1e1e1e] shadow-lg min-w-[80px]">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 px-2 py-1 text-[10px] w-full hover:bg-white/10 text-[var(--text)]"
+                    onClick={() => {
+                      setMode("code");
+                      setModeMenuOpen(false);
+                    }}
+                  >
+                    <span>code</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 px-2 py-1 text-[10px] w-full hover:bg-white/10 text-[var(--text)]"
+                    onClick={() => {
+                      setMode("chat");
+                      setModeMenuOpen(false);
+                    }}
+                  >
+                    <span>chat</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1">
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="bg-transparent border border-gray-600 px-2 py-1 text-[10px] rounded text-[var(--text)]"
+              >
+                <option value="deepseek-chat">deepseek</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onInsert}
-              className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-[#3c3c3c] hover:bg-gray-500 text-[var(--text)]"
-              title="Insert into editor"
+              onClick={handleSendWithContext}
+              disabled={sendDisabled}
+              className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-gray-600 hover:bg-white/5 text-[var(--text)] disabled:opacity-40 disabled:cursor-default"
+              title={t("run") || "Run"}
             >
-              <AppIcon name="diff" aria-hidden="true" className="w-3 h-3" />
+              &gt;
             </button>
-          )}
+          </div>
         </div>
       </div>
+
+      <style>{`
+        .ai-md .ai-md-h { margin: 0 0 6px 0; font-size: 12px; font-weight: 600; }
+        .ai-md .ai-md-p { margin: 0 0 6px 0; line-height: 1.4; }
+        .ai-md .ai-md-ul { margin: 0 0 6px 16px; padding: 0; list-style: disc; }
+        .ai-md .ai-md-li { margin: 0 0 2px 0; }
+        .ai-md .ai-md-inline { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); padding: 0 4px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; }
+        .ai-md .ai-md-pre { margin: 0 0 8px 0; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12); padding: 8px; border-radius: 6px; overflow: auto; }
+        .ai-md .ai-md-code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; }
+        .ai-md .ai-md-spacer { height: 6px; }
+      `}</style>
     </div>
   );
 }

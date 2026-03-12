@@ -16,12 +16,41 @@ mod solver;
 mod sparse_solve;
 
 use std::env;
+use std::io::Read;
 use std::process;
 use std::thread;
 use compiler::{Compiler, CompileOutput};
-use simulation::run_simulation;
+use simulation::{run_simulation, run_simulation_collect};
 
 type RunError = Box<dyn std::error::Error + Send + Sync>;
+
+fn emit_validate_json(
+    success: bool,
+    warnings: &[diag::WarningInfo],
+    errors: &[String],
+    state_vars: &[String],
+    output_vars: &[String],
+) {
+    let warnings_json: Vec<serde_json::Value> = warnings
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "path": w.path,
+                "line": w.line,
+                "column": w.column,
+                "message": w.message
+            })
+        })
+        .collect();
+    let out = serde_json::json!({
+        "success": success,
+        "warnings": warnings_json,
+        "errors": errors,
+        "state_vars": state_vars,
+        "output_vars": output_vars
+    });
+    println!("{}", serde_json::to_string(&out).unwrap_or_default());
+}
 
 /// INT-1: REPL loop. Commands: <var_name> (print value), simulate, list, quit/exit.
 fn run_repl_loop(artifacts: compiler::Artifacts) -> Result<(), RunError> {
@@ -129,6 +158,8 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut repl = false;
     let mut script_path: Option<String> = None;
     let mut model_name = None;
+    let mut validate_only = false;
+    let mut output_format: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
@@ -201,6 +232,16 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if let Some(v) = a.strip_prefix("--external-lib=") {
             external_libs.push(v.to_string());
             i += 1;
+        } else if a == "--validate" {
+            validate_only = true;
+            i += 1;
+        } else if a == "-" {
+            model_name = Some("-".to_string());
+            i += 1;
+            break;
+        } else if let Some(v) = a.strip_prefix("--output-format=") {
+            output_format = Some(v.to_string());
+            i += 1;
         } else if !a.starts_with('-') {
             model_name = Some(a.clone());
             i += 1;
@@ -246,7 +287,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --solver=rk4|rk45|implicit  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run script file (load, setParameter, simulate, quit); use - for stdin\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --function-args=<f1,f2,...>  function input values",
+                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --solver=rk4|rk45|implicit  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run script file (load, setParameter, simulate, quit); use - for stdin\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --function-args=<f1,f2,...>  function input values\n  Use model_name '-' to read Modelica source from stdin.",
                 args[0]
             );
             return Err(msg.into());
@@ -275,13 +316,58 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     compiler.options.emit_c_dir = emit_c_dir;
     compiler.options.external_libs = external_libs;
     let run_repl = repl;
+    let json_mode = validate_only || output_format.as_deref() == Some("json");
     compiler.loader.add_path(".".into());
     compiler.loader.add_path("StandardLib".into());
     compiler.loader.add_path("TestLib".into());
-    println!("{}", i18n::msg("compiling", &[&model_name as &dyn std::fmt::Display]));
-    let out = compiler.compile(&model_name)?;
+
+    let effective_model = if model_name == "-" {
+        let mut code = String::new();
+        std::io::stdin()
+            .read_to_string(&mut code)
+            .map_err(|e| format!("Failed to read stdin: {}", e))?;
+        compiler
+            .loader
+            .load_model_from_source("<stdin>", &code)
+            .map_err(|e| format!("{}", e))?;
+        "<stdin>".to_string()
+    } else {
+        model_name.clone()
+    };
+
+    if !json_mode {
+        println!("{}", i18n::msg("compiling", &[&effective_model as &dyn std::fmt::Display]));
+    }
+    let out = match compiler.compile(&effective_model) {
+        Ok(o) => o,
+        Err(e) => {
+            let warnings = compiler.take_warnings();
+            if validate_only {
+                emit_validate_json(false, &warnings, &[e.to_string()], &[], &[]);
+                return Ok(());
+            }
+            return Err(e.into());
+        }
+    };
     let warnings = compiler.take_warnings();
     let warn_level = compiler.options.warnings_level.as_str();
+    if validate_only {
+        match &out {
+            CompileOutput::FunctionRun(_) => {
+                emit_validate_json(true, &warnings, &[], &[], &[]);
+            }
+            CompileOutput::Simulation(artifacts) => {
+                emit_validate_json(
+                    true,
+                    &warnings,
+                    &[],
+                    &artifacts.state_vars,
+                    &artifacts.output_vars,
+                );
+            }
+        }
+        return Ok(());
+    }
     if warn_level != "none" {
         for w in &warnings {
             if warn_level == "error" {
@@ -295,7 +381,9 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     }
     match out {
         CompileOutput::FunctionRun(value) => {
-            println!("{}", i18n::msg("result", &[&value]));
+            if !json_mode {
+                println!("{}", i18n::msg("result", &[&value]));
+            }
             return Ok(());
         }
         CompileOutput::Simulation(artifacts) => {
@@ -310,7 +398,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 let path = std::path::Path::new(dir);
                 match fmi::emit_fmu_artifacts(
                     path,
-                    &model_name,
+                    &effective_model,
                     &artifacts.state_vars,
                     &artifacts.param_vars,
                     &artifacts.output_vars,
@@ -329,7 +417,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 let path = std::path::Path::new(dir);
                 match fmi::emit_fmu_me_artifacts(
                     path,
-                    &model_name,
+                    &effective_model,
                     &artifacts.state_vars,
                     &artifacts.param_vars,
                     &artifacts.output_vars,
@@ -351,7 +439,34 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
             if emit_fmu_dir.is_some() || emit_fmu_me_dir.is_some() {
                 return Ok(());
             }
-            println!("{}", i18n::msg0("starting_simulation"));
+            if output_format.as_deref() == Some("json") {
+                let result = run_simulation_collect(
+                    artifacts.calc_derivs,
+                    artifacts.when_count,
+                    artifacts.crossings_count,
+                    artifacts.states,
+                    artifacts.discrete_vals,
+                    artifacts.params,
+                    &artifacts.state_vars,
+                    &artifacts.discrete_vars,
+                    &artifacts.output_vars,
+                    &artifacts.state_var_index,
+                    artifacts.t_end,
+                    artifacts.dt,
+                    artifacts.numeric_ode_jacobian,
+                    artifacts.symbolic_ode_jacobian.as_ref(),
+                    &artifacts.newton_tearing_var_names,
+                    artifacts.atol,
+                    artifacts.rtol,
+                    &artifacts.solver,
+                    artifacts.output_interval,
+                )?;
+                println!("{}", serde_json::to_string(&result).unwrap_or_default());
+                return Ok(());
+            }
+            if !json_mode {
+                println!("{}", i18n::msg0("starting_simulation"));
+            }
             run_simulation(
                 artifacts.calc_derivs,
                 artifacts.when_count,
@@ -375,7 +490,9 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 artifacts.result_file.as_deref(),
                 None,
             )?;
-            println!("{}", i18n::msg0("simulation_completed"));
+            if !json_mode {
+                println!("{}", i18n::msg0("simulation_completed"));
+            }
         }
     }
     Ok(())
