@@ -1,8 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import type monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
+import { readComponentTypeSource } from "../api/tauri";
 import { t } from "../i18n";
 import { EditorGroupColumn, type EditorGroupState } from "./EditorGroupColumn";
+import type { EditorTab } from "./EditorTabBar";
 import type { JitValidateResult } from "../types";
 
 const MAX_EDITOR_GROUPS = 2;
@@ -16,9 +18,34 @@ function pathToModelName(relativePath: string): string {
     .join(".");
 }
 
+export type DiagramViewModeRequest = "diagramReadOnly" | null;
+
 export interface EditorWorkbenchRef {
   openFile: (relativePath: string, groupIndex?: number) => void;
+  openType: (typeName: string, groupIndex?: number, libraryId?: string) => void;
   save: () => void;
+  setViewModeRequest?: (mode: DiagramViewModeRequest) => void;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function tabContentKey(tab: EditorTab): string {
+  return tab.projectPath != null ? normalizePath(tab.projectPath) : tab.id;
+}
+
+function tabModelName(tab: EditorTab | null | undefined): string {
+  if (!tab) {
+    return "BouncingBall";
+  }
+  if (tab.modelName) {
+    return tab.modelName;
+  }
+  if (tab.projectPath) {
+    return pathToModelName(tab.projectPath);
+  }
+  return "BouncingBall";
 }
 
 export interface EditorWorkbenchProps {
@@ -35,6 +62,11 @@ export interface EditorWorkbenchProps {
   onGitStatusChange?: (status: { modified: string[]; staged: string[] }) => void;
   onContentByPathChange?: (contentByPath: Record<string, string>) => void;
   log?: (msg: string) => void;
+  focusSymbolQuery?: string | null;
+  onRequestWorkbenchView?: (view: "simulation" | "analysis") => void;
+  onViewModeChange?: (mode: "code" | "icon" | "diagram" | "diagramReadOnly") => void;
+  libraryRefreshToken?: number;
+  theme?: "dark" | "light";
 }
 
 export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchProps>(function EditorWorkbench(
@@ -52,11 +84,17 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     onGitStatusChange,
     onContentByPathChange,
     log = () => {},
-},
+    focusSymbolQuery = null,
+    onRequestWorkbenchView,
+    onViewModeChange,
+    libraryRefreshToken = 0,
+    theme = "dark",
+  },
   ref
 ) {
   const [editorGroups, setEditorGroups] = useState<EditorGroupState[]>([{ tabs: [], activeIndex: 0 }]);
   const [focusedGroupIndex, setFocusedGroupIndex] = useState(0);
+  const [viewModeRequest, setViewModeRequest] = useState<DiagramViewModeRequest>(null);
   const [contentByPath, setContentByPath] = useState<Record<string, string>>({});
   useEffect(() => {
     onContentByPathChange?.(contentByPath);
@@ -74,26 +112,29 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
   }, [focusedGroupIndex, editorRef, monacoRef]);
 
   const focusedGroup = editorGroups[focusedGroupIndex];
-  const focusedPath =
+  const focusedTab =
     focusedGroup?.tabs.length > 0 && focusedGroup.activeIndex >= 0 && focusedGroup.activeIndex < focusedGroup.tabs.length
-      ? focusedGroup.tabs[focusedGroup.activeIndex].path
+      ? focusedGroup.tabs[focusedGroup.activeIndex]
       : null;
-  const focusedContent = focusedPath ? (contentByPath[focusedPath.replace(/\\/g, "/")] ?? "") : "";
+  const focusedPath = focusedTab?.projectPath ?? null;
+  const focusedContent = focusedTab ? (contentByPath[tabContentKey(focusedTab)] ?? "") : "";
 
   useEffect(() => {
     onFocusedChange({ path: focusedPath, content: focusedContent });
-    if (focusedPath) setModelName(pathToModelName(focusedPath));
+    if (focusedTab) {
+      setModelName(tabModelName(focusedTab));
+    }
     else setModelName("BouncingBall");
-  }, [focusedPath, focusedContent, onFocusedChange, setModelName]);
+  }, [focusedPath, focusedContent, focusedTab, onFocusedChange, setModelName]);
 
   const handleOpenFile = useCallback(
     async (relativePath: string, groupIndex?: number) => {
       if (!projectDir) return;
       const gi = groupIndex ?? focusedGroupIndex;
-      const pathNorm = relativePath.replace(/\\/g, "/");
+      const pathNorm = normalizePath(relativePath);
       const group = editorGroups[gi];
-      if (group?.tabs.some((t) => t.path.replace(/\\/g, "/") === pathNorm)) {
-        const existing = group.tabs.findIndex((t) => t.path.replace(/\\/g, "/") === pathNorm);
+      if (group?.tabs.some((t) => normalizePath(t.projectPath ?? t.path) === pathNorm)) {
+        const existing = group.tabs.findIndex((t) => normalizePath(t.projectPath ?? t.path) === pathNorm);
         setEditorGroups((prev) => prev.map((g, i) => (i === gi ? { ...g, activeIndex: existing } : g)));
         setModelName(pathToModelName(relativePath));
         if (gi !== focusedGroupIndex) setFocusedGroupIndex(gi);
@@ -106,7 +147,16 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
           const g = prev[gi];
           if (!g) return prev;
           return prev.map((grp, i) =>
-            i === gi ? { ...grp, tabs: [...grp.tabs, { path: relativePath, dirty: false }], activeIndex: grp.tabs.length } : grp
+            i === gi
+              ? {
+                  ...grp,
+                  tabs: [
+                    ...grp.tabs,
+                    { id: pathNorm, path: relativePath, dirty: false, projectPath: relativePath, readOnly: false },
+                  ],
+                  activeIndex: grp.tabs.length,
+                }
+              : grp
           );
         });
         setModelName(pathToModelName(relativePath));
@@ -118,6 +168,48 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     [projectDir, focusedGroupIndex, editorGroups, setModelName]
   );
 
+  const handleOpenType = useCallback(
+    async (typeName: string, groupIndex?: number, libraryId?: string) => {
+      if (!projectDir) return;
+      const gi = groupIndex ?? focusedGroupIndex;
+      try {
+        const typeSource = await readComponentTypeSource(projectDir, typeName, libraryId);
+        const tabId = `library://${typeSource.libraryId}/${typeSource.qualifiedName}`;
+        const displayPath = typeSource.path
+          ? `library/${typeSource.libraryName}/${typeSource.path}`
+          : `library/${typeSource.libraryName}/${typeSource.qualifiedName.replace(/\./g, "/")}.mo`;
+        const group = editorGroups[gi];
+        const existing = group?.tabs.findIndex((tab) => tab.id === tabId) ?? -1;
+        setContentByPath((prev) => ({ ...prev, [tabId]: typeSource.content }));
+        if (existing >= 0) {
+          setEditorGroups((prev) => prev.map((g, i) => (i === gi ? { ...g, activeIndex: existing } : g)));
+        } else {
+          setEditorGroups((prev) => {
+            const current = prev[gi];
+            if (!current) return prev;
+            const nextTab: EditorTab = {
+              id: tabId,
+              path: displayPath,
+              dirty: false,
+              readOnly: true,
+              modelName: typeSource.qualifiedName,
+            };
+            return prev.map((g, i) =>
+              i === gi ? { ...g, tabs: [...g.tabs, nextTab], activeIndex: g.tabs.length } : g
+            );
+          });
+        }
+        setModelName(typeSource.qualifiedName);
+        if (gi !== focusedGroupIndex) {
+          setFocusedGroupIndex(gi);
+        }
+      } catch (error) {
+        log("Open type error: " + String(error));
+      }
+    },
+    [projectDir, focusedGroupIndex, editorGroups, setModelName, log]
+  );
+
   const handleCloseTab = useCallback(
     (groupIndex: number, tabIndex: number) => {
       setEditorGroups((prev) => {
@@ -125,7 +217,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
         if (!group) return prev;
         const tab = group.tabs[tabIndex];
         if (!tab) return prev;
-        if (tab.dirty && !window.confirm(t("unsavedChanges"))) return prev;
+        if (tab.dirty && !tab.readOnly && !window.confirm(t("unsavedChanges"))) return prev;
         const next = group.tabs.filter((_, i) => i !== tabIndex);
         const newActive =
           next.length === 0
@@ -138,7 +230,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
                   ? group.activeIndex - 1
                   : group.activeIndex;
         if (groupIndex === focusedGroupIndex && next.length > 0 && newActive < next.length) {
-          setModelName(pathToModelName(next[newActive].path));
+          setModelName(tabModelName(next[newActive]));
         } else if (groupIndex === focusedGroupIndex && next.length === 0) {
           setModelName("BouncingBall");
         }
@@ -152,16 +244,24 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     async (groupIndex?: number) => {
       const gi = groupIndex ?? focusedGroupIndex;
       const group = editorGroups[gi];
-      const path = group?.tabs[group.activeIndex]?.path;
-      if (!projectDir || !path) return;
-      const pathNorm = path.replace(/\\/g, "/");
+      const tab = group?.tabs[group.activeIndex];
+      const path = tab?.projectPath;
+      if (!projectDir || !path || tab?.readOnly) return;
+      const pathNorm = normalizePath(path);
       const content = contentByPath[pathNorm];
       if (content === undefined) return;
       try {
         await invoke("write_project_file", { projectDir, relativePath: pathNorm, content });
         setEditorGroups((prev) =>
           prev.map((g, i) =>
-            i === gi ? { ...g, tabs: g.tabs.map((t) => (t.path.replace(/\\/g, "/") === pathNorm ? { ...t, dirty: false } : t)) } : g
+            i === gi
+              ? {
+                  ...g,
+                  tabs: g.tabs.map((t) =>
+                    normalizePath(t.projectPath ?? t.path) === pathNorm ? { ...t, dirty: false } : t
+                  ),
+                }
+              : g
           )
         );
         const status = (await invoke("git_status", { projectDir })) as { modified: string[]; staged: string[] };
@@ -174,15 +274,24 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     [projectDir, focusedGroupIndex, editorGroups, contentByPath, log, onGitStatusChange]
   );
 
-  useImperativeHandle(ref, () => ({ openFile: handleOpenFile, save: () => handleSave() }), [handleOpenFile, handleSave]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      openFile: handleOpenFile,
+      openType: handleOpenType,
+      save: () => handleSave(),
+      setViewModeRequest,
+    }),
+    [handleOpenFile, handleOpenType, handleSave]
+  );
 
   const handleContentChange = useCallback(
     (groupIndex: number, value: string) => {
       const group = editorGroups[groupIndex];
-      const path = group?.tabs[group.activeIndex]?.path;
-      if (!path) return;
-      const pathNorm = path.replace(/\\/g, "/");
-      setContentByPath((prev) => ({ ...prev, [pathNorm]: value }));
+      const tab = group?.tabs[group.activeIndex];
+      if (!tab || tab.readOnly) return;
+      const contentKey = tabContentKey(tab);
+      setContentByPath((prev) => ({ ...prev, [contentKey]: value }));
       setEditorGroups((prev) =>
         prev.map((g, i) =>
           i === groupIndex ? { ...g, tabs: g.tabs.map((t, ti) => (ti === g.activeIndex ? { ...t, dirty: true } : t)) } : g
@@ -255,7 +364,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
             onSelectTab={(ti) => {
               setEditorGroups((prev) => prev.map((g, i) => (i === gi ? { ...g, activeIndex: ti } : g)));
               const group = editorGroups[gi];
-              if (group?.tabs[ti]) setModelName(pathToModelName(group.tabs[ti].path));
+              if (group?.tabs[ti]) setModelName(tabModelName(group.tabs[ti]));
               setFocusedGroupIndex(gi);
             }}
             onCloseTab={(ti) => handleCloseTab(gi, ti)}
@@ -271,6 +380,16 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
             jitResult={jitResult}
             onCursorPositionChange={onCursorPositionChange}
             onSelectionChange={onSelectionChange}
+            viewModeRequest={gi === focusedGroupIndex ? viewModeRequest : null}
+            onViewModeRequestConsumed={gi === focusedGroupIndex ? () => setViewModeRequest(null) : undefined}
+            focusSymbolQuery={gi === focusedGroupIndex ? focusSymbolQuery : null}
+            onRequestWorkbenchView={onRequestWorkbenchView}
+            onViewModeChange={gi === focusedGroupIndex ? onViewModeChange : undefined}
+            onNavigateToType={(typeName, libraryId) => {
+              void handleOpenType(typeName, undefined, libraryId);
+            }}
+            libraryRefreshToken={libraryRefreshToken}
+            theme={theme}
           />
         </React.Fragment>
       ))}

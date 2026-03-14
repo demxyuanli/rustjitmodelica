@@ -6,7 +6,7 @@ import { setLang } from "./i18n";
 import { useLayout } from "./hooks/useLayout";
 import { useProject, pathToModelName } from "./hooks/useProject";
 import { useSimulation } from "./hooks/useSimulation";
-import { useModelicaAI } from "./hooks/useAI";
+import { useModelicaAI, type AiContextBlock } from "./hooks/useAI";
 
 import { Titlebar } from "./components/Titlebar";
 import { FileTree } from "./components/FileTree";
@@ -14,6 +14,7 @@ import { OutlineSection } from "./components/OutlineSection";
 import { TimelineSection } from "./components/TimelineSection";
 import { SourceControlView } from "./components/SourceControlView";
 import { EditorWorkbench, type EditorWorkbenchRef } from "./components/EditorWorkbench";
+import { ComponentLibraryWorkspace } from "./components/ComponentLibraryWorkspace";
 import { StatusBar, type IndexStatusInfo } from "./components/StatusBar";
 import { AIPanel } from "./components/AIPanel";
 import { SearchPanel } from "./components/SearchPanel";
@@ -23,10 +24,10 @@ import { IconButton } from "./components/IconButton";
 const DiffView = lazy(() => import("./components/DiffView").then((m) => ({ default: m.DiffView })));
 const GitGraphView = lazy(() => import("./components/GitGraphView").then((m) => ({ default: m.GitGraphView })));
 const SimulationPanel = lazy(() => import("./components/SimulationPanel").then((m) => ({ default: m.SimulationPanel })));
-import { Modals } from "./components/Modals";
 import { JitIdeWorkspace } from "./components/JitIdeWorkspace";
 import { SettingsContent, type IndexActionState } from "./components/SettingsContent";
 import { t } from "./i18n";
+import type { JitCenterView } from "./hooks/useJitLayout";
 import { DEFAULT_MODEL_BOUNCING_BALL } from "./examples";
 import {
   indexRepoRoot,
@@ -39,8 +40,11 @@ import {
   indexRebuild,
   indexRefreshRepo,
   indexRebuildRepo,
+  writeProjectFile,
 } from "./api/tauri";
 import "./App.css";
+
+type WorkbenchBottomTab = "verify" | "run" | "log" | "deps" | "vars";
 
 function App() {
   const [modelName, setModelName] = useState("BouncingBall");
@@ -49,9 +53,6 @@ function App() {
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
   const [code, setCode] = useState(DEFAULT_MODEL_BOUNCING_BALL);
   const [cursorPosition, setCursorPosition] = useState<{ lineNumber: number; column: number } | null>(null);
-  const [showJitFailModal, setShowJitFailModal] = useState(false);
-  const [jitFailErrors, setJitFailErrors] = useState<string[]>([]);
-  const [selfIterateTargetPrefill, setSelfIterateTargetPrefill] = useState<string | null>(null);
   const [currentSelection, setCurrentSelection] = useState<{ path: string | null; text: string | null }>({ path: null, text: null });
 
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -70,6 +71,12 @@ function App() {
   const [indexStatus, setIndexStatus] = useState<IndexStatusInfo | null>(null);
   const [repoRoot, setRepoRoot] = useState<string | null>(null);
   const [indexAction, setIndexAction] = useState<IndexActionState>({ running: false, action: null, done: 0, total: 0 });
+  const [showJitViewMenu, setShowJitViewMenu] = useState(false);
+  const [jitCenterViewRequest, setJitCenterViewRequest] = useState<JitCenterView | null | undefined>(undefined);
+  const [jitActiveCenterView, setJitActiveCenterView] = useState<JitCenterView | null>(null);
+  const [requestedSimulationTab, setRequestedSimulationTab] = useState<WorkbenchBottomTab | null>(null);
+  const [focusedDiagramSymbol, setFocusedDiagramSymbol] = useState<string | null>(null);
+  const [libraryRefreshToken, setLibraryRefreshToken] = useState(0);
 
   useEffect(() => {
     indexRepoRoot().then((r) => setRepoRoot(r)).catch(() => {});
@@ -133,6 +140,17 @@ function App() {
     try { localStorage.setItem("modai-theme", layout.theme); } catch { /* ignore */ }
   }, [layout.theme]);
 
+  useEffect(() => {
+    const text = (currentSelection.text ?? "").trim();
+    if (!text) {
+      ai.setContextBlocks([]);
+      return;
+    }
+    const p = (currentSelection.path ?? openFilePath ?? "selection").replace(/\\/g, "/");
+    const block: AiContextBlock = { path: p, content: text };
+    ai.setContextBlocks([block]);
+  }, [currentSelection.path, currentSelection.text, openFilePath, ai.setContextBlocks]);
+
   const toggleLang = useCallback(() => {
     const next = layout.lang === "en" ? "zh" : "en";
     setLang(next);
@@ -171,14 +189,17 @@ function App() {
 
   // Close project menu on outside click
   useEffect(() => {
-    if (!layout.showProjectMenu) return;
-    const closeMenus = () => layout.setShowProjectMenu(false);
+    if (!layout.showProjectMenu && !showJitViewMenu) return;
+    const closeMenus = () => {
+      layout.setShowProjectMenu(false);
+      setShowJitViewMenu(false);
+    };
     const t = setTimeout(() => window.addEventListener("click", closeMenus), 0);
     return () => {
       clearTimeout(t);
       window.removeEventListener("click", closeMenus);
     };
-  }, [layout.showProjectMenu]);
+  }, [layout.showProjectMenu, showJitViewMenu]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -212,13 +233,21 @@ function App() {
     workbenchRef.current?.openFile(relativePath, groupIndex);
   }, []);
 
+  const handleCreateMoFile = useCallback(
+    async (relativePath: string, content: string) => {
+      if (!project.projectDir) throw new Error("No project directory");
+      await writeProjectFile(project.projectDir, relativePath, content);
+      handleOpenMoFile(relativePath);
+    },
+    [project.projectDir, handleOpenMoFile]
+  );
+
   const handleValidate = useCallback(async () => {
     const result = await sim.validate(code, modelName, project.projectDir);
     if (result && !result.success) {
-      setJitFailErrors(result.errors);
-      setShowJitFailModal(true);
-    } else {
-      setShowJitFailModal(false);
+      ai.setAiPrompt(`Compilation failed.\n${result.errors.join("\n")}`);
+      layout.setShowRightPanel(true);
+      layout.setRightPanelTab("ai");
     }
   }, [code, modelName, project.projectDir, sim]);
 
@@ -233,27 +262,49 @@ function App() {
   }, [project.projectDir, project.moFiles, sim]);
 
   const handleInsertAi = useCallback(() => {
-    if (!ai.aiResponse || !editorRef.current) return;
-    const model = editorRef.current.getModel();
+    if (!editorRef.current) return;
+    const editor = editorRef.current;
+    const model = editor.getModel();
     if (!model) return;
-    const selection = editorRef.current.getSelection();
-    const range = selection ?? editorRef.current.getPosition()
-      ? {
-          startLineNumber: selection?.startLineNumber ?? editorRef.current.getPosition()!.lineNumber,
-          startColumn: selection?.startColumn ?? editorRef.current.getPosition()!.column,
-          endLineNumber: selection?.endLineNumber ?? editorRef.current.getPosition()!.lineNumber,
-          endColumn: selection?.endColumn ?? editorRef.current.getPosition()!.column,
-        }
-      : {
-          startLineNumber: 1,
+
+    const pp = ai.pendingPatch;
+    const textToInsert = pp?.newContent ?? ai.aiResponse;
+    if (!textToInsert) return;
+
+    if (pp?.startLine != null && pp?.endLine != null && pp.startLine >= 1 && pp.endLine >= 1) {
+      const lineCount = model.getLineCount();
+      const start = Math.min(pp.startLine, lineCount);
+      const end = Math.min(pp.endLine, lineCount);
+      if (start <= end) {
+        const range = {
+          startLineNumber: start,
           startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 1,
+          endLineNumber: end,
+          endColumn: model.getLineMaxColumn(end),
         };
-    editorRef.current.executeEdits("insert-ai", [
-      { range, text: ai.aiResponse, forceMoveMarkers: true },
-    ]);
-  }, [ai.aiResponse]);
+        editor.executeEdits("agent-edit-file", [{ range, text: textToInsert, forceMoveMarkers: true }]);
+        ai.clearPendingPatch?.();
+        return;
+      }
+    }
+
+    const selection = editor.getSelection();
+    const hasSelection = selection && !selection.isEmpty();
+    if (hasSelection) {
+      editor.executeEdits("agent-edit-selection", [
+        { range: selection!, text: textToInsert, forceMoveMarkers: true },
+      ]);
+      ai.clearPendingPatch?.();
+      return;
+    }
+
+    const pos = editor.getPosition();
+    const range = pos
+      ? { startLineNumber: pos.lineNumber, startColumn: pos.column, endLineNumber: pos.lineNumber, endColumn: pos.column }
+      : { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 };
+    editor.executeEdits("insert-ai", [{ range, text: textToInsert, forceMoveMarkers: true }]);
+    ai.clearPendingPatch?.();
+  }, [ai.aiResponse, ai.pendingPatch, ai.clearPendingPatch]);
 
   return (
     <div className="flex flex-col h-screen bg-surface text-[var(--text)] overflow-hidden">
@@ -263,7 +314,9 @@ function App() {
         modelName={modelName}
         showProjectMenu={layout.showProjectMenu}
         setShowProjectMenu={layout.setShowProjectMenu}
-        setShowSettings={layout.setShowSettings}
+        onOpenSettings={() => {
+          layout.setShowSettings(true);
+        }}
         showLeftSidebar={layout.showLeftSidebar}
         setShowLeftSidebar={layout.setShowLeftSidebar}
         showRightPanel={layout.showRightPanel}
@@ -273,21 +326,10 @@ function App() {
         lang={layout.lang}
         onToggleLang={toggleLang}
         onOpenProject={project.openProject}
-      />
-      <Modals
-        showJitFailModal={showJitFailModal}
-        jitFailErrors={jitFailErrors}
-        onJitFailClose={() => setShowJitFailModal(false)}
-        onJitFailYes={() => {
-          ai.setAiPrompt("Fix the following Modelica compile error and suggest corrected code: " + jitFailErrors.join(" "));
-          layout.setShowRightPanel(true);
-          setShowJitFailModal(false);
-        }}
-        onJitFailTrySelfIterate={() => {
-          setSelfIterateTargetPrefill("Fix compiler to support: " + jitFailErrors.join(" "));
-          layout.setWorkspaceMode("compiler-iterate");
-          setShowJitFailModal(false);
-        }}
+        showJitViewMenu={showJitViewMenu}
+        setShowJitViewMenu={setShowJitViewMenu}
+        jitActiveCenterView={jitActiveCenterView}
+        onJitCenterViewSelect={(view) => setJitCenterViewRequest(view)}
       />
       {layout.workspaceMode === "modelica" ? (
         layout.showSettings ? (
@@ -363,6 +405,7 @@ function App() {
                           openFilePath={openFilePath}
                           editorRef={editorRef}
                           projectDir={project.projectDir}
+                          onOpenDiagram={() => workbenchRef.current?.setViewModeRequest?.("diagramReadOnly")}
                         />
                         <TimelineSection
                           projectDir={project.projectDir}
@@ -437,12 +480,25 @@ function App() {
                 onFocusedChange={({ path, content }) => {
                   setOpenFilePath(path);
                   setCode(content);
+                  ai.setActiveFilePath(path ?? null);
                 }}
                 onCursorPositionChange={(ln, col) => setCursorPosition({ lineNumber: ln, column: col })}
                 onSelectionChange={({ path, selectedText }) => setCurrentSelection({ path, text: selectedText })}
                 onGitStatusChange={project.setGitStatus}
                 onContentByPathChange={setContentByPath}
                 log={log}
+                focusSymbolQuery={focusedDiagramSymbol}
+                onRequestWorkbenchView={(view) => {
+                  layout.setShowBottomPanel(true);
+                  setRequestedSimulationTab(view === "analysis" ? "deps" : "run");
+                }}
+                onViewModeChange={(mode) => {
+                  if (mode === "icon" || mode === "diagram" || mode === "diagramReadOnly") {
+                    layout.setShowRightPanel(false);
+                  }
+                }}
+                libraryRefreshToken={libraryRefreshToken}
+                theme={layout.theme}
               />
               {layout.showBottomPanel && (
                 <>
@@ -479,6 +535,16 @@ function App() {
                           }}
                           setSelectedPlotVars={sim.setSelectedPlotVars}
                           theme={layout.theme}
+                          code={code}
+                          openFilePath={openFilePath}
+                          projectDir={project.projectDir}
+                          requestedTab={requestedSimulationTab}
+                          onRequestedTabHandled={() => setRequestedSimulationTab(null)}
+                          onFocusSymbol={(symbol) => {
+                            setFocusedDiagramSymbol(symbol);
+                            layout.setShowBottomPanel(true);
+                          }}
+                          selectedSymbol={focusedDiagramSymbol}
                         />
                       </Suspense>
                     </div>
@@ -489,7 +555,10 @@ function App() {
             {layout.showRightPanel && (
               <>
                 <div className="resize-handle shrink-0" onMouseDown={layout.startResizeRight} aria-hidden />
-                <aside className="shrink-0 border-l border-border bg-surface-alt overflow-hidden flex flex-col" style={{ width: layout.rightPanelWidth }}>
+                <aside
+                  className="shrink-0 border-l border-border bg-surface-alt overflow-hidden flex flex-col min-w-0"
+                  style={{ width: layout.rightPanelWidth }}
+                >
                   <div className="shrink-0 flex border-b border-border justify-around py-0.5">
                     <IconButton
                       icon={<AppIcon name="ai" aria-hidden="true" />}
@@ -537,6 +606,19 @@ function App() {
                           currentFilePath={openFilePath ?? undefined}
                           currentSelectionText={currentSelection.text ?? undefined}
                           lastJitErrorText={sim.jitResult?.errors?.join(" ") ?? undefined}
+                          messages={ai.messages}
+                          agentMode={ai.agentMode}
+                          setAgentMode={ai.setAgentMode}
+                          pendingPatch={ai.pendingPatch}
+                          clearPendingPatch={ai.clearPendingPatch}
+                          onCreateMoFile={project.projectDir ? handleCreateMoFile : undefined}
+                          iterationDiff={ai.iterationDiff}
+                          iterationRunResult={ai.iterationRunResult}
+                          iterationHistory={ai.iterationHistory}
+                          onRunIteration={ai.runIteration}
+                          onAdoptIteration={ai.adoptIteration}
+                          onCommitIteration={ai.commitIteration}
+                          onReuseIteration={ai.reuseIteration}
                         />
                       </div>
                     )}
@@ -550,6 +632,7 @@ function App() {
                           currentFilePath={openFilePath}
                           onClose={() => { project.setDiffTarget(null); layout.setRightPanelTab("ai"); }}
                           onOpenInEditor={(path) => handleOpenMoFile(path)}
+                          theme={layout.theme}
                         />
                       </Suspense>
                     )}
@@ -558,13 +641,54 @@ function App() {
               </>
             )}
           </div>
-      )) : (
+      )) : layout.workspaceMode === "component-library" ? (
+        layout.showSettings ? (
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 min-h-0 overflow-auto">
+              <div className="max-w-2xl mx-auto p-6 text-[var(--text)]">
+                <h2 className="text-lg font-semibold text-[var(--text)] mb-6">{t("settings")}</h2>
+                <SettingsContent
+                  theme={layout.theme}
+                  onThemeChange={layout.setTheme}
+                  indexFileCount={indexStatus?.fileCount ?? 0}
+                  indexSymbolCount={indexStatus?.symbolCount ?? 0}
+                  indexState={indexStatus?.state ?? null}
+                  indexAction={indexAction}
+                  onIndexRefresh={() => runIndexAction("refresh")}
+                  onIndexRebuild={() => runIndexAction("rebuild")}
+                  onEnterDevMode={() => layout.setWorkspaceMode("compiler-iterate")}
+                  aiModel={ai.model}
+                  onAiModelChange={ai.setModel}
+                  aiDailyUsed={ai.dailyTokenUsed}
+                  aiDailyLimit={ai.dailyTokenLimit}
+                  onAiDailyReset={ai.resetDailyUsage}
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <ComponentLibraryWorkspace
+            projectDir={project.projectDir}
+            theme={layout.theme}
+            onLibrariesChanged={() => setLibraryRefreshToken((value) => value + 1)}
+            onOpenType={(typeName, libraryId) => {
+              if (!project.projectDir) {
+                return;
+              }
+              void workbenchRef.current?.openType(typeName, undefined, libraryId);
+              layout.setWorkspaceMode("modelica");
+            }}
+          />
+        )
+      ) : (
         <JitIdeWorkspace
-          targetPrefill={selfIterateTargetPrefill}
-          onClearPrefill={() => setSelfIterateTargetPrefill(null)}
           repoRoot={repoRoot}
           showSettings={layout.showSettings}
           onSettingsHandled={() => layout.setShowSettings(false)}
+          requestedCenterView={jitCenterViewRequest}
+          onRequestedCenterViewHandled={() => setJitCenterViewRequest(undefined)}
+          onActiveCenterViewChange={setJitActiveCenterView}
+          theme={layout.theme}
           settingsProps={{
             theme: layout.theme,
             onThemeChange: layout.setTheme,
@@ -580,7 +704,7 @@ function App() {
       <StatusBar
         gitBranch={project.gitBranch}
         openFilePath={layout.workspaceMode === "modelica" ? openFilePath : null}
-        language={layout.workspaceMode === "modelica" ? "Modelica" : "Rust"}
+        language={layout.workspaceMode === "compiler-iterate" ? t("languageRust") : t("languageModelica")}
         position={layout.workspaceMode === "modelica" ? cursorPosition : null}
         errorCount={layout.workspaceMode === "modelica" ? (sim.jitResult?.errors?.length ?? 0) : 0}
         warningCount={layout.workspaceMode === "modelica" ? (sim.jitResult?.warnings?.length ?? 0) : 0}

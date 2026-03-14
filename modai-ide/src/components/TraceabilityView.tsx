@@ -219,7 +219,7 @@ export function TraceabilityView() {
   }
 
   const viewModes: { id: ViewMode; label: string }[] = [
-    { id: "matrix", label: "Matrix" },
+    { id: "matrix", label: t("matrix") },
     { id: "coverage", label: t("coverageAnalysis") },
     { id: "sync", label: t("syncCheck") },
     { id: "validate", label: t("validateConfig") },
@@ -242,16 +242,16 @@ export function TraceabilityView() {
                 else if (m.id === "gitImpact") runGitImpact();
                 else setViewMode(m.id);
               }}
-              className={`px-3 py-1 text-xs rounded-lg ${viewMode === m.id ? "bg-primary/30 text-primary" : "bg-[#3c3c3c] text-[var(--text-muted)] hover:text-[var(--text)]"}`}
+              className={`px-3 py-1 text-xs rounded-lg border ${viewMode === m.id ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary text-[var(--text-muted)]"}`}
             >
               {m.label}
             </button>
           ))}
-          <button type="button" onClick={clearSelection} className="px-3 py-1 text-xs rounded-lg bg-[#3c3c3c] text-[var(--text-muted)] hover:text-[var(--text)]">
-            Clear
+          <button type="button" onClick={clearSelection} className="px-3 py-1 text-xs rounded-lg border theme-button-secondary text-[var(--text-muted)]">
+            {t("clear")}
           </button>
           {highlightedSources.size > 0 && viewMode === "matrix" && (
-            <button type="button" onClick={runImpactAnalysis} className="px-3 py-1 text-xs rounded-lg bg-amber-800 hover:bg-amber-700 text-amber-200">
+            <button type="button" onClick={runImpactAnalysis} className="px-3 py-1 text-xs rounded-lg border theme-banner-warning">
               {t("impactAnalysis")}
             </button>
           )}
@@ -260,9 +260,9 @@ export function TraceabilityView() {
 
       {viewMode === "matrix" && (
         <div className="flex flex-1 min-h-0 gap-3 overflow-hidden">
-          <div className="w-1/3 rounded-lg border border-gray-700 bg-[#2d2d2d] overflow-hidden flex flex-col">
-            <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] bg-[#3c3c3c] border-b border-gray-700 shrink-0">
-              Source modules ({sourceModules.length})
+          <div className="w-1/3 rounded-lg border border-border bg-[var(--surface-elevated)] overflow-hidden flex flex-col">
+            <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] bg-[var(--panel-muted-bg)] border-b border-border shrink-0">
+              {t("sourceModules")} ({sourceModules.length})
             </div>
             <div className="flex-1 overflow-auto">
               {sourceModules.map((src) => {
@@ -272,7 +272,7 @@ export function TraceabilityView() {
                   <button
                     key={src}
                     type="button"
-                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-gray-700/30 ${hl ? "bg-primary/15 text-primary" : "hover:bg-[#3c3c3c]/50 text-[var(--text)]"}`}
+                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-border/40 ${hl ? "bg-primary/15 text-primary" : "hover:bg-[var(--surface-hover)] text-[var(--text)]"}`}
                     onClick={() => {
                       setSelectedSource(src === selectedSource ? null : src);
                       setSelectedFeature(null);
@@ -287,9 +287,9 @@ export function TraceabilityView() {
             </div>
           </div>
 
-          <div className="w-1/3 rounded-lg border border-gray-700 bg-[#2d2d2d] overflow-hidden flex flex-col">
-            <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] bg-[#3c3c3c] border-b border-gray-700 shrink-0">
-              Features ({matrix.features.length})
+          <div className="w-1/3 rounded-lg border border-border bg-[var(--surface-elevated)] overflow-hidden flex flex-col">
+            <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] bg-[var(--panel-muted-bg)] border-b border-border shrink-0">
+              {t("linkedFeatures")} ({matrix.features.length})
             </div>
             <div className="flex-1 overflow-auto">
               {matrix.features.map((f) => {
@@ -300,7 +300,7 @@ export function TraceabilityView() {
                   <button
                     key={f.id}
                     type="button"
-                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-gray-700/30 ${hl ? "bg-blue-900/30 text-blue-300" : "hover:bg-[#3c3c3c]/50 text-[var(--text)]"}`}
+                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-border/40 ${hl ? "bg-primary/20 text-primary" : "hover:bg-[var(--surface-hover)] text-[var(--text)]"}`}
                     onClick={() => {
                       setSelectedFeature(f.id === selectedFeature ? null : f.id);
                       setSelectedSource(null);
@@ -310,17 +310,17 @@ export function TraceabilityView() {
                     <div className="flex items-center gap-1">
                       <span className="font-mono text-[10px] text-[var(--text-muted)] w-10 shrink-0">{f.id}</span>
                       <span className="truncate">{f.name}</span>
-                      <span className={`ml-auto text-[9px] px-1.5 py-0.5 rounded shrink-0 ${f.status === "covered" ? "bg-green-900/50 text-green-300" : "bg-amber-900/50 text-amber-300"}`}>
+                      <span className={`ml-auto text-[9px] px-1.5 py-0.5 rounded shrink-0 ${f.status === "covered" ? "theme-banner-success" : "theme-banner-warning"}`}>
                         {f.status}
                       </span>
                     </div>
                     {selectedFeature === f.id && (deps?.length || depnts?.length) ? (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {deps?.map((d) => (
-                          <span key={d} className="px-1 py-0.5 rounded bg-purple-900/40 text-purple-300 text-[9px]">{t("featureDeps")}: {d}</span>
+                          <span key={d} className="px-1 py-0.5 rounded theme-banner-info text-[9px]">{t("featureDeps")}: {d}</span>
                         ))}
                         {depnts?.map((d) => (
-                          <span key={d} className="px-1 py-0.5 rounded bg-cyan-900/40 text-cyan-300 text-[9px]">{t("featureDependents")}: {d}</span>
+                          <span key={d} className="px-1 py-0.5 rounded theme-banner-info text-[9px]">{t("featureDependents")}: {d}</span>
                         ))}
                       </div>
                     ) : null}
@@ -330,9 +330,9 @@ export function TraceabilityView() {
             </div>
           </div>
 
-          <div className="w-1/3 rounded-lg border border-gray-700 bg-[#2d2d2d] overflow-hidden flex flex-col">
-            <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] bg-[#3c3c3c] border-b border-gray-700 shrink-0">
-              Test cases ({matrix.cases.length})
+          <div className="w-1/3 rounded-lg border border-border bg-[var(--surface-elevated)] overflow-hidden flex flex-col">
+            <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] bg-[var(--panel-muted-bg)] border-b border-border shrink-0">
+              {t("testCases")} ({matrix.cases.length})
             </div>
             <div className="flex-1 overflow-auto">
               {matrix.cases.map((c) => {
@@ -341,7 +341,7 @@ export function TraceabilityView() {
                   <button
                     key={c.name}
                     type="button"
-                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-gray-700/30 ${hl ? "bg-green-900/30 text-green-300" : "hover:bg-[#3c3c3c]/50 text-[var(--text)]"}`}
+                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-border/40 ${hl ? "bg-[var(--success-bg)] text-[var(--success-text)]" : "hover:bg-[var(--surface-hover)] text-[var(--text)]"}`}
                     onClick={() => {
                       setSelectedCase(c.name === selectedCase ? null : c.name);
                       setSelectedSource(null);
@@ -350,7 +350,7 @@ export function TraceabilityView() {
                   >
                     <div className="flex items-center gap-1">
                       <span className="truncate">{c.name.replace("TestLib/", "")}</span>
-                      <span className={`ml-auto text-[9px] px-1.5 py-0.5 rounded shrink-0 ${c.expected === "pass" ? "bg-green-900/50 text-green-300" : "bg-red-900/50 text-red-300"}`}>
+                      <span className={`ml-auto text-[9px] px-1.5 py-0.5 rounded shrink-0 ${c.expected === "pass" ? "theme-banner-success" : "theme-banner-danger"}`}>
                         {c.expected}
                       </span>
                     </div>
@@ -364,13 +364,13 @@ export function TraceabilityView() {
 
       {viewMode === "impact" && impactResult && (
         <div className="flex-1 overflow-auto">
-          <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] p-4 mb-3">
+          <div className="rounded-lg border border-border bg-[var(--surface-elevated)] p-4 mb-3">
             <h3 className="text-sm font-medium text-[var(--text)] mb-2">{t("impactAnalysis")}</h3>
             <div className="mb-3">
-              <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">Changed files</div>
+              <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("changedFiles")}</div>
               <div className="flex flex-wrap gap-1">
                 {impactResult.changedFiles.map((f) => (
-                  <span key={f} className="px-2 py-0.5 rounded bg-amber-900/40 text-amber-300 text-xs font-mono">{f.replace("src/", "")}</span>
+                  <span key={f} className="px-2 py-0.5 rounded theme-banner-warning text-xs font-mono">{f.replace("src/", "")}</span>
                 ))}
               </div>
             </div>
@@ -378,7 +378,7 @@ export function TraceabilityView() {
               <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("affectedFeatures")} ({impactResult.affectedFeatures.length})</div>
               <div className="flex flex-wrap gap-1">
                 {impactResult.affectedFeatures.map((f) => (
-                  <span key={f} className="px-2 py-0.5 rounded bg-blue-900/40 text-blue-300 text-xs">{f}</span>
+                  <span key={f} className="px-2 py-0.5 rounded theme-banner-info text-xs">{f}</span>
                 ))}
               </div>
             </div>
@@ -387,7 +387,7 @@ export function TraceabilityView() {
                 <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("indirectlyAffected")} ({impactResult.indirectlyAffectedFeatures.length})</div>
                 <div className="flex flex-wrap gap-1">
                   {impactResult.indirectlyAffectedFeatures.map((f) => (
-                    <span key={f} className="px-2 py-0.5 rounded bg-purple-900/40 text-purple-300 text-xs">{f}</span>
+                    <span key={f} className="px-2 py-0.5 rounded theme-banner-info text-xs">{f}</span>
                   ))}
                 </div>
               </div>
@@ -396,7 +396,7 @@ export function TraceabilityView() {
               <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("affectedTests")} ({impactResult.affectedCases.length})</div>
               <div className="flex flex-wrap gap-1">
                 {impactResult.affectedCases.map((c) => (
-                  <span key={c} className="px-2 py-0.5 rounded bg-green-900/40 text-green-300 text-xs">{c.replace("TestLib/", "")}</span>
+                  <span key={c} className="px-2 py-0.5 rounded theme-banner-success text-xs">{c.replace("TestLib/", "")}</span>
                 ))}
               </div>
             </div>
@@ -407,35 +407,35 @@ export function TraceabilityView() {
       {viewMode === "coverage" && coverageResult && (
         <div className="flex-1 overflow-auto">
           <div className="flex flex-wrap gap-3 mb-4">
-            <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] px-4 py-2 min-w-[100px]">
-              <div className="text-[10px] uppercase text-[var(--text-muted)]">Features</div>
+            <div className="rounded-lg border border-border bg-[var(--surface-elevated)] px-4 py-2 min-w-[100px]">
+              <div className="text-[10px] uppercase text-[var(--text-muted)]">{t("linkedFeatures")}</div>
               <div className="text-lg font-semibold text-[var(--text)]">{coverageResult.coveredFeatures}/{coverageResult.totalFeatures}</div>
             </div>
-            <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] px-4 py-2 min-w-[100px]">
-              <div className="text-[10px] uppercase text-[var(--text-muted)]">Sources</div>
+            <div className="rounded-lg border border-border bg-[var(--surface-elevated)] px-4 py-2 min-w-[100px]">
+              <div className="text-[10px] uppercase text-[var(--text-muted)]">{t("linkedSources")}</div>
               <div className="text-lg font-semibold text-[var(--text)]">{coverageResult.coveredSources}/{coverageResult.totalSources}</div>
             </div>
-            <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] px-4 py-2 min-w-[100px]">
-              <div className="text-[10px] uppercase text-[var(--text-muted)]">Cases</div>
+            <div className="rounded-lg border border-border bg-[var(--surface-elevated)] px-4 py-2 min-w-[100px]">
+              <div className="text-[10px] uppercase text-[var(--text-muted)]">{t("testCases")}</div>
               <div className="text-lg font-semibold text-[var(--text)]">{coverageResult.totalCases}</div>
             </div>
           </div>
           {coverageResult.untestedFeatures.length > 0 && (
-            <div className="rounded-lg border border-amber-700/50 bg-amber-900/10 p-4 mb-3">
-              <div className="text-xs font-medium text-amber-300 mb-2">{t("untestedFeatures")} ({coverageResult.untestedFeatures.length})</div>
+            <div className="rounded-lg border theme-banner-warning p-4 mb-3">
+              <div className="text-xs font-medium mb-2">{t("untestedFeatures")} ({coverageResult.untestedFeatures.length})</div>
               <div className="flex flex-wrap gap-1">
                 {coverageResult.untestedFeatures.map((f) => (
-                  <span key={f} className="px-2 py-0.5 rounded bg-amber-900/40 text-amber-300 text-xs">{f}</span>
+                  <span key={f} className="px-2 py-0.5 rounded theme-banner-warning text-xs">{f}</span>
                 ))}
               </div>
             </div>
           )}
           {coverageResult.uncoveredSources.length > 0 && (
-            <div className="rounded-lg border border-red-700/50 bg-red-900/10 p-4">
+            <div className="rounded-lg border theme-banner-danger p-4">
               <div className="text-xs font-medium text-red-300 mb-2">{t("uncoveredSources")} ({coverageResult.uncoveredSources.length})</div>
               <div className="flex flex-wrap gap-1">
                 {coverageResult.uncoveredSources.map((s) => (
-                  <span key={s} className="px-2 py-0.5 rounded bg-red-900/40 text-red-300 text-xs font-mono">{s.replace("src/", "")}</span>
+                  <span key={s} className="px-2 py-0.5 rounded theme-banner-danger text-xs font-mono">{s.replace("src/", "")}</span>
                 ))}
               </div>
             </div>
@@ -446,19 +446,19 @@ export function TraceabilityView() {
       {viewMode === "sync" && (
         <div className="flex-1 overflow-auto">
           {syncResult && (syncResult.newSources.length + syncResult.removedSources.length + syncResult.newCases.length + syncResult.removedCases.length) === 0 ? (
-            <div className="rounded-lg border border-green-700/50 bg-green-900/10 p-4">
-              <div className="text-xs font-medium text-green-300">{t("noSyncIssues")}</div>
+            <div className="rounded-lg border theme-banner-success p-4">
+              <div className="text-xs font-medium">{t("noSyncIssues")}</div>
             </div>
           ) : syncResult ? (
             <div className="flex flex-col gap-3">
               {syncResult.newSources.length > 0 && (
-                <div className="rounded-lg border border-blue-700/50 bg-blue-900/10 p-4">
-                  <div className="text-xs font-medium text-blue-300 mb-2">{t("newSources")} ({syncResult.newSources.length})</div>
+                <div className="rounded-lg border theme-banner-info p-4">
+                  <div className="text-xs font-medium mb-2">{t("newSources")} ({syncResult.newSources.length})</div>
                   <div className="flex flex-col gap-1">
                     {syncResult.newSources.map((s) => {
                       const key = "src:" + s;
                       return (
-                        <label key={s} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-white/5 rounded px-1 py-0.5">
+                        <label key={s} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-[var(--surface-hover)] rounded px-1 py-0.5">
                           <input type="checkbox" checked={syncChecked.has(key)} onChange={() => toggleSyncItem(key)} className="accent-primary" />
                           <span className="font-mono">{s}</span>
                         </label>
@@ -468,15 +468,15 @@ export function TraceabilityView() {
                 </div>
               )}
               {syncResult.removedSources.length > 0 && (
-                <div className="rounded-lg border border-red-700/50 bg-red-900/10 p-4">
-                  <div className="text-xs font-medium text-red-300 mb-2">{t("removedSources")} ({syncResult.removedSources.length})</div>
+                <div className="rounded-lg border theme-banner-danger p-4">
+                  <div className="text-xs font-medium mb-2">{t("removedSources")} ({syncResult.removedSources.length})</div>
                   <div className="flex flex-col gap-1">
                     {syncResult.removedSources.map((s) => {
                       const key = "rsrc:" + s;
                       return (
-                        <label key={s} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-white/5 rounded px-1 py-0.5">
+                        <label key={s} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-[var(--surface-hover)] rounded px-1 py-0.5">
                           <input type="checkbox" checked={syncChecked.has(key)} onChange={() => toggleSyncItem(key)} className="accent-primary" />
-                          <span className="font-mono line-through text-red-400">{s}</span>
+                          <span className="font-mono line-through text-[var(--danger-text)]">{s}</span>
                         </label>
                       );
                     })}
@@ -484,13 +484,13 @@ export function TraceabilityView() {
                 </div>
               )}
               {syncResult.newCases.length > 0 && (
-                <div className="rounded-lg border border-blue-700/50 bg-blue-900/10 p-4">
-                  <div className="text-xs font-medium text-blue-300 mb-2">{t("newCases")} ({syncResult.newCases.length})</div>
+                <div className="rounded-lg border theme-banner-info p-4">
+                  <div className="text-xs font-medium mb-2">{t("newCases")} ({syncResult.newCases.length})</div>
                   <div className="flex flex-col gap-1">
                     {syncResult.newCases.map((c) => {
                       const key = "case:" + c;
                       return (
-                        <label key={c} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-white/5 rounded px-1 py-0.5">
+                        <label key={c} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-[var(--surface-hover)] rounded px-1 py-0.5">
                           <input type="checkbox" checked={syncChecked.has(key)} onChange={() => toggleSyncItem(key)} className="accent-primary" />
                           <span>{c}</span>
                         </label>
@@ -500,15 +500,15 @@ export function TraceabilityView() {
                 </div>
               )}
               {syncResult.removedCases.length > 0 && (
-                <div className="rounded-lg border border-red-700/50 bg-red-900/10 p-4">
-                  <div className="text-xs font-medium text-red-300 mb-2">{t("removedCases")} ({syncResult.removedCases.length})</div>
+                <div className="rounded-lg border theme-banner-danger p-4">
+                  <div className="text-xs font-medium mb-2">{t("removedCases")} ({syncResult.removedCases.length})</div>
                   <div className="flex flex-col gap-1">
                     {syncResult.removedCases.map((c) => {
                       const key = "rcase:" + c;
                       return (
-                        <label key={c} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-white/5 rounded px-1 py-0.5">
+                        <label key={c} className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer hover:bg-[var(--surface-hover)] rounded px-1 py-0.5">
                           <input type="checkbox" checked={syncChecked.has(key)} onChange={() => toggleSyncItem(key)} className="accent-primary" />
-                          <span className="line-through text-red-400">{c}</span>
+                          <span className="line-through text-[var(--danger-text)]">{c}</span>
                         </label>
                       );
                     })}
@@ -537,17 +537,17 @@ export function TraceabilityView() {
       {viewMode === "validate" && (
         <div className="flex-1 overflow-auto">
           {validationResult && validationResult.errors.length === 0 ? (
-            <div className="rounded-lg border border-green-700/50 bg-green-900/10 p-4">
-              <div className="text-xs font-medium text-green-300">{t("noValidationErrors")}</div>
+            <div className="rounded-lg border theme-banner-success p-4">
+              <div className="text-xs font-medium">{t("noValidationErrors")}</div>
             </div>
           ) : validationResult ? (
-            <div className="rounded-lg border border-red-700/50 bg-red-900/10 p-4">
-              <div className="text-xs font-medium text-red-300 mb-2">{t("validationErrors")} ({validationResult.errors.length})</div>
+            <div className="rounded-lg border theme-banner-danger p-4">
+              <div className="text-xs font-medium mb-2">{t("validationErrors")} ({validationResult.errors.length})</div>
               <div className="flex flex-col gap-1.5">
                 {validationResult.errors.map((e, i) => (
                   <div key={i} className="flex items-start gap-2 text-xs">
                     <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-mono ${
-                      e.kind === "orphan_feature" ? "bg-amber-900/40 text-amber-300" : "bg-red-900/40 text-red-300"
+                      e.kind === "orphan_feature" ? "theme-banner-warning" : "theme-banner-danger"
                     }`}>
                       {e.kind}
                     </span>
@@ -567,17 +567,17 @@ export function TraceabilityView() {
           {gitImpactResult ? (
             <div className="flex flex-col gap-3">
               {gitImpactResult.impact.changedFiles.length === 0 ? (
-                <div className="rounded-lg border border-green-700/50 bg-green-900/10 p-4">
-                  <div className="text-xs font-medium text-green-300">No changed source files detected in git.</div>
+                <div className="rounded-lg border theme-banner-success p-4">
+                  <div className="text-xs font-medium">{t("noChangedSourceFilesInGit")}</div>
                 </div>
               ) : (
                 <>
-                  <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] p-4">
+                  <div className="rounded-lg border border-border bg-[var(--surface-elevated)] p-4">
                     <div className="mb-3">
-                      <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">Changed files ({gitImpactResult.impact.changedFiles.length})</div>
+                      <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("changedFiles")} ({gitImpactResult.impact.changedFiles.length})</div>
                       <div className="flex flex-wrap gap-1">
                         {gitImpactResult.impact.changedFiles.map((f) => (
-                          <span key={f} className="px-2 py-0.5 rounded bg-amber-900/40 text-amber-300 text-xs font-mono">{f.replace("src/", "")}</span>
+                          <span key={f} className="px-2 py-0.5 rounded theme-banner-warning text-xs font-mono">{f.replace("src/", "")}</span>
                         ))}
                       </div>
                     </div>
@@ -586,7 +586,7 @@ export function TraceabilityView() {
                         <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("affectedFeatures")} ({gitImpactResult.impact.affectedFeatures.length})</div>
                         <div className="flex flex-wrap gap-1">
                           {gitImpactResult.impact.affectedFeatures.map((f) => (
-                            <span key={f} className="px-2 py-0.5 rounded bg-blue-900/40 text-blue-300 text-xs">{f}</span>
+                            <span key={f} className="px-2 py-0.5 rounded theme-banner-info text-xs">{f}</span>
                           ))}
                         </div>
                       </div>
@@ -596,28 +596,28 @@ export function TraceabilityView() {
                         <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("indirectlyAffected")} ({gitImpactResult.impact.indirectlyAffectedFeatures.length})</div>
                         <div className="flex flex-wrap gap-1">
                           {gitImpactResult.impact.indirectlyAffectedFeatures.map((f) => (
-                            <span key={f} className="px-2 py-0.5 rounded bg-purple-900/40 text-purple-300 text-xs">{f}</span>
+                            <span key={f} className="px-2 py-0.5 rounded theme-banner-info text-xs">{f}</span>
                           ))}
                         </div>
                       </div>
                     )}
                   </div>
                   {gitImpactResult.suggestedCases.length > 0 && (
-                    <div className="rounded-lg border border-green-700/50 bg-green-900/10 p-4">
-                      <div className="text-xs font-medium text-green-300 mb-2">{t("suggestedCases")} ({gitImpactResult.suggestedCases.length})</div>
+                    <div className="rounded-lg border theme-banner-success p-4">
+                      <div className="text-xs font-medium mb-2">{t("suggestedCases")} ({gitImpactResult.suggestedCases.length})</div>
                       <div className="flex flex-wrap gap-1">
                         {gitImpactResult.suggestedCases.map((c) => (
-                          <span key={c} className="px-2 py-0.5 rounded bg-green-900/40 text-green-300 text-xs">{c.replace("TestLib/", "")}</span>
+                          <span key={c} className="px-2 py-0.5 rounded theme-banner-success text-xs">{c.replace("TestLib/", "")}</span>
                         ))}
                       </div>
                     </div>
                   )}
                   {gitImpactResult.unregisteredChangedSources.length > 0 && (
-                    <div className="rounded-lg border border-amber-700/50 bg-amber-900/10 p-4">
-                      <div className="text-xs font-medium text-amber-300 mb-2">{t("unregisteredChanged")} ({gitImpactResult.unregisteredChangedSources.length})</div>
+                    <div className="rounded-lg border theme-banner-warning p-4">
+                      <div className="text-xs font-medium mb-2">{t("unregisteredChanged")} ({gitImpactResult.unregisteredChangedSources.length})</div>
                       <div className="flex flex-wrap gap-1">
                         {gitImpactResult.unregisteredChangedSources.map((s) => (
-                          <span key={s} className="px-2 py-0.5 rounded bg-amber-900/40 text-amber-300 text-xs font-mono">{s}</span>
+                          <span key={s} className="px-2 py-0.5 rounded theme-banner-warning text-xs font-mono">{s}</span>
                         ))}
                       </div>
                     </div>

@@ -2,12 +2,12 @@ import { useState, useCallback, useEffect } from "react";
 import { gitIsRepo, gitStatus, gitStage, gitUnstage, gitCommit, gitInit } from "../api/tauri";
 
 export interface GitStatus {
-  branch: string;
-  staged: string[];
-  modified: string[];
-  deleted: string[];
-  untracked: string[];
-  renamed: { from: string; to: string }[];
+  branch?: string;
+  staged?: string[];
+  modified?: string[];
+  deleted?: string[];
+  untracked?: string[];
+  renamed?: { from: string; to: string }[];
 }
 
 export interface GitLogEntry {
@@ -117,7 +117,7 @@ export function useGit(projectDir: string | null, onRefreshStatus?: () => void) 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        if (status && commitMessage.trim() && status.staged.length > 0) commit();
+        if (status && commitMessage.trim() && (status.staged?.length ?? 0) > 0) commit();
       }
     };
     window.addEventListener("keydown", onKey);

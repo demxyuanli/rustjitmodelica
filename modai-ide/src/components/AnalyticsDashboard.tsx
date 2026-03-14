@@ -67,30 +67,30 @@ export function AnalyticsDashboard() {
 
       {/* Summary cards */}
       <div className="flex flex-wrap gap-3 mb-6">
-        <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] px-5 py-3 min-w-[120px]">
+        <div className="rounded-lg border border-border bg-[var(--surface-elevated)] px-5 py-3 min-w-[120px]">
           <div className="text-[10px] uppercase text-[var(--text-muted)]">{t("totalIterations")}</div>
           <div className="text-2xl font-bold text-[var(--text)]">{stats.total}</div>
         </div>
-        <div className="rounded-lg border border-green-700/50 bg-green-900/15 px-5 py-3 min-w-[120px]">
-          <div className="text-[10px] uppercase text-green-400/80">{t("successRate")}</div>
-          <div className="text-2xl font-bold text-green-300">{stats.rate}%</div>
-          <div className="text-[10px] text-green-400/60">{stats.passed} passed / {stats.failed} failed</div>
+        <div className="rounded-lg border theme-banner-success px-5 py-3 min-w-[120px]">
+          <div className="text-[10px] uppercase opacity-80">{t("successRate")}</div>
+          <div className="text-2xl font-bold">{stats.rate}%</div>
+          <div className="text-[10px] opacity-80">{stats.passed} passed / {stats.failed} failed</div>
         </div>
-        <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] px-5 py-3 min-w-[120px]">
+        <div className="rounded-lg border border-border bg-[var(--surface-elevated)] px-5 py-3 min-w-[120px]">
           <div className="text-[10px] uppercase text-[var(--text-muted)]">{t("avgDuration")}</div>
           <div className="text-2xl font-bold text-[var(--text)]">{stats.avgDuration > 0 ? `${(stats.avgDuration / 1000).toFixed(1)}s` : "--"}</div>
         </div>
         {coverage && (
           <>
-            <div className="rounded-lg border border-blue-700/50 bg-blue-900/15 px-5 py-3 min-w-[120px]">
-              <div className="text-[10px] uppercase text-blue-400/80">Feature coverage</div>
-              <div className="text-2xl font-bold text-blue-300">{featureCoveragePercent}%</div>
-              <div className="text-[10px] text-blue-400/60">{coverage.coveredFeatures}/{coverage.totalFeatures}</div>
+            <div className="rounded-lg border theme-banner-info px-5 py-3 min-w-[120px]">
+              <div className="text-[10px] uppercase opacity-80">{t("featureCoverage")}</div>
+              <div className="text-2xl font-bold">{featureCoveragePercent}%</div>
+              <div className="text-[10px] opacity-80">{coverage.coveredFeatures}/{coverage.totalFeatures}</div>
             </div>
-            <div className="rounded-lg border border-amber-700/50 bg-amber-900/15 px-5 py-3 min-w-[120px]">
-              <div className="text-[10px] uppercase text-amber-400/80">Source coverage</div>
-              <div className="text-2xl font-bold text-amber-300">{sourceCoveragePercent}%</div>
-              <div className="text-[10px] text-amber-400/60">{coverage.coveredSources}/{coverage.totalSources}</div>
+            <div className="rounded-lg border theme-banner-warning px-5 py-3 min-w-[120px]">
+              <div className="text-[10px] uppercase opacity-80">{t("sourceCoverage")}</div>
+              <div className="text-2xl font-bold">{sourceCoveragePercent}%</div>
+              <div className="text-[10px] opacity-80">{coverage.coveredSources}/{coverage.totalSources}</div>
             </div>
           </>
         )}
@@ -98,8 +98,8 @@ export function AnalyticsDashboard() {
 
       {/* Timeline bar chart */}
       {successByWeek.length > 0 && (
-        <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] p-4 mb-6">
-          <h3 className="text-sm font-medium text-[var(--text)] mb-3">Iteration history by date</h3>
+        <div className="rounded-lg border border-border bg-[var(--surface-elevated)] p-4 mb-6">
+          <h3 className="text-sm font-medium text-[var(--text)] mb-3">{t("iterationHistoryByDate")}</h3>
           <div className="flex items-end gap-1 h-24">
             {successByWeek.map(([date, data]) => {
               const total = data.passed + data.failed;
@@ -122,10 +122,10 @@ export function AnalyticsDashboard() {
       )}
 
       {/* Recent timeline */}
-      <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] p-4 mb-6">
-        <h3 className="text-sm font-medium text-[var(--text)] mb-3">Recent iterations</h3>
+        <div className="rounded-lg border border-border bg-[var(--surface-elevated)] p-4 mb-6">
+        <h3 className="text-sm font-medium text-[var(--text)] mb-3">{t("recentIterations")}</h3>
         {recentTimeline.length === 0 ? (
-          <div className="text-xs text-[var(--text-muted)]">No iterations yet</div>
+          <div className="text-xs text-[var(--text-muted)]">{t("noIterationsYet")}</div>
         ) : (
           <div className="space-y-1">
             {recentTimeline.map((r) => (
@@ -145,14 +145,14 @@ export function AnalyticsDashboard() {
 
       {/* Coverage gaps */}
       {coverage && (coverage.untestedFeatures.length > 0 || coverage.uncoveredSources.length > 0) && (
-        <div className="rounded-lg border border-amber-700/50 bg-amber-900/10 p-4">
-          <h3 className="text-sm font-medium text-amber-300 mb-2">{t("coverageGaps")}</h3>
+        <div className="rounded-lg border theme-banner-warning p-4">
+          <h3 className="text-sm font-medium mb-2">{t("coverageGaps")}</h3>
           {coverage.untestedFeatures.length > 0 && (
             <div className="mb-2">
               <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("untestedFeatures")}</div>
               <div className="flex flex-wrap gap-1">
                 {coverage.untestedFeatures.map((f) => (
-                  <span key={f} className="px-2 py-0.5 rounded bg-amber-900/40 text-amber-300 text-xs">{f}</span>
+                  <span key={f} className="px-2 py-0.5 rounded theme-banner-warning text-xs">{f}</span>
                 ))}
               </div>
             </div>
@@ -162,7 +162,7 @@ export function AnalyticsDashboard() {
               <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("uncoveredSources")}</div>
               <div className="flex flex-wrap gap-1">
                 {coverage.uncoveredSources.map((s) => (
-                  <span key={s} className="px-2 py-0.5 rounded bg-red-900/40 text-red-300 text-xs font-mono">{s.replace("src/", "")}</span>
+                  <span key={s} className="px-2 py-0.5 rounded theme-banner-danger text-xs font-mono">{s.replace("src/", "")}</span>
                 ))}
               </div>
             </div>

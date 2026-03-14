@@ -1,14 +1,16 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type monaco from "monaco-editor";
 import { t } from "../i18n";
-import { EditorTabBar } from "./EditorTabBar";
+import { EditorTabBar, type EditorTab } from "./EditorTabBar";
 import { CodeEditor } from "./CodeEditor";
 import { EmptyEditorState } from "./EmptyEditorState";
 import { DiagramView } from "./DiagramView";
+import { IconButton } from "./IconButton";
+import { AppIcon } from "./Icon";
 import type { JitValidateResult } from "../types";
 
 export interface EditorGroupState {
-  tabs: { path: string; dirty: boolean }[];
+  tabs: EditorTab[];
   activeIndex: number;
 }
 
@@ -36,6 +38,14 @@ interface EditorGroupColumnProps {
   jitResult: JitValidateResult | null;
   onCursorPositionChange?: (lineNumber: number, column: number) => void;
   onSelectionChange?: (params: { path: string | null; selectedText: string | null }) => void;
+  viewModeRequest?: "diagramReadOnly" | null;
+  onViewModeRequestConsumed?: () => void;
+  focusSymbolQuery?: string | null;
+  onRequestWorkbenchView?: (view: "simulation" | "analysis") => void;
+  onViewModeChange?: (mode: "code" | "icon" | "diagram" | "diagramReadOnly") => void;
+  onNavigateToType?: (typeName: string, libraryId?: string) => void;
+  libraryRefreshToken?: number;
+  theme?: "dark" | "light";
 }
 
 const DEFAULT_MODEL = `model BouncingBall
@@ -77,15 +87,35 @@ export function EditorGroupColumn({
   jitResult,
   onCursorPositionChange,
   onSelectionChange,
+  viewModeRequest,
+  onViewModeRequestConsumed,
+  focusSymbolQuery,
+  onRequestWorkbenchView,
+  onViewModeChange,
+  onNavigateToType,
+  libraryRefreshToken = 0,
+  theme = "dark",
 }: EditorGroupColumnProps) {
-  const groupPath = group.tabs[group.activeIndex]?.path ?? null;
-  const groupCode = groupPath
-    ? (contentByPath[groupPath.replace(/\\/g, "/")] ?? "")
+  const activeTab = group.tabs[group.activeIndex] ?? null;
+  const groupPath = activeTab?.path ?? null;
+  const contentKey = activeTab?.projectPath?.replace(/\\/g, "/") ?? activeTab?.id ?? null;
+  const groupCode = contentKey
+    ? (contentByPath[contentKey] ?? "")
     : DEFAULT_MODEL;
 
   const hasTabs = group.tabs.length > 0;
   const isMoFile = groupPath != null && /\.mo$/i.test(groupPath);
-  const [viewMode, setViewMode] = useState<"code" | "diagram">("code");
+  const tabModelName = activeTab?.modelName ?? (activeTab?.projectPath ? pathToModelName(activeTab.projectPath) : "BouncingBall");
+  const [viewMode, setViewMode] = useState<"code" | "icon" | "diagram" | "diagramReadOnly">("code");
+  const diagramReadOnly = Boolean(activeTab?.readOnly) || viewMode === "diagramReadOnly";
+
+  useEffect(() => {
+    if (viewModeRequest === "diagramReadOnly" && isMoFile) {
+      setViewMode("diagramReadOnly");
+      onViewModeChange?.("diagramReadOnly");
+      onViewModeRequestConsumed?.();
+    }
+  }, [viewModeRequest, isMoFile, onViewModeChange, onViewModeRequestConsumed]);
 
   return (
     <div
@@ -106,83 +136,163 @@ export function EditorGroupColumn({
           onCloseTab={onCloseTab}
         />
         {isMoFile && (
-          <div className="flex rounded border border-[var(--border)] overflow-hidden shrink-0" role="group" aria-label="View mode">
-            <button
-              type="button"
-              className={`px-2 py-1 text-xs font-medium ${viewMode === "code" ? "bg-primary text-white" : "bg-transparent text-[var(--text-muted)] hover:text-[var(--text)]"}`}
+          <div className="flex rounded border border-[var(--border)] overflow-hidden shrink-0" role="group" aria-label={t("viewMode")}>
+            <IconButton
+              icon={<span className="text-[10px] font-semibold" aria-hidden="true">&lt;/&gt;</span>}
+              variant="tab"
+              size="xs"
+              active={viewMode === "code"}
               onClick={(e) => {
                 e.stopPropagation();
                 setViewMode("code");
+                onViewModeChange?.("code");
               }}
-              aria-pressed={viewMode === "code"}
-            >
-              {t("viewCode")}
-            </button>
-            <button
-              type="button"
-              className={`px-2 py-1 text-xs font-medium ${viewMode === "diagram" ? "bg-primary text-white" : "bg-transparent text-[var(--text-muted)] hover:text-[var(--text)]"}`}
+              title={t("viewCode")}
+              aria-label={t("viewCode")}
+            />
+            <IconButton
+              icon={
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                  <circle cx="12" cy="12" r="6" />
+                  <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+                </svg>
+              }
+              variant="tab"
+              size="xs"
+              active={viewMode === "icon"}
+              onClick={(e) => {
+                e.stopPropagation();
+                setViewMode("icon");
+                onViewModeChange?.("icon");
+              }}
+              title={t("viewIcon")}
+              aria-label={t("viewIcon")}
+            />
+            <IconButton
+              icon={
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                  <rect x="4" y="5" width="6" height="6" rx="1" />
+                  <rect x="14" y="5" width="6" height="6" rx="1" />
+                  <rect x="9" y="13" width="6" height="6" rx="1" />
+                  <path d="M10 8h4M12 11v2" />
+                </svg>
+              }
+              variant="tab"
+              size="xs"
+              active={viewMode === "diagram"}
               onClick={(e) => {
                 e.stopPropagation();
                 setViewMode("diagram");
+                onViewModeChange?.("diagram");
               }}
-              aria-pressed={viewMode === "diagram"}
-            >
-              {t("viewDiagram")}
-            </button>
+              title={t("viewDiagram")}
+              aria-label={t("viewDiagram")}
+            />
+            <IconButton
+              icon={
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                  <rect x="4" y="5" width="6" height="6" rx="1" />
+                  <rect x="14" y="5" width="6" height="6" rx="1" />
+                  <rect x="9" y="13" width="6" height="6" rx="1" />
+                  <path d="M16 15.5a1.5 1.5 0 1 0-3 0v1.5h3z" />
+                </svg>
+              }
+              variant="tab"
+              size="xs"
+              active={viewMode === "diagramReadOnly"}
+              onClick={(e) => {
+                e.stopPropagation();
+                setViewMode("diagramReadOnly");
+                onViewModeChange?.("diagramReadOnly");
+              }}
+              title={t("viewDiagramReadOnly")}
+              aria-label={t("viewDiagramReadOnly")}
+            />
+            <IconButton
+              icon={<AppIcon name="run" aria-hidden="true" />}
+              variant="tab"
+              size="xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRequestWorkbenchView?.("simulation");
+              }}
+              title={t("run")}
+              aria-label={t("run")}
+            />
+            <IconButton
+              icon={<AppIcon name="link" aria-hidden="true" />}
+              variant="tab"
+              size="xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRequestWorkbenchView?.("analysis");
+              }}
+              title={t("tabDependencies")}
+              aria-label={t("tabDependencies")}
+            />
           </div>
         )}
         {showSplitButton && (
-          <button
-            type="button"
-            className="shrink-0 px-2 py-1 text-xs text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text)]"
+          <IconButton
+            icon={<AppIcon name="columns" aria-hidden="true" />}
+            variant="ghost"
+            size="xs"
+            className="shrink-0"
             onClick={(e) => {
               e.stopPropagation();
               onSplit();
             }}
             title={t("splitEditor")}
-          >
-            {t("splitEditor")}
-          </button>
+            aria-label={t("splitEditor")}
+          />
         )}
         {showCloseSplitButton && (
-          <button
-            type="button"
-            className="shrink-0 px-2 py-1 text-xs text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text)]"
+          <IconButton
+            icon={<AppIcon name="close" aria-hidden="true" />}
+            variant="ghost"
+            size="xs"
+            className="shrink-0"
             onClick={(e) => {
               e.stopPropagation();
               onUnsplit();
             }}
             title={t("closeSplit")}
-          >
-            ×
-          </button>
+            aria-label={t("closeSplit")}
+          />
         )}
       </div>
       <div className="editor-group-body flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden" onClick={onFocus}>
         {!hasTabs ? (
           <EmptyEditorState hasProject={!!projectDir} isSecondGroup={groupIndex === 1} />
-        ) : viewMode === "diagram" && isMoFile ? (
+        ) : (viewMode === "diagram" || viewMode === "diagramReadOnly" || viewMode === "icon") && isMoFile ? (
           <DiagramView
             source={groupCode}
             projectDir={projectDir}
-            relativeFilePath={groupPath != null ? groupPath.replace(/\\/g, "/") : null}
-            onContentChange={onContentChange}
-            readOnly={false}
+            relativeFilePath={activeTab?.projectPath != null ? activeTab.projectPath.replace(/\\/g, "/") : null}
+            onContentChange={!diagramReadOnly ? onContentChange : undefined}
+            readOnly={diagramReadOnly}
+            mode={viewMode === "icon" ? "icon" : "diagram"}
+            focusSymbolQuery={focusSymbolQuery}
+            onNavigateToType={onNavigateToType}
+            libraryRefreshToken={libraryRefreshToken}
           />
         ) : (
           <CodeEditor
             value={groupCode}
             onChange={onContentChange}
-            modelName={isFocused ? modelName : (groupPath ? pathToModelName(groupPath) : "BouncingBall")}
-            onModelNameChange={isFocused ? onModelNameChange : () => {}}
+            modelName={isFocused ? modelName : tabModelName}
+            onModelNameChange={isFocused && !activeTab?.readOnly ? onModelNameChange : () => {}}
+            modelNameReadOnly={Boolean(activeTab?.readOnly)}
             jitResult={isFocused ? jitResult : null}
             editorRef={editorRef}
             monacoRef={monacoRef}
             onCursorPositionChange={isFocused ? onCursorPositionChange : undefined}
-            openFilePath={groupPath}
-            projectDir={projectDir}
-            onSave={onSave}
+            openFilePath={activeTab?.id ?? groupPath}
+            projectDir={activeTab?.projectPath ? projectDir : null}
+            onSave={activeTab?.readOnly ? undefined : onSave}
             onSelectionChange={isFocused ? onSelectionChange : undefined}
+            theme={theme}
+            readOnly={Boolean(activeTab?.readOnly)}
           />
         )}
       </div>

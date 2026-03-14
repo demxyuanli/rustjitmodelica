@@ -1,39 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ReactFlow,
-  ReactFlowProvider,
-  useNodesState,
-  useEdgesState,
-  addEdge,
-  useReactFlow,
-  type Connection,
-  type Edge,
-  type Node,
-  type NodeProps,
-  Handle,
-  Position,
-  Background,
-  Controls,
-  MiniMap,
-  Panel,
-  type EdgeProps,
-  BaseEdge,
-} from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { addEdge, type Connection, type Edge, type Node, useEdgesState, useNodesState } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import {
   type AnnotationPoint,
+  type GraphicItem,
   type IconDiagramAnnotation,
   type LineAnnotation,
-  IconSvg,
-  connectorHandleStyle,
-  DEFAULT_ICON_SIZE,
 } from "./DiagramSvgRenderer";
-
-// ---------------------------------------------------------------------------
-// Types matching enriched backend DiagramModel
-// ---------------------------------------------------------------------------
+import { applyGraphicalDocumentEdits, getGraphicalDocumentFromSource } from "../api/tauri";
+import type { GraphicalDocumentModel } from "../types";
+import { GraphicalCanvas, type GraphicalMessage } from "./GraphicalCanvas";
+import { decodeModelicaDragPayload, MODELICA_DRAG_TYPE } from "./LibrariesBrowser";
+import { DiagramEditorView, type DiagramNodeData } from "./DiagramEditorView";
+import { IconEditorView } from "./IconEditorView";
 
 export interface LayoutPoint {
   x: number;
@@ -60,6 +40,7 @@ interface ParamValue {
 interface ComponentData {
   name: string;
   typeName: string;
+  libraryId?: string;
   placement?: PlacementData;
   icon?: IconDiagramAnnotation;
   rotation?: number;
@@ -76,7 +57,9 @@ interface ConnectionData {
   line?: LineAnnotation;
 }
 
-export interface DiagramModel {
+type DiagramDocument = GraphicalDocumentModel<IconDiagramAnnotation, ComponentData, ConnectionData>;
+
+interface DiagramModel {
   modelName: string;
   components: ComponentData[];
   connections: ConnectionData[];
@@ -85,148 +68,36 @@ export interface DiagramModel {
   iconAnnotation?: IconDiagramAnnotation;
 }
 
-// ---------------------------------------------------------------------------
-// Path utilities
-// ---------------------------------------------------------------------------
+const DEFAULT_HANDLE_ID = "__default__";
 
 function pathToNodeAndHandle(path: string): { nodeId: string; handleId: string } {
   const dot = path.indexOf(".");
-  if (dot < 0) return { nodeId: path, handleId: "p" };
+  if (dot < 0) return { nodeId: path, handleId: DEFAULT_HANDLE_ID };
   return { nodeId: path.slice(0, dot), handleId: path.slice(dot + 1) };
 }
 
 function nodeAndHandleToPath(nodeId: string, handleId: string): string {
-  if (handleId === "p" || !handleId) return nodeId;
+  if (handleId === DEFAULT_HANDLE_ID || !handleId) return nodeId;
   return `${nodeId}.${handleId}`;
 }
-
-// ---------------------------------------------------------------------------
-// Component Node (memoized)
-// ---------------------------------------------------------------------------
-
-type DiagramNodeData = {
-  typeName: string;
-  portHandles: string[];
-  icon?: IconDiagramAnnotation;
-  rotation?: number;
-  params?: ParamValue[];
-  connectorKind?: string;
-  onDoubleClick?: (typeName: string) => void;
-};
-
-const ComponentNode = React.memo(function ComponentNode(props: NodeProps<Node<DiagramNodeData>>) {
-  const { id, data, selected } = props;
-  const safeData = data ?? { typeName: "Block", portHandles: ["p"] };
-  const ports = safeData.portHandles?.length ? safeData.portHandles : ["p"];
-  const hasIcon = safeData.icon && safeData.icon.graphics && safeData.icon.graphics.length > 0;
-  const iconSize = DEFAULT_ICON_SIZE;
-
-  const paramStr = safeData.params
-    ?.filter((p) => p.value)
-    .map((p) => (p.name ? `${p.name}=${p.value}` : p.value))
-    .join(", ");
-
-  const portStyles = useMemo(
-    () =>
-      ports.map((_port: string, i: number) => {
-        const pct = ports.length === 1 ? 50 : 20 + (i * 60) / Math.max(1, ports.length - 1);
-        const base = connectorHandleStyle(safeData.connectorKind, "right");
-        const baseL = connectorHandleStyle(safeData.connectorKind, "left");
-        return {
-          pct,
-          right: { ...base, top: `${pct}%`, transform: "translateY(-50%)" } as React.CSSProperties,
-          left: { ...baseL, top: `${pct}%`, transform: "translateY(-50%)" } as React.CSSProperties,
-        };
-      }),
-    [ports.length, safeData.connectorKind]
-  );
-
-  return (
-    <div
-      className={`rounded border bg-[var(--bg-elevated)] border-[var(--border)] relative ${selected ? "ring-2 ring-primary" : ""}`}
-      style={{ minWidth: hasIcon ? iconSize + 16 : 80, padding: hasIcon ? 4 : "8px 12px" }}
-      onDoubleClick={() => safeData.onDoubleClick?.(safeData.typeName)}
-    >
-      {hasIcon ? (
-        <div className="flex flex-col items-center gap-0.5">
-          <IconSvg
-            icon={safeData.icon!}
-            instanceName={id}
-            rotation={safeData.rotation}
-            size={iconSize}
-          />
-          <div className="text-[9px] font-medium text-[var(--text)] text-center leading-tight truncate max-w-[60px]">
-            {id}
-          </div>
-          {paramStr && (
-            <div className="text-[8px] text-[var(--text-muted)] text-center truncate max-w-[70px]">
-              {paramStr}
-            </div>
-          )}
-        </div>
-      ) : (
-        <>
-          <div className="text-xs font-medium text-[var(--text)]">{id}</div>
-          <div className="text-[10px] text-[var(--text-muted)] truncate">{safeData.typeName}</div>
-          {paramStr && (
-            <div className="text-[9px] text-[var(--text-muted)] mt-0.5 truncate max-w-[100px]">
-              {paramStr}
-            </div>
-          )}
-        </>
-      )}
-      {ports.map((port: string, i: number) => (
-        <React.Fragment key={port}>
-          <Handle
-            type="source"
-            id={port}
-            position={Position.Right}
-            style={portStyles[i].right}
-          />
-          <Handle
-            type="target"
-            id={port}
-            position={Position.Left}
-            style={portStyles[i].left}
-          />
-        </React.Fragment>
-      ))}
-    </div>
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Polyline Edge (memoized)
-// ---------------------------------------------------------------------------
-
-const PolylineEdge = React.memo(function PolylineEdge(props: EdgeProps) {
-  const { sourceX, sourceY, targetX, targetY, style, markerEnd } = props;
-  const edgeData = (props as any).data as { linePoints?: AnnotationPoint[] } | undefined;
-
-  if (edgeData?.linePoints && edgeData.linePoints.length >= 2) {
-    const pts = edgeData.linePoints;
-    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-    return <BaseEdge path={d} style={style} markerEnd={markerEnd} />;
-  }
-
-  const midX = (sourceX + targetX) / 2;
-  const d = `M ${sourceX} ${sourceY} C ${midX} ${sourceY}, ${midX} ${targetY}, ${targetX} ${targetY}`;
-  return <BaseEdge path={d} style={style} markerEnd={markerEnd} />;
-});
-
-const nodeTypes = { component: ComponentNode as React.ComponentType<NodeProps<Node<DiagramNodeData>>> };
-const edgeTypes = { polyline: PolylineEdge };
-
-// ---------------------------------------------------------------------------
-// Conversion helpers
-// ---------------------------------------------------------------------------
 
 const GRID_GAP = 180;
 const ROW_GAP = 120;
 
+function documentToDiagram(document: DiagramDocument): DiagramModel {
+  return {
+    modelName: document.modelName,
+    components: document.components,
+    connections: document.connections,
+    layout: document.graphical.layout,
+    diagramAnnotation: document.graphical.diagramAnnotation,
+    iconAnnotation: document.graphical.iconAnnotation,
+  };
+}
+
 function diagramToFlow(
   diagram: DiagramModel,
-  onDoubleClick?: (typeName: string) => void
+  onDoubleClick?: (typeName: string, libraryId?: string) => void
 ): { nodes: Node<DiagramNodeData>[]; edges: Edge[] } {
   const portUsage: Record<string, Set<string>> = {};
   for (const c of diagram.connections) {
@@ -254,7 +125,7 @@ function diagramToFlow(
       position = { x: (i % 4) * GRID_GAP, y: Math.floor(i / 4) * ROW_GAP };
     }
 
-    const ports = portUsage[comp.name] ? Array.from(portUsage[comp.name]) : ["p"];
+    const ports = portUsage[comp.name] ? Array.from(portUsage[comp.name]) : [DEFAULT_HANDLE_ID];
 
     return {
       id: comp.name,
@@ -262,11 +133,14 @@ function diagramToFlow(
       position,
       data: {
         typeName: comp.typeName,
+        libraryId: comp.libraryId,
         portHandles: ports,
         icon: comp.icon,
         rotation: comp.rotation,
         params: comp.params,
         connectorKind: comp.connectorKind,
+        isInput: comp.isInput,
+        isOutput: comp.isOutput,
         onDoubleClick,
       },
     };
@@ -293,17 +167,31 @@ function flowToDiagram(
   nodes: Node<DiagramNodeData>[],
   edges: Edge[]
 ): {
-  components: { name: string; typeName: string }[];
-  connections: { from: string; to: string }[];
+  components: {
+    name: string;
+    typeName: string;
+    libraryId?: string;
+    params?: ParamValue[];
+    isInput?: boolean;
+    isOutput?: boolean;
+  }[];
+  connections: { from: string; to: string; line?: LineAnnotation }[];
   layout: Record<string, LayoutPoint>;
 } {
   const components = nodes.map((n) => ({
     name: n.id,
     typeName: (n.data?.typeName as string) || "Block",
+    libraryId: n.data?.libraryId as string | undefined,
+    params: n.data?.params,
+    isInput: Boolean(n.data?.isInput),
+    isOutput: Boolean(n.data?.isOutput),
   }));
   const connections = edges.map((e) => ({
-    from: nodeAndHandleToPath(e.source, e.sourceHandle ?? "p"),
-    to: nodeAndHandleToPath(e.target, e.targetHandle ?? "p"),
+    from: nodeAndHandleToPath(e.source, e.sourceHandle ?? DEFAULT_HANDLE_ID),
+    to: nodeAndHandleToPath(e.target, e.targetHandle ?? DEFAULT_HANDLE_ID),
+    line: (e.data as { linePoints?: AnnotationPoint[] } | undefined)?.linePoints
+      ? { points: (e.data as { linePoints?: AnnotationPoint[] }).linePoints ?? [] }
+      : undefined,
   }));
   const layout: Record<string, LayoutPoint> = {};
   nodes.forEach((n) => {
@@ -313,18 +201,13 @@ function flowToDiagram(
 }
 
 const DEBOUNCE_MS = 600;
-const FIT_VIEW_OPTIONS = { padding: 0.2 };
-
-export interface InstantiableClass {
-  name: string;
-  path?: string;
-}
 
 function uniqueInstanceName(typeName: string, existingIds: string[]): string {
-  const base =
-    typeName.length > 0
-      ? typeName[0].toLowerCase() + typeName.slice(1)
-      : "c";
+  const rawBase = typeName.split(".").pop() ?? typeName;
+  const sanitized = rawBase.replace(/[^A-Za-z0-9_]/g, "");
+  const base = sanitized.length > 0
+    ? sanitized[0].toLowerCase() + sanitized.slice(1)
+    : "c";
   const set = new Set(existingIds);
   if (!set.has(base)) return base;
   let i = 1;
@@ -338,7 +221,10 @@ export interface DiagramViewProps {
   relativeFilePath?: string | null;
   onContentChange?: (newSource: string) => void;
   readOnly?: boolean;
-  onNavigateToType?: (typeName: string) => void;
+  onNavigateToType?: (typeName: string, libraryId?: string) => void;
+  mode?: "diagram" | "icon";
+  focusSymbolQuery?: string | null;
+  libraryRefreshToken?: number;
 }
 
 export function DiagramView({
@@ -348,11 +234,15 @@ export function DiagramView({
   onContentChange,
   readOnly = false,
   onNavigateToType,
+  mode = "diagram",
+  focusSymbolQuery = null,
+  libraryRefreshToken = 0,
 }: DiagramViewProps) {
-  const [diagram, setDiagram] = useState<DiagramModel | null>(null);
+  const [document, setDocument] = useState<DiagramDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [conflictPending, setConflictPending] = useState<DiagramModel | null>(null);
+  const [conflictPending, setConflictPending] = useState<DiagramDocument | null>(null);
+  const [messages, setMessages] = useState<GraphicalMessage[]>([]);
 
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -364,8 +254,8 @@ export function DiagramView({
   onContentChangeRef.current = onContentChange;
 
   const handleDoubleClick = useCallback(
-    (typeName: string) => {
-      onNavigateToType?.(typeName);
+    (typeName: string, libraryId?: string) => {
+      onNavigateToType?.(typeName, libraryId);
     },
     [onNavigateToType]
   );
@@ -373,6 +263,7 @@ export function DiagramView({
   const handleDoubleClickRef = useRef(handleDoubleClick);
   handleDoubleClickRef.current = handleDoubleClick;
 
+  const diagram = useMemo(() => (document ? documentToDiagram(document) : null), [document]);
   const initial = useMemo(() => {
     const { nodes, edges } = diagramToFlow(
       diagram ?? { modelName: "", components: [], connections: [] },
@@ -381,24 +272,27 @@ export function DiagramView({
     return { nodes, edges };
   }, [!!diagram]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<DiagramNodeData>>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   const edgesRef = useRef(edges);
   edgesRef.current = edges;
+  const documentRef = useRef(document);
+  documentRef.current = document;
+  const [selectedGraphicIndex, setSelectedGraphicIndex] = useState(-1);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setConflictPending(null);
-    invoke<DiagramModel>("get_diagram_data_from_source", {
+    getGraphicalDocumentFromSource<IconDiagramAnnotation, ComponentData, ConnectionData>(
       source,
-      projectDir: projectDir ?? undefined,
-      relativePath: relativeFilePath ?? undefined,
-    })
+      projectDir,
+      relativeFilePath,
+    )
       .then((data) => {
         if (cancelled) return;
         const current = flowToDiagram(nodesRef.current, edgesRef.current);
@@ -421,15 +315,16 @@ export function DiagramView({
           );
         const inSync = sameComponents && sameConnections;
         if (!hasCurrentState || inSync) {
-          setDiagram(data);
-          const { nodes: n, edges: e } = diagramToFlow(data, handleDoubleClickRef.current);
+          setDocument(data);
+          setSelectedGraphicIndex(-1);
+          const { nodes: n, edges: e } = diagramToFlow(documentToDiagram(data), handleDoubleClickRef.current);
           setNodes(n);
           setEdges(e);
           setConflictPending(null);
           lastAppliedRef.current = JSON.stringify({
             components: data.components.map((c) => ({ name: c.name, typeName: c.typeName })),
             connections: data.connections.map((c) => ({ from: c.from, to: c.to })),
-            layout: data.layout ?? {},
+            layout: data.graphical.layout ?? {},
           });
         } else {
           setConflictPending(data);
@@ -438,7 +333,7 @@ export function DiagramView({
       .catch((err) => {
         if (!cancelled) {
           setError(String(err));
-          setDiagram(null);
+          setDocument(null);
           setNodes([]);
           setEdges([]);
           setConflictPending(null);
@@ -454,19 +349,49 @@ export function DiagramView({
 
   const onConnect = useCallback(
     (conn: Connection) => {
-      if (readOnly) return;
+      if (readOnly || mode === "icon") return;
+      const sourceNode = nodesRef.current.find((node) => node.id === conn.source);
+      const targetNode = nodesRef.current.find((node) => node.id === conn.target);
+      const sourceKind = sourceNode?.data?.connectorKind;
+      const targetKind = targetNode?.data?.connectorKind;
+      const signalPair =
+        (sourceKind === "signal_output" && targetKind === "signal_input")
+        || (sourceKind === "signal_input" && targetKind === "signal_output");
+      const sameKind = sourceKind && targetKind && sourceKind === targetKind;
+      if (sourceKind && targetKind && !sameKind && !signalPair) {
+        setMessages((prev) => [
+          {
+            severity: "error",
+            text: `Incompatible connectors: ${sourceKind} -> ${targetKind}`,
+          } as GraphicalMessage,
+          ...prev,
+        ].slice(0, 20));
+        return;
+      }
+      setMessages((prev) => prev.filter((message) => !message.text.startsWith("Incompatible connectors")));
+      const sourcePosition = sourceNode?.position ?? { x: 0, y: 0 };
+      const targetPosition = targetNode?.position ?? { x: 0, y: 0 };
+      const elbowX = (sourcePosition.x + targetPosition.x) / 2;
+      const linePoints = [
+        { x: sourcePosition.x + 80, y: sourcePosition.y + 20 },
+        { x: elbowX, y: sourcePosition.y + 20 },
+        { x: elbowX, y: targetPosition.y + 20 },
+        { x: targetPosition.x + 20, y: targetPosition.y + 20 },
+      ];
       setEdges((eds) =>
         addEdge(
           {
             ...conn,
-            sourceHandle: conn.sourceHandle ?? "p",
-            targetHandle: conn.targetHandle ?? "p",
+            sourceHandle: conn.sourceHandle ?? DEFAULT_HANDLE_ID,
+            targetHandle: conn.targetHandle ?? DEFAULT_HANDLE_ID,
+            type: "polyline",
+            data: { linePoints },
           },
           eds
         )
       );
     },
-    [readOnly, setEdges]
+    [mode, readOnly, setEdges]
   );
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -478,20 +403,154 @@ export function DiagramView({
     const key = JSON.stringify({ components, connections, layout });
     if (key === lastAppliedRef.current) return;
     lastAppliedRef.current = key;
-    const layoutForBackend = Object.keys(layout).length > 0 ? layout : undefined;
-    invoke<{ newSource: string }>("apply_diagram_edits", {
-      source: sourceRef.current,
+    const nextDocument: DiagramDocument = {
+      modelName: documentRef.current?.modelName ?? diagram?.modelName ?? "",
       components,
       connections,
-      layout: layoutForBackend,
-      projectDir: projectDirRef.current ?? undefined,
-      relativePath: filePathRef.current ?? undefined,
-    })
+      graphical: {
+        layout: Object.keys(layout).length > 0 ? layout : undefined,
+        diagramAnnotation: documentRef.current?.graphical.diagramAnnotation,
+        iconAnnotation: documentRef.current?.graphical.iconAnnotation,
+      },
+    };
+    applyGraphicalDocumentEdits(
+      sourceRef.current,
+      nextDocument,
+      projectDirRef.current,
+      filePathRef.current,
+    )
       .then(({ newSource }) => {
         onContentChangeRef.current?.(newSource);
       })
-      .catch(() => {});
-  }, [readOnly]);
+      .catch((syncError) => {
+        setMessages((prev) => [
+          { severity: "error", text: `Sync failed: ${String(syncError)}` } as GraphicalMessage,
+          ...prev,
+        ].slice(0, 20));
+      });
+  }, [diagram?.modelName, readOnly]);
+
+  const onRefreshDiagram = useCallback(
+    (data: DiagramDocument) => {
+      setDocument(data);
+      setSelectedGraphicIndex(-1);
+      const { nodes: n, edges: e } = diagramToFlow(documentToDiagram(data), handleDoubleClickRef.current);
+      setNodes(n);
+      setEdges(e);
+      setConflictPending(null);
+      lastAppliedRef.current = JSON.stringify({
+        components: data.components.map((c) => ({ name: c.name, typeName: c.typeName })),
+        connections: data.connections.map((c) => ({ from: c.from, to: c.to })),
+        layout: data.graphical.layout ?? {},
+      });
+    },
+    [setNodes, setEdges]
+  );
+
+  const activeGraphics = mode === "icon"
+    ? (diagram?.iconAnnotation?.graphics ?? [])
+    : (diagram?.diagramAnnotation?.graphics ?? []);
+
+  const updateActiveAnnotation = useCallback((graphics: GraphicItem[]) => {
+    setDocument((prev) => {
+      if (!prev) return prev;
+      const next = {
+        ...prev,
+        graphical: {
+          ...prev.graphical,
+        },
+      };
+      if (mode === "icon") {
+        next.graphical.iconAnnotation = {
+          coordinateSystem: prev.graphical.iconAnnotation?.coordinateSystem,
+          graphics,
+        };
+      } else {
+        next.graphical.diagramAnnotation = {
+          coordinateSystem: prev.graphical.diagramAnnotation?.coordinateSystem,
+          graphics,
+        };
+      }
+      return next;
+    });
+  }, [mode]);
+
+  const selectedNode = useMemo(
+    () => nodes.find((node) => node.selected),
+    [nodes]
+  );
+
+  const selectedComponent = useMemo(() => {
+    if (!selectedNode) return null;
+    return {
+      name: selectedNode.id,
+      typeName: selectedNode.data?.typeName ?? "",
+      libraryId: selectedNode.data?.libraryId as string | undefined,
+      params: selectedNode.data?.params ?? [],
+      placement: {
+        transformation: {
+          origin: { x: selectedNode.position.x, y: selectedNode.position.y },
+          rotation: selectedNode.data?.rotation,
+        },
+      },
+    };
+  }, [selectedNode]);
+
+  const updateSelectedParam = useCallback((name: string, value: string) => {
+    if (!selectedNode) return;
+    setNodes((prev) =>
+      prev.map((node) => {
+        if (node.id !== selectedNode.id) return node;
+        const params = [...(node.data?.params ?? [])];
+        const index = params.findIndex((item) => item.name === name);
+        if (index >= 0) {
+          params[index] = { ...params[index], value };
+        } else {
+          params.push({ name, value });
+        }
+        return { ...node, data: { ...node.data, params } };
+      })
+    );
+  }, [selectedNode, setNodes]);
+
+  const updateSelectedPlacement = useCallback((patch: { x?: number; y?: number; rotation?: number }) => {
+    if (!selectedNode) return;
+    setNodes((prev) =>
+      prev.map((node) =>
+        node.id !== selectedNode.id
+          ? node
+          : {
+              ...node,
+              position: {
+                x: patch.x ?? node.position.x,
+                y: patch.y ?? node.position.y,
+              },
+              data: {
+                ...node.data,
+                rotation: patch.rotation ?? node.data?.rotation,
+              },
+            }
+      )
+    );
+  }, [selectedNode, setNodes]);
+
+  const handleUpdateGraphic = useCallback((index: number, next: GraphicItem) => {
+    const graphics = [...activeGraphics];
+    graphics[index] = next;
+    updateActiveAnnotation(graphics);
+  }, [activeGraphics, updateActiveAnnotation]);
+
+  const handleAddGraphic = useCallback((graphic: GraphicItem) => {
+    const graphics = [...activeGraphics, graphic];
+    updateActiveAnnotation(graphics);
+    setSelectedGraphicIndex(graphics.length - 1);
+  }, [activeGraphics, updateActiveAnnotation]);
+
+  const handleDeleteGraphic = useCallback((index: number) => {
+    const graphics = activeGraphics.filter((_, itemIndex) => itemIndex !== index);
+    updateActiveAnnotation(graphics);
+    setSelectedGraphicIndex(-1);
+  }, [activeGraphics, updateActiveAnnotation]);
 
   useEffect(() => {
     if (readOnly || !onContentChange || !diagram) return;
@@ -500,23 +559,18 @@ export function DiagramView({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [nodes, edges, readOnly, onContentChange, diagram, syncToSource]);
+  }, [nodes, edges, diagram?.diagramAnnotation, diagram?.iconAnnotation, readOnly, onContentChange, diagram, syncToSource]);
 
-  const onRefreshDiagram = useCallback(
-    (data: DiagramModel) => {
-      setDiagram(data);
-      const { nodes: n, edges: e } = diagramToFlow(data, handleDoubleClickRef.current);
-      setNodes(n);
-      setEdges(e);
-      setConflictPending(null);
-      lastAppliedRef.current = JSON.stringify({
-        components: data.components.map((c) => ({ name: c.name, typeName: c.typeName })),
-        connections: data.connections.map((c) => ({ from: c.from, to: c.to })),
-        layout: data.layout ?? {},
-      });
-    },
-    [setNodes, setEdges]
-  );
+  useEffect(() => {
+    if (!focusSymbolQuery) return;
+    const targetNode = focusSymbolQuery.split(".")[0];
+    setNodes((prev) =>
+      prev.map((node) => ({
+        ...node,
+        selected: node.id === targetNode,
+      })),
+    );
+  }, [focusSymbolQuery, setNodes]);
 
   if (loading) {
     return (
@@ -544,172 +598,76 @@ export function DiagramView({
   }
 
   return (
-    <ReactFlowProvider>
-      <DiagramFlowWithLibrary
-        nodes={nodes}
-        setNodes={setNodes}
-        edges={edges}
-        onEdgesChange={onEdgesChange}
-        onNodesChange={onNodesChange}
-        onConnect={onConnect}
-        diagram={diagram}
-        readOnly={readOnly}
+    <GraphicalCanvas
+        modelName={diagram.modelName}
         projectDir={projectDir}
-        conflictPending={conflictPending}
-        onRefreshDiagram={onRefreshDiagram}
-      />
-    </ReactFlowProvider>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main flow wrapper with library sidebar
-// ---------------------------------------------------------------------------
-
-const DRAG_TYPE = "application/modelica-type";
-
-interface DiagramFlowWithLibraryProps {
-  nodes: Node<DiagramNodeData>[];
-  setNodes: React.Dispatch<React.SetStateAction<Node<DiagramNodeData>[]>>;
-  edges: Edge[];
-  onEdgesChange: (changes: import("@xyflow/react").EdgeChange[]) => void;
-  onNodesChange: (changes: import("@xyflow/react").NodeChange<Node<DiagramNodeData>>[]) => void;
-  onConnect: (conn: Connection) => void;
-  diagram: DiagramModel;
-  readOnly: boolean;
-  projectDir: string | null;
-  conflictPending: DiagramModel | null;
-  onRefreshDiagram: (data: DiagramModel) => void;
-}
-
-function DiagramFlowWithLibrary({
-  nodes,
-  setNodes,
-  edges,
-  onEdgesChange,
-  onNodesChange,
-  onConnect,
-  diagram,
-  readOnly,
-  projectDir,
-  conflictPending,
-  onRefreshDiagram,
-}: DiagramFlowWithLibraryProps) {
-  const { screenToFlowPosition } = useReactFlow();
-  const [libraryClasses, setLibraryClasses] = useState<InstantiableClass[]>([]);
-
-  useEffect(() => {
-    if (!projectDir) {
-      setLibraryClasses([]);
-      return;
-    }
-    let cancelled = false;
-    invoke<InstantiableClass[]>("list_instantiable_classes", { projectDir })
-      .then((list) => {
-        if (!cancelled) setLibraryClasses(list);
-      })
-      .catch(() => {
-        if (!cancelled) setLibraryClasses([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectDir]);
-
-  const onDrop = useCallback(
-    (event: React.DragEvent) => {
-      if (readOnly) return;
-      const typeName = event.dataTransfer.getData(DRAG_TYPE);
-      if (!typeName) return;
-      event.preventDefault();
-      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      setNodes((nds) => {
-        const existingIds = nds.map((n) => n.id);
-        const id = uniqueInstanceName(typeName, existingIds);
-        return nds.concat({
-          id,
-          type: "component",
-          position,
-          data: { typeName, portHandles: ["p"] },
-        });
-      });
-    },
-    [readOnly, setNodes, screenToFlowPosition]
-  );
-  const onDragOver = useCallback((event: React.DragEvent) => {
-    if (event.dataTransfer.types.includes(DRAG_TYPE)) event.preventDefault();
-  }, []);
-
-  return (
-    <div className="h-full w-full flex flex-col">
-      {conflictPending && (
-        <div
-          className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-amber-500/20 border-b border-amber-500/40 text-[var(--text)]"
-          role="alert"
-        >
-          <span className="text-sm">{t("diagramConflict")}</span>
-          <button
-            type="button"
-            className="px-2 py-1 text-xs font-medium rounded bg-primary text-white hover:opacity-90"
-            onClick={() => onRefreshDiagram(conflictPending)}
-          >
-            {t("refreshDiagram")}
-          </button>
-        </div>
-      )}
-      <div className="flex-1 min-h-0 flex">
-      {projectDir && libraryClasses.length > 0 && !readOnly && (
-        <div
-          className="w-48 shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--bg-elevated)] overflow-auto"
-          aria-label={t("componentLibrary")}
-        >
-          <div className="p-2 text-xs font-medium text-[var(--text-muted)] border-b border-[var(--border)]">
-            {t("componentLibrary")}
-          </div>
-          <ul className="p-1 list-none">
-            {libraryClasses.map((c) => (
-              <li
-                key={c.name}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(DRAG_TYPE, c.name);
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-                className="px-2 py-1.5 text-xs text-[var(--text)] cursor-grab active:cursor-grabbing rounded hover:bg-white/10"
-              >
-                {c.name}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <div className="flex-1 min-w-0" onDrop={onDrop} onDragOver={onDragOver}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={FIT_VIEW_OPTIONS}
-          nodesDraggable={!readOnly}
-          nodesConnectable={!readOnly}
-          elementsSelectable={!readOnly}
-          deleteKeyCode={readOnly ? null : "Delete"}
-        >
-          <Background />
-          <Controls />
-          <MiniMap />
-          {diagram.modelName && (
-            <Panel position="top-left" className="text-xs text-[var(--text-muted)]">
-              {diagram.modelName}
-            </Panel>
-          )}
-        </ReactFlow>
-      </div>
-      </div>
-    </div>
+        mode={mode}
+        readOnly={readOnly}
+        annotation={mode === "icon" ? diagram.iconAnnotation : diagram.diagramAnnotation}
+        graphics={activeGraphics}
+        selectedGraphicIndex={selectedGraphicIndex}
+        selectedComponent={mode === "icon" ? null : selectedComponent}
+        conflictPending={Boolean(conflictPending)}
+        messages={messages}
+        onRefreshDiagram={conflictPending ? () => onRefreshDiagram(conflictPending) : undefined}
+        onSelectGraphic={setSelectedGraphicIndex}
+        onUpdateGraphic={handleUpdateGraphic}
+        onAddGraphic={handleAddGraphic}
+        onDeleteGraphic={handleDeleteGraphic}
+        onUpdateParam={updateSelectedParam}
+        onUpdatePlacement={updateSelectedPlacement}
+        onOpenType={handleDoubleClick}
+        libraryRefreshToken={libraryRefreshToken}
+        onDrop={(event) => {
+          if (readOnly || mode === "icon") return;
+          const payload = decodeModelicaDragPayload(event.dataTransfer.getData(MODELICA_DRAG_TYPE));
+          if (!payload) return;
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          const position = {
+            x: Math.max(0, event.clientX - rect.left),
+            y: Math.max(0, event.clientY - rect.top),
+          };
+          setNodes((nds) => {
+            const existingIds = nds.map((n) => n.id);
+            const id = uniqueInstanceName(payload.displayName, existingIds);
+            return nds.concat({
+              id,
+              type: "component",
+              position,
+              data: {
+                typeName: payload.typeName,
+                libraryId: payload.libraryId,
+                portHandles: [DEFAULT_HANDLE_ID],
+                params: [],
+              },
+            });
+          });
+        }}
+        onDragOver={(event) => {
+          if (Array.from(event.dataTransfer.types as ArrayLike<string>).includes(MODELICA_DRAG_TYPE)) {
+            event.preventDefault();
+          }
+        }}
+      >
+        {mode === "icon" ? (
+          <IconEditorView
+            annotation={diagram.iconAnnotation ?? { graphics: [] }}
+            selectedGraphicIndex={selectedGraphicIndex}
+            readOnly={readOnly}
+            onSelectGraphic={setSelectedGraphicIndex}
+            onUpdateGraphic={handleUpdateGraphic}
+          />
+        ) : (
+          <DiagramEditorView
+            nodes={nodes}
+            edges={edges}
+            readOnly={readOnly}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+          />
+        )}
+      </GraphicalCanvas>
   );
 }

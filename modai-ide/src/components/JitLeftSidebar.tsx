@@ -39,7 +39,7 @@ function TreeNode({
     return (
       <div className="flex flex-col">
         <div className="tree-row group rounded" style={{ paddingLeft }}>
-          <button type="button" className="tree-arrow text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10 rounded"
+          <button type="button" className="tree-arrow text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-hover)] rounded"
             onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
             {expanded ? "\u02C5" : "\u203A"}
           </button>
@@ -59,7 +59,7 @@ function TreeNode({
     <div className={`tree-row group rounded ${isSelected ? "bg-primary/20" : ""}`} style={{ paddingLeft }}>
       <span className="tree-icon-box shrink-0"><FileIcon name={entry.name} /></span>
       <button type="button"
-        className={`tree-label text-left px-1 hover:bg-white/10 rounded ${isSelected ? "text-primary" : "text-[var(--text)]"}`}
+        className={`tree-label text-left px-1 hover:bg-[var(--surface-hover)] rounded ${isSelected ? "text-primary" : "text-[var(--text)]"}`}
         onClick={() => entry.path && onSelect(entry.path)} title={entry.path}>
         {entry.name}
       </button>
@@ -174,7 +174,7 @@ export function JitLeftSidebar({
               <div className="px-3 py-4 text-xs text-[var(--text-muted)]">{t("loading")}</div>
             )}
             {branches.length > 0 && (
-              <div className="border-t border-gray-700 mt-2 pt-2 px-3">
+              <div className="border-t border-border mt-2 pt-2 px-3">
                 <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("iterationBranches")}</div>
                 {branches.map((b) => (
                   <div key={b} className="text-xs text-[var(--text)] truncate py-0.5">{b}</div>
@@ -186,27 +186,27 @@ export function JitLeftSidebar({
 
         {activeTab === "tests" && (
           <div className="flex flex-col h-full">
-            <div className="px-3 py-2 border-b border-gray-700 shrink-0">
+            <div className="px-3 py-2 border-b border-border shrink-0">
               <input type="text" placeholder={t("search")} value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#3c3c3c] border border-gray-600 px-2 py-1 text-xs rounded mb-1" />
+                className="w-full theme-input border px-2 py-1 text-xs rounded mb-1" />
               <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
-                className="w-full bg-[#3c3c3c] border border-gray-600 px-2 py-1 text-xs rounded text-[var(--text)]">
+                className="w-full theme-input border px-2 py-1 text-xs rounded text-[var(--text)]">
                 {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c === "all" ? "All categories" : c}</option>
+                  <option key={c} value={c}>{c === "all" ? t("allCategories") : c}</option>
                 ))}
               </select>
             </div>
-            <div className="px-2 py-1 flex gap-1 shrink-0 border-b border-gray-700">
+            <div className="px-2 py-1 flex gap-1 shrink-0 border-b border-border">
               <button type="button" onClick={onCreateTest}
-                className="px-2 py-0.5 text-[10px] rounded bg-green-800 hover:bg-green-700 text-green-200">
+                className="px-2 py-0.5 text-[10px] rounded border theme-banner-success">
                 + {t("createTest")}
               </button>
               {onRunSuite && (
                 <button type="button"
                   onClick={() => onRunSuite(filteredCases.slice(0, 12).map((c) => c.name))}
                   disabled={suiteRunning}
-                  className="px-2 py-0.5 text-[10px] rounded bg-[#3c3c3c] hover:bg-gray-600 disabled:opacity-50">
+                  className="px-2 py-0.5 text-[10px] rounded border theme-button-secondary disabled:opacity-50">
                   {suiteRunning ? "..." : t("runSuite")}
                 </button>
               )}
@@ -216,7 +216,7 @@ export function JitLeftSidebar({
                 const isSelected = c.name === selectedTestName;
                 return (
                   <button key={c.name} type="button"
-                    className={`w-full text-left px-3 py-1 text-xs truncate ${isSelected ? "bg-primary/20 text-primary" : "hover:bg-[#3c3c3c]/50 text-[var(--text)]"}`}
+                    className={`w-full text-left px-3 py-1 text-xs truncate ${isSelected ? "bg-primary/20 text-primary" : "hover:bg-[var(--surface-hover)] text-[var(--text)]"}`}
                     onClick={() => onSelectTest(c.name)} title={c.name}>
                     {c.name.replace("TestLib/", "")}
                     <span className="ml-1 text-[10px] text-[var(--text-muted)]">({c.category})</span>
@@ -224,8 +224,8 @@ export function JitLeftSidebar({
                 );
               })}
             </div>
-            <div className="px-3 py-1 border-t border-gray-700 text-[10px] text-[var(--text-muted)] shrink-0">
-              {filteredCases.length} / {testCases.length} tests
+            <div className="px-3 py-1 border-t border-border text-[10px] text-[var(--text-muted)] shrink-0">
+              {filteredCases.length} / {testCases.length} {t("jitLeftTests" as Parameters<typeof t>[0]).toLowerCase()}
             </div>
           </div>
         )}
@@ -254,7 +254,7 @@ export function JitLeftSidebar({
                     {activeSourceModule.features.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {activeSourceModule.features.map((fid) => (
-                          <span key={fid} className="px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 text-[10px]">{fid}</span>
+                          <span key={fid} className="px-1.5 py-0.5 rounded theme-banner-info text-[10px]">{fid}</span>
                         ))}
                       </div>
                     ) : <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>}
@@ -265,7 +265,7 @@ export function JitLeftSidebar({
                     <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("linkedTests")}</div>
                     <div className="flex flex-wrap gap-1">
                       {linkedCasesForSource.map((c) => (
-                        <span key={c} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 text-[10px]">{c.replace("TestLib/", "")}</span>
+                        <span key={c} className="px-1.5 py-0.5 rounded theme-banner-success text-[10px]">{c.replace("TestLib/", "")}</span>
                       ))}
                     </div>
                   </div>
@@ -282,7 +282,7 @@ export function JitLeftSidebar({
                   {linkedFeaturesForTest.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {linkedFeaturesForTest.map((fid) => (
-                        <span key={fid} className="px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 text-[10px]">{fid}</span>
+                        <span key={fid} className="px-1.5 py-0.5 rounded theme-banner-info text-[10px]">{fid}</span>
                       ))}
                     </div>
                   ) : <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>}
@@ -292,7 +292,7 @@ export function JitLeftSidebar({
                   {linkedSourcesForTest.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {linkedSourcesForTest.map((s) => (
-                        <span key={s} className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 text-[10px] truncate">{s.replace("src/", "")}</span>
+                        <span key={s} className="px-1.5 py-0.5 rounded theme-banner-warning text-[10px] truncate">{s.replace("src/", "")}</span>
                       ))}
                     </div>
                   ) : <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>}

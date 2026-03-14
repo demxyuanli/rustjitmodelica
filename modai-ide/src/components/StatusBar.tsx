@@ -70,8 +70,8 @@ export function StatusBar({
         </Item>
         <Item>{language}</Item>
         {position != null && (
-          <Item title={`Line ${position.lineNumber}, Column ${position.column}`}>
-            Ln {position.lineNumber}, Col {position.column}
+          <Item title={`${t("line")} ${position.lineNumber}, ${t("column")} ${position.column}`}>
+            {t("line")} {position.lineNumber}, {t("column")} {position.column}
           </Item>
         )}
       </div>
@@ -80,14 +80,14 @@ export function StatusBar({
           <Item
             title={
               indexStatus.state === "building"
-                ? t("indexBuilding") || "Building index..."
-                : `${t("indexReady") || "Index"}: ${indexStatus.fileCount} files, ${indexStatus.symbolCount} symbols`
+                ? t("indexBuilding")
+                : `${t("indexReady")}: ${indexStatus.fileCount} ${t("indexFiles")}, ${indexStatus.symbolCount} ${t("indexSymbols")}`
             }
           >
             {indexStatus.state === "building" ? (
               <span className="flex items-center gap-1 text-amber-400">
                 <AppIcon name="index" aria-hidden="true" className="w-3.5 h-3.5" />
-                <span>Index...</span>
+                <span>{t("indexBuilding")}</span>
               </span>
             ) : (
               <span className="flex items-center gap-1">

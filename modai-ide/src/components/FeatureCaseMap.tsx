@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { t } from "../i18n";
+import { IconButton } from "./IconButton";
+import { AppIcon } from "./Icon";
 import {
   features,
   cases,
@@ -42,29 +44,31 @@ export function FeatureCaseMap() {
       <p className="text-xs text-[var(--text-muted)] mb-4">{t("featureCaseMapDesc")}</p>
 
       <div className="flex items-center gap-4 mb-4 flex-wrap">
-        <div className="flex rounded-lg border border-gray-700 overflow-hidden" role="group" aria-label="View mode">
-          <button
-            type="button"
-            className={`px-4 py-2 text-sm font-medium ${viewMode === "table" ? "bg-primary text-white" : "bg-[#3c3c3c] text-[var(--text-muted)] hover:text-[var(--text)]"}`}
+        <div className="flex rounded-lg border border-border overflow-hidden" role="group" aria-label={t("viewMode")}>
+          <IconButton
+            icon={<AppIcon name="table" aria-hidden="true" />}
+            variant="tab"
+            size="xs"
+            active={viewMode === "table"}
             onClick={() => setViewMode("table")}
-            aria-pressed={viewMode === "table"}
-          >
-            {t("viewModeTable")}
-          </button>
-          <button
-            type="button"
-            className={`px-4 py-2 text-sm font-medium ${viewMode === "graph" ? "bg-primary text-white" : "bg-[#3c3c3c] text-[var(--text-muted)] hover:text-[var(--text)]"}`}
+            title={t("viewModeTable")}
+            aria-label={t("viewModeTable")}
+          />
+          <IconButton
+            icon={<AppIcon name="chart" aria-hidden="true" />}
+            variant="tab"
+            size="xs"
+            active={viewMode === "graph"}
             onClick={() => setViewMode("graph")}
-            aria-pressed={viewMode === "graph"}
-          >
-            {t("viewModeGraph")}
-          </button>
+            title={t("viewModeGraph")}
+            aria-label={t("viewModeGraph")}
+          />
         </div>
         <div className="flex gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-xs text-[var(--text-muted)]">{t("viewByFeature")}:</span>
           <select
-            className="text-xs bg-[#3c3c3c] border border-gray-600 rounded px-2 py-1 text-[var(--text)]"
+            className="text-xs theme-input border rounded px-2 py-1 text-[var(--text)]"
             value={highlightFeature ?? ""}
             onChange={(e) => {
               setHighlightFeature(e.target.value || null);
@@ -82,7 +86,7 @@ export function FeatureCaseMap() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-[var(--text-muted)]">{t("viewByCase")}:</span>
           <select
-            className="text-xs bg-[#3c3c3c] border border-gray-600 rounded px-2 py-1 text-[var(--text)] max-w-[220px]"
+            className="text-xs theme-input border rounded px-2 py-1 text-[var(--text)] max-w-[220px]"
             value={highlightCase ?? ""}
             onChange={(e) => {
               setHighlightCase(e.target.value || null);
@@ -101,7 +105,7 @@ export function FeatureCaseMap() {
       </div>
 
       {highlightFeature && (
-        <div className="mb-4 p-3 rounded bg-[#2d2d2d] border border-gray-700 text-xs">
+        <div className="mb-4 p-3 rounded bg-[var(--surface-elevated)] border border-border text-xs">
           <span className="text-[var(--text-muted)]">{t("casesCoveringFeature")}: </span>
           <span className="text-[var(--text)]">
             {(featureToCases[highlightFeature] ?? []).join(", ") || t("none")}
@@ -110,7 +114,7 @@ export function FeatureCaseMap() {
       )}
 
       {highlightCase && (
-        <div className="mb-4 p-3 rounded bg-[#2d2d2d] border border-gray-700 text-xs">
+        <div className="mb-4 p-3 rounded bg-[var(--surface-elevated)] border border-border text-xs">
           <span className="text-[var(--text-muted)]">{t("featuresCoveredByCase")}: </span>
           <span className="text-[var(--text)]">
             {(caseToFeatures[highlightCase] ?? []).join(", ") || t("none")}
@@ -119,8 +123,8 @@ export function FeatureCaseMap() {
       )}
 
       {viewMode === "graph" ? (
-        <div className="rounded-lg border border-gray-700 bg-[#2d2d2d]/50 overflow-auto flex-1 min-h-0 flex flex-col">
-          <div className="text-xs text-[var(--text-muted)] px-3 py-2 border-b border-gray-700 shrink-0 flex items-center gap-4 flex-wrap">
+        <div className="rounded-lg border border-border bg-[var(--panel-muted-bg)] overflow-auto flex-1 min-h-0 flex flex-col">
+          <div className="text-xs text-[var(--text-muted)] px-3 py-2 border-b border-border shrink-0 flex items-center gap-4 flex-wrap">
             <span>{t("featureCaseMapDesc")} ({features.length} features, {cases.length} cases)</span>
             <span className="flex items-center gap-3 ml-auto">
               <span className="flex items-center gap-1.5">
@@ -132,7 +136,7 @@ export function FeatureCaseMap() {
                 <span>{t("graphLegendCase")}</span>
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="w-6 h-0.5 bg-gray-500 rounded" aria-hidden />
+                <span className="w-6 h-0.5 bg-[var(--border-strong)] rounded" aria-hidden />
                 <span>{t("graphLegendEdge")}</span>
               </span>
             </span>
@@ -150,22 +154,22 @@ export function FeatureCaseMap() {
           </div>
         </div>
       ) : (
-      <div className="rounded-lg border border-gray-700 bg-[#2d2d2d]/50 overflow-hidden flex-1 min-h-0 flex flex-col">
-        <div className="text-xs text-[var(--text-muted)] px-3 py-2 border-b border-gray-700">
+      <div className="rounded-lg border border-border bg-[var(--panel-muted-bg)] overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="text-xs text-[var(--text-muted)] px-3 py-2 border-b border-border">
           {t("featureCaseMatrix")} ({featureSlice.length} x {caseSlice.length})
         </div>
         <div className="flex-1 min-h-0 overflow-auto">
           <table className="w-full text-[10px] border-collapse">
-            <thead className="sticky top-0 bg-[#2d2d2d] z-10">
+            <thead className="sticky top-0 bg-[var(--surface-elevated)] z-10">
               <tr>
-                <th className="px-2 py-1.5 text-left font-medium text-[var(--text-muted)] border border-gray-700 w-24 sticky left-0 bg-[#2d2d2d]">
-                  Feature
+                <th className="px-2 py-1.5 text-left font-medium text-[var(--text-muted)] border border-border w-24 sticky left-0 bg-[var(--surface-elevated)]">
+                  {t("viewByFeature")}
                 </th>
                 {caseSlice.map((c) => (
                   <th
                     key={c.name}
-                    className={`px-1 py-1.5 text-center font-medium border border-gray-700 max-w-[80px] truncate align-bottom ${
-                      highlightCase === c.name ? "bg-blue-900/40 text-blue-200" : "text-[var(--text-muted)]"
+                    className={`px-1 py-1.5 text-center font-medium border border-border max-w-[80px] truncate align-bottom ${
+                      highlightCase === c.name ? "bg-primary/20 text-primary" : "text-[var(--text-muted)]"
                     }`}
                     title={c.name}
                   >
@@ -178,10 +182,10 @@ export function FeatureCaseMap() {
               {featureSlice.map((f) => (
                 <tr
                   key={f.id}
-                  className={highlightFeature === f.id ? "bg-blue-900/20" : ""}
+                  className={highlightFeature === f.id ? "bg-primary/10" : ""}
                 >
                   <td
-                    className={`px-2 py-1 border border-gray-700 sticky left-0 bg-[#2d2d2d] ${
+                    className={`px-2 py-1 border border-border sticky left-0 bg-[var(--surface-elevated)] ${
                       highlightFeature === f.id ? "bg-blue-900/30" : ""
                     }`}
                     title={f.name}
@@ -193,16 +197,16 @@ export function FeatureCaseMap() {
                     return (
                       <td
                         key={c.name}
-                        className={`px-1 py-1 border border-gray-700 text-center ${
-                          highlightCase === c.name ? "bg-blue-900/20" : ""
+                        className={`px-1 py-1 border border-border text-center ${
+                          highlightCase === c.name ? "bg-primary/10" : ""
                         }`}
                       >
                         {covered ? (
-                          <span className="text-green-400" title={`${f.id} <-> ${c.name}`}>
+                          <span className="text-[var(--success-text)]" title={`${f.id} <-> ${c.name}`}>
                             &#x2713;
                           </span>
                         ) : (
-                          <span className="text-gray-600">-</span>
+                          <span className="text-[var(--text-muted)]">-</span>
                         )}
                       </td>
                     );
@@ -212,11 +216,11 @@ export function FeatureCaseMap() {
             </tbody>
           </table>
         </div>
-        <div className="flex items-center justify-between px-3 py-2 border-t border-gray-700 text-xs text-[var(--text-muted)]">
+        <div className="flex items-center justify-between px-3 py-2 border-t border-border text-xs text-[var(--text-muted)]">
           <div className="flex gap-2 items-center">
             <button
               type="button"
-              className="px-2 py-1 rounded bg-[#3c3c3c] hover:bg-gray-600 disabled:opacity-50 disabled:pointer-events-none"
+              className="px-2 py-1 rounded border theme-button-secondary disabled:opacity-50 disabled:pointer-events-none"
               onClick={() => setFeaturePage((p) => Math.max(0, p - 1))}
               disabled={featurePage === 0}
             >
@@ -227,7 +231,7 @@ export function FeatureCaseMap() {
             </span>
             <button
               type="button"
-              className="px-2 py-1 rounded bg-[#3c3c3c] hover:bg-gray-600 disabled:opacity-50 disabled:pointer-events-none"
+              className="px-2 py-1 rounded border theme-button-secondary disabled:opacity-50 disabled:pointer-events-none"
               onClick={() => setFeaturePage((p) => Math.min(maxFeaturePage, p + 1))}
               disabled={featurePage >= maxFeaturePage}
             >
@@ -237,7 +241,7 @@ export function FeatureCaseMap() {
           <div className="flex gap-2 items-center">
             <button
               type="button"
-              className="px-2 py-1 rounded bg-[#3c3c3c] hover:bg-gray-600 disabled:opacity-50 disabled:pointer-events-none"
+              className="px-2 py-1 rounded border theme-button-secondary disabled:opacity-50 disabled:pointer-events-none"
               onClick={() => setCasePage((p) => Math.max(0, p - 1))}
               disabled={casePage === 0}
             >
@@ -248,7 +252,7 @@ export function FeatureCaseMap() {
             </span>
             <button
               type="button"
-              className="px-2 py-1 rounded bg-[#3c3c3c] hover:bg-gray-600 disabled:opacity-50 disabled:pointer-events-none"
+              className="px-2 py-1 rounded border theme-button-secondary disabled:opacity-50 disabled:pointer-events-none"
               onClick={() => setCasePage((p) => Math.min(maxCasePage, p + 1))}
               disabled={casePage >= maxCasePage}
             >
@@ -433,10 +437,10 @@ function FeatureCaseGraph({
         opacity={0.5}
       />
       <text x={leftX} y={14} textAnchor="middle" className="fill-[var(--text-muted)]" style={{ fontSize: 9 }}>
-        JIT Feature
+        {t("graphLegendFeature")}
       </text>
       <text x={rightX} y={14} textAnchor="middle" className="fill-[var(--text-muted)]" style={{ fontSize: 9 }}>
-        Mo Case
+        {t("graphLegendCase")}
       </text>
     </svg>
   );

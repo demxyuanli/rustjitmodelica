@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { t } from "../i18n";
+import { t, tf } from "../i18n";
 import { features, JIT_FEATURE_CATEGORIES, type JitFeature } from "../data/jit_regression_metadata";
 
 function filterFeatures(featList: JitFeature[], search: string, category: string): JitFeature[] {
@@ -41,17 +41,17 @@ export function JitOverview() {
       <p className="text-xs text-[var(--text-muted)] mb-4">{t("jitOverviewDesc")}</p>
 
       <div className="flex flex-wrap gap-3 mb-4">
-        <div className="rounded-lg border border-gray-700 bg-[#2d2d2d] px-4 py-2 min-w-[80px]">
+        <div className="rounded-lg border border-border bg-[var(--surface-elevated)] px-4 py-2 min-w-[80px]">
           <div className="text-[10px] uppercase text-[var(--text-muted)]">{t("jitSummaryTotal")}</div>
           <div className="text-lg font-semibold text-[var(--text)]">{total}</div>
         </div>
-        <div className="rounded-lg border border-green-700/50 bg-green-900/20 px-4 py-2 min-w-[80px]">
-          <div className="text-[10px] uppercase text-green-400/80">{t("jitSummaryCovered")}</div>
-          <div className="text-lg font-semibold text-green-300">{covered}</div>
+        <div className="rounded-lg border theme-banner-success px-4 py-2 min-w-[80px]">
+          <div className="text-[10px] uppercase opacity-80">{t("jitSummaryCovered")}</div>
+          <div className="text-lg font-semibold">{covered}</div>
         </div>
-        <div className="rounded-lg border border-amber-700/50 bg-amber-900/20 px-4 py-2 min-w-[80px]">
-          <div className="text-[10px] uppercase text-amber-400/80">{t("jitSummaryPartial")}</div>
-          <div className="text-lg font-semibold text-amber-300">{partial}</div>
+        <div className="rounded-lg border theme-banner-warning px-4 py-2 min-w-[80px]">
+          <div className="text-[10px] uppercase opacity-80">{t("jitSummaryPartial")}</div>
+          <div className="text-lg font-semibold">{partial}</div>
         </div>
       </div>
 
@@ -61,14 +61,14 @@ export function JitOverview() {
           placeholder={t("search")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[120px] max-w-[240px] bg-[#3c3c3c] border border-gray-600 px-3 py-1.5 text-sm rounded-lg placeholder:text-[var(--text-muted)]"
+          className="flex-1 min-w-[120px] max-w-[240px] theme-input border px-3 py-1.5 text-sm rounded-lg placeholder:text-[var(--text-muted)]"
         />
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
-          className="bg-[#3c3c3c] border border-gray-600 px-3 py-1.5 text-sm rounded-lg text-[var(--text)]"
+          className="theme-input border px-3 py-1.5 text-sm rounded-lg text-[var(--text)]"
         >
-          <option value="">All categories</option>
+          <option value="">{t("allCategories")}</option>
           {JIT_FEATURE_CATEGORIES.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -82,23 +82,23 @@ export function JitOverview() {
           const list = byCategory.get(cat);
           if (!list?.length) return null;
           return (
-            <section key={cat} className="rounded-lg border border-gray-700 bg-[#2d2d2d] overflow-hidden">
-              <h3 className="text-sm font-medium px-4 py-2.5 bg-[#3c3c3c] text-[var(--text)] border-b border-gray-700 rounded-t-lg">
+            <section key={cat} className="rounded-lg border border-border bg-[var(--surface-elevated)] overflow-hidden">
+              <h3 className="text-sm font-medium px-4 py-2.5 bg-[var(--panel-muted-bg)] text-[var(--text)] border-b border-border rounded-t-lg">
                 {cat}
               </h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-left text-[var(--text-muted)] border-b border-gray-700">
-                      <th className="px-4 py-2 font-medium w-20">ID</th>
-                      <th className="px-4 py-2 font-medium">Name</th>
-                      <th className="px-4 py-2 font-medium flex-1">Description</th>
-                      <th className="px-4 py-2 font-medium w-24">Status</th>
+                    <tr className="text-left text-[var(--text-muted)] border-b border-border">
+                      <th className="px-4 py-2 font-medium w-20">{t("id")}</th>
+                      <th className="px-4 py-2 font-medium">{t("name")}</th>
+                      <th className="px-4 py-2 font-medium flex-1">{t("description")}</th>
+                      <th className="px-4 py-2 font-medium w-24">{t("status")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {list.map((f) => (
-                      <tr key={f.id} className="border-b border-gray-700/50 hover:bg-[#3c3c3c]/30">
+                      <tr key={f.id} className="border-b border-border/50 hover:bg-[var(--surface-hover)]">
                         <td className="px-4 py-2 font-mono text-[var(--text)]">{f.id}</td>
                         <td className="px-4 py-2 text-[var(--text)]">{f.name}</td>
                         <td className="px-4 py-2 text-[var(--text-muted)]">{f.description}</td>
@@ -106,8 +106,8 @@ export function JitOverview() {
                           <span
                             className={
                               f.status === "covered"
-                                ? "px-2 py-0.5 rounded-lg bg-green-900/50 text-green-300 text-[10px]"
-                                : "px-2 py-0.5 rounded-lg bg-amber-900/50 text-amber-300 text-[10px]"
+                                ? "px-2 py-0.5 rounded-lg theme-banner-success text-[10px]"
+                                : "px-2 py-0.5 rounded-lg theme-banner-warning text-[10px]"
                             }
                           >
                             {f.status === "covered" ? t("statusCovered") : t("statusPartial")}
@@ -124,7 +124,7 @@ export function JitOverview() {
       </div>
       <div className="mt-4 text-xs text-[var(--text-muted)]">
         {t("jitFeatureCount")}: {filtered.length}
-        {filtered.length !== total && ` (filtered from ${total})`}
+        {filtered.length !== total && ` (${tf("filteredFrom", { total })})`}
       </div>
     </div>
   );

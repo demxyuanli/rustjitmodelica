@@ -93,6 +93,7 @@ interface OutlineSectionProps {
   openFilePath: string | null;
   editorRef: React.MutableRefObject<monaco.editor.IStandaloneCodeEditor | null>;
   projectDir?: string | null;
+  onOpenDiagram?: () => void;
 }
 
 export function OutlineSection({
@@ -100,6 +101,7 @@ export function OutlineSection({
   openFilePath,
   editorRef,
   projectDir,
+  onOpenDiagram,
 }: OutlineSectionProps) {
   const [expanded, setExpanded] = useState(true);
   const [indexSymbols, setIndexSymbols] = useState<IndexSymbol[] | null>(null);
@@ -162,7 +164,7 @@ export function OutlineSection({
         <span className="tree-arrow">
           {expanded ? "\u02C5" : "\u203A"}
         </span>
-        <span className="tree-label">{t("outline")}</span>
+        <span className="tree-label">{t("currentStructure")}</span>
         {indexSymbols && indexSymbols.length > 0 && (
           <span className="ml-1 text-[10px] text-[var(--text-muted)] opacity-60">
             (indexed)
@@ -183,6 +185,18 @@ export function OutlineSection({
               {t("noSymbolsInDocument").replace("{name}", displayName)}
             </div>
           ) : (
+            <>
+              {onOpenDiagram && (
+                <button
+                  type="button"
+                  className="tree-row w-full text-left text-xs px-1 py-0.5 rounded hover:bg-white/10 text-[var(--text)] flex items-center gap-1"
+                  onClick={onOpenDiagram}
+                  title={t("viewDiagramReadOnly")}
+                >
+                  <span className="inline-block w-4 text-center text-[var(--text-muted)] font-mono text-[10px]">D</span>
+                  <span className="text-[var(--text-muted)]">{t("outlineDiagram")}</span>
+                </button>
+              )}
             <ul className="text-xs space-y-0.5">
               {symbols.map((sym, i) => (
                 <SymbolNode
@@ -193,6 +207,7 @@ export function OutlineSection({
                 />
               ))}
             </ul>
+            </>
           )}
         </div>
       )}

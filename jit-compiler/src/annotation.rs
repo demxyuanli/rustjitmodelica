@@ -61,6 +61,7 @@ pub enum GraphicItem {
     Ellipse(GraphicEllipse),
     Polygon(GraphicPolygon),
     Text(GraphicText),
+    Bitmap(GraphicBitmap),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +175,20 @@ pub struct GraphicText {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphicBitmap {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extent: Option<Extent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Point>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IconDiagramAnnotation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordinate_system: Option<CoordinateSystem>,
@@ -203,6 +218,38 @@ pub struct AnnotationData {
     pub diagram: Option<IconDiagramAnnotation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<LineAnnotation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dialog: Option<DialogAnnotation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SelectorAnnotation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DialogAnnotation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_start_attribute: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connector_sizing: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_selector: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_selector: Option<SelectorAnnotation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub save_selector: Option<SelectorAnnotation>,
 }
 
 // ---------------------------------------------------------------------------
@@ -650,6 +697,15 @@ fn extract_graphic_item(v: &AVal) -> Option<GraphicItem> {
             rotation: v.field("rotation").and_then(|v| v.as_num()),
             origin: v.field("origin").and_then(extract_point),
         })),
+        "Bitmap" => Some(GraphicItem::Bitmap(GraphicBitmap {
+            extent: v.field("extent").and_then(extract_extent),
+            file_name: v.field("fileName").and_then(|v| v.as_str().map(|s| s.to_string())),
+            image_source: v
+                .field("imageSource")
+                .and_then(|v| v.as_str().map(|s| s.to_string())),
+            rotation: v.field("rotation").and_then(|v| v.as_num()),
+            origin: v.field("origin").and_then(extract_point),
+        })),
         _ => None,
     }
 }
@@ -703,6 +759,31 @@ fn extract_line_annotation(fields: &[(String, AVal)]) -> Option<LineAnnotation> 
     })
 }
 
+fn extract_selector_annotation(v: &AVal) -> Option<SelectorAnnotation> {
+    let (_, _) = v.as_record()?;
+    Some(SelectorAnnotation {
+        filter: v.field("filter").and_then(|x| x.as_str().map(|s| s.to_string())),
+        caption: v.field("caption").and_then(|x| x.as_str().map(|s| s.to_string())),
+    })
+}
+
+fn extract_dialog_annotation(v: &AVal) -> Option<DialogAnnotation> {
+    let (_, _) = v.as_record()?;
+    Some(DialogAnnotation {
+        tab: v.field("tab").and_then(|x| x.as_str().map(|s| s.to_string())),
+        group: v.field("group").and_then(|x| x.as_str().map(|s| s.to_string())),
+        group_image: v
+            .field("groupImage")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
+        enable: v.field("enable").and_then(|x| x.as_bool()),
+        show_start_attribute: v.field("showStartAttribute").and_then(|x| x.as_bool()),
+        connector_sizing: v.field("connectorSizing").and_then(|x| x.as_bool()),
+        color_selector: v.field("colorSelector").and_then(|x| x.as_bool()),
+        load_selector: v.field("loadSelector").and_then(extract_selector_annotation),
+        save_selector: v.field("saveSelector").and_then(extract_selector_annotation),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -722,6 +803,7 @@ pub fn parse_annotation(raw: &str) -> Option<AnnotationData> {
     let mut icon = None;
     let mut diagram = None;
     let mut line = None;
+    let mut dialog = None;
 
     for (name, val) in &fields {
         match name.as_str() {
@@ -755,6 +837,7 @@ pub fn parse_annotation(raw: &str) -> Option<AnnotationData> {
                         line = extract_line_annotation(lf);
                     }
                 }
+                "Dialog" => dialog = extract_dialog_annotation(val),
                 _ => {}
             }
         }
@@ -765,6 +848,7 @@ pub fn parse_annotation(raw: &str) -> Option<AnnotationData> {
         icon,
         diagram,
         line,
+        dialog,
     })
 }
 
@@ -776,4 +860,8 @@ pub fn parse_placement(raw: &str) -> Option<Placement> {
 /// Parse Icon annotation from a class annotation string.
 pub fn parse_icon(raw: &str) -> Option<IconDiagramAnnotation> {
     parse_annotation(raw).and_then(|a| a.icon)
+}
+
+pub fn parse_dialog(raw: &str) -> Option<DialogAnnotation> {
+    parse_annotation(raw).and_then(|a| a.dialog)
 }

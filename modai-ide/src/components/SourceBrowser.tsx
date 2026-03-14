@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Editor from "@monaco-editor/react";
-import { t } from "../i18n";
+import { t, tf } from "../i18n";
 import { getSourceModules, getCaseToSourceFiles, type SourceModuleInfo } from "../data/jit_regression_metadata";
 import { FileIcon } from "./FileIcon";
 
@@ -53,7 +53,7 @@ function TreeNode({
         <div className="tree-row group rounded" style={{ paddingLeft }}>
           <button
             type="button"
-            className="tree-arrow text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10 rounded"
+            className="tree-arrow text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-hover)] rounded"
             onClick={() => setExpanded(!expanded)}
             aria-expanded={expanded}
           >
@@ -85,7 +85,7 @@ function TreeNode({
       </span>
       <button
         type="button"
-        className={`tree-label text-left px-1 hover:bg-white/10 rounded ${isSelected ? "text-primary" : "text-[var(--text)]"}`}
+        className={`tree-label text-left px-1 hover:bg-[var(--surface-hover)] rounded ${isSelected ? "text-primary" : "text-[var(--text)]"}`}
         onClick={() => entry.path && onSelect(entry.path)}
         title={entry.path}
       >
@@ -97,9 +97,10 @@ function TreeNode({
 
 interface SourceBrowserProps {
   repoRoot?: string | null;
+  theme?: "dark" | "light";
 }
 
-export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
+export function SourceBrowser({ repoRoot: _repoRoot, theme = "dark" }: SourceBrowserProps) {
   const [tree, setTree] = useState<SourceTreeEntry | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [content, setContent] = useState<string>("");
@@ -116,7 +117,7 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
   useEffect(() => {
     invoke<SourceTreeEntry>("list_compiler_source_tree")
       .then(setTree)
-      .catch((e) => setBanner({ msg: `Failed to load source tree: ${e}`, type: "error" }));
+      .catch((e) => setBanner({ msg: `${t("sourceBrowserTitle")}: ${String(e)}`, type: "error" }));
     invoke<string[]>("list_iteration_branches").then(setBranches).catch(() => {});
   }, []);
 
@@ -147,7 +148,7 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
       await invoke("write_compiler_file", { path: selectedPath, content });
       setOriginalContent(content);
       setDirty(false);
-      setBanner({ msg: "File saved", type: "success" });
+      setBanner({ msg: t("fileSaved"), type: "success" });
       const diff = await invoke<string>("compiler_file_git_diff", { path: selectedPath });
       setDiffText(diff);
     } catch (e) {
@@ -163,11 +164,11 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
   }, [originalContent]);
 
   const handleCreateBranch = useCallback(async () => {
-    const name = prompt("Branch name (will be prefixed with iter/):");
+    const name = prompt(t("createBranchPrompt"));
     if (!name) return;
     try {
       const branchName = await invoke<string>("create_iteration_branch", { name });
-      setBanner({ msg: `Created branch: ${branchName}`, type: "success" });
+      setBanner({ msg: tf("createdBranch", { name: branchName }), type: "success" });
       const b = await invoke<string[]>("list_iteration_branches");
       setBranches(b);
     } catch (e) {
@@ -195,14 +196,14 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
       {banner && (
-        <div className={`px-4 py-2 text-xs shrink-0 ${banner.type === "error" ? "bg-red-900/30 text-red-300" : "bg-green-900/30 text-green-300"}`}>
+        <div className={`px-4 py-2 text-xs shrink-0 border-b border-border ${banner.type === "error" ? "theme-banner-danger" : "theme-banner-success"}`}>
           {banner.msg}
         </div>
       )}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Left: file tree */}
-        <div className={`w-56 shrink-0 border-r border-gray-700 overflow-auto bg-[#252526]`}>
-          <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] uppercase border-b border-gray-700">
+        <div className={`w-56 shrink-0 border-r border-border overflow-auto bg-[var(--panel-bg)]`}>
+          <div className="px-3 py-2 text-xs font-medium text-[var(--text-muted)] uppercase border-b border-border">
             {t("sourceBrowserTitle")}
           </div>
           {tree ? (
@@ -213,7 +214,7 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
             <div className="px-3 py-4 text-xs text-[var(--text-muted)]">{t("loading")}</div>
           )}
           {branches.length > 0 && (
-            <div className="border-t border-gray-700 mt-2 pt-2 px-3">
+            <div className="border-t border-border mt-2 pt-2 px-3">
               <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("iterationBranches")}</div>
               {branches.map((b) => (
                 <div key={b} className="text-xs text-[var(--text)] truncate py-0.5">{b}</div>
@@ -226,7 +227,7 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
           {selectedPath ? (
             <>
-              <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-700 bg-[#2d2d2d] shrink-0">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-[var(--surface-elevated)] shrink-0">
                 <span className="text-xs text-[var(--text)] font-mono truncate">{selectedPath}</span>
                 <div className="flex gap-2">
                   <button
@@ -241,14 +242,14 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
                     type="button"
                     onClick={handleRevert}
                     disabled={!dirty}
-                    className="px-3 py-1 text-xs rounded bg-[#3c3c3c] hover:bg-gray-600 disabled:opacity-40"
+                    className="px-3 py-1 text-xs rounded border theme-button-secondary disabled:opacity-40"
                   >
                     {t("revertFile")}
                   </button>
                   <button
                     type="button"
                     onClick={handleCreateBranch}
-                    className="px-3 py-1 text-xs rounded bg-[#3c3c3c] hover:bg-gray-600"
+                    className="px-3 py-1 text-xs rounded border theme-button-secondary"
                   >
                     {t("createBranch")}
                   </button>
@@ -263,13 +264,13 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
                     setContent(v ?? "");
                     setDirty(v !== originalContent);
                   }}
-                  theme="vs-dark"
+                  theme={theme === "light" ? "vs-light" : "vs-dark"}
                   options={{ minimap: { enabled: false }, scrollBeyondLastLine: false, fontSize: 13 }}
                 />
               </div>
               {diffText && (
-                <div className="border-t border-gray-700 max-h-32 overflow-auto shrink-0">
-                  <div className="px-3 py-1 text-[10px] uppercase text-[var(--text-muted)] bg-[#2d2d2d]">Uncommitted diff</div>
+                <div className="border-t border-border max-h-32 overflow-auto shrink-0">
+                  <div className="px-3 py-1 text-[10px] uppercase text-[var(--text-muted)] bg-[var(--surface-elevated)]">{t("uncommittedDiff")}</div>
                   <pre className="px-3 py-1 text-[11px] text-[var(--text-muted)] font-mono whitespace-pre-wrap">{diffText}</pre>
                 </div>
               )}
@@ -282,16 +283,16 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
         </div>
 
         {/* Right: metadata */}
-        <div className="w-56 shrink-0 border-l border-gray-700 overflow-auto bg-[#252526]">
+        <div className="w-56 shrink-0 border-l border-border overflow-auto bg-[var(--panel-bg)]">
           {selectedPath && (
             <>
-              <div className="px-3 py-2 border-b border-gray-700">
+              <div className="px-3 py-2 border-b border-border">
                 <button
                   type="button"
                   className="text-[10px] uppercase text-[var(--text-muted)] mb-1 hover:text-[var(--text)] w-full text-left flex items-center justify-between"
                   onClick={() => setShowSymbols(!showSymbols)}
                 >
-                  <span>Symbols ({symbols.length})</span>
+                  <span>{t("symbols")} ({symbols.length})</span>
                   <span>{showSymbols ? "\u25BC" : "\u25B6"}</span>
                 </button>
                 {showSymbols && (
@@ -313,7 +314,7 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
                           <button
                             key={`${s.name}-${s.lineStart}-${i}`}
                             type="button"
-                            className="flex items-center gap-1 text-[11px] py-0.5 w-full text-left hover:bg-white/10 rounded px-1"
+                            className="flex items-center gap-1 text-[11px] py-0.5 w-full text-left hover:bg-[var(--surface-hover)] rounded px-1"
                             title={s.signature || `${s.kind} ${s.name} (L${s.lineStart})`}
                           >
                             <span className={`text-[9px] font-mono ${color} w-4 shrink-0`}>
@@ -330,7 +331,7 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
                   )
                 )}
               </div>
-              <div className="px-3 py-2 border-b border-gray-700">
+              <div className="px-3 py-2 border-b border-border">
                 <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("gitHistory")}</div>
                 {gitLog.length === 0 ? (
                   <div className="text-xs text-[var(--text-muted)]">{t("noCommitsYet")}</div>
@@ -344,13 +345,13 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
                 )}
               </div>
               {moduleInfo && (
-                <div className="px-3 py-2 border-b border-gray-700">
+                <div className="px-3 py-2 border-b border-border">
                   <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("linkedFeatures")}</div>
                   <div className="text-xs text-[var(--text-muted)] mb-1">{moduleInfo.description}</div>
                   {moduleInfo.features.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {moduleInfo.features.map((fid) => (
-                        <span key={fid} className="px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 text-[10px]">{fid}</span>
+                        <span key={fid} className="px-1.5 py-0.5 rounded theme-banner-info text-[10px]">{fid}</span>
                       ))}
                     </div>
                   ) : (
@@ -359,11 +360,11 @@ export function SourceBrowser({ repoRoot: _repoRoot }: SourceBrowserProps) {
                 </div>
               )}
               {linkedCases.length > 0 && (
-                <div className="px-3 py-2 border-b border-gray-700">
+                <div className="px-3 py-2 border-b border-border">
                   <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("linkedTests")}</div>
                   <div className="flex flex-wrap gap-1">
                     {linkedCases.map((c) => (
-                      <span key={c} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 text-[10px]">{c.replace("TestLib/", "")}</span>
+                      <span key={c} className="px-1.5 py-0.5 rounded theme-banner-success text-[10px]">{c.replace("TestLib/", "")}</span>
                     ))}
                   </div>
                 </div>

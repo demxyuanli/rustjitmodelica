@@ -29,12 +29,12 @@ export function IconButton({
       : "bg-primary text-white hover:bg-blue-600";
   } else if (variant === "tab") {
     variantClass = active
-      ? "bg-white/10 text-[var(--text)]"
-      : "text-[var(--text-muted)] hover:bg-white/5";
+      ? "bg-[var(--surface-active)] text-[var(--text)]"
+      : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]";
   } else {
     variantClass = active
-      ? "bg-white/10 text-[var(--text)]"
-      : "text-[#cccccc] hover:bg-white/10";
+      ? "bg-[var(--surface-active)] text-[var(--text)]"
+      : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]";
   }
 
   const merged = className ? `${base} ${sizeClass} ${variantClass} ${className}` : `${base} ${sizeClass} ${variantClass}`;

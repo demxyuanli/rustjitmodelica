@@ -1,0 +1,43 @@
+use crate::{compiler_config, db};
+
+#[tauri::command]
+pub fn greet(name: &str) -> String {
+    format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+pub fn get_compiler_config() -> Result<Option<compiler_config::CompilerConfig>, String> {
+    compiler_config::load_config()
+}
+
+#[tauri::command]
+pub fn set_compiler_config(config: compiler_config::CompilerConfig) -> Result<(), String> {
+    compiler_config::save_config(&config)
+}
+
+#[tauri::command]
+pub fn list_iteration_history(limit: i32) -> Result<Vec<db::IterationRecord>, String> {
+    db::list_iteration_history(limit)
+}
+
+#[tauri::command]
+pub fn get_iteration(id: i64) -> Result<Option<db::IterationRecord>, String> {
+    db::get_iteration_by_id(id)
+}
+
+#[tauri::command]
+pub fn save_iteration(
+    target: String,
+    diff: Option<String>,
+    success: bool,
+    message: String,
+    git_commit: Option<String>,
+) -> Result<i64, String> {
+    db::save_iteration(
+        &target,
+        diff.as_deref(),
+        success,
+        &message,
+        git_commit.as_deref(),
+    )
+}

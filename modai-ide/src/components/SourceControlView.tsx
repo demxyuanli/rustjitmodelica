@@ -75,12 +75,13 @@ export function SourceControlView({
 
   useEffect(() => {
     if (!git.status) return;
+    const st = git.status;
     const paths = [
-      ...git.status.staged,
-      ...git.status.modified,
-      ...git.status.deleted,
-      ...git.status.untracked,
-      ...git.status.renamed.map((r) => r.to),
+      ...(st.staged ?? []),
+      ...(st.modified ?? []),
+      ...(st.deleted ?? []),
+      ...(st.untracked ?? []),
+      ...(st.renamed ?? []).map((r) => r.to),
     ];
     const prefixes = new Set<string>();
     paths.forEach((path) => {
@@ -123,23 +124,28 @@ export function SourceControlView({
   }
 
   const status = git.status;
+  const staged = status.staged ?? [];
+  const modified = status.modified ?? [];
+  const deleted = status.deleted ?? [];
+  const untracked = status.untracked ?? [];
+  const renamed = status.renamed ?? [];
 
   const stagedPaths: { path: string; status: string; isStaged: boolean }[] = [
-    ...status.staged.map((path) => ({ path, status: "M", isStaged: true })),
-    ...status.renamed.map((r) => ({ path: r.to, status: "R", isStaged: true })),
+    ...staged.map((path) => ({ path, status: "M", isStaged: true })),
+    ...renamed.map((r) => ({ path: r.to, status: "R", isStaged: true })),
   ];
   const unstagedPaths: { path: string; status: string; isStaged: boolean }[] = [];
-  status.modified.forEach((path) => {
-    if (!status.staged.includes(path) && !status.renamed.some((r) => r.to === path)) {
+  modified.forEach((path) => {
+    if (!staged.includes(path) && !renamed.some((r) => r.to === path)) {
       unstagedPaths.push({ path, status: "M", isStaged: false });
     }
   });
-  status.deleted.forEach((path) => {
-    if (!status.staged.includes(path)) {
+  deleted.forEach((path) => {
+    if (!staged.includes(path)) {
       unstagedPaths.push({ path, status: "D", isStaged: false });
     }
   });
-  status.untracked.forEach((path) => {
+  untracked.forEach((path) => {
     unstagedPaths.push({ path, status: "U", isStaged: false });
   });
 
@@ -274,7 +280,7 @@ export function SourceControlView({
     );
   }
 
-  const commitPlaceholder = t("commitMessageHint").replace("{branch}", status.branch);
+  const commitPlaceholder = t("commitMessageHint").replace("{branch}", status.branch ?? "");
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -292,11 +298,11 @@ export function SourceControlView({
         />
       </div>
       {git.error && (
-        <div className="shrink-0 px-2 py-1 text-xs text-red-400">{git.error}</div>
+        <div className="shrink-0 px-2 py-1 text-xs text-[var(--danger-text)]">{git.error}</div>
       )}
       <div className="shrink-0 border-b border-border p-2 flex flex-col gap-1.5">
         <textarea
-          className="w-full min-h-[3.5rem] px-2 py-1.5 text-sm bg-[#3c3c3c] border border-gray-600 rounded resize-none"
+          className="w-full min-h-[3.5rem] px-2 py-1.5 text-sm theme-input border rounded resize-none"
           placeholder={commitPlaceholder}
           value={git.commitMessage}
           onChange={(e) => git.setCommitMessage(e.target.value)}
@@ -316,7 +322,7 @@ export function SourceControlView({
         <div className="shrink-0 border-b border-border">
           <button
             type="button"
-            className="flex items-center gap-2 w-full px-2 py-1.5 text-left hover:bg-white/5"
+            className="flex items-center gap-2 w-full px-2 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             onClick={() => setStagedOpen((o) => !o)}
             aria-expanded={stagedOpen}
           >

@@ -137,14 +137,14 @@ export function SearchPanel({ projectDir, onOpenFile }: SearchPanelProps) {
             className={`px-2 py-0.5 text-xs rounded ${mode === "text" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)] text-[var(--text-muted)]"}`}
             onClick={() => setMode("text")}
           >
-            {t("textSearch") || "Text"}
+            {t("textSearch")}
           </button>
           <button
             type="button"
             className={`px-2 py-0.5 text-xs rounded ${mode === "symbol" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)] text-[var(--text-muted)]"}`}
             onClick={() => setMode("symbol")}
           >
-            {t("symbolSearch") || "Symbol"}
+            {t("symbolSearch")}
           </button>
         </div>
 
@@ -188,7 +188,7 @@ export function SearchPanel({ projectDir, onOpenFile }: SearchPanelProps) {
               ref={inputRef}
               type="text"
               className="w-full text-sm rounded bg-[var(--surface)] border border-border px-2 py-1.5 text-[var(--text)] placeholder-[var(--text-muted)]"
-              placeholder={t("symbolSearchPlaceholder") || "Search symbols..."}
+              placeholder={t("symbolSearchPlaceholder")}
               value={symbolQuery}
               onChange={(e) => updateSymbolQuery(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -201,7 +201,7 @@ export function SearchPanel({ projectDir, onOpenFile }: SearchPanelProps) {
                 if (symbolQuery.trim().length >= 2) doSymbolSearch(symbolQuery);
               }}
             >
-              <option value="">{t("allKinds") || "All kinds"}</option>
+              <option value="">{t("allKinds")}</option>
               {SYMBOL_KINDS.map((k) => (
                 <option key={k} value={k}>
                   {k}

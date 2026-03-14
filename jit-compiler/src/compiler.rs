@@ -14,6 +14,7 @@ use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_
 use crate::diag::WarningInfo;
 use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
 use crate::jit::native::builtin_jit_symbol_names;
+use crate::equation_graph;
 use crate::expr_eval;
 use crate::i18n;
 
@@ -408,6 +409,34 @@ impl Compiler {
             .load_model_from_source(model_name, code)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
         self.compile(model_name)
+    }
+
+    /// Build equation/variable dependency graph from source (for analysis/debug). Does not run full compile.
+    pub fn get_equation_graph_from_source(
+        &mut self,
+        model_name: &str,
+        code: &str,
+    ) -> Result<equation_graph::EquationGraph, Box<dyn std::error::Error + Send + Sync>> {
+        self.loader
+            .load_model_from_source(model_name, code)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        let mut root_model = self
+            .loader
+            .load_model(model_name)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        if root_model.as_ref().is_function {
+            return Err("Equation graph is not supported for functions.".into());
+        }
+        let mut flattener = Flattener::new();
+        for path in &self.loader.library_paths {
+            flattener.loader.add_path(path.clone());
+        }
+        if let Some(p) = self.loader.get_path_for_model(model_name) {
+            flattener.loader.register_path(model_name, p);
+        }
+        let mut flat_model = flattener.flatten(&mut root_model, model_name)?;
+        inline::inline_function_calls(&mut flat_model, &mut self.loader);
+        Ok(equation_graph::build_equation_graph(&flat_model))
     }
 
     /// Run a function once with given inputs (or 0.0 per input if not provided) and return the output (F3-1).
