@@ -178,15 +178,8 @@ fn write_declaration(buf: &mut String, d: &Declaration) {
         write_expression(buf, sz);
         buf.push(']');
     }
-    let has_mod = d.start_value.is_some() || !d.modifications.is_empty();
-    if has_mod {
+    if !d.modifications.is_empty() {
         buf.push_str("(");
-        if let Some(ref v) = d.start_value {
-            write_expression(buf, v);
-            if !d.modifications.is_empty() {
-                buf.push_str(", ");
-            }
-        }
         for (i, m) in d.modifications.iter().enumerate() {
             if i > 0 {
                 buf.push_str(", ");
@@ -194,6 +187,10 @@ fn write_declaration(buf: &mut String, d: &Declaration) {
             write_modification(buf, m);
         }
         buf.push_str(")");
+    }
+    if let Some(ref v) = d.start_value {
+        buf.push_str(" = ");
+        write_expression(buf, v);
     }
     buf.push_str(";\n");
 }

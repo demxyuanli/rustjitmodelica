@@ -18,7 +18,7 @@ pub use expression_utils::{
     time_derivative,
 };
 #[allow(unused_imports)]
-pub use variable_collection::contains_var;
+pub use variable_collection::{contains_var, extract_unknowns};
 
 #[derive(Clone, Default)]
 pub struct AnalysisOptions {

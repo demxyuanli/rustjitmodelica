@@ -10,7 +10,7 @@ use rustmodlica::ast::{
 use rustmodlica::parser;
 use rustmodlica::unparse;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,41 +73,123 @@ pub struct DiagramModel {
     pub icon_annotation: Option<IconDiagramAnnotation>,
 }
 
-const LAYOUT_FILE_NAME: &str = ".modai/diagram-layout.json";
-
-fn layout_file_path(project_dir: &str) -> std::path::PathBuf {
-    Path::new(project_dir).join(LAYOUT_FILE_NAME)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphicalModelState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<HashMap<String, LayoutPoint>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_annotation: Option<IconDiagramAnnotation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_annotation: Option<IconDiagramAnnotation>,
 }
 
-/// Load diagram layout for a file from external .modai/diagram-layout.json.
-fn load_layout_from_file(
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphicalDocumentModel {
+    pub model_name: String,
+    pub components: Vec<ComponentInstance>,
+    pub connections: Vec<Connection>,
+    pub graphical: GraphicalModelState,
+}
+
+impl GraphicalDocumentModel {
+    fn from_diagram_model(diagram: DiagramModel) -> Self {
+        Self {
+            model_name: diagram.model_name,
+            components: diagram.components,
+            connections: diagram.connections,
+            graphical: GraphicalModelState {
+                layout: diagram.layout,
+                diagram_annotation: diagram.diagram_annotation,
+                icon_annotation: diagram.icon_annotation,
+            },
+        }
+    }
+
+    fn into_diagram_model(self) -> DiagramModel {
+        DiagramModel {
+            model_name: self.model_name,
+            components: self.components,
+            connections: self.connections,
+            layout: self.graphical.layout,
+            diagram_annotation: self.graphical.diagram_annotation,
+            icon_annotation: self.graphical.icon_annotation,
+        }
+    }
+}
+
+const STATE_FILE_NAME: &str = ".modai/diagram-state.json";
+const LEGACY_LAYOUT_FILE_NAME: &str = ".modai/diagram-layout.json";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagramPersistentState {
+    #[serde(default)]
+    layout: HashMap<String, LayoutPoint>,
+    #[serde(default)]
+    connection_lines: HashMap<String, LineAnnotation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diagram_annotation: Option<IconDiagramAnnotation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_annotation: Option<IconDiagramAnnotation>,
+}
+
+fn state_file_path(project_dir: &str) -> std::path::PathBuf {
+    Path::new(project_dir).join(STATE_FILE_NAME)
+}
+
+fn legacy_layout_file_path(project_dir: &str) -> std::path::PathBuf {
+    Path::new(project_dir).join(LEGACY_LAYOUT_FILE_NAME)
+}
+
+fn normalize_relative_path(relative_path: &str) -> String {
+    relative_path.replace('\\', "/")
+}
+
+fn load_legacy_layout_from_file(
     project_dir: &str,
     relative_path: &str,
 ) -> Option<HashMap<String, LayoutPoint>> {
-    let path = layout_file_path(project_dir);
+    let path = legacy_layout_file_path(project_dir);
     let content = std::fs::read_to_string(&path).ok()?;
     let all: HashMap<String, HashMap<String, LayoutPoint>> =
         serde_json::from_str(&content).ok()?;
-    let key = relative_path.replace('\\', "/");
-    all.get(&key).cloned()
+    all.get(&normalize_relative_path(relative_path)).cloned()
 }
 
-/// Save diagram layout for a file into external .modai/diagram-layout.json.
-fn save_layout_to_file(
+fn load_persistent_state(
     project_dir: &str,
     relative_path: &str,
-    layout: &HashMap<String, LayoutPoint>,
+) -> Option<DiagramPersistentState> {
+    let path = state_file_path(project_dir);
+    let content = std::fs::read_to_string(&path).ok()?;
+    let all: HashMap<String, DiagramPersistentState> = serde_json::from_str(&content).ok()?;
+    let key = normalize_relative_path(relative_path);
+    if let Some(state) = all.get(&key) {
+        return Some(state.clone());
+    }
+    load_legacy_layout_from_file(project_dir, relative_path).map(|layout| DiagramPersistentState {
+        layout,
+        ..DiagramPersistentState::default()
+    })
+}
+
+fn save_persistent_state(
+    project_dir: &str,
+    relative_path: &str,
+    state: &DiagramPersistentState,
 ) -> Result<(), String> {
-    let path = layout_file_path(project_dir);
+    let path = state_file_path(project_dir);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let key = relative_path.replace('\\', "/");
-    let mut all: HashMap<String, HashMap<String, LayoutPoint>> = std::fs::read_to_string(&path)
+    let key = normalize_relative_path(relative_path);
+    let mut all: HashMap<String, DiagramPersistentState> = std::fs::read_to_string(&path)
         .ok()
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default();
-    all.insert(key, layout.clone());
+    all.insert(key, state.clone());
     let content = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok(())
@@ -166,6 +248,141 @@ fn strip_diagram_layout_from_annotation_inner(inner: &str) -> String {
     out.trim_matches(',').trim().to_string()
 }
 
+fn split_top_level_items(input: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut depth_paren = 0i32;
+    let mut depth_brace = 0i32;
+    let mut in_string = false;
+    let mut escape = false;
+    for ch in input.chars() {
+        if in_string {
+            current.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => {
+                in_string = true;
+                current.push(ch);
+            }
+            '(' => {
+                depth_paren += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth_paren -= 1;
+                current.push(ch);
+            }
+            '{' => {
+                depth_brace += 1;
+                current.push(ch);
+            }
+            '}' => {
+                depth_brace -= 1;
+                current.push(ch);
+            }
+            ',' if depth_paren == 0 && depth_brace == 0 => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    items.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        items.push(trimmed.to_string());
+    }
+    items
+}
+
+fn annotation_inner(raw: &str) -> Option<String> {
+    raw.trim()
+        .strip_suffix(';')
+        .unwrap_or(raw.trim())
+        .trim()
+        .strip_prefix("annotation(")
+        .and_then(|s| s.strip_suffix(')'))
+        .map(|s| s.trim().to_string())
+}
+
+fn format_point(p: &Point) -> String {
+    format!("{{{},{}}}", p.x, p.y)
+}
+
+fn format_extent(p1: &Point, p2: &Point) -> String {
+    format!("{{{},{}}}", format_point(p1), format_point(p2))
+}
+
+fn format_transformation(t: &annotation::Transformation) -> String {
+    let mut parts = Vec::new();
+    if let Some(ref origin) = t.origin {
+        parts.push(format!("origin={}", format_point(origin)));
+    }
+    if let Some(ref extent) = t.extent {
+        parts.push(format!("extent={}", format_extent(&extent.p1, &extent.p2)));
+    }
+    if let Some(rotation) = t.rotation {
+        parts.push(format!("rotation={}", rotation));
+    }
+    format!("transformation({})", parts.join(", "))
+}
+
+fn format_placement(placement: &Placement) -> String {
+    let mut parts = Vec::new();
+    if let Some(ref transformation) = placement.transformation {
+        parts.push(format_transformation(transformation));
+    }
+    if let Some(ref transformation) = placement.icon_transformation {
+        parts.push(format!(
+            "iconTransformation({})",
+            format_transformation(transformation)
+                .trim_start_matches("transformation(")
+                .trim_end_matches(')')
+        ));
+    }
+    if let Some(visible) = placement.visible {
+        parts.push(format!("visible={}", if visible { "true" } else { "false" }));
+    }
+    format!("Placement({})", parts.join(", "))
+}
+
+fn upsert_annotation_item(
+    existing: Option<&String>,
+    prefix: &str,
+    replacement: Option<String>,
+) -> Option<String> {
+    let inner = existing.and_then(|raw| annotation_inner(raw));
+    let mut items = inner
+        .as_deref()
+        .map(split_top_level_items)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| !item.trim().starts_with(prefix))
+        .collect::<Vec<_>>();
+    if let Some(value) = replacement {
+        items.push(value);
+    }
+    if items.is_empty() {
+        None
+    } else {
+        Some(format!("annotation({});", items.join(", ")))
+    }
+}
+
+fn connection_key(from: &str, to: &str) -> String {
+    format!("{}->{}", from, to)
+}
+
 fn expr_to_display_string(e: &Expression) -> String {
     match e {
         Expression::Number(n) => {
@@ -202,7 +419,7 @@ fn extract_params(d: &Declaration) -> Option<Vec<ParamValue>> {
         let vs = expr_to_display_string(sv);
         if !vs.is_empty() {
             params.push(ParamValue {
-                name: String::new(),
+                name: "start".to_string(),
                 value: vs,
             });
         }
@@ -355,7 +572,7 @@ fn extract_diagram_from_model(m: &Model, project_dir: Option<&str>) -> DiagramMo
 }
 
 /// Parses source and returns diagram data for the top-level model.
-/// If project_dir and relative_path are set, layout is loaded from .modai/diagram-layout.json (no layout in .mo).
+/// If project_dir and relative_path are set, internal diagram state is loaded from .modai/diagram-state.json.
 pub fn get_diagram_data_from_source(
     source: &str,
     project_dir: Option<&str>,
@@ -368,10 +585,41 @@ pub fn get_diagram_data_from_source(
     };
     let mut diagram = extract_diagram_from_model(&m, project_dir);
     if let (Some(pdir), Some(rpath)) = (project_dir, relative_path) {
-        if let Some(layout) = load_layout_from_file(pdir, rpath) {
-            diagram.layout = Some(layout);
-        } else if let Some(ref layout) = diagram.layout {
-            let _ = save_layout_to_file(pdir, rpath, layout);
+        if let Some(state) = load_persistent_state(pdir, rpath) {
+            if !state.layout.is_empty() {
+                diagram.layout = Some(state.layout);
+            }
+            if let Some(annotation) = state.diagram_annotation {
+                diagram.diagram_annotation = Some(annotation);
+            }
+            if let Some(annotation) = state.icon_annotation {
+                diagram.icon_annotation = Some(annotation);
+            }
+            for connection in &mut diagram.connections {
+                let key = connection_key(&connection.from, &connection.to);
+                if let Some(line) = state.connection_lines.get(&key) {
+                    connection.line = Some(line.clone());
+                }
+            }
+        } else {
+            let _ = save_persistent_state(
+                pdir,
+                rpath,
+                &DiagramPersistentState {
+                    layout: diagram.layout.clone().unwrap_or_default(),
+                    connection_lines: diagram
+                        .connections
+                        .iter()
+                        .filter_map(|connection| {
+                            connection.line.as_ref().map(|line| {
+                                (connection_key(&connection.from, &connection.to), line.clone())
+                            })
+                        })
+                        .collect(),
+                    diagram_annotation: diagram.diagram_annotation.clone(),
+                    icon_annotation: diagram.icon_annotation.clone(),
+                },
+            );
         }
     }
     Ok(diagram)
@@ -384,22 +632,149 @@ pub fn get_diagram_data(project_dir: &str, relative_path: &str) -> Result<Diagra
     get_diagram_data_from_source(&source, Some(project_dir), Some(relative_path))
 }
 
+pub fn get_graphical_document_from_source(
+    source: &str,
+    project_dir: Option<&str>,
+    relative_path: Option<&str>,
+) -> Result<GraphicalDocumentModel, String> {
+    get_diagram_data_from_source(source, project_dir, relative_path)
+        .map(GraphicalDocumentModel::from_diagram_model)
+}
+
+pub fn get_graphical_document(
+    project_dir: &str,
+    relative_path: &str,
+) -> Result<GraphicalDocumentModel, String> {
+    get_diagram_data(project_dir, relative_path).map(GraphicalDocumentModel::from_diagram_model)
+}
+
 fn declaration_from_component(c: &ComponentInstance) -> Declaration {
-    Declaration {
+    let mut decl = Declaration {
         type_name: c.type_name.clone(),
         name: c.name.clone(),
         replaceable: false,
         is_parameter: false,
         is_flow: false,
         is_discrete: false,
-        is_input: false,
-        is_output: false,
+        is_input: c.is_input,
+        is_output: c.is_output,
         start_value: None,
         array_size: None,
         modifications: vec![],
         is_rest: false,
         annotation: None,
+    };
+    apply_component_to_declaration(&mut decl, c);
+    decl
+}
+
+fn parse_param_expression(value: &str) -> Option<Expression> {
+    parser::parse_expression_from_str(value).ok()
+}
+
+fn apply_component_to_declaration(decl: &mut Declaration, component: &ComponentInstance) {
+    decl.type_name = component.type_name.clone();
+    decl.is_input = component.is_input;
+    decl.is_output = component.is_output;
+    decl.annotation = upsert_annotation_item(
+        decl.annotation.as_ref(),
+        "Placement(",
+        component.placement.as_ref().map(format_placement),
+    );
+
+    let incoming = component.params.clone().unwrap_or_default();
+    let mut incoming_mods = HashMap::new();
+    for param in &incoming {
+        if param.name.trim().is_empty() {
+            continue;
+        }
+        incoming_mods.insert(param.name.clone(), param.value.clone());
     }
+    if let Some(start) = incoming_mods.remove("start") {
+        decl.start_value = parse_param_expression(&start).or_else(|| decl.start_value.clone());
+    }
+    for modification in &mut decl.modifications {
+        if let Some(new_value) = incoming_mods.remove(&modification.name) {
+            modification.value = parse_param_expression(&new_value).or(modification.value.clone());
+        }
+    }
+    for (name, value) in incoming_mods {
+        if let Some(expr) = parse_param_expression(&value) {
+            decl.modifications.push(rustmodlica::ast::Modification {
+                name,
+                value: Some(expr),
+                each: false,
+                redeclare: false,
+                redeclare_type: None,
+            });
+        }
+    }
+}
+
+fn merge_declarations(
+    existing: &[Declaration],
+    components: &[ComponentInstance],
+) -> Vec<Declaration> {
+    let mut component_map = HashMap::new();
+    for component in components {
+        component_map.insert(component.name.clone(), component.clone());
+    }
+    let mut used = HashSet::new();
+    let mut merged = Vec::new();
+
+    for decl in existing {
+        if decl.is_parameter {
+            merged.push(decl.clone());
+            continue;
+        }
+        if let Some(component) = component_map.get(&decl.name) {
+            let mut updated = decl.clone();
+            apply_component_to_declaration(&mut updated, component);
+            merged.push(updated);
+            used.insert(component.name.clone());
+        }
+    }
+
+    for component in components {
+        if !used.contains(&component.name) {
+            merged.push(declaration_from_component(component));
+        }
+    }
+
+    merged
+}
+
+fn merge_connections(existing: &[Equation], connections: &[Connection]) -> Vec<Equation> {
+    let mut remaining = HashMap::new();
+    for connection in connections {
+        remaining.insert(connection_key(&connection.from, &connection.to), connection.clone());
+    }
+
+    let mut merged = Vec::new();
+    for eq in existing {
+        if let Equation::Connect(a, b) = eq {
+            if let (Some(from), Some(to)) = (expr_to_connector_path(a), expr_to_connector_path(b)) {
+                let key = connection_key(&from, &to);
+                if remaining.remove(&key).is_some() {
+                    merged.push(eq.clone());
+                }
+                continue;
+            }
+        }
+        merged.push(eq.clone());
+    }
+
+    for connection in connections {
+        let key = connection_key(&connection.from, &connection.to);
+        if remaining.contains_key(&key) {
+            merged.push(Equation::Connect(
+                connector_path_to_expr(&connection.from),
+                connector_path_to_expr(&connection.to),
+            ));
+        }
+    }
+
+    merged
 }
 
 /// Builds new .mo source from original source and new diagram components/connections.
@@ -409,6 +784,8 @@ pub fn apply_diagram_edits(
     components: &[ComponentInstance],
     connections: &[Connection],
     layout: Option<&HashMap<String, LayoutPoint>>,
+    diagram_annotation: Option<&IconDiagramAnnotation>,
+    icon_annotation: Option<&IconDiagramAnnotation>,
     project_dir: Option<&str>,
     relative_path: Option<&str>,
 ) -> Result<String, String> {
@@ -418,33 +795,25 @@ pub fn apply_diagram_edits(
         ClassItem::Function(_) => return Err("File defines a function, not a model".to_string()),
     };
 
-    m.declarations = components
-        .iter()
-        .map(declaration_from_component)
-        .collect();
+    m.declarations = merge_declarations(&m.declarations, components);
+    m.equations = merge_connections(&m.equations, connections);
 
-    let connect_equations: Vec<Equation> = connections
-        .iter()
-        .map(|c| {
-            Equation::Connect(
-                connector_path_to_expr(&c.from),
-                connector_path_to_expr(&c.to),
-            )
-        })
-        .collect();
-
-    let other_equations: Vec<Equation> = m
-        .equations
-        .iter()
-        .filter(|eq| !matches!(eq, Equation::Connect(_, _)))
-        .cloned()
-        .collect();
-
-    m.equations = other_equations;
-    m.equations.extend(connect_equations);
-
-    if let (Some(lay), Some(pdir), Some(rpath)) = (layout, project_dir, relative_path) {
-        let _ = save_layout_to_file(pdir, rpath, lay);
+    if let (Some(pdir), Some(rpath)) = (project_dir, relative_path) {
+        let state = DiagramPersistentState {
+            layout: layout.cloned().unwrap_or_default(),
+            connection_lines: connections
+                .iter()
+                .filter_map(|connection| {
+                    connection
+                        .line
+                        .as_ref()
+                        .map(|line| (connection_key(&connection.from, &connection.to), line.clone()))
+                })
+                .collect(),
+            diagram_annotation: diagram_annotation.cloned(),
+            icon_annotation: icon_annotation.cloned(),
+        };
+        let _ = save_persistent_state(pdir, rpath, &state);
     }
     if let Some(ref ann) = m.annotation {
         let inner = ann
@@ -465,4 +834,23 @@ pub fn apply_diagram_edits(
     }
 
     Ok(unparse::model_to_mo(&m))
+}
+
+pub fn apply_graphical_document_edits(
+    source: &str,
+    document: &GraphicalDocumentModel,
+    project_dir: Option<&str>,
+    relative_path: Option<&str>,
+) -> Result<String, String> {
+    let diagram = document.clone().into_diagram_model();
+    apply_diagram_edits(
+        source,
+        &diagram.components,
+        &diagram.connections,
+        diagram.layout.as_ref(),
+        diagram.diagram_annotation.as_ref(),
+        diagram.icon_annotation.as_ref(),
+        project_dir,
+        relative_path,
+    )
 }

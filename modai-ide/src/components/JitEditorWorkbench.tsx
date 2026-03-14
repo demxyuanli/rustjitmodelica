@@ -77,6 +77,7 @@ export interface JitEditorWorkbenchProps {
   settingsProps?: SettingsViewProps;
   onSelectionChange?: (params: { path: string | null; text: string | null }) => void;
   repoRoot?: string | null;
+  theme?: "dark" | "light";
 }
 
 function SettingsInlineView(props: SettingsViewProps) {
@@ -103,6 +104,7 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
     settingsProps,
     onSelectionChange,
     repoRoot,
+    theme = "dark",
   }: JitEditorWorkbenchProps,
   ref: React.ForwardedRef<JitEditorWorkbenchRef>
 ) {
@@ -228,40 +230,20 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
       {banner && (
-        <div className={`px-4 py-1.5 text-xs shrink-0 ${banner.type === "error" ? "bg-red-900/30 text-red-300" : "bg-green-900/30 text-green-300"}`}>
+        <div className={`px-4 py-1.5 text-xs shrink-0 border-b border-border ${banner.type === "error" ? "theme-banner-danger" : "theme-banner-success"}`}>
           {banner.msg}
         </div>
       )}
 
-      {/* Toolbar: analysis view buttons */}
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-gray-700 bg-[#2d2d2d] shrink-0">
-        <span className="text-[10px] text-[var(--text-muted)] mr-1">{t("view")}:</span>
-        {(Object.keys(CENTER_VIEW_META) as JitCenterView[]).map((viewId) => {
-          const meta = CENTER_VIEW_META[viewId];
-          const isActive = activeCenterView === viewId;
-          return (
-            <button key={viewId} type="button"
-              className={`px-2 py-0.5 text-xs rounded ${isActive ? "bg-primary text-white" : "bg-[#3c3c3c] text-[var(--text-muted)] hover:bg-gray-600 hover:text-[var(--text)]"}`}
-              onClick={() => onCenterViewChange(isActive ? null : viewId)}
-              title={t(meta.labelKey as Parameters<typeof t>[0])}>
-              <span className="inline-flex items-center gap-1">
-                {meta.icon}
-                <span>{t(meta.labelKey as Parameters<typeof t>[0])}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
       {/* Tab bar: file tabs + active center view tab */}
-      <div className="flex border-b border-gray-700 shrink-0 bg-[#2d2d2d] overflow-x-auto">
+      <div className="flex border-b border-border shrink-0 bg-[var(--surface-elevated)] overflow-x-auto">
         {openFiles.map((f) => {
           const isActive = showingEditor && f.path === activeFilePath;
           const label = f.type === "modelica" ? f.path.replace("TestLib/", "") : f.path.replace("src/", "");
           return (
             <div key={f.path}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-gray-700 ${
-                isActive ? "bg-[#1e1e1e] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[#3c3c3c]"
+              className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-border ${
+                isActive ? "bg-[var(--surface)] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"
               }`}
               onClick={() => { onCenterViewChange(null); onActiveFileChange(f.path); }}>
               <span className={`w-2 h-2 rounded-full shrink-0 ${f.type === "rust" ? "bg-orange-500" : "bg-blue-500"}`} />
@@ -275,7 +257,7 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
         })}
 
         {activeCenterView && (
-          <div className="flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-gray-700 bg-[#1e1e1e] text-[var(--text)]">
+          <div className="flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-border bg-[var(--surface)] text-[var(--text)]">
             <span className="text-primary font-medium">
               {t(CENTER_VIEW_META[activeCenterView].labelKey as Parameters<typeof t>[0])}
             </span>
@@ -303,12 +285,12 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
       ) : activeFile ? (
         <div className="flex flex-1 min-h-0">
           <div className="flex-1 min-w-0 flex flex-col min-h-0">
-            <div className="flex items-center justify-between px-3 py-1 border-b border-gray-700 bg-[#2d2d2d] shrink-0">
+            <div className="flex items-center justify-between px-3 py-1 border-b border-border bg-[var(--surface-elevated)] shrink-0">
               <span className="text-xs text-[var(--text)] font-mono truncate">{activeFile.path}</span>
               <div className="flex gap-2 shrink-0">
                 {isModelica && (
                   <button type="button" onClick={handleRunTest} disabled={running}
-                    className="px-2 py-0.5 text-xs rounded bg-green-700 hover:bg-green-600 disabled:opacity-50">
+                    className="px-2 py-0.5 text-xs rounded border theme-banner-success disabled:opacity-50">
                     {running ? t("running") : t("runTest")}
                   </button>
                 )}
@@ -317,12 +299,12 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
                   {t("saveFile")}
                 </button>
                 <button type="button" onClick={handleRevert} disabled={!activeFile.dirty}
-                  className="px-2 py-0.5 text-xs rounded bg-[#3c3c3c] hover:bg-gray-600 disabled:opacity-40">
+                  className="px-2 py-0.5 text-xs rounded border theme-button-secondary disabled:opacity-40">
                   {t("revertFile")}
                 </button>
                 {isRust && (
                   <button type="button" onClick={() => setShowSymbols(!showSymbols)}
-                    className={`px-2 py-0.5 text-xs rounded ${showSymbols ? "bg-primary/30 text-primary" : "bg-[#3c3c3c] text-[var(--text-muted)]"}`}>
+                    className={`px-2 py-0.5 text-xs rounded border ${showSymbols ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary text-[var(--text-muted)]"}`}>
                     Symbols ({symbols.length})
                   </button>
                 )}
@@ -334,7 +316,7 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
                 language={isRust ? "rust" : "modelica"}
                 value={diffOverlay ?? activeFile.content}
                 onChange={diffOverlay ? undefined : (v) => onFileContentChange(activeFile.path, v ?? "")}
-                theme="vs-dark"
+                theme={theme === "light" ? "vs-light" : "vs-dark"}
                 options={{
                   readOnly: !!diffOverlay,
                   minimap: { enabled: false },
@@ -367,14 +349,14 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
           </div>
 
           {showSymbols && isRust && (
-            <div className="w-52 shrink-0 border-l border-gray-700 overflow-auto bg-[#252526]">
-              <div className="px-3 py-2 border-b border-gray-700">
+            <div className="w-52 shrink-0 border-l border-border overflow-auto bg-[var(--panel-bg)]">
+              <div className="px-3 py-2 border-b border-border">
                 <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">Symbols ({symbols.length})</div>
                 {symbols.length > 0 ? (
                   <div className="max-h-60 overflow-auto">
                     {symbols.map((s, i) => (
                       <button key={`${s.name}-${s.lineStart}-${i}`} type="button"
-                        className="flex items-center gap-1 text-[11px] py-0.5 w-full text-left hover:bg-white/10 rounded px-1"
+                        className="flex items-center gap-1 text-[11px] py-0.5 w-full text-left hover:bg-[var(--surface-hover)] rounded px-1"
                         title={s.signature || `${s.kind} ${s.name} (L${s.lineStart})`}>
                         <span className={`text-[9px] font-mono ${kindColor[s.kind] || "text-[var(--text)]"} w-4 shrink-0`}>
                           {s.kind.slice(0, 2).toUpperCase()}
@@ -387,7 +369,7 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
                 ) : <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>}
               </div>
               {gitLog.length > 0 && (
-                <div className="px-3 py-2 border-b border-gray-700">
+              <div className="px-3 py-2 border-b border-border">
                   <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("gitHistory")}</div>
                   {gitLog.map((g) => (
                     <div key={g.hash} className="mb-1.5">
@@ -398,23 +380,23 @@ export const JitEditorWorkbench = forwardRef(function JitEditorWorkbench(
                 </div>
               )}
               {moduleInfo && (
-                <div className="px-3 py-2 border-b border-gray-700">
+                <div className="px-3 py-2 border-b border-border">
                   <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("linkedFeatures")}</div>
                   {moduleInfo.features.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {moduleInfo.features.map((fid) => (
-                        <span key={fid} className="px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 text-[10px]">{fid}</span>
+                        <span key={fid} className="px-1.5 py-0.5 rounded theme-banner-info text-[10px]">{fid}</span>
                       ))}
                     </div>
                   ) : <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>}
                 </div>
               )}
               {linkedCases.length > 0 && (
-                <div className="px-3 py-2 border-b border-gray-700">
+                <div className="px-3 py-2 border-b border-border">
                   <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("linkedTests")}</div>
                   <div className="flex flex-wrap gap-1">
                     {linkedCases.map((c) => (
-                      <span key={c} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 text-[10px]">{c.replace("TestLib/", "")}</span>
+                      <span key={c} className="px-1.5 py-0.5 rounded theme-banner-success text-[10px]">{c.replace("TestLib/", "")}</span>
                     ))}
                   </div>
                 </div>

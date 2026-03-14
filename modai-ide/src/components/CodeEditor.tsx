@@ -10,6 +10,7 @@ interface CodeEditorProps {
   onChange: (value: string) => void;
   modelName: string;
   onModelNameChange: (v: string) => void;
+  modelNameReadOnly?: boolean;
   jitResult: JitValidateResult | null;
   editorRef: React.MutableRefObject<monaco.editor.IStandaloneCodeEditor | null>;
   monacoRef: React.MutableRefObject<typeof monaco | null>;
@@ -18,6 +19,8 @@ interface CodeEditorProps {
   projectDir?: string | null;
   onSave?: () => void;
   onSelectionChange?: (params: { path: string | null; selectedText: string | null }) => void;
+  theme?: "dark" | "light";
+  readOnly?: boolean;
 }
 
 export function CodeEditor({
@@ -25,6 +28,7 @@ export function CodeEditor({
   onChange,
   modelName,
   onModelNameChange,
+  modelNameReadOnly = false,
   jitResult,
   editorRef,
   monacoRef,
@@ -33,6 +37,8 @@ export function CodeEditor({
   projectDir,
   onSave,
   onSelectionChange,
+  theme = "dark",
+  readOnly = false,
 }: CodeEditorProps) {
   const [editorReady, setEditorReady] = useState(false);
   useEffect(() => {
@@ -74,17 +80,18 @@ export function CodeEditor({
   return (
     <section className="flex-1 min-w-0 flex flex-col">
       <div className="flex items-center gap-2 px-2 py-1 border-b border-border">
-        <span className="text-xs text-[var(--text-muted)]">Model:</span>
+        <span className="text-xs text-[var(--text-muted)]">{t("model")}:</span>
         <input
           type="text"
           value={modelName}
           onChange={(e) => onModelNameChange(e.target.value)}
-          className="bg-[#3c3c3c] border border-gray-600 px-2 py-1 text-sm w-40 rounded"
+          readOnly={modelNameReadOnly}
+          className="theme-input px-2 py-1 text-sm w-40 rounded border"
         />
-        {openFilePath != null && onSave != null && (
+        {openFilePath != null && onSave != null && !readOnly && (
           <button
             type="button"
-            className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[var(--text)]"
+            className="text-xs px-2 py-1 rounded border theme-button-secondary"
             onClick={onSave}
           >
             {t("save")}
@@ -125,13 +132,14 @@ export function CodeEditor({
               });
             }
           }}
-          theme="vs-dark"
+          theme={theme === "light" ? "vs-light" : "vs-dark"}
           options={{
             minimap: { enabled: false },
             fontSize: 14,
             wordWrap: "on",
             padding: { top: 8 },
             glyphMargin: true,
+            readOnly,
           }}
           beforeMount={(monaco) => {
             monaco.languages.register({ id: "modelica" });

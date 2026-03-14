@@ -21,6 +21,7 @@ interface DiffViewProps {
   /** When set, render this unified diff (e.g. from iteration history) instead of loading from git. */
   iterationUnifiedDiff?: string | null;
   iterationTitle?: string;
+  theme?: "dark" | "light";
 }
 
 type ViewType = "split" | "unified";
@@ -52,6 +53,7 @@ export function DiffView({
   onOpenInEditor,
   iterationUnifiedDiff,
   iterationTitle,
+  theme = "dark",
 }: DiffViewProps) {
   const [diffText, setDiffText] = useState<string | null>(null);
   const [original, setOriginal] = useState("");
@@ -68,19 +70,19 @@ export function DiffView({
         <div className="flex flex-col h-full min-h-0 diff-view-container">
           <div className="shrink-0 flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border">
             <span className="text-xs text-[var(--text-muted)] truncate flex-1 min-w-0">
-              {iterationTitle ?? "Iteration patch"}
+              {iterationTitle ?? t("iterationPatch")}
             </span>
             <div className="shrink-0 flex items-center gap-1">
               <button
                 type="button"
-                className={`text-xs px-1.5 py-0.5 rounded ${viewType === "split" ? "bg-white/15 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
+                className={`text-xs px-1.5 py-0.5 rounded ${viewType === "split" ? "bg-[var(--surface-active)] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"}`}
                 onClick={() => setViewType("split")}
               >
                 {t("diffSplit")}
               </button>
               <button
                 type="button"
-                className={`text-xs px-1.5 py-0.5 rounded ${viewType === "unified" ? "bg-white/15 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
+                className={`text-xs px-1.5 py-0.5 rounded ${viewType === "unified" ? "bg-[var(--surface-active)] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"}`}
                 onClick={() => setViewType("unified")}
               >
                 {t("diffUnified")}
@@ -103,12 +105,12 @@ export function DiffView({
       return (
         <div className="flex flex-col h-full min-h-0">
           <div className="shrink-0 flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border">
-            <span className="text-xs text-[var(--text-muted)]">{iterationTitle ?? "Iteration patch"}</span>
+            <span className="text-xs text-[var(--text-muted)]">{iterationTitle ?? t("iterationPatch")}</span>
             <button type="button" className="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" onClick={onClose}>
               ×
             </button>
           </div>
-          <div className="p-3 text-xs text-red-400">Invalid diff format.</div>
+          <div className="p-3 text-xs text-[var(--danger-text)]">{t("invalidDiffFormat")}</div>
         </div>
       );
     }
@@ -221,7 +223,7 @@ export function DiffView({
       {onOpenInEditor && (
         <button
           type="button"
-          className="shrink-0 text-xs px-1.5 py-0.5 rounded text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text)]"
+          className="shrink-0 text-xs px-1.5 py-0.5 rounded text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
           onClick={() => onOpenInEditor(diffTarget.relativePath)}
           title={t("openInEditor")}
         >
@@ -232,14 +234,14 @@ export function DiffView({
         <div className="shrink-0 flex items-center gap-1">
           <button
             type="button"
-            className={`text-xs px-1.5 py-0.5 rounded ${viewType === "split" ? "bg-white/15 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
+            className={`text-xs px-1.5 py-0.5 rounded ${viewType === "split" ? "bg-[var(--surface-active)] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"}`}
             onClick={() => setViewType("split")}
           >
             {t("diffSplit")}
           </button>
           <button
             type="button"
-            className={`text-xs px-1.5 py-0.5 rounded ${viewType === "unified" ? "bg-white/15 text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5"}`}
+            className={`text-xs px-1.5 py-0.5 rounded ${viewType === "unified" ? "bg-[var(--surface-active)] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"}`}
             onClick={() => setViewType("unified")}
           >
             {t("diffUnified")}
@@ -260,7 +262,7 @@ export function DiffView({
     return (
       <>
         {header}
-        <div className="shrink-0 px-2 py-1 text-xs text-red-400">{error}</div>
+        <div className="shrink-0 px-2 py-1 text-xs text-[var(--danger-text)]">{error}</div>
       </>
     );
   }
@@ -275,7 +277,7 @@ export function DiffView({
             original={original}
             modified={modified}
             language="plaintext"
-            theme="vs-dark"
+            theme={theme === "light" ? "vs-light" : "vs-dark"}
             options={{
               readOnly: true,
               renderSideBySide: true,

@@ -51,7 +51,7 @@ export function JitBottomPanel({ activeTab, onTabChange, buildOutput, testResult
         {activeTab === "output" && (
           <div className="flex-1 overflow-auto p-2 text-xs font-mono scroll-vscode h-full">
             {buildOutput.length === 0 ? (
-              <div className="text-[var(--text-muted)]">No build output yet. Run iteration sandbox to see output.</div>
+              <div className="text-[var(--text-muted)]">{t("noBuildOutputYet")}</div>
             ) : (
               buildOutput.map((line, i) => (
                 <div key={i} className="text-[var(--text-muted)]">{line}</div>
@@ -63,25 +63,25 @@ export function JitBottomPanel({ activeTab, onTabChange, buildOutput, testResult
         {activeTab === "testResults" && (
           <div className="flex-1 overflow-auto p-2 text-xs h-full">
             {testResults.length === 0 ? (
-              <div className="text-[var(--text-muted)] p-2">No test results yet. Run a test or iteration to see results.</div>
+              <div className="text-[var(--text-muted)] p-2">{t("noTestResultsYet")}</div>
             ) : (
               <div className="overflow-auto">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-surface-alt">
-                    <tr className="text-left text-[var(--text-muted)] border-b border-gray-700">
-                      <th className="px-2 py-1 font-medium">Test</th>
-                      <th className="px-2 py-1 font-medium w-16">Status</th>
-                      <th className="px-2 py-1 font-medium w-16">Exit</th>
-                      <th className="px-2 py-1 font-medium w-20">Duration</th>
+                    <tr className="text-left text-[var(--text-muted)] border-b border-border">
+                      <th className="px-2 py-1 font-medium">{t("testLabel")}</th>
+                      <th className="px-2 py-1 font-medium w-16">{t("statusLabel")}</th>
+                      <th className="px-2 py-1 font-medium w-16">{t("exitLabel")}</th>
+                      <th className="px-2 py-1 font-medium w-20">{t("durationLabel")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {testResults.map((r, i) => (
-                      <tr key={`${r.name}-${i}`} className="border-b border-gray-700/50">
+                      <tr key={`${r.name}-${i}`} className="border-b border-border/60">
                         <td className="px-2 py-1 text-[var(--text)]">{r.name.replace("TestLib/", "")}</td>
                         <td className="px-2 py-1">
-                          <span className={r.passed ? "text-green-400" : "text-red-400"}>
-                            {r.passed ? "Pass" : "Fail"}
+                          <span className={r.passed ? "text-[var(--success-text)]" : "text-[var(--danger-text)]"}>
+                            {r.passed ? t("pass") : t("fail")}
                           </span>
                         </td>
                         <td className="px-2 py-1 text-[var(--text-muted)]">{r.exitCode}</td>

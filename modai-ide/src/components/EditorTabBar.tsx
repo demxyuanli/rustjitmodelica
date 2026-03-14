@@ -2,8 +2,12 @@ import { t } from "../i18n";
 import { FileIcon } from "./FileIcon";
 
 export interface EditorTab {
+  id: string;
   path: string;
   dirty: boolean;
+  projectPath?: string | null;
+  readOnly?: boolean;
+  modelName?: string;
 }
 
 interface EditorTabBarProps {

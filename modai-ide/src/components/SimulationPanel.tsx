@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Plot from "react-plotly.js";
 import { t } from "../i18n";
 import { AppIcon } from "./Icon";
 import { IconButton } from "./IconButton";
+import { EquationGraphView } from "./EquationGraphView";
 import type { JitValidateResult, SimulationResult } from "../types";
 
 export interface TestAllResultItem {
@@ -55,9 +56,21 @@ export interface SimResultData {
 
 type PlotTrace = { x: number[]; y: number[]; type: "scatter"; mode: "lines"; name: string };
 
-type BottomTab = "verify" | "run" | "log";
+type BottomTab = "verify" | "run" | "log" | "deps" | "vars";
 
 const inputClass = "w-14 bg-[var(--surface)] border border-border px-1 text-sm rounded text-[var(--text)]";
+
+function readThemeColor(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function pathToModelName(relativePath: string | null | undefined): string {
+  if (!relativePath) return "";
+  const withoutExt = relativePath.replace(/\.mo$/i, "");
+  return withoutExt.replace(/[/\\]/g, ".");
+}
 
 interface SimulationPanelProps {
   params: SimParams;
@@ -68,6 +81,13 @@ interface SimulationPanelProps {
   data: SimResultData;
   setSelectedPlotVars: (v: string[] | ((prev: string[]) => string[])) => void;
   theme?: "dark" | "light";
+  code?: string;
+  openFilePath?: string | null;
+  projectDir?: string | null;
+  requestedTab?: BottomTab | null;
+  onRequestedTabHandled?: () => void;
+  onFocusSymbol?: (symbol: string) => void;
+  selectedSymbol?: string | null;
 }
 
 export function SimulationPanel({
@@ -79,13 +99,22 @@ export function SimulationPanel({
   data,
   setSelectedPlotVars,
   theme = "dark",
+  code = "",
+  openFilePath = null,
+  projectDir = null,
+  requestedTab = null,
+  onRequestedTabHandled,
+  onFocusSymbol,
+  selectedSymbol = null,
 }: SimulationPanelProps) {
+  const modelName = pathToModelName(openFilePath);
+  const canShowDeps = Boolean(code && modelName && openFilePath?.toLowerCase().endsWith(".mo"));
   const [showSettings, setShowSettings] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("verify");
 
-  const plotPaperBg = theme === "light" ? "#f3f4f6" : "#1e1e1e";
-  const plotBg = theme === "light" ? "#e5e7eb" : "#252526";
-  const plotFontColor = theme === "light" ? "#1f2937" : "#d4d4d4";
+  const plotPaperBg = readThemeColor("--surface", theme === "light" ? "#f3f4f6" : "#1e1e1e");
+  const plotBg = readThemeColor("--surface-elevated", theme === "light" ? "#ffffff" : "#2b2b2b");
+  const plotFontColor = readThemeColor("--text", theme === "light" ? "#1f2937" : "#d4d4d4");
 
   const togglePlotVar = (name: string) => {
     setSelectedPlotVars((prev) => (prev.includes(name) ? prev.filter((v) => v !== name) : [...prev, name]));
@@ -104,6 +133,12 @@ export function SimulationPanel({
   };
   const [showColumnsDropdown, setShowColumnsDropdown] = useState(false);
   const [logSearch, setLogSearch] = useState("");
+
+  useEffect(() => {
+    if (!requestedTab) return;
+    setBottomTab(requestedTab);
+    onRequestedTabHandled?.();
+  }, [requestedTab, onRequestedTabHandled]);
 
   return (
     <div className="h-full border-t border-border flex flex-col shrink-0 overflow-hidden bg-surface-alt">
@@ -144,7 +179,7 @@ export function SimulationPanel({
               <legend className="text-[var(--text-muted)]">{t("simGroupSimulation")}</legend>
               <label className="flex items-center gap-1"><span>{t("paramTEnd")}</span><input type="number" value={params.tEnd} onChange={(e) => onParamChange("tEnd", Number(e.target.value))} className={inputClass} /></label>
               <label className="flex items-center gap-1"><span>{t("paramDt")}</span><input type="number" step={0.001} value={params.dt} onChange={(e) => onParamChange("dt", Number(e.target.value))} className={inputClass} /></label>
-              <label className="flex items-center gap-1"><span>{t("paramSolver")}</span><select value={params.solver} onChange={(e) => onParamChange("solver", e.target.value)} className={inputClass}><option value="rk4">rk4</option><option value="rk45">rk45</option></select></label>
+              <label className="flex items-center gap-1"><span>{t("paramSolver")}</span><select value={params.solver} onChange={(e) => onParamChange("solver", e.target.value)} className={inputClass}><option value="rk4">rk4</option><option value="rk45">rk45</option><option value="implicit">{t("implicitSolver")}</option></select></label>
               <label className="flex items-center gap-1"><span>{t("paramOutputInterval")}</span><input type="number" step={0.001} value={params.outputInterval} onChange={(e) => onParamChange("outputInterval", Number(e.target.value))} className={inputClass} /></label>
             </fieldset>
             <fieldset className="flex flex-wrap items-center gap-2 border border-border rounded px-2 py-1">
@@ -183,6 +218,26 @@ export function SimulationPanel({
           title={t("tabLog")}
           aria-label={t("tabLog")}
         />
+        <IconButton
+          icon={<AppIcon name="variables" aria-hidden="true" />}
+          variant="tab"
+          size="xs"
+          active={bottomTab === "vars"}
+          onClick={() => setBottomTab("vars")}
+          title={t("variablesBrowser")}
+          aria-label={t("variablesBrowser")}
+        />
+        {canShowDeps && (
+          <IconButton
+            icon={<AppIcon name="link" aria-hidden="true" />}
+            variant="tab"
+            size="xs"
+            active={bottomTab === "deps"}
+            onClick={() => setBottomTab("deps")}
+            title={t("tabDependencies")}
+            aria-label={t("tabDependencies")}
+          />
+        )}
       </div>
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {bottomTab === "verify" && (
@@ -211,16 +266,16 @@ export function SimulationPanel({
                 <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-black/20 p-1 rounded mb-1 max-h-48 overflow-auto scroll-vscode">{regressionText}</pre>
                 <button
                   type="button"
-                  className="px-2 py-0.5 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                  className="px-2 py-0.5 text-xs rounded border theme-button-secondary"
                   onClick={() => void navigator.clipboard.writeText(regressionText)}
                 >
                   {t("copyTestAllOutput")}
                 </button>
                 <div className="mt-1">
                   {data.testAllResults.map((r, i) => (
-                    <div key={i} className={r.success ? "text-green-500" : "text-red-400"}>
+                    <div key={i} className={r.success ? "text-[var(--success-text)]" : "text-[var(--danger-text)]"}>
                       {r.success ? "\u2713" : "\u2717"} {r.path}
-                      {!r.success && r.errors.length > 0 && <div className="pl-3 text-amber-400">{r.errors[0]}</div>}
+                      {!r.success && r.errors.length > 0 && <div className="pl-3 text-[var(--warning-text)]">{r.errors[0]}</div>}
                     </div>
                   ))}
                 </div>
@@ -228,7 +283,7 @@ export function SimulationPanel({
             );
           })()}
           {data.jitResult && !data.jitResult.success && (
-            <div className="text-red-400">
+            <div className="text-[var(--danger-text)]">
               {data.jitResult.errors.map((e, i) => (
                 <div key={i}>{e}</div>
               ))}
@@ -242,12 +297,12 @@ export function SimulationPanel({
             </div>
           )}
           {data.jitResult?.warnings?.map((w, i) => (
-            <div key={i} className="text-amber-400">
+            <div key={i} className="text-[var(--warning-text)]">
               {w.path}:{w.line}:{w.column} {w.message}
             </div>
           ))}
           {data.logLines.slice(-20).map((line, i) => (
-            <div key={i} className="text-gray-500">{line}</div>
+            <div key={i} className="text-[var(--text-muted)]">{line}</div>
           ))}
         </div>
         )}
@@ -262,15 +317,15 @@ export function SimulationPanel({
                     icon={<AppIcon name="stage" aria-hidden="true" />}
                     size="xs"
                     onClick={selectAllPlotVars}
-                    title="Select all variables"
-                    aria-label="Select all variables"
+                    title={t("selectAllVariables")}
+                    aria-label={t("selectAllVariables")}
                   />
                   <IconButton
                     icon={<AppIcon name="unstage" aria-hidden="true" />}
                     size="xs"
                     onClick={clearPlotVars}
-                    title="Clear variable selection"
-                    aria-label="Clear variable selection"
+                    title={t("clearVariableSelection")}
+                    aria-label={t("clearVariableSelection")}
                   />
                 </div>
                 <div className="space-y-0.5">
@@ -306,8 +361,8 @@ export function SimulationPanel({
               />
               {data.simResult && (
                 <>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={actions.onExportCSV}>{t("exportCSV")}</button>
-                  <button type="button" className="px-2 py-0.5 text-xs rounded bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600" onClick={actions.onExportJSON}>{t("exportJSON")}</button>
+                  <button type="button" className="px-2 py-0.5 text-xs rounded border theme-button-secondary text-[var(--text-muted)]" onClick={actions.onExportCSV}>{t("exportCSV")}</button>
+                  <button type="button" className="px-2 py-0.5 text-xs rounded border theme-button-secondary text-[var(--text-muted)]" onClick={actions.onExportJSON}>{t("exportJSON")}</button>
                 </>
               )}
               {tableState.simViewMode === "table" && data.simResult && (
@@ -322,27 +377,27 @@ export function SimulationPanel({
                   <IconButton
                     icon={<AppIcon name="prev" aria-hidden="true" />}
                     size="xs"
-                    className="bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50"
+                    className="border theme-button-secondary text-[var(--text-muted)] disabled:opacity-50"
                     disabled={tableState.tablePage <= 0}
                     onClick={() => onTableChange("tablePage", Math.max(0, tableState.tablePage - 1))}
-                    title="Previous page"
-                    aria-label="Previous page"
+                    title={t("previousPage")}
+                    aria-label={t("previousPage")}
                   />
                   <span className="text-xs text-[var(--text-muted)]">{(tableState.tablePage + 1) + " / " + (totalTablePages || 1)}</span>
                   <IconButton
                     icon={<AppIcon name="next" aria-hidden="true" />}
                     size="xs"
-                    className="bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600 disabled:opacity-50"
+                    className="border theme-button-secondary text-[var(--text-muted)] disabled:opacity-50"
                     disabled={tableState.tablePage >= totalTablePages - 1}
                     onClick={() => onTableChange("tablePage", Math.min(totalTablePages - 1, tableState.tablePage + 1))}
-                    title="Next page"
-                    aria-label="Next page"
+                    title={t("nextPage")}
+                    aria-label={t("nextPage")}
                   />
                   <div className="relative">
                     <IconButton
                       icon={<AppIcon name="columns" aria-hidden="true" />}
                       size="xs"
-                      className="bg-surface-alt text-[var(--text-muted)] hover:bg-gray-600"
+                      className="border theme-button-secondary text-[var(--text-muted)]"
                       onClick={() => setShowColumnsDropdown((s) => !s)}
                       title={t("columnsSelect")}
                       aria-label={t("columnsSelect")}
@@ -355,7 +410,7 @@ export function SimulationPanel({
                             {col}
                           </label>
                         ))}
-                        <button type="button" className="mt-1 w-full text-xs rounded bg-surface hover:bg-gray-600" onClick={() => setShowColumnsDropdown(false)}>Close</button>
+                        <button type="button" className="mt-1 w-full text-xs rounded border theme-button-secondary" onClick={() => setShowColumnsDropdown(false)}>{t("closeTab")}</button>
                       </div>
                     )}
                   </div>
@@ -396,7 +451,7 @@ export function SimulationPanel({
                           {(tableState.visibleTableColumns.length ? tableState.visibleTableColumns : data.tableColumns).map((col) => (
                             <th
                               key={col}
-                              className="border border-border px-2 py-1 text-left cursor-pointer hover:bg-gray-600 bg-surface-alt"
+                              className="border border-border px-2 py-1 text-left cursor-pointer hover:bg-[var(--surface-hover)] bg-surface-alt"
                             onClick={() => {
                               onTableChange("tableSortKey", col);
                               onTableChange("tableSortAsc", tableState.tableSortKey === col ? !tableState.tableSortAsc : true);
@@ -438,6 +493,49 @@ export function SimulationPanel({
               <div key={i} className="text-gray-500">{line}</div>
             ))}
           </div>
+        </div>
+        )}
+        {bottomTab === "vars" && (
+        <div className="flex-1 overflow-auto p-3 text-xs space-y-3">
+          <div>
+            <div className="text-[var(--text-muted)] mb-1">state</div>
+            <div className="space-y-0.5">
+              {(data.jitResult?.state_vars ?? []).map((name) => (
+                <button
+                  key={`state:${name}`}
+                  type="button"
+                  className={`block w-full rounded px-2 py-1 text-left font-mono ${
+                    selectedSymbol === name ? "bg-primary/20 text-primary" : "hover:bg-white/5"
+                  }`}
+                  onClick={() => onFocusSymbol?.(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[var(--text-muted)] mb-1">output</div>
+            <div className="space-y-0.5">
+              {(data.jitResult?.output_vars ?? []).map((name) => (
+                <button
+                  key={`output:${name}`}
+                  type="button"
+                  className={`block w-full rounded px-2 py-1 text-left font-mono ${
+                    selectedSymbol === name ? "bg-primary/20 text-primary" : "hover:bg-white/5"
+                  }`}
+                  onClick={() => onFocusSymbol?.(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        )}
+        {bottomTab === "deps" && canShowDeps && (
+        <div className="flex-1 min-h-0 flex flex-col">
+          <EquationGraphView code={code} modelName={modelName} projectDir={projectDir} />
         </div>
         )}
       </div>

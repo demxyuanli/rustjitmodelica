@@ -1,5 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { JitValidateOptions, JitValidateResult, SimulationResult } from "../types";
+import type {
+  ComponentLibrary,
+  ComponentLibraryTypeQueryResult,
+  ComponentTypeInfo,
+  ComponentTypeRelationGraph,
+  ComponentTypeSource,
+  EquationGraph,
+  GraphicalDocumentModel,
+  InstantiableClass,
+  JitValidateOptions,
+  JitValidateResult,
+  SimulationResult,
+} from "../types";
 
 // --- JIT / simulation ---
 
@@ -25,10 +37,30 @@ export async function runSimulation(request: RunSimulationRequest): Promise<Simu
   return invoke<SimulationResult>("run_simulation_cmd", { request });
 }
 
+export async function getEquationGraph(
+  code: string,
+  modelName: string,
+  projectDir?: string | null
+): Promise<EquationGraph> {
+  return invoke<EquationGraph>("get_equation_graph", {
+    code,
+    modelName,
+    projectDir: projectDir ?? undefined,
+  });
+}
+
 // --- Project / Modelica files ---
 
 export async function openProjectDir(): Promise<string | null> {
   return invoke<string | null>("open_project_dir");
+}
+
+export async function pickComponentLibraryFolder(): Promise<string | null> {
+  return invoke<string | null>("pick_component_library_folder");
+}
+
+export async function pickComponentLibraryFiles(): Promise<string[]> {
+  return invoke<string[]>("pick_component_library_files");
 }
 
 export async function listMoTree(projectDir: string) {
@@ -37,6 +69,138 @@ export async function listMoTree(projectDir: string) {
 
 export async function listMoFiles(projectDir: string) {
   return invoke<string[]>("list_mo_files", { projectDir });
+}
+
+export async function listInstantiableClasses(projectDir?: string | null): Promise<InstantiableClass[]> {
+  return invoke<InstantiableClass[]>("list_instantiable_classes", { projectDir: projectDir ?? undefined });
+}
+
+export async function queryComponentLibraryTypes(params: {
+  projectDir?: string | null;
+  libraryId?: string | null;
+  scope?: string | null;
+  enabledOnly?: boolean;
+  query?: string;
+  offset?: number;
+  limit?: number;
+}): Promise<ComponentLibraryTypeQueryResult> {
+  return invoke<ComponentLibraryTypeQueryResult>("query_component_library_types", {
+    projectDir: params.projectDir ?? undefined,
+    libraryId: params.libraryId ?? undefined,
+    scope: params.scope ?? undefined,
+    enabledOnly: params.enabledOnly ?? true,
+    query: params.query ?? "",
+    offset: params.offset ?? 0,
+    limit: params.limit ?? 100,
+  });
+}
+
+export async function listComponentLibraries(projectDir?: string | null): Promise<ComponentLibrary[]> {
+  return invoke<ComponentLibrary[]>("list_component_libraries", { projectDir: projectDir ?? undefined });
+}
+
+export async function addComponentLibrary(params: {
+  projectDir?: string | null;
+  scope: string;
+  kind: string;
+  sourcePath: string;
+  displayName?: string;
+}): Promise<ComponentLibrary> {
+  return invoke<ComponentLibrary>("add_component_library", {
+    projectDir: params.projectDir ?? undefined,
+    scope: params.scope,
+    kind: params.kind,
+    sourcePath: params.sourcePath,
+    displayName: params.displayName,
+  });
+}
+
+export async function removeComponentLibrary(params: {
+  projectDir?: string | null;
+  scope: string;
+  libraryId: string;
+}): Promise<void> {
+  await invoke("remove_component_library", {
+    projectDir: params.projectDir ?? undefined,
+    scope: params.scope,
+    libraryId: params.libraryId,
+  });
+}
+
+export async function setComponentLibraryEnabled(params: {
+  projectDir?: string | null;
+  scope: string;
+  libraryId: string;
+  enabled: boolean;
+}): Promise<ComponentLibrary> {
+  return invoke<ComponentLibrary>("set_component_library_enabled", {
+    projectDir: params.projectDir ?? undefined,
+    scope: params.scope,
+    libraryId: params.libraryId,
+    enabled: params.enabled,
+  });
+}
+
+export async function getComponentTypeDetails(
+  projectDir: string | null | undefined,
+  typeName: string,
+  libraryId?: string | null,
+): Promise<ComponentTypeInfo> {
+  return invoke<ComponentTypeInfo>("get_component_type_details", {
+    projectDir: projectDir ?? undefined,
+    typeName,
+    libraryId: libraryId ?? undefined,
+  });
+}
+
+export async function readComponentTypeSource(
+  projectDir: string | null | undefined,
+  typeName: string,
+  libraryId?: string | null,
+): Promise<ComponentTypeSource> {
+  return invoke<ComponentTypeSource>("read_component_type_source", {
+    projectDir: projectDir ?? undefined,
+    typeName,
+    libraryId: libraryId ?? undefined,
+  });
+}
+
+export async function getComponentTypeRelationGraph(
+  projectDir: string | null | undefined,
+  typeName: string,
+  libraryId?: string | null,
+): Promise<ComponentTypeRelationGraph> {
+  return invoke<ComponentTypeRelationGraph>("get_component_type_relation_graph", {
+    projectDir: projectDir ?? undefined,
+    typeName,
+    libraryId: libraryId ?? undefined,
+  });
+}
+
+export async function getGraphicalDocumentFromSource<TAnnotation = unknown, TComponent = unknown, TConnection = unknown>(
+  source: string,
+  projectDir?: string | null,
+  relativePath?: string | null,
+): Promise<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>> {
+  return invoke<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>>("get_graphical_document_from_source", {
+    source,
+    projectDir: projectDir ?? undefined,
+    relativePath: relativePath ?? undefined,
+  });
+}
+
+export async function applyGraphicalDocumentEdits<TAnnotation = unknown, TComponent = unknown, TConnection = unknown>(
+  source: string,
+  document: GraphicalDocumentModel<TAnnotation, TComponent, TConnection>,
+  projectDir?: string | null,
+  relativePath?: string | null,
+): Promise<{ newSource: string }> {
+  return invoke<{ newSource: string }>("apply_graphical_document_edits", {
+    source,
+    document,
+    projectDir: projectDir ?? undefined,
+    relativePath: relativePath ?? undefined,
+  });
 }
 
 export async function readProjectFile(projectDir: string, relativePath: string): Promise<string> {
@@ -196,5 +360,97 @@ export async function setApiKey(apiKey: string): Promise<void> {
 
 export async function aiCodeGen(payload: unknown): Promise<string> {
   return invoke<string>("ai_code_gen", { payload });
+}
+
+export async function aiGenerateCompilerPatch(target: string): Promise<string> {
+  return invoke<string>("ai_generate_compiler_patch", { target });
+}
+
+export async function aiGenerateCompilerPatchWithContext(
+  target: string,
+  contextFiles: string[],
+  testCases: string[],
+): Promise<string> {
+  return invoke<string>("ai_generate_compiler_patch_with_context", {
+    target,
+    contextFiles,
+    testCases,
+  });
+}
+
+export interface MoRunDetail {
+  name: string;
+  expected: string;
+  actual: string;
+}
+
+export interface MoRunResult {
+  passed: number;
+  failed: number;
+  details: MoRunDetail[];
+}
+
+export interface IterationRunResult {
+  success: boolean;
+  build_ok: boolean;
+  test_ok: boolean;
+  message: string;
+  mo_run?: MoRunResult | null;
+  quick_run?: boolean;
+}
+
+export interface IterationRecord {
+  id: number;
+  target: string;
+  diff: string | null;
+  success: boolean;
+  message: string;
+  created_at: string;
+  branch_name?: string | null;
+  duration_ms?: number | null;
+  git_commit?: string | null;
+}
+
+export async function runSelfIterate(
+  diff?: string,
+  quick = true,
+): Promise<IterationRunResult> {
+  return invoke<IterationRunResult>("self_iterate", { diff, quick });
+}
+
+export async function applyPatchToWorkspace(diff: string): Promise<void> {
+  await invoke("apply_patch_to_workspace", { diff });
+}
+
+export async function commitIterationPatch(message: string): Promise<void> {
+  await invoke("commit_patch", { message });
+}
+
+export async function listIterationHistory(limit = 50): Promise<IterationRecord[]> {
+  return invoke<IterationRecord[]>("list_iteration_history", { limit });
+}
+
+export async function getIteration(id: number): Promise<IterationRecord | null> {
+  return invoke<IterationRecord | null>("get_iteration", { id });
+}
+
+export async function saveIteration(
+  target: string,
+  diff: string | null,
+  success: boolean,
+  message: string,
+  gitCommit?: string | null,
+): Promise<number> {
+  return invoke<number>("save_iteration", {
+    target,
+    diff,
+    success,
+    message,
+    git_commit: gitCommit ?? null,
+  });
+}
+
+export async function gitHeadCommit(projectDir: string): Promise<string> {
+  return invoke<string>("git_head_commit", { projectDir });
 }
 

@@ -35,6 +35,7 @@ interface JitRightPanelProps {
   onOpenInEditor?: (relativePath: string) => void;
   contentByPath?: Record<string, string>;
   onViewIterationDiff?: (iterationId: number, unifiedDiff: string, title?: string) => void;
+  theme?: "dark" | "light";
 }
 
 export function JitRightPanel({
@@ -42,6 +43,7 @@ export function JitRightPanel({
   onDiffGenerated, onRunResult, openFilePaths, aiPanelProps,
   currentFilePath, currentSelectionText, onInsertAi,
   jitDiffTarget, onCloseDiff, onOpenInEditor, contentByPath, onViewIterationDiff,
+  theme = "dark",
 }: JitRightPanelProps) {
   const gitDiffTarget = jitDiffTarget != null && isGitDiffTarget(jitDiffTarget) ? jitDiffTarget : null;
   const iterationDiff = jitDiffTarget != null && jitDiffTarget.type === "iteration" ? jitDiffTarget : null;
@@ -78,7 +80,7 @@ export function JitRightPanel({
           active={activeTab === "diff"}
           onClick={() => onTabChange("diff")}
           title={t("sourceControl")}
-          aria-label="Diff"
+          aria-label={t("viewDiff")}
         />
       </div>
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
@@ -125,6 +127,7 @@ export function JitRightPanel({
                   currentFilePath={currentFilePath ?? null}
                   onClose={onCloseDiff ?? (() => {})}
                   onOpenInEditor={onOpenInEditor}
+                  theme={theme}
                 />
               </Suspense>
             ) : gitDiffTarget ? (
@@ -135,11 +138,12 @@ export function JitRightPanel({
                   currentFilePath={currentFilePath ?? null}
                   onClose={onCloseDiff ?? (() => {})}
                   onOpenInEditor={onOpenInEditor}
+                  theme={theme}
                 />
               </Suspense>
             ) : (
               <div className="p-4 text-sm text-[var(--text-muted)]">
-                {t("noFileSelected")}. Open a file diff from Source Control or iteration history.
+                {t("noFileSelected")}. {t("noFileDiffSelected")}
               </div>
             )}
           </div>

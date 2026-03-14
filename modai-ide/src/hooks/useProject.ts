@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { gitIsRepo, gitStatus, openProjectDir, listMoTree } from "../api/tauri";
+import { gitIsRepo, gitStatus as fetchGitStatus, openProjectDir, listMoTree } from "../api/tauri";
 
 export interface MoTreeEntry {
   name: string;
@@ -53,7 +53,7 @@ export function useProject() {
           setGitStatus(null);
           return;
         }
-        const status = await gitStatus(projectDir);
+        const status = await fetchGitStatus(projectDir);
         if (!cancelled) {
           setGitBranch(status.branch ?? null);
           setGitStatus({ modified: status.modified ?? [], staged: status.staged ?? [] });
@@ -92,7 +92,7 @@ export function useProject() {
         setGitStatus(null);
         return;
       }
-      const status = await gitStatus(projectDir);
+      const status = await fetchGitStatus(projectDir);
       setGitStatus({ modified: status.modified ?? [], staged: status.staged ?? [] });
     } catch {
       setGitStatus(null);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getApiKey, setApiKey as setApiKeyCommand } from "../api/tauri";
 import { t } from "../i18n";
 
@@ -70,9 +71,6 @@ export function SettingsContent({
   const [compilerConfigBanner, setCompilerConfigBanner] = useState<string | null>(null);
 
   useEffect(() => {
-    // compiler config is still managed via Tauri; keep existing invoke to avoid changing config shape for now
-    // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
-    const { invoke } = require("@tauri-apps/api/core") as typeof import("@tauri-apps/api/core");
     invoke<{ exe?: string; args?: string[] } | null>("get_compiler_config")
       .then((c) => {
         if (c) {
@@ -94,7 +92,7 @@ export function SettingsContent({
     try {
       const args = compilerArgs.trim() ? compilerArgs.trim().split(/\s+/).filter(Boolean) : [];
       await invoke("set_compiler_config", { config: { exe: compilerExe.trim(), args } });
-      setCompilerConfigBanner("Saved");
+      setCompilerConfigBanner(t("saved"));
     } catch (e) {
       setCompilerConfigBanner(String(e));
     }
@@ -156,13 +154,13 @@ export function SettingsContent({
               </div>
             ) : (
               <div className="flex gap-2 items-center">
-                <input type="password" placeholder="API key" value={apiKeyInput}
+                <input type="password" placeholder={t("apiKeyPlaceholder")} value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey(); }}
                   className="w-40 bg-[var(--surface)] border border-border px-2.5 py-1.5 text-sm rounded" />
                 <button type="button" onClick={handleSaveApiKey} disabled={!apiKeyInput.trim()}
                   className="px-3 py-1.5 bg-primary hover:bg-blue-600 text-sm rounded text-white disabled:opacity-40">
-                  Save
+                  {t("save")}
                 </button>
               </div>
             )}
@@ -178,7 +176,7 @@ export function SettingsContent({
           )}
           <SettingsRow title={t("settingsCompilerExePath")} description={t("settingsCompilerExeDesc")}>
             <div className="flex gap-2 items-center flex-wrap">
-              <input type="text" placeholder="(auto-detect)" value={compilerExe}
+              <input type="text" placeholder={t("autoDetectPlaceholder")} value={compilerExe}
                 onChange={(e) => setCompilerExe(e.target.value)}
                 className="min-w-[200px] max-w-[320px] bg-[var(--surface)] border border-border px-2.5 py-1.5 text-sm rounded font-mono" />
               <button type="button" onClick={handleSaveCompilerConfig}
@@ -189,7 +187,7 @@ export function SettingsContent({
           </SettingsRow>
           <SettingsRow title={t("settingsCompilerArgs")} description={t("settingsCompilerArgsDesc")}>
             <div className="flex gap-2 items-center flex-wrap">
-              <input type="text" placeholder="e.g. --warnings=none" value={compilerArgs}
+              <input type="text" placeholder={t("compilerArgsPlaceholder")} value={compilerArgs}
                 onChange={(e) => setCompilerArgs(e.target.value)}
                 className="min-w-[200px] max-w-[320px] bg-[var(--surface)] border border-border px-2.5 py-1.5 text-sm rounded font-mono" />
               <button type="button" onClick={handleSaveCompilerConfig}
@@ -204,7 +202,7 @@ export function SettingsContent({
       {onAiModelChange && aiDailyLimit != null && (
         <section>
           <h3 className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-1">{t("settingsSectionDeveloper")}</h3>
-          <SettingsRow title="AI model" description="Model and usage for AI coding assistant.">
+          <SettingsRow title={t("settingsAiModel")} description={t("settingsAiModelDesc")}>
             <select
               value={aiModel || "deepseek-chat"}
               onChange={(e) => onAiModelChange(e.target.value)}
@@ -221,7 +219,7 @@ export function SettingsContent({
                 onClick={onAiDailyReset}
                 className="px-3 py-1.5 text-xs rounded bg-[var(--surface)] border border-border hover:bg-white/10 text-[var(--text-muted)]"
               >
-                Reset
+                {t("reset")}
               </button>
             )}
           </SettingsRow>

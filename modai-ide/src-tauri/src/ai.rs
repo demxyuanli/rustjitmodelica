@@ -70,6 +70,7 @@ pub struct AiOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiCodeGenPayload {
     pub prompt: String,
     #[serde(default)]

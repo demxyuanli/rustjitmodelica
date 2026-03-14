@@ -18,6 +18,12 @@ pub fn parse(input: &str) -> Result<ClassItem, pest::error::Error<Rule>> {
     parse_model(model_pair)
 }
 
+pub fn parse_expression_from_str(input: &str) -> Result<Expression, pest::error::Error<Rule>> {
+    let mut pairs = ModelicaParser::parse(Rule::expression, input)?;
+    let pair = pairs.next().unwrap();
+    Ok(expression::parse_expression(pair))
+}
+
 fn parse_annotation_to_string(pair: &pest::iterators::Pair<Rule>) -> String {
     pair.as_str().trim().to_string()
 }

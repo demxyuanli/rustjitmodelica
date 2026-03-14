@@ -12,7 +12,7 @@ export interface LayoutState {
   graphExpanded: boolean;
   showProjectMenu: boolean;
   showSettings: boolean;
-  workspaceMode: "modelica" | "compiler-iterate";
+  workspaceMode: "modelica" | "component-library" | "compiler-iterate";
 }
 
 export function useLayout() {
@@ -27,7 +27,7 @@ export function useLayout() {
   const [graphExpanded, setGraphExpanded] = useState(false);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [workspaceMode, setWorkspaceMode] = useState<"modelica" | "compiler-iterate">("modelica");
+  const [workspaceMode, setWorkspaceMode] = useState<"modelica" | "component-library" | "compiler-iterate">("modelica");
 
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     try {

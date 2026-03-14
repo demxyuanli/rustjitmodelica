@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useJitLayout } from "../hooks/useJitLayout";
+import { useJitLayout, type JitCenterView } from "../hooks/useJitLayout";
 import { useJitAI } from "../hooks/useAI";
 import { JitLeftSidebar } from "./JitLeftSidebar";
 import { JitEditorWorkbench, type OpenFileTab, type SettingsViewProps, type JitEditorWorkbenchRef } from "./JitEditorWorkbench";
@@ -24,9 +24,24 @@ interface JitIdeWorkspaceProps {
   showSettings?: boolean;
   onSettingsHandled?: () => void;
   settingsProps?: SettingsViewProps;
+  requestedCenterView?: JitCenterView | null;
+  onRequestedCenterViewHandled?: () => void;
+  onActiveCenterViewChange?: (view: JitCenterView | null) => void;
+  theme?: "dark" | "light";
 }
 
-export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showSettings, onSettingsHandled, settingsProps }: JitIdeWorkspaceProps) {
+export function JitIdeWorkspace({
+  targetPrefill,
+  onClearPrefill,
+  repoRoot,
+  showSettings,
+  onSettingsHandled,
+  settingsProps,
+  requestedCenterView,
+  onRequestedCenterViewHandled,
+  onActiveCenterViewChange,
+  theme = "dark",
+}: JitIdeWorkspaceProps) {
   const layout = useJitLayout();
 
   const [openFiles, setOpenFiles] = useState<OpenFileTab[]>([]);
@@ -65,6 +80,16 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
       onSettingsHandled?.();
     }
   }, [showSettings]);
+
+  useEffect(() => {
+    if (requestedCenterView === undefined) return;
+    layout.setActiveCenterView(requestedCenterView);
+    onRequestedCenterViewHandled?.();
+  }, [requestedCenterView, onRequestedCenterViewHandled]);
+
+  useEffect(() => {
+    onActiveCenterViewChange?.(layout.activeCenterView);
+  }, [layout.activeCenterView, onActiveCenterViewChange]);
 
   const refreshGitStatus = useCallback(async () => {
     if (!repoRoot) {
@@ -295,6 +320,7 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
               settingsProps={settingsProps}
               onSelectionChange={(sel) => setCurrentSelection(sel)}
               repoRoot={repoRoot ?? null}
+              theme={theme}
             />
           </div>
 
@@ -335,6 +361,7 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
                 onOpenInEditor={handleOpenInEditorFromDiff}
                 contentByPath={contentByPath}
                 onViewIterationDiff={handleViewIterationDiff}
+                theme={theme}
                 aiPanelProps={{
                   apiKey: ai.apiKey,
                   setApiKey: ai.setApiKey,
@@ -361,6 +388,18 @@ export function JitIdeWorkspace({ targetPrefill, onClearPrefill, repoRoot, showS
                   currentFilePath: null,
                   currentSelectionText: null,
                   lastJitErrorText: undefined,
+                  messages: ai.messages,
+                  agentMode: ai.agentMode,
+                  setAgentMode: ai.setAgentMode,
+                  pendingPatch: ai.pendingPatch,
+                  clearPendingPatch: ai.clearPendingPatch,
+                  iterationDiff: ai.iterationDiff,
+                  iterationRunResult: ai.iterationRunResult,
+                  iterationHistory: ai.iterationHistory,
+                  onRunIteration: ai.runIteration,
+                  onAdoptIteration: ai.adoptIteration,
+                  onCommitIteration: ai.commitIteration,
+                  onReuseIteration: ai.reuseIteration,
                 }}
                 currentFilePath={activeFilePath}
                 currentSelectionText={currentSelection.text ?? null}

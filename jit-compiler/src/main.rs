@@ -10,6 +10,7 @@ mod analysis;
 mod jit;
 mod simulation;
 mod compiler;
+mod equation_graph;
 mod fmi;
 mod script;
 mod solver;

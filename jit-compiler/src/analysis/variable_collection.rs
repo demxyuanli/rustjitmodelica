@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use crate::ast::{Equation, Expression};
 
-pub(crate) fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> {
+pub fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> {
     let mut vars = HashSet::new();
     collect_vars_eq(eq, &mut vars);
     let mut unknowns = Vec::new();
