@@ -2,6 +2,14 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import type { JitValidateOptions, JitValidateResult, SimulationResult } from "../types";
 import { jitValidate, runSimulation as runSimulationApi, readProjectFile } from "../api/tauri";
 import { t } from "../i18n";
+import {
+  buildSimulationChartMeta,
+  buildSimulationChartSeries,
+  buildSimulationTableColumns,
+  buildSimulationTableRows,
+  listSimulationPlotVarNames,
+  sortSimulationTableRows,
+} from "./simulationSelectors";
 
 export interface SimulationParams {
   tEnd: number;
@@ -137,32 +145,12 @@ export function useSimulation(log: (msg: string) => void) {
     log(t("testAllSummary").replace("{passed}", String(passed)).replace("{failed}", String(failed)));
   }, [buildOptions, log]);
 
-  const tableColumns = useMemo(() =>
-    simResult ? ["time", ...Object.keys(simResult.series).filter((k) => k !== "time")] : [],
-    [simResult]
-  );
+  const tableColumns = useMemo(() => buildSimulationTableColumns(simResult), [simResult]);
 
-  const tableRows = useMemo(() =>
-    simResult
-      ? simResult.time.map((_, i) => {
-          const row: Record<string, number> = { time: simResult.time[i] };
-          for (const k of Object.keys(simResult.series)) {
-            row[k] = simResult.series[k][i];
-          }
-          return row;
-        })
-      : [],
-    [simResult]
-  );
+  const tableRows = useMemo(() => buildSimulationTableRows(simResult), [simResult]);
 
-  const sortedTableRows = useMemo(() =>
-    [...tableRows].sort((a, b) => {
-      const va = a[tableState.tableSortKey];
-      const vb = b[tableState.tableSortKey];
-      if (va == null || vb == null) return 0;
-      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-      return tableState.tableSortAsc ? cmp : -cmp;
-    }),
+  const sortedTableRows = useMemo(
+    () => sortSimulationTableRows(tableRows, tableState.tableSortKey, tableState.tableSortAsc),
     [tableRows, tableState.tableSortKey, tableState.tableSortAsc]
   );
 
@@ -174,27 +162,18 @@ export function useSimulation(log: (msg: string) => void) {
     }
   }, [tableColumns.join(",")]);
 
-  const plotTraces = useMemo(() =>
-    simResult
-      ? selectedPlotVars
-          .filter((name) => simResult.series[name] != null)
-          .map((name) => ({
-            x: simResult.time,
-            y: simResult.series[name],
-            type: "scatter" as const,
-            mode: "lines" as const,
-            name,
-          }))
-      : [],
+  const plotSeries = useMemo(
+    () => buildSimulationChartSeries(simResult, selectedPlotVars),
     [simResult, selectedPlotVars]
   );
 
-  const allPlotVarNames = useMemo(() =>
-    simResult != null
-      ? Object.keys(simResult.series).filter((k) => k !== "time")
-      : jitResult != null
-        ? [...new Set([...(jitResult.state_vars ?? []), ...(jitResult.output_vars ?? [])])]
-        : [],
+  const chartMeta = useMemo(
+    () => buildSimulationChartMeta(simResult, plotSeries),
+    [simResult, plotSeries]
+  );
+
+  const allPlotVarNames = useMemo(
+    () => listSimulationPlotVarNames(simResult, jitResult),
     [simResult, jitResult]
   );
 
@@ -231,7 +210,7 @@ export function useSimulation(log: (msg: string) => void) {
     testAllLoading, testAllResults,
     tableState, setTable,
     tableColumns, sortedTableRows,
-    plotTraces, allPlotVarNames,
+    plotSeries, chartMeta, allPlotVarNames,
     validate, runSimulation, testAllMoFiles,
     exportCSV, exportJSON,
   };

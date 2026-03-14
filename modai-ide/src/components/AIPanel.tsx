@@ -223,6 +223,7 @@ export interface AIPanelProps {
   onAdoptIteration?: () => Promise<unknown>;
   onCommitIteration?: (message?: string) => Promise<unknown>;
   onReuseIteration?: (record: IterationRecord) => Promise<unknown>;
+  theme?: "dark" | "light";
 }
 
 function getAgentModeLabel(mode: AgentMode): string {
@@ -276,6 +277,7 @@ export function AIPanel({
   onAdoptIteration,
   onCommitIteration,
   onReuseIteration,
+  theme = "dark",
 }: AIPanelProps) {
   const [contextChunks, setContextChunks] = useState<ChunkInfo[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
@@ -449,10 +451,14 @@ export function AIPanel({
   }, [modeMenuOpen]);
 
   return (
-    <div className="flex flex-col h-full text-xs text-[var(--text)] px-3 py-2 max-w-full box-border">
-      <div className="shrink-0 flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-border">
-        <span className="text-[11px] font-medium text-[var(--text)]">{t("agent")}</span>
-        <span className="text-[10px] text-[var(--text-muted)]">
+    <div
+      className={`ai-panel flex flex-col h-full text-xs text-[var(--text)] px-3 py-2 max-w-full box-border ${
+        theme === "light" ? "ai-panel-theme-light" : "ai-panel-theme-dark"
+      }`}
+    >
+      <div className="shrink-0 flex items-center justify-between gap-2 mb-2 rounded-lg border border-border bg-[var(--panel-muted-bg)] px-2 py-1.5">
+        <span className="text-[11px] font-semibold tracking-wide text-[var(--text)]">{t("agent")}</span>
+        <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-[var(--text-muted)]">
           {getAgentModeLabel(agentMode)}
         </span>
       </div>
@@ -697,7 +703,7 @@ export function AIPanel({
         </div>
       )}
 
-      <div className="mt-2 border border-border rounded-lg bg-transparent overflow-hidden">
+      <div className="mt-2 border border-border rounded-xl bg-[var(--agent-input-shell-bg)] overflow-hidden">
         <div className="px-3 pt-2 pb-1">
           <textarea
             ref={inputRef}
@@ -799,8 +805,8 @@ export function AIPanel({
         .ai-md .ai-md-p { margin: 0 0 6px 0; line-height: 1.4; white-space: pre-wrap; }
         .ai-md .ai-md-ul { margin: 0 0 6px 16px; padding: 0; list-style: disc; }
         .ai-md .ai-md-li { margin: 0 0 2px 0; }
-        .ai-md .ai-md-inline { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); padding: 0 4px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; }
-        .ai-md .ai-md-pre { margin: 0 0 8px 0; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12); padding: 8px; border-radius: 6px; overflow: auto; }
+        .ai-md .ai-md-inline { background: var(--agent-inline-code-bg); border: 1px solid var(--agent-inline-code-border); padding: 0 4px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; }
+        .ai-md .ai-md-pre { margin: 0 0 8px 0; background: var(--agent-code-bg); border: 1px solid var(--agent-code-border); padding: 8px; border-radius: 6px; overflow: auto; }
         .ai-md .ai-md-code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; }
         .ai-md .ai-md-spacer { height: 6px; }
       `}</style>
