@@ -107,6 +107,7 @@ export function JitRightPanel({
                 currentSelectionText={currentSelectionText ?? undefined}
                 lastJitErrorText={undefined}
                 onInsert={onInsertAi ?? aiPanelProps.onInsert}
+                theme={theme}
               />
             ) : (
               <div className="text-xs text-[var(--text-muted)]">

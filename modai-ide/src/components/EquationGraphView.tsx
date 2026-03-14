@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import ELK from "elkjs/lib/elk.bundled.js";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -12,74 +13,136 @@ import {
   Background,
   Controls,
   Panel,
+  MarkerType,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { getEquationGraph } from "../api/tauri";
 import type { EquationGraph } from "../types";
 import { t } from "../i18n";
 
-const LAYER_GAP = 220;
-const NODE_GAP = 48;
+const elk = new ELK();
+const DEFAULT_NODE_HEIGHT = 42;
+const MIN_NODE_WIDTH = 180;
+const MAX_NODE_WIDTH = 320;
+const LABEL_CHAR_WIDTH = 7.2;
 
-function equationGraphToFlow(
-  g: EquationGraph
-): { nodes: Node[]; edges: Edge[] } {
-  const eqNodes = g.nodes.filter((n) => n.kind === "equation");
-  const varNodes = g.nodes.filter((n) => n.kind === "variable");
+type GraphNodeData = {
+  label: string;
+  width: number;
+  height: number;
+};
+
+function estimateNodeWidth(label: string): number {
+  return Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, Math.ceil(label.length * LABEL_CHAR_WIDTH) + 32));
+}
+
+function buildBaseFlow(g: EquationGraph): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
-  let y = 0;
-  for (const n of eqNodes) {
+  for (const n of g.nodes) {
+    const width = estimateNodeWidth(n.label);
     nodes.push({
       id: n.id,
-      type: "equation",
-      data: { label: n.label },
-      position: { x: 0, y },
+      type: n.kind === "equation" ? "equation" : "variable",
+      data: {
+        label: n.label,
+        width,
+        height: DEFAULT_NODE_HEIGHT,
+      },
+      position: { x: 0, y: 0 },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
     });
-    y += NODE_GAP;
-  }
-  y = 0;
-  for (const n of varNodes) {
-    nodes.push({
-      id: n.id,
-      type: "variable",
-      data: { label: n.label },
-      position: { x: LAYER_GAP, y },
-    });
-    y += NODE_GAP;
   }
   const edges: Edge[] = g.edges.map((e, i) => ({
     id: `e${i}`,
     source: e.source,
     target: e.target,
-    type: e.kind === "solves" ? "smoothstep" : "default",
-    data: e.kind === "solves" ? { label: "solves" } : undefined,
+    type: "smoothstep",
+    animated: e.kind === "solves",
+    label: e.kind === "solves" ? "solves" : undefined,
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      width: 16,
+      height: 16,
+    },
+    style: {
+      stroke: e.kind === "solves" ? "#f59e0b" : "#60a5fa",
+      strokeWidth: e.kind === "solves" ? 1.8 : 1.4,
+    },
   }));
   return { nodes, edges };
 }
 
+async function layoutEquationGraph(g: EquationGraph): Promise<{ nodes: Node[]; edges: Edge[] }> {
+  const base = buildBaseFlow(g);
+  const layoutGraph = await elk.layout({
+    id: "equation-graph",
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": "RIGHT",
+      "elk.padding": "[top=24,left=24,bottom=24,right=24]",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+      "elk.spacing.nodeNode": "56",
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+    },
+    children: base.nodes.map((node) => {
+      const nodeData = node.data as GraphNodeData;
+      return {
+        id: node.id,
+        width: nodeData.width,
+        height: nodeData.height,
+      };
+    }),
+    edges: g.edges.map((edge, index) => ({
+      id: `e${index}`,
+      sources: [edge.source],
+      targets: [edge.target],
+    })),
+  });
+
+  const positions = new Map(
+    (layoutGraph.children ?? []).map((child) => [child.id, { x: child.x ?? 0, y: child.y ?? 0 }])
+  );
+
+  return {
+    nodes: base.nodes.map((node) => ({
+      ...node,
+      position: positions.get(node.id) ?? { x: 0, y: 0 },
+    })),
+    edges: base.edges,
+  };
+}
+
 function EquationNode({ data }: NodeProps) {
-  const label = (data?.label as string) ?? "";
+  const nodeData = data as GraphNodeData | undefined;
+  const label = nodeData?.label ?? "";
   return (
     <div
-      className="px-2 py-1 rounded border border-amber-600/80 bg-amber-950/50 text-amber-200 text-xs font-mono max-w-[180px] truncate"
+      className="rounded border border-amber-500/70 bg-amber-950/40 px-3 py-2 font-mono text-xs text-amber-200 shadow-[0_10px_20px_rgba(0,0,0,0.18)]"
       title={label}
+      style={{ width: nodeData?.width }}
     >
       <Handle type="target" position={Position.Left} className="!w-1.5 !h-1.5 !-left-1" />
-      {label}
+      <div className="truncate">{label}</div>
       <Handle type="source" position={Position.Right} className="!w-1.5 !h-1.5 !-right-1" />
     </div>
   );
 }
 
 function VariableNode({ data }: NodeProps) {
-  const label = (data?.label as string) ?? "";
+  const nodeData = data as GraphNodeData | undefined;
+  const label = nodeData?.label ?? "";
   return (
     <div
-      className="px-2 py-1 rounded border border-sky-600/80 bg-sky-950/50 text-sky-200 text-xs font-mono max-w-[180px] truncate"
+      className="rounded border border-sky-500/70 bg-sky-950/35 px-3 py-2 font-mono text-xs text-sky-200 shadow-[0_10px_20px_rgba(0,0,0,0.18)]"
       title={label}
+      style={{ width: nodeData?.width }}
     >
       <Handle type="target" position={Position.Left} className="!w-1.5 !h-1.5 !-left-1" />
-      {label}
+      <div className="truncate">{label}</div>
       <Handle type="source" position={Position.Right} className="!w-1.5 !h-1.5 !-right-1" />
     </div>
   );
@@ -97,38 +160,54 @@ export function EquationGraphView({ code, modelName, projectDir }: EquationGraph
   const [graph, setGraph] = useState<EquationGraph | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getEquationGraph(code, modelName, projectDir)
-      .then((g) => {
-        if (!cancelled) setGraph(g);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+
+    async function loadGraph() {
+      setLoading(true);
+      setError(null);
+      try {
+        const graphResult = await getEquationGraph(code, modelName, projectDir);
+        if (cancelled) return;
+        setGraph(graphResult);
+        if (graphResult.nodes.length === 0) {
+          setNodes([]);
+          setEdges([]);
+          return;
+        }
+        const layout = await layoutEquationGraph(graphResult);
+        if (cancelled) return;
+        setNodes(layout.nodes);
+        setEdges(layout.edges);
+      } catch (layoutError) {
+        if (!cancelled) {
+          setError(String(layoutError));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadGraph();
+
     return () => {
       cancelled = true;
     };
-  }, [code, modelName, projectDir]);
-
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
-    if (!graph) return { nodes: [], edges: [] };
-    return equationGraphToFlow(graph);
-  }, [graph]);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  }, [code, modelName, projectDir, setEdges, setNodes]);
 
   useEffect(() => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-  }, [initialNodes, initialEdges, setNodes, setEdges]);
+    if (!flowInstance || nodes.length === 0) return;
+    const rafId = window.requestAnimationFrame(() => {
+      void flowInstance.fitView({ padding: 0.16, duration: 260 });
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [flowInstance, nodes, edges]);
 
   if (loading) {
     return (
@@ -161,15 +240,20 @@ export function EquationGraphView({ code, modelName, projectDir }: EquationGraph
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
+          onInit={setFlowInstance}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.1}
-          maxZoom={2}
+          fitViewOptions={{ padding: 0.16 }}
+          minZoom={0.05}
+          maxZoom={2.5}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable
+          proOptions={{ hideAttribution: true }}
         >
           <Background />
           <Controls />
           <Panel position="top-left" className="text-xs text-[var(--text-muted)]">
-            {graph.nodes.filter((n) => n.kind === "equation").length} eq / {graph.nodes.filter((n) => n.kind === "variable").length} var
+            {graph.nodes.filter((n) => n.kind === "equation").length} eq / {graph.nodes.filter((n) => n.kind === "variable").length} var / {t("horizontalAutoLayout")}
           </Panel>
         </ReactFlow>
       </div>

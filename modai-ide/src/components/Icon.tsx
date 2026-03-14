@@ -25,6 +25,8 @@ import {
   AlertCircle,
   Link,
   BookOpenText,
+  ScrollText,
+  Loader2,
 } from "lucide-react";
 
 export type AppIconName =
@@ -55,7 +57,9 @@ export type AppIconName =
   | "iterate"
   | "tests"
   | "link"
-  | "library";
+  | "library"
+  | "output"
+  | "spinner";
 
 type IconProps = Omit<ComponentProps<"svg">, "ref">;
 
@@ -119,6 +123,10 @@ export function AppIcon({ name, className, ...rest }: { name: AppIconName } & Ic
       return <Link className={mergedClassName} {...rest} />;
     case "library":
       return <BookOpenText className={mergedClassName} {...rest} />;
+    case "output":
+      return <ScrollText className={mergedClassName} {...rest} />;
+    case "spinner":
+      return <Loader2 className={mergedClassName} {...rest} />;
     default:
       return null;
   }

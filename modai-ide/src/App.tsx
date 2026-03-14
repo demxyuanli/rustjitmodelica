@@ -44,7 +44,7 @@ import {
 } from "./api/tauri";
 import "./App.css";
 
-type WorkbenchBottomTab = "verify" | "run" | "log" | "deps" | "vars";
+type WorkbenchBottomTab = "problems" | "output" | "results" | "deps";
 
 function App() {
   const [modelName, setModelName] = useState("BouncingBall");
@@ -243,23 +243,29 @@ function App() {
   );
 
   const handleValidate = useCallback(async () => {
+    layout.setShowBottomPanel(true);
+    setRequestedSimulationTab("problems");
     const result = await sim.validate(code, modelName, project.projectDir);
     if (result && !result.success) {
       ai.setAiPrompt(`Compilation failed.\n${result.errors.join("\n")}`);
       layout.setShowRightPanel(true);
       layout.setRightPanelTab("ai");
     }
-  }, [code, modelName, project.projectDir, sim]);
+  }, [code, modelName, project.projectDir, sim, layout, ai]);
 
-  const handleRunSimulation = useCallback(() => {
-    sim.runSimulation(code, modelName, project.projectDir);
-  }, [code, modelName, project.projectDir, sim]);
+  const handleRunSimulation = useCallback(async () => {
+    layout.setShowBottomPanel(true);
+    setRequestedSimulationTab("results");
+    await sim.runSimulation(code, modelName, project.projectDir);
+  }, [code, modelName, project.projectDir, sim, layout]);
 
-  const handleTestAll = useCallback(() => {
+  const handleTestAll = useCallback(async () => {
     if (project.projectDir && project.moFiles.length > 0) {
-      sim.testAllMoFiles(project.projectDir, project.moFiles, pathToModelName);
+      layout.setShowBottomPanel(true);
+      await sim.testAllMoFiles(project.projectDir, project.moFiles, pathToModelName);
+      setRequestedSimulationTab("problems");
     }
-  }, [project.projectDir, project.moFiles, sim]);
+  }, [project.projectDir, project.moFiles, sim, layout]);
 
   const handleInsertAi = useCallback(() => {
     if (!editorRef.current) return;
@@ -490,7 +496,7 @@ function App() {
                 focusSymbolQuery={focusedDiagramSymbol}
                 onRequestWorkbenchView={(view) => {
                   layout.setShowBottomPanel(true);
-                  setRequestedSimulationTab(view === "analysis" ? "deps" : "run");
+                  setRequestedSimulationTab(view === "analysis" ? "deps" : "results");
                 }}
                 onViewModeChange={(mode) => {
                   if (mode === "icon" || mode === "diagram" || mode === "diagramReadOnly") {
@@ -518,6 +524,7 @@ function App() {
                             onExportCSV: sim.exportCSV,
                             onExportJSON: sim.exportJSON,
                             onSuggestFixWithAi: ai.setAiPrompt,
+                          onClearLog: () => setLogLines([]),
                           }}
                           data={{
                             jitResult: sim.jitResult,
@@ -527,7 +534,8 @@ function App() {
                             testAllResults: sim.testAllResults,
                             moFilesCount: project.moFiles.length,
                             logLines,
-                            plotTraces: sim.plotTraces,
+                            plotSeries: sim.plotSeries,
+                            chartMeta: sim.chartMeta,
                             allPlotVarNames: sim.allPlotVarNames,
                             selectedPlotVars: sim.selectedPlotVars,
                             tableColumns: sim.tableColumns,
@@ -619,6 +627,7 @@ function App() {
                           onAdoptIteration={ai.adoptIteration}
                           onCommitIteration={ai.commitIteration}
                           onReuseIteration={ai.reuseIteration}
+                          theme={layout.theme}
                         />
                       </div>
                     )}

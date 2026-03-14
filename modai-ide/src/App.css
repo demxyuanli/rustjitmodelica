@@ -39,6 +39,19 @@
   --info-text: #93c5fd;
   --status-error: #f14c4c;
   --status-warning: #e2c08d;
+  --agent-user-bg: #2a2a2a;
+  --agent-user-border: rgba(255, 255, 255, 0.08);
+  --agent-assistant-bg: #151515;
+  --agent-assistant-border: rgba(255, 255, 255, 0.08);
+  --agent-diff-bg: rgba(255, 255, 255, 0.02);
+  --agent-filebar-bg: #111111;
+  --agent-filebar-border: #3c3c3c;
+  --agent-menu-bg: #1e1e1e;
+  --agent-input-shell-bg: rgba(255, 255, 255, 0.01);
+  --agent-inline-code-bg: rgba(255, 255, 255, 0.06);
+  --agent-inline-code-border: rgba(255, 255, 255, 0.12);
+  --agent-code-bg: rgba(255, 255, 255, 0.04);
+  --agent-code-border: rgba(255, 255, 255, 0.12);
 }
 
 .light {
@@ -74,6 +87,19 @@
   --info-text: #1d4ed8;
   --status-error: #c72e2e;
   --status-warning: #bc8f2e;
+  --agent-user-bg: #e2e8f0;
+  --agent-user-border: #cbd5e1;
+  --agent-assistant-bg: #ffffff;
+  --agent-assistant-border: #dbe3ef;
+  --agent-diff-bg: #f8fafc;
+  --agent-filebar-bg: #f8fafc;
+  --agent-filebar-border: #d1d5db;
+  --agent-menu-bg: #ffffff;
+  --agent-input-shell-bg: #f8fafc;
+  --agent-inline-code-bg: rgba(15, 23, 42, 0.06);
+  --agent-inline-code-border: rgba(15, 23, 42, 0.12);
+  --agent-code-bg: rgba(15, 23, 42, 0.04);
+  --agent-code-border: rgba(15, 23, 42, 0.12);
 }
 
 .status-bar-error { color: var(--status-error); }
@@ -167,16 +193,18 @@ body {
 /* Agent conversation styling */
 .agent-msg {
   max-width: 100%;
-  border-radius: 8px;
-  padding: 6px 8px;
+  border-radius: 10px;
+  padding: 8px 10px;
   font-size: 12px;
+  border: 1px solid transparent;
 }
 .agent-msg-user {
-  background: #2a2a2a;
+  background: var(--agent-user-bg);
+  border-color: var(--agent-user-border);
 }
 .agent-msg-assistant {
-  background: #151515;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--agent-assistant-bg);
+  border-color: var(--agent-assistant-border);
 }
 .agent-msg-loading {
   display: inline-flex;
@@ -209,7 +237,7 @@ body {
   margin: 0;
   padding: 6px 8px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--agent-diff-bg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 11px;
   overflow-x: auto;
@@ -227,7 +255,7 @@ body {
 .agent-status-row {
   border-radius: 4px;
   padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--agent-diff-bg);
 }
 .agent-status-error {
   color: var(--status-error);
@@ -235,8 +263,8 @@ body {
 
 .agent-filebar {
   border-radius: 6px;
-  border: 1px solid #3c3c3c;
-  background: #111111;
+  border: 1px solid var(--agent-filebar-border);
+  background: var(--agent-filebar-bg);
 }
 .agent-filebar-header {
   display: flex;
@@ -268,7 +296,7 @@ body {
 .agent-filebar-btn {
   padding: 2px 6px;
   border-radius: 999px;
-  border: 1px solid #4b4b4b;
+  border: 1px solid var(--input-border);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -323,7 +351,7 @@ body {
   font-size: 9px;
   padding: 0 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--agent-inline-code-bg);
 }
 .agent-ctx-loading {
   width: 6px;
@@ -333,11 +361,19 @@ body {
   animation: agent-dot 1.1s infinite ease-in-out both;
 }
 
+.ai-panel-theme-dark {
+  color-scheme: dark;
+}
+
+.ai-panel-theme-light {
+  color-scheme: light;
+}
+
 .agent-mode-menu-portal {
   min-width: 140px;
   border-radius: 6px;
-  border: 1px solid #3c3c3c;
-  background: #1e1e1e;
+  border: 1px solid var(--border);
+  background: var(--agent-menu-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
