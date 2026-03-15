@@ -1,4 +1,4 @@
-use crate::{compiler_config, db};
+use crate::{app_settings, compiler_config, db};
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -13,6 +13,21 @@ pub fn get_compiler_config() -> Result<Option<compiler_config::CompilerConfig>, 
 #[tauri::command]
 pub fn set_compiler_config(config: compiler_config::CompilerConfig) -> Result<(), String> {
     compiler_config::save_config(&config)
+}
+
+#[tauri::command]
+pub fn get_app_settings() -> Result<app_settings::AppSettings, String> {
+    app_settings::load_settings()
+}
+
+#[tauri::command]
+pub fn set_app_settings(settings: app_settings::AppSettings) -> Result<(), String> {
+    app_settings::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn get_app_data_root() -> Result<String, String> {
+    crate::app_data::app_data_root().map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]

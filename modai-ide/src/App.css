@@ -3,9 +3,15 @@
 @tailwind utilities;
 
 :root {
-  font-family: ui-monospace, Monaco, Consolas, monospace;
+  font-family: var(--font-ui, "Microsoft JhengHei Light", "Microsoft JhengHei", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif);
+  font-size: var(--font-size-ui, 12px);
   --primary: #3b82f6;
   --radius: 8;
+  --panel-header-height: 32px;
+  --panel-header-padding-y: 6px;
+  --panel-header-padding-x: 12px;
+  --toolbar-btn-size: 26px;
+  --toolbar-gap: 8px;
   --surface: #1e1e1e;
   --surface-alt: #252526;
   --surface-elevated: #2d2d2d;
@@ -16,11 +22,11 @@
   --surface-active: rgba(255, 255, 255, 0.12);
   --border: #3c3c3c;
   --border-strong: #4b4b4b;
-  --text: #d4d4d4;
-  --text-muted: #9d9d9d;
+  --text: #e8e8e8;
+  --text-muted: #b0b0b0;
   --accent: #8b5cf6;
   --titlebar-bg: #323233;
-  --titlebar-fg: #d4d4d4;
+  --titlebar-fg: #e8e8e8;
   --menu-bg: #252526;
   --menu-hover: rgba(255, 255, 255, 0.08);
   --panel-bg: #252526;
@@ -56,6 +62,40 @@
   --agent-code-border: rgba(255, 255, 255, 0.12);
 }
 
+.ui-color-classic {
+  --text: #e2e2e2;
+  --text-muted: #a5a5a5;
+  --primary: #0078d4;
+  --border: #3f3f46;
+  --border-strong: #505050;
+  --surface: #252526;
+  --surface-alt: #2d2d30;
+  --surface-elevated: #3c3c3c;
+  --titlebar-bg: #2d2d30;
+  --titlebar-fg: #e2e2e2;
+  --menu-bg: #252526;
+  --panel-bg: #252526;
+  --input-bg: #3c3c3c;
+  --input-border: #3f3f46;
+}
+
+.light.ui-color-classic {
+  --text: #1a1a1a;
+  --text-muted: #5c5c5c;
+  --primary: #006ab1;
+  --border: #d4d4d4;
+  --border-strong: #adadad;
+  --surface: #f3f3f3;
+  --surface-alt: #e8e8e8;
+  --surface-elevated: #ffffff;
+  --titlebar-bg: #e8e8e8;
+  --titlebar-fg: #1a1a1a;
+  --menu-bg: #ffffff;
+  --panel-bg: #ffffff;
+  --input-bg: #ffffff;
+  --input-border: #d4d4d4;
+}
+
 .light {
   --surface: #f3f4f6;
   --surface-alt: #e5e7eb;
@@ -67,10 +107,10 @@
   --surface-active: rgba(15, 23, 42, 0.1);
   --border: #d1d5db;
   --border-strong: #9ca3af;
-  --text: #1f2937;
-  --text-muted: #6b7280;
+  --text: #111827;
+  --text-muted: #4b5563;
   --titlebar-bg: #eef2f7;
-  --titlebar-fg: #1f2937;
+  --titlebar-fg: #111827;
   --menu-bg: #ffffff;
   --menu-hover: rgba(15, 23, 42, 0.06);
   --panel-bg: #ffffff;
@@ -199,8 +239,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: var(--toolbar-gap);
+  height: var(--panel-header-height);
+  min-height: var(--panel-header-height);
+  box-sizing: border-box;
+  padding: 0 var(--panel-header-padding-x);
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
   flex-shrink: 0;
@@ -208,7 +251,7 @@ body {
 .agent-header-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--toolbar-gap);
 }
 .agent-header-title {
   font-size: 12px;
@@ -237,14 +280,14 @@ body {
 .agent-header-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--toolbar-gap);
 }
 .agent-header-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--toolbar-btn-size);
+  height: var(--toolbar-btn-size);
   border-radius: 6px;
   border: 1px solid transparent;
   background: transparent;
@@ -387,6 +430,16 @@ body {
 @keyframes agent-dot {
   0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+/* Dependency graph: animated dashed "solves" link (flow toward target, 8+4=12) */
+.joint-dep-link-line-animated {
+  stroke-dasharray: 8 4;
+  animation: joint-dep-link-dash 0.5s linear infinite;
+}
+@keyframes joint-dep-link-dash {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -12; }
 }
 
 /* Message list container */
@@ -607,9 +660,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--toolbar-gap);
   flex-wrap: wrap;
-  padding: 6px 10px;
+  height: var(--panel-header-height);
+  min-height: var(--panel-header-height);
+  box-sizing: border-box;
+  padding: 0 var(--panel-header-padding-x);
   border-top: 1px solid var(--border);
   font-size: 10px;
 }
@@ -641,8 +697,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
-  width: 28px;
+  height: var(--toolbar-btn-size);
+  width: var(--toolbar-btn-size);
   border-radius: 8px;
   border: 1px solid var(--accent);
   background: rgba(59, 130, 246, 0.1);
@@ -917,7 +973,62 @@ body {
 }
 .editor-group-toolbar {
   flex-shrink: 0;
+  height: var(--panel-header-height);
+  min-height: var(--panel-header-height);
+  box-sizing: border-box;
 }
+
+/* Shared in-app panel header / toolbar: strict height 32px (from variable) */
+.panel-header-bar {
+  height: var(--panel-header-height);
+  min-height: var(--panel-header-height);
+  box-sizing: border-box;
+  padding: 0 var(--panel-header-padding-x);
+  display: flex;
+  align-items: center;
+  gap: var(--toolbar-gap);
+}
+/* Multi-line header (title + extra content): at least 32px, can grow */
+.panel-header-bar-tall {
+  min-height: var(--panel-header-height);
+  box-sizing: border-box;
+  padding: var(--panel-header-padding-y) var(--panel-header-padding-x);
+  gap: var(--toolbar-gap);
+}
+.panel-header-min-height {
+  height: var(--panel-header-height);
+  min-height: var(--panel-header-height);
+  box-sizing: border-box;
+}
+.panel-header-padding {
+  padding: var(--panel-header-padding-y) var(--panel-header-padding-x);
+  box-sizing: border-box;
+}
+.toolbar-icon-btn {
+  width: var(--toolbar-btn-size);
+  height: var(--toolbar-btn-size);
+  min-width: var(--toolbar-btn-size);
+  min-height: var(--toolbar-btn-size);
+}
+
+/* JIT tab bar: only bar bottom border, tabs differ by background (match first reference image) */
+.jit-tab-bar {
+  background: transparent;
+}
+.jit-tab-bar button {
+  border-radius: 0;
+  border: none;
+}
+.jit-tab-bar button:not(.jit-tab-active) {
+  background: transparent !important;
+}
+.jit-tab-bar button:hover:not(.jit-tab-active) {
+  background: var(--surface-hover) !important;
+}
+.jit-tab-bar button.jit-tab-active {
+  background: var(--surface-alt) !important;
+}
+
 .editor-group-body {
   flex: 1 1 0;
   min-height: 0;

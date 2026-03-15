@@ -12,6 +12,7 @@
 //! | jit_traceability.json| repo_root/jit_traceability.json | JIT traceability config, compiler-iteration only |
 //! | diagram-layout.json  | project_dir/.modai/diagram-layout.json | Diagram layout per file |
 //! | API key              | Keyring (system)            | AI API key (ai.rs)                     |
+//! | settings.json        | app_data_root/settings.json | App settings: storage, resources, docs, extensions (app_settings.rs) |
 //!
 //! ## Frontend localStorage keys
 //!

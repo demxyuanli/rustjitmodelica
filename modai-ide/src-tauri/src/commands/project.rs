@@ -18,6 +18,25 @@ pub fn open_project_dir() -> Option<String> {
 }
 
 #[tauri::command]
+pub fn reopen_project_dir(path: String) -> Result<String, String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err("Path does not exist".to_string());
+    }
+    if !p.is_dir() {
+        return Err("Path is not a directory".to_string());
+    }
+    p.canonicalize()
+        .map_err(|e| e.to_string())
+        .and_then(|canonical| {
+            canonical
+                .to_str()
+                .map(String::from)
+                .ok_or_else(|| "Path is not valid UTF-8".to_string())
+        })
+}
+
+#[tauri::command]
 pub fn pick_component_library_folder() -> Option<String> {
     rfd::FileDialog::new()
         .pick_folder()

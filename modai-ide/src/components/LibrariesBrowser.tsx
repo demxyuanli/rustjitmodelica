@@ -4,7 +4,7 @@ import type { InstantiableClass } from "../types";
 import type { MoTreeEntry } from "../hooks/useProject";
 import { t } from "../i18n";
 import { FileIcon } from "./FileIcon";
-import { CONNECTOR_COLORS } from "./diagramConnectorColors";
+import { useDiagramScheme } from "../contexts/DiagramSchemeContext";
 
 export const MODELICA_DRAG_TYPE = "application/modelica-type";
 
@@ -46,16 +46,6 @@ const CATEGORY_KEYWORDS: Record<CategoryKey, string[]> = {
   signal: ["signal", "input", "output", "block", "gain", "integrator", "transfer", "pid", "controller", "feedback"],
   math: ["math", "sin", "cos", "sqrt", "abs", "exp", "log", "function", "constant", "table"],
   other: [],
-};
-
-const CATEGORY_COLORS: Record<CategoryKey, string> = {
-  all: "var(--text-muted)",
-  electrical: CONNECTOR_COLORS.electrical ?? "#2563eb",
-  mechanical: CONNECTOR_COLORS.mechanical ?? "#059669",
-  thermal: CONNECTOR_COLORS.thermal ?? "#dc2626",
-  signal: CONNECTOR_COLORS.signal_input ?? "#f59e0b",
-  math: "#8b5cf6",
-  other: "var(--text-muted)",
 };
 
 function classifyComponent(item: InstantiableClass): CategoryKey {
@@ -211,6 +201,19 @@ export function LibrariesBrowser({
   const [category, setCategory] = useState<CategoryKey>("all");
   const [favorites, setFavorites] = useState<Set<string>>(loadFavorites);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const { scheme } = useDiagramScheme();
+  const categoryColors = useMemo<Record<CategoryKey, string>>(
+    () => ({
+      all: "var(--text-muted)",
+      electrical: scheme.connectorColors.electrical ?? "#2563eb",
+      mechanical: scheme.connectorColors.mechanical ?? "#059669",
+      thermal: scheme.connectorColors.thermal ?? "#dc2626",
+      signal: scheme.connectorColors.signal_input ?? "#f59e0b",
+      math: "#8b5cf6",
+      other: "var(--text-muted)",
+    }),
+    [scheme]
+  );
 
   useEffect(() => {
     if (!projectDir || variant !== "standalone") {
@@ -346,7 +349,7 @@ export function LibrariesBrowser({
                   }`}
                   onClick={() => setCategory(cat.key)}
                 >
-                  <span className="inline-block w-1.5 h-1.5 rounded-full mr-0.5" style={{ backgroundColor: CATEGORY_COLORS[cat.key] }} />
+                  <span className="inline-block w-1.5 h-1.5 rounded-full mr-0.5" style={{ backgroundColor: categoryColors[cat.key] }} />
                   {cat.label}
                 </button>
               ))}
@@ -427,7 +430,7 @@ export function LibrariesBrowser({
                           >
                             <span
                               className="shrink-0 w-2 h-2 rounded-full"
-                              style={{ backgroundColor: CATEGORY_COLORS[cat] }}
+                              style={{ backgroundColor: categoryColors[cat] }}
                               title={cat}
                             />
                             <button

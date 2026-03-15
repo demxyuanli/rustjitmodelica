@@ -54,12 +54,13 @@ export function JitRightPanel({
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-surface-alt">
-      <div className="shrink-0 flex border-b border-border justify-around py-0.5">
+      <div className="jit-tab-bar panel-header-min-height shrink-0 flex items-center justify-around border-b border-border w-full bg-transparent">
         <IconButton
           icon={<AppIcon name="iterate" aria-hidden="true" />}
           variant="tab"
           size="xs"
           active={activeTab === "iterate"}
+          className={activeTab === "iterate" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("iterate")}
           title={t("selfIterate")}
           aria-label={t("selfIterate")}
@@ -69,6 +70,7 @@ export function JitRightPanel({
           variant="tab"
           size="xs"
           active={activeTab === "ai"}
+          className={activeTab === "ai" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("ai")}
           title={t("aiCoding")}
           aria-label={t("aiCoding")}
@@ -78,6 +80,7 @@ export function JitRightPanel({
           variant="tab"
           size="xs"
           active={activeTab === "diff"}
+          className={activeTab === "diff" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("diff")}
           title={t("sourceControl")}
           aria-label={t("viewDiff")}

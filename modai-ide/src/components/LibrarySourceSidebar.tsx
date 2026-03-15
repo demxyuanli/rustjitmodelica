@@ -84,7 +84,7 @@ export function LibrarySourceSidebar({
 
   return (
     <aside className="w-[248px] shrink-0 border-r border-border bg-[var(--bg-elevated)]">
-      <div className="border-b border-border px-3 py-3">
+      <div className="panel-header-bar-tall flex flex-col items-stretch border-b border-border">
         <div className="text-sm font-medium">{t("componentLibraryManager")}</div>
         <div className="mt-2 flex flex-col gap-2">
           <input

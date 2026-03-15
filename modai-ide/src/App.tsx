@@ -5,6 +5,7 @@ import { setLang } from "./i18n";
 
 import { useLayout } from "./hooks/useLayout";
 import { useProject, pathToModelName } from "./hooks/useProject";
+import { useDiagramScheme } from "./contexts/DiagramSchemeContext";
 import { useSimulation } from "./hooks/useSimulation";
 import { useModelicaAI, type AiContextBlock } from "./hooks/useAI";
 
@@ -26,7 +27,8 @@ const GitGraphView = lazy(() => import("./components/GitGraphView").then((m) => 
 const SimulationPanel = lazy(() => import("./components/SimulationPanel").then((m) => ({ default: m.SimulationPanel })));
 import { NewModelDialog } from "./components/diagram/NewModelDialog";
 import { JitIdeWorkspace } from "./components/JitIdeWorkspace";
-import { SettingsContent, type IndexActionState } from "./components/SettingsContent";
+import { GlobalSettingsPanel } from "./components/GlobalSettingsPanel";
+import type { IndexActionState } from "./components/SettingsContent";
 import { t } from "./i18n";
 import type { JitCenterView } from "./hooks/useJitLayout";
 import { DEFAULT_MODEL_BOUNCING_BALL } from "./examples";
@@ -42,10 +44,55 @@ import {
   indexRefreshRepo,
   indexRebuildRepo,
   writeProjectFile,
+  getAppSettings,
+  setAppSettings,
+  getAppDataRoot,
 } from "./api/tauri";
+import type { AppSettings } from "./api/tauri";
+import { PREFS_KEYS, readPref, writePref } from "./utils/prefsConstants";
+import {
+  getWorkspaceStateKey,
+  loadWorkspaceMeta,
+  loadWorkspaceDrafts,
+  saveWorkspaceMeta,
+  saveWorkspaceDrafts,
+  type WorkspaceMetaSerial,
+} from "./utils/workspacePersistence";
+import type { EditorTab } from "./components/EditorTabBar";
 import "./App.css";
 
 type WorkbenchBottomTab = "problems" | "output" | "results" | "deps";
+
+let lastProjectRestoreAttempted = false;
+
+function scheduleRestoreLastProjectOnce(
+  setWorkspaceMode: (mode: "modelica" | "component-library" | "compiler-iterate") => void,
+  setProjectDirFromPath: (path: string) => Promise<void>
+) {
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      if (lastProjectRestoreAttempted) return;
+      const restoreLayout = readPref(PREFS_KEYS.restoreLayout, (s) => s === "true", true);
+      if (!restoreLayout) return;
+      const lastDir = readPref(PREFS_KEYS.lastProjectDir, (s) => (s && s.trim() ? s.trim() : ""), "");
+      if (!lastDir) return;
+      const attempt = (retry = false) => {
+        lastProjectRestoreAttempted = true;
+        setProjectDirFromPath(lastDir)
+          .then(() => setWorkspaceMode("modelica"))
+          .catch(() => {
+            if (retry) {
+              writePref(PREFS_KEYS.lastProjectDir, "");
+              return;
+            }
+            lastProjectRestoreAttempted = false;
+            setTimeout(() => attempt(true), 500);
+          });
+      };
+      attempt(false);
+    }, 200);
+  });
+}
 
 function App() {
   const [modelName, setModelName] = useState("BouncingBall");
@@ -66,6 +113,7 @@ function App() {
 
   const layout = useLayout();
   const project = useProject();
+  const diagramScheme = useDiagramScheme();
   const sim = useSimulation(log);
   const ai = useModelicaAI(log);
 
@@ -79,10 +127,103 @@ function App() {
   const [focusedDiagramSymbol, setFocusedDiagramSymbol] = useState<string | null>(null);
   const [libraryRefreshToken, setLibraryRefreshToken] = useState(0);
   const [showNewModelDialog, setShowNewModelDialog] = useState(false);
+  const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null);
+  const [appDataRoot, setAppDataRoot] = useState<string | null>(null);
+  const [restoredWorkspace, setRestoredWorkspace] = useState<{
+    projectDir: string;
+    meta: WorkspaceMetaSerial;
+    drafts: Record<string, string>;
+  } | null>(null);
 
   useEffect(() => {
     indexRepoRoot().then((r) => setRepoRoot(r)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    getAppSettings().then(setAppSettingsState).catch(() => {});
+    getAppDataRoot().then(setAppDataRoot).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    scheduleRestoreLastProjectOnce(layout.setWorkspaceMode, project.setProjectDirFromPath);
+  }, [layout.setWorkspaceMode, project.setProjectDirFromPath]);
+
+  useEffect(() => {
+    if (!project.projectDir) {
+      setRestoredWorkspace(null);
+      return;
+    }
+    const projectKey = getWorkspaceStateKey(project.projectDir);
+    if (!projectKey) return;
+    const meta = loadWorkspaceMeta(projectKey);
+    loadWorkspaceDrafts(projectKey).then((drafts) => {
+      if (meta) {
+        setRestoredWorkspace({ projectDir: project.projectDir!, meta, drafts });
+      } else {
+        setRestoredWorkspace(null);
+      }
+    });
+  }, [project.projectDir]);
+
+  const persistWorkspaceState = useCallback(() => {
+    const dir = project.projectDir;
+    if (!dir) return;
+    const snapshot = workbenchRef.current?.getWorkspaceState?.();
+    if (!snapshot) return;
+    const hasTabs = snapshot.editorGroups.some((g) => g.tabs.length > 0);
+    if (!hasTabs) return;
+    const projectKey = getWorkspaceStateKey(dir);
+    if (!projectKey) return;
+    const meta: WorkspaceMetaSerial = {
+      version: 1,
+      editorGroups: snapshot.editorGroups.map((g) => ({
+        tabs: g.tabs.map((t: EditorTab) => ({
+          id: t.id,
+          path: t.path,
+          dirty: t.dirty,
+          projectPath: t.projectPath,
+          readOnly: t.readOnly,
+          modelName: t.modelName,
+        })),
+        activeIndex: g.activeIndex,
+      })),
+      focusedGroupIndex: snapshot.focusedGroupIndex,
+      splitRatio: snapshot.splitRatio,
+    };
+    saveWorkspaceMeta(projectKey, meta);
+    const drafts: Record<string, string> = {};
+    const norm = (p: string) => p.replace(/\\/g, "/");
+    for (const g of snapshot.editorGroups) {
+      for (const tab of g.tabs) {
+        if (tab.dirty) {
+          const key = tab.projectPath != null ? norm(tab.projectPath) : tab.id;
+          const content = snapshot.contentByPath[key];
+          if (content !== undefined) drafts[key] = content;
+        }
+      }
+    }
+    saveWorkspaceDrafts(projectKey, drafts);
+  }, [project.projectDir]);
+
+  useEffect(() => {
+    if (!project.projectDir) return;
+    const id = setInterval(persistWorkspaceState, 2000);
+    return () => clearInterval(id);
+  }, [project.projectDir, persistWorkspaceState]);
+
+  useEffect(() => {
+    const onUnload = () => persistWorkspaceState();
+    window.addEventListener("beforeunload", onUnload);
+    window.addEventListener("pagehide", onUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onUnload);
+      window.removeEventListener("pagehide", onUnload);
+    };
+  }, [persistWorkspaceState]);
+
+  useEffect(() => {
+    setLang(layout.lang);
+  }, [layout.lang]);
 
   useEffect(() => {
     if (layout.workspaceMode === "modelica") {
@@ -142,6 +283,54 @@ function App() {
     try { localStorage.setItem("modai-theme", layout.theme); } catch { /* ignore */ }
   }, [layout.theme]);
 
+  const fontUiStack = layout.fontUi === "code"
+    ? "Consolas, Monaco, \"Courier New\", \"Liberation Mono\", monospace"
+    : "\"Microsoft JhengHei Light\", \"Microsoft JhengHei\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", system-ui, sans-serif";
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--font-ui", fontUiStack);
+    root.style.setProperty("--font-size-ui", `calc(12px * ${layout.fontSizePercent} / 100)`);
+    try {
+      localStorage.setItem("modai-font-ui", layout.fontUi);
+      localStorage.setItem("modai-font-size-percent", String(layout.fontSizePercent));
+    } catch { /* ignore */ }
+  }, [layout.fontUi, layout.fontSizePercent, fontUiStack]);
+
+  useEffect(() => {
+    const syncFontFromStorage = () => {
+      const root = document.documentElement;
+      const fontUi = localStorage.getItem("modai-font-ui") === "code" ? "code" : "chinese";
+      const stack = fontUi === "code"
+        ? "Consolas, Monaco, \"Courier New\", \"Liberation Mono\", monospace"
+        : "\"Microsoft JhengHei Light\", \"Microsoft JhengHei\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", system-ui, sans-serif";
+      root.style.setProperty("--font-ui", stack);
+      const pct = localStorage.getItem("modai-font-size-percent");
+      const n = pct ? parseInt(pct, 10) : 100;
+      const percent = [90, 100, 110, 120].includes(n) ? n : 100;
+      root.style.setProperty("--font-size-ui", `calc(12px * ${percent} / 100)`);
+    };
+    window.addEventListener("modai-font-ui-change", syncFontFromStorage);
+    window.addEventListener("modai-font-size-change", syncFontFromStorage);
+    return () => {
+      window.removeEventListener("modai-font-ui-change", syncFontFromStorage);
+      window.removeEventListener("modai-font-size-change", syncFontFromStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (layout.uiColorScheme === "classic") root.classList.add("ui-color-classic");
+    else root.classList.remove("ui-color-classic");
+    try { localStorage.setItem("modai-ui-color-scheme", layout.uiColorScheme); } catch { /* ignore */ }
+  }, [layout.uiColorScheme]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--panel-header-height", `${layout.panelHeaderHeight}px`);
+    root.style.setProperty("--toolbar-btn-size", `${layout.toolbarBtnSize}px`);
+    root.style.setProperty("--toolbar-gap", `${layout.toolbarGap}px`);
+  }, [layout.panelHeaderHeight, layout.toolbarBtnSize, layout.toolbarGap]);
+
   useEffect(() => {
     const text = (currentSelection.text ?? "").trim();
     if (!text) {
@@ -156,7 +345,7 @@ function App() {
   const toggleLang = useCallback(() => {
     const next = layout.lang === "en" ? "zh" : "en";
     setLang(next);
-    layout.setLangState(next);
+    layout.setLang(next);
   }, [layout.lang]);
 
   const runIndexAction = useCallback(async (action: "refresh" | "rebuild") => {
@@ -275,6 +464,24 @@ function App() {
     }
   }, [project.projectDir, project.moFiles, sim, layout]);
 
+  const isSettingsOpen = layout.showSettings;
+
+  const handleOpenSettings = useCallback(() => {
+    layout.setShowSettings(!layout.showSettings);
+  }, [layout.showSettings, layout.setShowSettings]);
+
+  const handleAppSettingsChange = useCallback(
+    async (next: AppSettings) => {
+      setAppSettingsState(next);
+      try {
+        await setAppSettings(next);
+      } catch {
+        /* ignore */
+      }
+    },
+    []
+  );
+
   const handleInsertAi = useCallback(() => {
     if (!editorRef.current) return;
     const editor = editorRef.current;
@@ -328,9 +535,8 @@ function App() {
         modelName={modelName}
         showProjectMenu={layout.showProjectMenu}
         setShowProjectMenu={layout.setShowProjectMenu}
-        onOpenSettings={() => {
-          layout.setShowSettings(true);
-        }}
+        isSettingsOpen={isSettingsOpen}
+        onOpenSettings={handleOpenSettings}
         showLeftSidebar={layout.showLeftSidebar}
         setShowLeftSidebar={layout.setShowLeftSidebar}
         showRightPanel={layout.showRightPanel}
@@ -345,37 +551,13 @@ function App() {
         jitActiveCenterView={jitActiveCenterView}
         onJitCenterViewSelect={(view) => setJitCenterViewRequest(view)}
       />
+      <div className="relative flex flex-1 min-h-0 min-w-0">
       {layout.workspaceMode === "modelica" ? (
-        layout.showSettings ? (
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="flex-1 min-h-0 overflow-auto">
-              <div className="max-w-2xl mx-auto p-6 text-[var(--text)]">
-                <h2 className="text-lg font-semibold text-[var(--text)] mb-6">{t("settings")}</h2>
-                <SettingsContent
-                  theme={layout.theme}
-                  onThemeChange={layout.setTheme}
-                  indexFileCount={indexStatus?.fileCount ?? 0}
-                  indexSymbolCount={indexStatus?.symbolCount ?? 0}
-                  indexState={indexStatus?.state ?? null}
-                  indexAction={indexAction}
-                  onIndexRefresh={() => runIndexAction("refresh")}
-                  onIndexRebuild={() => runIndexAction("rebuild")}
-                  onEnterDevMode={() => layout.setWorkspaceMode("compiler-iterate")}
-                  aiModel={ai.model}
-                  onAiModelChange={ai.setModel}
-                  aiDailyUsed={ai.dailyTokenUsed}
-                  aiDailyLimit={ai.dailyTokenLimit}
-                  onAiDailyReset={ai.resetDailyUsage}
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-1 min-h-0">
+          <div className="flex flex-1 min-h-0 min-w-0">
             {layout.showLeftSidebar && (
               <>
-                <div className="shrink-0 border-r border-border bg-surface-alt overflow-hidden flex flex-col" style={{ width: layout.leftSidebarWidth }}>
-                  <div className="shrink-0 flex border-b border-border justify-around py-0.5">
+                <div className="shrink-0 border-r border-border bg-surface-alt overflow-hidden flex flex-col w-full" style={{ width: layout.leftSidebarWidth }}>
+                  <div className="panel-header-min-height shrink-0 flex items-center justify-around border-b border-border w-full">
                     <IconButton
                       icon={<AppIcon name="explorer" aria-hidden="true" />}
                       variant="tab"
@@ -408,10 +590,10 @@ function App() {
                     {layout.leftSidebarTab === "explorer" && (
                       <>
                         {project.projectDir && (
-                          <div className="shrink-0 flex items-center gap-1 px-2 py-1 border-b border-border">
+                          <div className="panel-header-bar shrink-0 flex items-center border-b border-border">
                             <button
                               type="button"
-                              className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]"
+                              className="flex items-center gap-[var(--toolbar-gap)] px-2 py-0.5 text-[10px] rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]"
                               onClick={() => setShowNewModelDialog(true)}
                               title={t("newModelTooltip")}
                             >
@@ -466,7 +648,7 @@ function App() {
                         <div className="shrink-0 border-t border-border flex flex-col min-h-0">
                           <button
                             type="button"
-                            className="shrink-0 flex items-center gap-1 py-1.5 px-2 text-xs text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text)] w-full text-left"
+                            className="panel-header-bar shrink-0 flex items-center text-xs text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text)] w-full text-left"
                             onClick={() => layout.setGraphExpanded((e) => !e)}
                             aria-expanded={layout.graphExpanded}
                           >
@@ -494,8 +676,9 @@ function App() {
                 <div className="resize-handle shrink-0" onMouseDown={layout.startResizeLeft} aria-hidden />
               </>
             )}
-            <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex min-w-0 flex-col flex-1 min-h-0">
               <EditorWorkbench
+                key={project.projectDir ?? "no-project"}
                 ref={workbenchRef}
                 projectDir={project.projectDir}
                 gitStatus={project.gitStatus}
@@ -526,6 +709,25 @@ function App() {
                 }}
                 libraryRefreshToken={libraryRefreshToken}
                 theme={layout.theme}
+                initialEditorGroups={
+                  restoredWorkspace?.projectDir === project.projectDir
+                    ? (restoredWorkspace.meta.editorGroups as import("./components/EditorGroupColumn").EditorGroupState[])
+                    : undefined
+                }
+                initialContentByPath={
+                  restoredWorkspace?.projectDir === project.projectDir ? restoredWorkspace.drafts : undefined
+                }
+                initialFocusedGroupIndex={
+                  restoredWorkspace?.projectDir === project.projectDir
+                    ? restoredWorkspace.meta.focusedGroupIndex
+                    : undefined
+                }
+                initialSplitRatio={
+                  restoredWorkspace?.projectDir === project.projectDir ? restoredWorkspace.meta.splitRatio : undefined
+                }
+                initialProjectDir={
+                  restoredWorkspace?.projectDir === project.projectDir ? project.projectDir : undefined
+                }
               />
               {layout.showBottomPanel && (
                 <>
@@ -585,10 +787,10 @@ function App() {
               <>
                 <div className="resize-handle shrink-0" onMouseDown={layout.startResizeRight} aria-hidden />
                 <aside
-                  className="shrink-0 border-l border-border bg-surface-alt overflow-hidden flex flex-col min-w-0"
+                  className="shrink-0 border-l border-border bg-surface-alt overflow-hidden flex flex-col min-w-0 w-full"
                   style={{ width: layout.rightPanelWidth }}
                 >
-                  <div className="shrink-0 flex border-b border-border justify-around py-0.5">
+                  <div className="panel-header-min-height shrink-0 flex items-center justify-around border-b border-border w-full">
                     <IconButton
                       icon={<AppIcon name="ai" aria-hidden="true" />}
                       variant="tab"
@@ -671,66 +873,74 @@ function App() {
               </>
             )}
           </div>
-      )) : layout.workspaceMode === "component-library" ? (
-        layout.showSettings ? (
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="flex-1 min-h-0 overflow-auto">
-              <div className="max-w-2xl mx-auto p-6 text-[var(--text)]">
-                <h2 className="text-lg font-semibold text-[var(--text)] mb-6">{t("settings")}</h2>
-                <SettingsContent
-                  theme={layout.theme}
-                  onThemeChange={layout.setTheme}
-                  indexFileCount={indexStatus?.fileCount ?? 0}
-                  indexSymbolCount={indexStatus?.symbolCount ?? 0}
-                  indexState={indexStatus?.state ?? null}
-                  indexAction={indexAction}
-                  onIndexRefresh={() => runIndexAction("refresh")}
-                  onIndexRebuild={() => runIndexAction("rebuild")}
-                  onEnterDevMode={() => layout.setWorkspaceMode("compiler-iterate")}
-                  aiModel={ai.model}
-                  onAiModelChange={ai.setModel}
-                  aiDailyUsed={ai.dailyTokenUsed}
-                  aiDailyLimit={ai.dailyTokenLimit}
-                  onAiDailyReset={ai.resetDailyUsage}
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <ComponentLibraryWorkspace
-            projectDir={project.projectDir}
-            theme={layout.theme}
-            onLibrariesChanged={() => setLibraryRefreshToken((value) => value + 1)}
-            onOpenType={(typeName, libraryId) => {
-              if (!project.projectDir) {
-                return;
-              }
-              void workbenchRef.current?.openType(typeName, undefined, libraryId);
-              layout.setWorkspaceMode("modelica");
-            }}
-          />
-        )
+      ) : layout.workspaceMode === "component-library" ? (
+        <ComponentLibraryWorkspace
+          projectDir={project.projectDir}
+          theme={layout.theme}
+          onLibrariesChanged={() => setLibraryRefreshToken((value) => value + 1)}
+          onOpenType={(typeName, libraryId) => {
+            if (!project.projectDir) {
+              return;
+            }
+            void workbenchRef.current?.openType(typeName, undefined, libraryId);
+            layout.setWorkspaceMode("modelica");
+          }}
+        />
       ) : (
         <JitIdeWorkspace
           repoRoot={repoRoot}
-          showSettings={layout.showSettings}
-          onSettingsHandled={() => layout.setShowSettings(false)}
           requestedCenterView={jitCenterViewRequest}
           onRequestedCenterViewHandled={() => setJitCenterViewRequest(undefined)}
           onActiveCenterViewChange={setJitActiveCenterView}
           theme={layout.theme}
-          settingsProps={{
-            theme: layout.theme,
-            onThemeChange: layout.setTheme,
-            indexFileCount: indexStatus?.fileCount ?? 0,
-            indexSymbolCount: indexStatus?.symbolCount ?? 0,
-            indexState: indexStatus?.state ?? null,
-            indexAction,
-            onIndexRefresh: () => runIndexAction("refresh"),
-            onIndexRebuild: () => runIndexAction("rebuild"),
-          }}
         />
       )}
+      <GlobalSettingsPanel
+        open={layout.showSettings}
+        onClose={() => layout.setShowSettings(false)}
+        theme={layout.theme}
+        onThemeChange={layout.setTheme}
+        fontUi={layout.fontUi}
+        onFontUiChange={layout.setFontUi}
+        fontSizePercent={layout.fontSizePercent}
+        onFontSizePercentChange={layout.setFontSizePercent}
+        uiColorScheme={layout.uiColorScheme}
+        onUiColorSchemeChange={layout.setUiColorScheme}
+        panelHeaderHeight={layout.panelHeaderHeight}
+        onPanelHeaderHeightChange={layout.setPanelHeaderHeight}
+        toolbarBtnSize={layout.toolbarBtnSize}
+        onToolbarBtnSizeChange={layout.setToolbarBtnSize}
+        toolbarGap={layout.toolbarGap}
+        onToolbarGapChange={layout.setToolbarGap}
+        diagramSchemeId={diagramScheme.schemeId}
+        diagramScheme={diagramScheme.scheme}
+        onDiagramSchemeChange={diagramScheme.setSchemeId}
+        indexFileCount={indexStatus?.fileCount ?? 0}
+        indexSymbolCount={indexStatus?.symbolCount ?? 0}
+        indexState={indexStatus?.state ?? null}
+        indexAction={indexAction}
+        onIndexRefresh={() => runIndexAction("refresh")}
+        onIndexRebuild={() => runIndexAction("rebuild")}
+        onEnterDevMode={() => layout.setWorkspaceMode("compiler-iterate")}
+        aiModel={ai.model}
+        onAiModelChange={ai.setModel}
+        aiDailyUsed={ai.dailyTokenUsed}
+        aiDailyLimit={ai.dailyTokenLimit}
+        onAiDailyReset={ai.resetDailyUsage}
+        defaultWorkspace={layout.defaultWorkspace}
+        onDefaultWorkspaceChange={layout.setDefaultWorkspace}
+        restoreLayout={layout.restoreLayout}
+        onRestoreLayoutChange={layout.setRestoreLayout}
+        lang={layout.lang}
+        onLangChange={(l) => {
+          setLang(l);
+          layout.setLang(l);
+        }}
+        appDataRoot={appDataRoot ?? undefined}
+        appSettings={appSettings ?? undefined}
+        onAppSettingsChange={handleAppSettingsChange}
+      />
+      </div>
       <StatusBar
         gitBranch={project.gitBranch}
         openFilePath={layout.workspaceMode === "modelica" ? openFilePath : null}

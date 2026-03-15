@@ -1,5 +1,5 @@
 import { dia, shapes } from "@joint/core";
-import { getConnectorColor, resolveThemeColors } from "../../utils/jointUtils";
+import { getConnectorColor, resolveDiagramColors } from "../../utils/jointUtils";
 
 const PORT_SIZE = 6;
 
@@ -48,7 +48,7 @@ export interface CreateElementOptions {
   errorMessage?: string;
 }
 
-function createBlockElement(opts: CreateElementOptions, colors: ReturnType<typeof resolveThemeColors>, connectorColor: string): dia.Element {
+function createBlockElement(opts: CreateElementOptions, colors: ReturnType<typeof resolveDiagramColors>, connectorColor: string): dia.Element {
   const fullLabel = opts.sublabel ? `${opts.label}\n${opts.sublabel}` : opts.label;
   const displayLabel = opts.paramStr ? `${fullLabel}\n${opts.paramStr}` : fullLabel;
   const lines = displayLabel.split("\n");
@@ -103,7 +103,7 @@ function createBlockElement(opts: CreateElementOptions, colors: ReturnType<typeo
   return el;
 }
 
-function createSourceElement(opts: CreateElementOptions, colors: ReturnType<typeof resolveThemeColors>, connectorColor: string): dia.Element {
+function createSourceElement(opts: CreateElementOptions, colors: ReturnType<typeof resolveDiagramColors>, connectorColor: string): dia.Element {
   const el = new shapes.standard.Path({
     id: opts.id,
     position: opts.position,
@@ -144,7 +144,7 @@ function createSourceElement(opts: CreateElementOptions, colors: ReturnType<type
   return el;
 }
 
-function createSinkElement(opts: CreateElementOptions, colors: ReturnType<typeof resolveThemeColors>, connectorColor: string): dia.Element {
+function createSinkElement(opts: CreateElementOptions, colors: ReturnType<typeof resolveDiagramColors>, connectorColor: string): dia.Element {
   const el = new shapes.standard.Circle({
     id: opts.id,
     position: opts.position,
@@ -183,7 +183,7 @@ function createSinkElement(opts: CreateElementOptions, colors: ReturnType<typeof
 }
 
 export function createElement(opts: CreateElementOptions): dia.Element {
-  const colors = resolveThemeColors();
+  const colors = resolveDiagramColors();
   const connectorColor = getConnectorColor(opts.connectorKind);
 
   let el: dia.Element;
@@ -238,7 +238,7 @@ export function createLink(
   },
   graph?: dia.Graph
 ): dia.Link {
-  const colors = resolveThemeColors();
+  const colors = resolveDiagramColors();
 
   let sourcePort = opts.sourcePort;
   let targetPort = opts.targetPort;

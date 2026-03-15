@@ -33,10 +33,10 @@ export function SimulationChartToolbar({
   onExpandChart,
 }: SimulationChartToolbarProps) {
   return (
-    <div className="flex shrink-0 items-center border-b border-border bg-surface-alt">
+    <div className="panel-header-min-height flex shrink-0 items-center border-b border-border bg-surface-alt">
       {/* Left: view mode toggle — always visible */}
-      <div className="shrink-0 px-2 py-1">
-        <div className="flex items-center gap-1 rounded border border-border bg-surface p-0.5">
+      <div className="panel-header-padding shrink-0">
+        <div className="flex items-center gap-[var(--toolbar-gap)] rounded border border-border bg-surface p-0.5">
           <IconButton
             icon={<AppIcon name="chart" aria-hidden="true" />}
             size="xs"
@@ -58,11 +58,11 @@ export function SimulationChartToolbar({
 
       {/* Middle: export buttons (scrollable when space is limited) */}
       {canExport ? (
-        <div className="min-w-0 flex-1 overflow-x-auto scroll-vscode px-1 py-1">
-          <div className="flex min-w-max items-center gap-1">
+        <div className="min-w-0 flex-1 overflow-x-auto scroll-vscode panel-header-padding">
+          <div className="flex min-w-max items-center gap-[var(--toolbar-gap)]">
             <button
               type="button"
-              className="rounded border border-border p-1.5 theme-button-secondary"
+              className="toolbar-icon-btn flex rounded items-center justify-center border border-border theme-button-secondary"
               onClick={onExportCSV}
               title={t("exportCSV")}
             >
@@ -70,7 +70,7 @@ export function SimulationChartToolbar({
             </button>
             <button
               type="button"
-              className="rounded border border-border p-1.5 theme-button-secondary"
+              className="toolbar-icon-btn flex rounded items-center justify-center border border-border theme-button-secondary"
               onClick={onExportJSON}
               title={t("exportJSON")}
             >
@@ -83,10 +83,10 @@ export function SimulationChartToolbar({
       )}
 
       {/* Right: chart controls — always visible, pinned to the right */}
-      <div className="flex shrink-0 items-center gap-1 border-l border-border px-2 py-1">
+      <div className="panel-header-padding flex shrink-0 items-center gap-[var(--toolbar-gap)] border-l border-border">
         <button
           type="button"
-          className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
+          className="toolbar-icon-btn flex rounded items-center justify-center border border-border theme-button-secondary disabled:opacity-50"
           onClick={onResetChart}
           disabled={!canResetChart || simViewMode !== "chart"}
           title={t("reset")}
@@ -95,7 +95,7 @@ export function SimulationChartToolbar({
         </button>
         <button
           type="button"
-          className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
+          className="toolbar-icon-btn flex rounded items-center justify-center border border-border theme-button-secondary disabled:opacity-50"
           onClick={onSaveImage}
           disabled={!canSaveImage || simViewMode !== "chart"}
           title={t("save")}
@@ -104,7 +104,7 @@ export function SimulationChartToolbar({
         </button>
         <button
           type="button"
-          className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
+          className="toolbar-icon-btn flex rounded items-center justify-center border border-border theme-button-secondary disabled:opacity-50"
           onClick={onExpandChart}
           disabled={!canExpandChart || simViewMode !== "chart"}
           title={expandLabel}

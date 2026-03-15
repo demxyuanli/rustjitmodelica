@@ -127,7 +127,7 @@ export function EditorGroupColumn({
       tabIndex={0}
     >
       <div
-        className={`editor-group-toolbar flex items-center shrink-0 border-b border-border ${isFocused ? "ring-1 ring-inset ring-primary/30" : ""}`}
+        className="editor-group-toolbar flex items-center shrink-0 w-full min-w-0 border-b border-border bg-[var(--surface-muted)]"
       >
         <EditorTabBar
           tabs={group.tabs}
@@ -136,7 +136,7 @@ export function EditorGroupColumn({
           onCloseTab={onCloseTab}
         />
         {isMoFile && (
-          <div className="flex rounded border border-[var(--border)] overflow-hidden shrink-0" role="group" aria-label={t("viewMode")}>
+          <div className="flex items-center gap-0 overflow-hidden shrink-0" role="group" aria-label={t("viewMode")}>
             <IconButton
               icon={<span className="text-[10px] font-semibold" aria-hidden="true">&lt;/&gt;</span>}
               variant="tab"

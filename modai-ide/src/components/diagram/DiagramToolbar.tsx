@@ -69,7 +69,7 @@ export function DiagramToolbar({
   if (!showShapes && !showLayout && !showZoom && !showMinimapToggle) return null;
 
   return (
-    <div className="shrink-0 flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--bg-elevated)]">
+    <div className="panel-header-bar shrink-0 flex items-center border-b border-[var(--border)] bg-[var(--bg-elevated)]">
       {showShapes && (
         <>
           <div className="flex items-center gap-0.5 rounded border border-[var(--border)] bg-[var(--surface)] p-0.5">
@@ -77,7 +77,7 @@ export function DiagramToolbar({
               <button
                 key={kind}
                 type="button"
-                className="rounded p-1.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+                className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
                 onClick={() => onAddGraphic?.(createDefaultGraphic(kind))}
                 title={t(titleKey)}
               >
@@ -90,7 +90,7 @@ export function DiagramToolbar({
       )}
       {showLayout && (
         <>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-[var(--toolbar-gap)]">
             <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">
               {t("diagramAutoLayout")}
             </span>
@@ -99,7 +99,7 @@ export function DiagramToolbar({
                 <button
                   key={kind}
                   type="button"
-                  className="rounded p-1.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+                  className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
                   onClick={() => onApplyLayout?.(kind)}
                   title={t(labelKey)}
                 >
@@ -116,7 +116,7 @@ export function DiagramToolbar({
           <div className="flex items-center gap-0.5 rounded border border-[var(--border)] bg-[var(--surface)] p-0.5">
             <button
               type="button"
-              className="rounded p-1.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+              className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
               onClick={() => paperHandle?.zoomIn()}
               title={t("zoomIn")}
             >
@@ -124,7 +124,7 @@ export function DiagramToolbar({
             </button>
             <button
               type="button"
-              className="rounded p-1.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+              className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
               onClick={() => paperHandle?.zoomOut()}
               title={t("zoomOut")}
             >
@@ -132,7 +132,7 @@ export function DiagramToolbar({
             </button>
             <button
               type="button"
-              className="rounded p-1.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+              className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
               onClick={() => paperHandle?.fitView({ padding: 0.16 })}
               title={t("fitView")}
             >
@@ -145,7 +145,7 @@ export function DiagramToolbar({
       {showMinimapToggle && (
         <button
           type="button"
-          className={`rounded p-1.5 ${showMiniMap ? "bg-primary/20 text-primary" : "text-[var(--text-muted)] hover:text-[var(--text)]"} hover:bg-white/10`}
+          className={`toolbar-icon-btn flex rounded items-center justify-center ${showMiniMap ? "bg-primary/20 text-primary" : "text-[var(--text-muted)] hover:text-[var(--text)]"} hover:bg-white/10`}
           onClick={onToggleMiniMap}
           title={showMiniMap ? t("hideMinimap") : t("showMinimap")}
         >

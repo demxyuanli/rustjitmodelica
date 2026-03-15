@@ -1,5 +1,5 @@
 import { dia, shapes } from "@joint/core";
-import { CONNECTOR_COLORS } from "../components/diagramConnectorColors";
+import { getActiveScheme } from "./diagramColorSchemes";
 
 export interface JointPaperHandle {
   zoomIn: (opts?: { duration?: number }) => void;
@@ -47,9 +47,24 @@ export function resolveThemeColors(): {
   return { bg, bgElevated, border, text, textMuted, primary };
 }
 
+export function resolveDiagramColors(): {
+  bg: string;
+  bgElevated: string;
+  border: string;
+  text: string;
+  textMuted: string;
+  primary: string;
+} {
+  const base = resolveThemeColors();
+  const scheme = getActiveScheme();
+  const primary = scheme.diagramPrimary ?? base.primary;
+  return { ...base, primary };
+}
+
 export function getConnectorColor(kind?: string): string {
   if (!kind) return "#888";
-  return CONNECTOR_COLORS[kind] || "#888";
+  const scheme = getActiveScheme();
+  return scheme.connectorColors[kind] ?? "#888";
 }
 
 export interface CreatePaperOptions {
@@ -63,7 +78,7 @@ export interface CreatePaperOptions {
 
 export function createPaper(opts: CreatePaperOptions): dia.Paper {
   const { el, graph, gridSize = 10, readOnly = false } = opts;
-  const colors = resolveThemeColors();
+  const colors = resolveDiagramColors();
 
   const rect = el.getBoundingClientRect();
   const w = Math.max(rect.width, 200);
