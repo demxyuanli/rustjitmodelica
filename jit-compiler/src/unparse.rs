@@ -344,6 +344,14 @@ fn write_extends(buf: &mut String, e: &ExtendsClause) {
     buf.push_str(";\n");
 }
 
+/// Serializes a single equation to a string (without trailing semicolon/newline for display).
+pub fn equation_to_string(eq: &Equation) -> String {
+    let mut buf = String::new();
+    write_equation(&mut buf, eq);
+    let trimmed = buf.trim().trim_end_matches(';').trim().to_string();
+    trimmed
+}
+
 /// Serializes a Model to .mo source (single top-level class).
 pub fn model_to_mo(m: &Model) -> String {
     let mut buf = String::new();

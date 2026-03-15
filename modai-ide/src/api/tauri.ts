@@ -454,3 +454,70 @@ export async function gitHeadCommit(projectDir: string): Promise<string> {
   return invoke<string>("git_head_commit", { projectDir });
 }
 
+export interface ModelEquationsAndVars {
+  modelName: string;
+  variables: {
+    name: string;
+    typeName: string;
+    variability: string;
+    startValue: string;
+    unit: string;
+    description: string;
+  }[];
+  equations: {
+    id: string;
+    text: string;
+    isWhen: boolean;
+  }[];
+}
+
+export async function extractEquationsFromSource(source: string): Promise<ModelEquationsAndVars> {
+  return invoke<ModelEquationsAndVars>("extract_equations_from_source", { source });
+}
+
+export async function applyEquationEdits(
+  source: string,
+  variables: ModelEquationsAndVars["variables"],
+  equations: ModelEquationsAndVars["equations"],
+): Promise<{ newSource: string }> {
+  return invoke<{ newSource: string }>("apply_equation_edits", { source, variables, equations });
+}
+
+export interface StepState {
+  time: number;
+  states: number[];
+  stateNames: string[];
+  discreteVals: number[];
+  outputs: number[];
+  outputNames: string[];
+  activeEvents: string[];
+  stepIndex: number;
+}
+
+export async function startSimulationSession(
+  code: string,
+  modelName?: string,
+  projectDir?: string | null,
+): Promise<string> {
+  return invoke<string>("start_simulation_session", {
+    code,
+    modelName: modelName ?? undefined,
+    projectDir: projectDir ?? undefined,
+  });
+}
+
+export async function simulationStep(sessionId: string): Promise<StepState> {
+  return invoke<StepState>("simulation_step", { sessionId });
+}
+
+export async function simulationCommand(
+  sessionId: string,
+  command: "run" | "pause" | "stop",
+): Promise<void> {
+  return invoke<void>("simulation_command", { sessionId, command });
+}
+
+export async function getSimulationState(sessionId: string): Promise<StepState | null> {
+  return invoke<StepState | null>("get_simulation_state", { sessionId });
+}
+

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ZoomIn, ZoomOut, Maximize2, Maximize } from "lucide-react";
 import { getComponentTypeDetails } from "../api/tauri";
 import type { ComponentTypeInfo } from "../types";
 import { t } from "../i18n";
@@ -12,6 +13,9 @@ import type {
   GraphicText,
   AnnotationPoint,
 } from "./DiagramSvgRenderer";
+import { EquationGraphView } from "./EquationGraphView";
+import { DependencyGraphModal } from "./DependencyGraphModal";
+import type { JointPaperHandle } from "../utils/jointUtils";
 
 interface PlacementData {
   transformation?: {
@@ -125,6 +129,8 @@ interface ModelicaPropertyPanelProps {
   onDeleteGraphic: (index: number) => void;
   onUpdateParam: (name: string, value: string) => void;
   onUpdatePlacement: (patch: { x?: number; y?: number; rotation?: number }) => void;
+  source?: string;
+  modelName?: string;
 }
 
 function updateGraphicField<T extends GraphicItem>(
@@ -303,8 +309,22 @@ export function ModelicaPropertyPanel({
   onDeleteGraphic,
   onUpdateParam,
   onUpdatePlacement,
+  source,
+  modelName,
 }: ModelicaPropertyPanelProps) {
   const [typeInfo, setTypeInfo] = useState<ComponentTypeInfo | null>(null);
+  const [showDepGraph, setShowDepGraph] = useState(false);
+  const [depGraphModal, setDepGraphModal] = useState(false);
+  const [depPaperHandle, setDepPaperHandle] = useState<JointPaperHandle | null>(null);
+
+  const handleDepZoomIn = useCallback(() => depPaperHandle?.zoomIn(), [depPaperHandle]);
+  const handleDepZoomOut = useCallback(() => depPaperHandle?.zoomOut(), [depPaperHandle]);
+  const handleDepFitView = useCallback(() => depPaperHandle?.fitView(), [depPaperHandle]);
+
+  useEffect(() => {
+    setShowDepGraph(false);
+    setDepPaperHandle(null);
+  }, [selectedComponent?.name]);
 
   useEffect(() => {
     if (!projectDir || !selectedComponent?.typeName) {
@@ -428,6 +448,64 @@ export function ModelicaPropertyPanel({
                 </div>
               </div>
             ))}
+          </section>
+        )}
+
+        {mode === "diagram" && selectedComponent && source && modelName && (
+          <section className="space-y-1">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                className="flex items-center gap-1 text-[var(--text)] hover:text-[var(--primary)]"
+                onClick={() => setShowDepGraph((v) => !v)}
+              >
+                <svg
+                  className={`h-3 w-3 shrink-0 transition-transform ${showDepGraph ? "rotate-90" : ""}`}
+                  viewBox="0 0 12 12"
+                  fill="currentColor"
+                >
+                  <path d="M4 2l5 4-5 4z" />
+                </svg>
+                <span className="font-medium">{t("viewDependencyGraph")}</span>
+              </button>
+              {showDepGraph && (
+                <div className="flex items-center gap-0.5">
+                  <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("zoomIn")} onClick={handleDepZoomIn}>
+                    <ZoomIn className="h-3 w-3" />
+                  </button>
+                  <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("zoomOut")} onClick={handleDepZoomOut}>
+                    <ZoomOut className="h-3 w-3" />
+                  </button>
+                  <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("fitView")} onClick={handleDepFitView}>
+                    <Maximize2 className="h-3 w-3" />
+                  </button>
+                  <div className="w-px h-3 bg-[var(--border)] mx-0.5" />
+                  <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("expandToWindow")} onClick={() => setDepGraphModal(true)}>
+                    <Maximize className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+            {showDepGraph && (
+              <div className="border border-[var(--border)] rounded overflow-hidden relative" style={{ height: 260 }}>
+                <EquationGraphView
+                  code={source}
+                  modelName={modelName}
+                  projectDir={projectDir}
+                  layoutOptions={{ algorithm: "layered", direction: "RIGHT" }}
+                  onReady={setDepPaperHandle}
+                />
+              </div>
+            )}
+            {depGraphModal && (
+              <DependencyGraphModal
+                open={depGraphModal}
+                onClose={() => setDepGraphModal(false)}
+                code={source}
+                modelName={modelName}
+                projectDir={projectDir}
+              />
+            )}
           </section>
         )}
 

@@ -1,3 +1,4 @@
+import { FileDown, FileJson, RotateCcw, Image, Maximize2 } from "lucide-react";
 import { t } from "../../i18n";
 import { AppIcon } from "../Icon";
 import { IconButton } from "../IconButton";
@@ -58,20 +59,22 @@ export function SimulationChartToolbar({
       {/* Middle: export buttons (scrollable when space is limited) */}
       {canExport ? (
         <div className="min-w-0 flex-1 overflow-x-auto scroll-vscode px-1 py-1">
-          <div className="flex min-w-max items-center gap-2">
+          <div className="flex min-w-max items-center gap-1">
             <button
               type="button"
-              className="rounded border border-border px-2 py-1 text-xs theme-button-secondary"
+              className="rounded border border-border p-1.5 theme-button-secondary"
               onClick={onExportCSV}
+              title={t("exportCSV")}
             >
-              {t("exportCSV")}
+              <FileDown className="h-4 w-4" />
             </button>
             <button
               type="button"
-              className="rounded border border-border px-2 py-1 text-xs theme-button-secondary"
+              className="rounded border border-border p-1.5 theme-button-secondary"
               onClick={onExportJSON}
+              title={t("exportJSON")}
             >
-              {t("exportJSON")}
+              <FileJson className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -80,30 +83,33 @@ export function SimulationChartToolbar({
       )}
 
       {/* Right: chart controls — always visible, pinned to the right */}
-      <div className="flex shrink-0 items-center gap-2 border-l border-border px-2 py-1">
+      <div className="flex shrink-0 items-center gap-1 border-l border-border px-2 py-1">
         <button
           type="button"
-          className="rounded border border-border px-2 py-1 text-xs theme-button-secondary disabled:opacity-50"
+          className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
           onClick={onResetChart}
           disabled={!canResetChart || simViewMode !== "chart"}
+          title={t("reset")}
         >
-          {t("reset")}
+          <RotateCcw className="h-4 w-4" />
         </button>
         <button
           type="button"
-          className="rounded border border-border px-2 py-1 text-xs theme-button-secondary disabled:opacity-50"
+          className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
           onClick={onSaveImage}
           disabled={!canSaveImage || simViewMode !== "chart"}
+          title={t("save")}
         >
-          {t("save")}
+          <Image className="h-4 w-4" />
         </button>
         <button
           type="button"
-          className="rounded border border-border px-2 py-1 text-xs theme-button-secondary disabled:opacity-50"
+          className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
           onClick={onExpandChart}
           disabled={!canExpandChart || simViewMode !== "chart"}
+          title={expandLabel}
         >
-          {expandLabel}
+          <Maximize2 className="h-4 w-4" />
         </button>
       </div>
     </div>

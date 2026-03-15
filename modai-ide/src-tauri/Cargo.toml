@@ -34,4 +34,5 @@ notify-debouncer-mini = "0.5"
 sha2 = "0.10"
 patch-apply = "0.8"
 directories = "5"
+once_cell = "1"
 

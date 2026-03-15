@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { RotateCcw, Image, X } from "lucide-react";
 import type { SimulationResult } from "../../types";
 import { t } from "../../i18n";
 import type { SimulationChartMeta, SimulationChartSeries } from "./types";
@@ -151,29 +152,32 @@ export function SimulationRunView({
                   aria-label={t("tableView")}
                 />
               </div>
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex items-center gap-1">
                 <button
                   type="button"
-                  className="rounded border border-border px-2 py-1 text-xs theme-button-secondary disabled:opacity-50"
+                  className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
                   onClick={() => modalChartRef.current?.resetView()}
                   disabled={plotSeries.length === 0 || modalViewMode !== "chart"}
+                  title={t("reset")}
                 >
-                  {t("reset")}
+                  <RotateCcw className="h-4 w-4" />
                 </button>
                 <button
                   type="button"
-                  className="rounded border border-border px-2 py-1 text-xs theme-button-secondary disabled:opacity-50"
+                  className="rounded border border-border p-1.5 theme-button-secondary disabled:opacity-50"
                   onClick={() => modalChartRef.current?.saveImage()}
                   disabled={plotSeries.length === 0 || modalViewMode !== "chart"}
+                  title={t("save")}
                 >
-                  {t("save")}
+                  <Image className="h-4 w-4" />
                 </button>
                 <button
                   type="button"
-                  className="rounded border border-border px-2 py-1 text-xs theme-button-secondary"
+                  className="rounded border border-border p-1.5 theme-button-secondary"
                   onClick={() => setIsExpanded(false)}
+                  title={t("closeTab")}
                 >
-                  {t("closeTab")}
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>

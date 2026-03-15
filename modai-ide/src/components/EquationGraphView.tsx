@@ -1,22 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ELK from "elkjs/lib/elk.bundled.js";
-import {
-  ReactFlow,
-  ReactFlowProvider,
-  useNodesState,
-  useEdgesState,
-  type Node,
-  type Edge,
-  type NodeProps,
-  Handle,
-  Position,
-  Background,
-  Controls,
-  Panel,
-  MarkerType,
-  type ReactFlowInstance,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import { dia, shapes } from "@joint/core";
+import { createPaper, createPaperHandle, resolveThemeColors, type JointPaperHandle } from "../utils/jointUtils";
 import { getEquationGraph } from "../api/tauri";
 import type { EquationGraph } from "../types";
 import { t } from "../i18n";
@@ -31,71 +16,87 @@ type GraphNodeData = {
   label: string;
   width: number;
   height: number;
+  kind: string;
 };
 
 function estimateNodeWidth(label: string): number {
   return Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, Math.ceil(label.length * LABEL_CHAR_WIDTH) + 32));
 }
 
-function buildBaseFlow(g: EquationGraph): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = [];
-  for (const n of g.nodes) {
-    const width = estimateNodeWidth(n.label);
-    nodes.push({
-      id: n.id,
-      type: n.kind === "equation" ? "equation" : "variable",
-      data: {
-        label: n.label,
-        width,
-        height: DEFAULT_NODE_HEIGHT,
-      },
-      position: { x: 0, y: 0 },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
-    });
+function colorToRgba(cssColor: string, alpha: number): string {
+  const hex = cssColor.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (hex) {
+    return `rgba(${parseInt(hex[1], 16)}, ${parseInt(hex[2], 16)}, ${parseInt(hex[3], 16)}, ${alpha})`;
   }
-  const edges: Edge[] = g.edges.map((e, i) => ({
-    id: `e${i}`,
-    source: e.source,
-    target: e.target,
-    type: "smoothstep",
-    animated: e.kind === "solves",
-    label: e.kind === "solves" ? "solves" : undefined,
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      width: 16,
-      height: 16,
-    },
-    style: {
-      stroke: e.kind === "solves" ? "#f59e0b" : "#60a5fa",
-      strokeWidth: e.kind === "solves" ? 1.8 : 1.4,
-    },
-  }));
-  return { nodes, edges };
+  const rgb = cssColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (rgb) {
+    return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
+  }
+  return cssColor;
 }
 
-async function layoutEquationGraph(g: EquationGraph): Promise<{ nodes: Node[]; edges: Edge[] }> {
-  const base = buildBaseFlow(g);
+export type LayoutAlgorithm = "layered" | "box" | "force";
+export type LayoutDirection = "RIGHT" | "DOWN" | "LEFT" | "UP";
+
+export interface EquationGraphLayoutOptions {
+  algorithm?: LayoutAlgorithm;
+  direction?: LayoutDirection;
+}
+
+const DEFAULT_LAYOUT: EquationGraphLayoutOptions = {
+  algorithm: "layered",
+  direction: "RIGHT",
+};
+
+function buildElkOptions(options: EquationGraphLayoutOptions): Record<string, string> {
+  const algorithm = options.algorithm ?? "layered";
+  const direction = options.direction ?? "RIGHT";
+  const base: Record<string, string> = {
+    "elk.padding": "[top=24,left=24,bottom=24,right=24]",
+    "elk.spacing.nodeNode": "56",
+  };
+  if (algorithm === "layered") {
+    base["elk.algorithm"] = "layered";
+    base["elk.direction"] = direction;
+    base["elk.layered.spacing.nodeNodeBetweenLayers"] = "120";
+    base["elk.edgeRouting"] = "ORTHOGONAL";
+    base["elk.layered.nodePlacement.strategy"] = "NETWORK_SIMPLEX";
+    base["elk.layered.crossingMinimization.strategy"] = "LAYER_SWEEP";
+  } else if (algorithm === "box") {
+    base["elk.algorithm"] = "box";
+    base["elk.direction"] = direction;
+    base["elk.box.spacing.nodeNode"] = "40";
+  } else {
+    base["elk.algorithm"] = "force";
+    base["elk.direction"] = direction;
+  }
+  return base;
+}
+
+interface LayoutResult {
+  nodes: Array<{ id: string; x: number; y: number; data: GraphNodeData }>;
+  edges: Array<{ id: string; source: string; target: string; kind: string }>;
+}
+
+async function layoutEquationGraph(
+  g: EquationGraph,
+  options: EquationGraphLayoutOptions = {}
+): Promise<LayoutResult> {
+  const nodeDataMap: Record<string, GraphNodeData> = {};
+  for (const n of g.nodes) {
+    const width = estimateNodeWidth(n.label);
+    nodeDataMap[n.id] = { label: n.label, width, height: DEFAULT_NODE_HEIGHT, kind: n.kind };
+  }
+
+  const layoutOptions = buildElkOptions(options);
   const layoutGraph = await elk.layout({
     id: "equation-graph",
-    layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": "RIGHT",
-      "elk.padding": "[top=24,left=24,bottom=24,right=24]",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "120",
-      "elk.spacing.nodeNode": "56",
-      "elk.edgeRouting": "ORTHOGONAL",
-      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
-      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
-    },
-    children: base.nodes.map((node) => {
-      const nodeData = node.data as GraphNodeData;
-      return {
-        id: node.id,
-        width: nodeData.width,
-        height: nodeData.height,
-      };
-    }),
+    layoutOptions,
+    children: g.nodes.map((n) => ({
+      id: n.id,
+      width: nodeDataMap[n.id].width,
+      height: nodeDataMap[n.id].height,
+    })),
     edges: g.edges.map((edge, index) => ({
       id: `e${index}`,
       sources: [edge.source],
@@ -108,61 +109,38 @@ async function layoutEquationGraph(g: EquationGraph): Promise<{ nodes: Node[]; e
   );
 
   return {
-    nodes: base.nodes.map((node) => ({
-      ...node,
-      position: positions.get(node.id) ?? { x: 0, y: 0 },
+    nodes: g.nodes.map((n) => ({
+      id: n.id,
+      x: positions.get(n.id)?.x ?? 0,
+      y: positions.get(n.id)?.y ?? 0,
+      data: nodeDataMap[n.id],
     })),
-    edges: base.edges,
+    edges: g.edges.map((e, i) => ({
+      id: `e${i}`,
+      source: e.source,
+      target: e.target,
+      kind: e.kind,
+    })),
   };
 }
-
-function EquationNode({ data }: NodeProps) {
-  const nodeData = data as GraphNodeData | undefined;
-  const label = nodeData?.label ?? "";
-  return (
-    <div
-      className="rounded border border-amber-500/70 bg-amber-950/40 px-3 py-2 font-mono text-xs text-amber-200 shadow-[0_10px_20px_rgba(0,0,0,0.18)]"
-      title={label}
-      style={{ width: nodeData?.width }}
-    >
-      <Handle type="target" position={Position.Left} className="!w-1.5 !h-1.5 !-left-1" />
-      <div className="truncate">{label}</div>
-      <Handle type="source" position={Position.Right} className="!w-1.5 !h-1.5 !-right-1" />
-    </div>
-  );
-}
-
-function VariableNode({ data }: NodeProps) {
-  const nodeData = data as GraphNodeData | undefined;
-  const label = nodeData?.label ?? "";
-  return (
-    <div
-      className="rounded border border-sky-500/70 bg-sky-950/35 px-3 py-2 font-mono text-xs text-sky-200 shadow-[0_10px_20px_rgba(0,0,0,0.18)]"
-      title={label}
-      style={{ width: nodeData?.width }}
-    >
-      <Handle type="target" position={Position.Left} className="!w-1.5 !h-1.5 !-left-1" />
-      <div className="truncate">{label}</div>
-      <Handle type="source" position={Position.Right} className="!w-1.5 !h-1.5 !-right-1" />
-    </div>
-  );
-}
-
-const nodeTypes = { equation: EquationNode, variable: VariableNode };
 
 interface EquationGraphViewProps {
   code: string;
   modelName: string;
   projectDir: string | null | undefined;
+  layoutOptions?: EquationGraphLayoutOptions;
+  onReady?: (handle: JointPaperHandle | null) => void;
 }
 
-export function EquationGraphView({ code, modelName, projectDir }: EquationGraphViewProps) {
+export function EquationGraphView({ code, modelName, projectDir, layoutOptions: externalLayout, onReady }: EquationGraphViewProps) {
   const [graph, setGraph] = useState<EquationGraph | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<dia.Graph | null>(null);
+  const paperRef = useRef<dia.Paper | null>(null);
+  const initializedRef = useRef(false);
+  const layoutOptions = externalLayout ?? DEFAULT_LAYOUT;
 
   useEffect(() => {
     let cancelled = false;
@@ -174,18 +152,9 @@ export function EquationGraphView({ code, modelName, projectDir }: EquationGraph
         const graphResult = await getEquationGraph(code, modelName, projectDir);
         if (cancelled) return;
         setGraph(graphResult);
-        if (graphResult.nodes.length === 0) {
-          setNodes([]);
-          setEdges([]);
-          return;
-        }
-        const layout = await layoutEquationGraph(graphResult);
-        if (cancelled) return;
-        setNodes(layout.nodes);
-        setEdges(layout.edges);
-      } catch (layoutError) {
+      } catch (loadError) {
         if (!cancelled) {
-          setError(String(layoutError));
+          setError(String(loadError));
         }
       } finally {
         if (!cancelled) {
@@ -199,15 +168,151 @@ export function EquationGraphView({ code, modelName, projectDir }: EquationGraph
     return () => {
       cancelled = true;
     };
-  }, [code, modelName, projectDir, setEdges, setNodes]);
+  }, [code, modelName, projectDir]);
 
   useEffect(() => {
-    if (!flowInstance || nodes.length === 0) return;
-    const rafId = window.requestAnimationFrame(() => {
-      void flowInstance.fitView({ padding: 0.16, duration: 260 });
+    if (!graph || graph.nodes.length === 0 || !containerRef.current) return;
+    let cancelled = false;
+
+    void (async () => {
+      const result = await layoutEquationGraph(graph, layoutOptions);
+      if (cancelled) return;
+      renderGraph(result);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [graph, layoutOptions.algorithm, layoutOptions.direction]);
+
+  function renderGraph(result: LayoutResult) {
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (paperRef.current) {
+      paperRef.current.remove();
+      paperRef.current = null;
+      graphRef.current = null;
+      initializedRef.current = false;
+    }
+
+    const paperEl = document.createElement("div");
+    paperEl.style.width = "100%";
+    paperEl.style.height = "100%";
+    container.appendChild(paperEl);
+
+    const jointGraph = new dia.Graph({}, { cellNamespace: shapes });
+    const paper = createPaper({
+      el: paperEl,
+      graph: jointGraph,
+      gridSize: 1,
+      readOnly: true,
     });
-    return () => window.cancelAnimationFrame(rafId);
-  }, [flowInstance, nodes, edges]);
+
+    graphRef.current = jointGraph;
+    paperRef.current = paper;
+    initializedRef.current = true;
+
+    const theme = resolveThemeColors();
+    const equationFill = colorToRgba(theme.primary, 0.25);
+    const variableFill = theme.bgElevated;
+
+    for (const node of result.nodes) {
+      const isEquation = node.data.kind === "equation";
+      const el = new shapes.standard.Rectangle({
+        id: node.id,
+        position: { x: node.x, y: node.y },
+        size: { width: node.data.width, height: node.data.height },
+        attrs: {
+          body: {
+            rx: 4,
+            ry: 4,
+            fill: isEquation ? equationFill : variableFill,
+            stroke: isEquation ? theme.primary : theme.border,
+            strokeWidth: 1,
+          },
+          label: {
+            text: node.data.label,
+            fontSize: 11,
+            fontFamily: "monospace",
+            fill: theme.text,
+            textVerticalAnchor: "middle",
+            textAnchor: "middle",
+          },
+        },
+        ports: {
+          groups: {
+            input: {
+              position: { name: "left" },
+              attrs: { portBody: { magnet: false, width: 3, height: 3, x: -1.5, y: -1.5, fill: "transparent" } },
+              markup: [{ tagName: "rect", selector: "portBody" }],
+            },
+            output: {
+              position: { name: "right" },
+              attrs: { portBody: { magnet: false, width: 3, height: 3, x: -1.5, y: -1.5, fill: "transparent" } },
+              markup: [{ tagName: "rect", selector: "portBody" }],
+            },
+          },
+        },
+      });
+      el.addPort({ id: `${node.id}_in`, group: "input" });
+      el.addPort({ id: `${node.id}_out`, group: "output" });
+      jointGraph.addCell(el);
+    }
+
+    for (const edge of result.edges) {
+      const isSolves = edge.kind === "solves";
+      const strokeColor = isSolves ? theme.primary : theme.textMuted;
+      const link = new shapes.standard.Link({
+        id: edge.id,
+        source: { id: edge.source, port: `${edge.source}_out` },
+        target: { id: edge.target, port: `${edge.target}_in` },
+        router: { name: "manhattan", args: { step: 10 } },
+        connector: { name: "rounded", args: { radius: 4 } },
+        attrs: {
+          line: {
+            stroke: strokeColor,
+            strokeWidth: isSolves ? 1.8 : 1.4,
+            strokeDasharray: isSolves ? "6 3" : undefined,
+            targetMarker: {
+              type: "path",
+              d: "M 10 -5 0 0 10 5 Z",
+              fill: strokeColor,
+            },
+          },
+        },
+        labels: isSolves
+          ? [
+              {
+                position: 0.5,
+                attrs: {
+                  text: { text: "solves", fontSize: 9, fill: theme.text },
+                  rect: { fill: "transparent" },
+                },
+              },
+            ]
+          : [],
+      });
+      jointGraph.addCell(link);
+    }
+
+    if (jointGraph.getElements().length > 0) {
+      try {
+        const containerRect = container.getBoundingClientRect();
+        const isSmall = containerRect.height < 300 || containerRect.width < 400;
+        paper.transformToFitContent({
+          padding: isSmall ? 10 : 30,
+          maxScale: isSmall ? 1.0 : 2.5,
+          minScale: 0.02,
+        });
+      } catch (_) {
+        // empty graph
+      }
+    }
+
+    const handle = createPaperHandle(paper);
+    onReady?.(handle);
+  }
 
   if (loading) {
     return (
@@ -232,31 +337,8 @@ export function EquationGraphView({ code, modelName, projectDir }: EquationGraph
   }
 
   return (
-    <ReactFlowProvider>
-      <div className="h-full w-full">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          nodeTypes={nodeTypes}
-          onInit={setFlowInstance}
-          fitView
-          fitViewOptions={{ padding: 0.16 }}
-          minZoom={0.05}
-          maxZoom={2.5}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background />
-          <Controls />
-          <Panel position="top-left" className="text-xs text-[var(--text-muted)]">
-            {graph.nodes.filter((n) => n.kind === "equation").length} eq / {graph.nodes.filter((n) => n.kind === "variable").length} var / {t("horizontalAutoLayout")}
-          </Panel>
-        </ReactFlow>
-      </div>
-    </ReactFlowProvider>
+    <div className="h-full w-full relative">
+      <div ref={containerRef} className="absolute inset-0" />
+    </div>
   );
 }

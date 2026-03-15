@@ -219,6 +219,209 @@ pub fn get_equation_graph(
         .map_err(|e| e.to_string())
 }
 
+// --- Simulation session support for step-by-step debugging ---
+
+use std::sync::Mutex;
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepState {
+    pub time: f64,
+    pub states: Vec<f64>,
+    pub state_names: Vec<String>,
+    pub discrete_vals: Vec<f64>,
+    pub outputs: Vec<f64>,
+    pub output_names: Vec<String>,
+    pub active_events: Vec<String>,
+    pub step_index: usize,
+}
+
+struct SimulationSession {
+    result: SimulationResult,
+    current_step: usize,
+    state_names: Vec<String>,
+    output_names: Vec<String>,
+    paused: bool,
+}
+
+static SESSIONS: Lazy<Mutex<HashMap<String, SimulationSession>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartSessionRequest {
+    code: String,
+    model_name: Option<String>,
+    project_dir: Option<String>,
+    options: Option<JitValidateOptions>,
+}
+
+#[tauri::command]
+pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, String> {
+    let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
+    let mut compiler = rustmodlica::Compiler::new();
+    compiler.options = build_compiler_options(request.options);
+    with_loader_paths(&mut compiler, request.project_dir.as_ref());
+    let out = compiler
+        .compile_from_source(&model_name, &request.code)
+        .map_err(|e| e.to_string())?;
+    let artifacts = match out {
+        rustmodlica::CompileOutput::FunctionRun(_) => {
+            return Err("Simulation requested for a function entry".to_string());
+        }
+        rustmodlica::CompileOutput::Simulation(artifacts) => artifacts,
+    };
+
+    let state_names = artifacts.state_vars.clone();
+    let output_names = artifacts.output_vars.clone();
+
+    let result = rustmodlica::run_simulation_collect(
+        artifacts.calc_derivs,
+        artifacts.when_count,
+        artifacts.crossings_count,
+        artifacts.states,
+        artifacts.discrete_vals,
+        artifacts.params,
+        &artifacts.state_vars,
+        &artifacts.discrete_vars,
+        &artifacts.output_vars,
+        &artifacts.state_var_index,
+        artifacts.t_end,
+        artifacts.dt,
+        artifacts.numeric_ode_jacobian,
+        artifacts.symbolic_ode_jacobian.as_ref(),
+        &artifacts.newton_tearing_var_names,
+        artifacts.atol,
+        artifacts.rtol,
+        &artifacts.solver,
+        artifacts.output_interval,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let session_id = format!("sim_{}", uuid_simple());
+    let session = SimulationSession {
+        result,
+        current_step: 0,
+        state_names,
+        output_names,
+        paused: false,
+    };
+
+    SESSIONS.lock().unwrap().insert(session_id.clone(), session);
+    Ok(session_id)
+}
+
+fn uuid_simple() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}_{}", d.as_millis(), d.subsec_nanos())
+}
+
+#[tauri::command]
+pub fn simulation_step(session_id: String) -> Result<StepState, String> {
+    let mut sessions = SESSIONS.lock().unwrap();
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| "Session not found".to_string())?;
+
+    let total_steps = session.result.time.len();
+    if session.current_step >= total_steps {
+        return Err("Simulation completed".to_string());
+    }
+
+    let idx = session.current_step;
+    let time = session.result.time[idx];
+
+    let mut states = Vec::new();
+    for name in &session.state_names {
+        if let Some(series) = session.result.series.get(name) {
+            states.push(if idx < series.len() { series[idx] } else { 0.0 });
+        }
+    }
+
+    let mut outputs = Vec::new();
+    for name in &session.output_names {
+        if let Some(series) = session.result.series.get(name) {
+            outputs.push(if idx < series.len() { series[idx] } else { 0.0 });
+        }
+    }
+
+    session.current_step += 1;
+
+    Ok(StepState {
+        time,
+        states,
+        state_names: session.state_names.clone(),
+        discrete_vals: vec![],
+        outputs,
+        output_names: session.output_names.clone(),
+        active_events: vec![],
+        step_index: idx,
+    })
+}
+
+#[tauri::command]
+pub fn simulation_command(session_id: String, command: String) -> Result<(), String> {
+    let mut sessions = SESSIONS.lock().unwrap();
+    match command.as_str() {
+        "pause" => {
+            if let Some(session) = sessions.get_mut(&session_id) {
+                session.paused = true;
+            }
+        }
+        "run" => {
+            if let Some(session) = sessions.get_mut(&session_id) {
+                session.paused = false;
+            }
+        }
+        "stop" | "reset" => {
+            sessions.remove(&session_id);
+        }
+        _ => return Err(format!("Unknown command: {}", command)),
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_simulation_state(session_id: String) -> Result<Option<StepState>, String> {
+    let sessions = SESSIONS.lock().unwrap();
+    let session = match sessions.get(&session_id) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    if session.current_step == 0 || session.result.time.is_empty() {
+        return Ok(None);
+    }
+    let idx = session.current_step.saturating_sub(1).min(session.result.time.len() - 1);
+    let time = session.result.time[idx];
+    let mut states = Vec::new();
+    for name in &session.state_names {
+        if let Some(series) = session.result.series.get(name) {
+            states.push(if idx < series.len() { series[idx] } else { 0.0 });
+        }
+    }
+    let mut outputs = Vec::new();
+    for name in &session.output_names {
+        if let Some(series) = session.result.series.get(name) {
+            outputs.push(if idx < series.len() { series[idx] } else { 0.0 });
+        }
+    }
+    Ok(Some(StepState {
+        time,
+        states,
+        state_names: session.state_names.clone(),
+        discrete_vals: vec![],
+        outputs,
+        output_names: session.output_names.clone(),
+        active_events: vec![],
+        step_index: idx,
+    }))
+}
+
 pub(crate) fn parse_modelica_deps(content: &str) -> Option<(String, Vec<String>)> {
     let item = parser::parse(content).ok()?;
     let (class_name, extends) = match &item {
