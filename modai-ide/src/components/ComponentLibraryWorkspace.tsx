@@ -298,14 +298,14 @@ export function ComponentLibraryWorkspace({
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface text-[var(--text)]">
-      <div className="border-b border-border px-5 py-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-surface text-[var(--text)]">
+      <div className="panel-header-bar-tall flex flex-col border-b border-border">
+        <div className="flex items-center justify-between gap-4 min-h-0">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold">{t("libraryWorkspaceTitle")}</h2>
             <p className="mt-1 text-sm text-[var(--text-muted)]">{t("libraryWorkspaceDesc")}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-[var(--toolbar-gap)] shrink-0">
             <button
               type="button"
               onClick={() => void handleImportLibraryFolder("global")}
@@ -333,13 +333,13 @@ export function ComponentLibraryWorkspace({
           </div>
         </div>
         {banner && (
-          <div className="mt-3 rounded border border-border bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--text-muted)]">
+          <div className="mt-2 rounded border border-border bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--text-muted)]">
             {banner}
           </div>
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 w-full">
         <LibrarySourceSidebar
           libraries={libraries}
           selectedLibraryId={selectedLibraryId}
@@ -355,7 +355,7 @@ export function ComponentLibraryWorkspace({
         />
 
         <section className="w-[340px] shrink-0 border-r border-border bg-surface-alt">
-          <div className="border-b border-border px-4 py-3">
+          <div className="panel-header-bar-tall border-b border-border flex flex-col gap-2">
             <div className="text-sm font-medium">{t("libraryTypeList")}</div>
             <div className="mt-2 flex flex-col gap-2">
               <input
@@ -449,19 +449,17 @@ export function ComponentLibraryWorkspace({
         </section>
 
         <section className="min-w-0 flex-1 border-r border-border bg-surface">
-          <div className="border-b border-border px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-medium">{t("libraryDetailsTitle")}</div>
-              {selectedClass && onOpenType && (
-                <button
-                  type="button"
-                  className="rounded border border-border px-2 py-1 text-xs hover:bg-[var(--surface-hover)]"
-                  onClick={() => onOpenType(selectedClass.qualifiedName, selectedClass.libraryId)}
-                >
-                  {t("libraryOpenReadOnly")}
-                </button>
-              )}
-            </div>
+          <div className="panel-header-bar flex items-center justify-between border-b border-border">
+            <div className="text-sm font-medium">{t("libraryDetailsTitle")}</div>
+            {selectedClass && onOpenType && (
+              <button
+                type="button"
+                className="rounded border border-border px-2 py-1 text-xs hover:bg-[var(--surface-hover)]"
+                onClick={() => onOpenType(selectedClass.qualifiedName, selectedClass.libraryId)}
+              >
+                {t("libraryOpenReadOnly")}
+              </button>
+            )}
           </div>
           <div className="h-full overflow-auto px-4 py-4">
             {!selectedClass ? (
@@ -595,11 +593,13 @@ export function ComponentLibraryWorkspace({
           </div>
         </section>
 
-        <section className="min-w-0 flex-[1.1] bg-[var(--bg-elevated)]">
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="min-h-0 flex-[0.58] border-b border-border">
-              <div className="border-b border-border px-4 py-3 text-sm font-medium">{t("librarySourcePreview")}</div>
-              <div className="h-[calc(100%-49px)]">
+        <section className="min-w-0 flex-1 flex-[1.1] w-full bg-[var(--bg-elevated)]">
+          <div className="flex h-full min-h-0 w-full flex-col">
+            <div className="min-h-0 flex-[0.58] flex flex-col border-b border-border">
+              <div className="panel-header-bar shrink-0 flex items-center border-b border-border">
+                <span className="text-sm font-medium">{t("librarySourcePreview")}</span>
+              </div>
+              <div className="min-h-0 flex-1">
                 <Editor
                   height="100%"
                   defaultLanguage="modelica"

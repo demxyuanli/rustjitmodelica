@@ -1,4 +1,5 @@
 mod app_data;
+mod app_settings;
 mod ai;
 mod chunker;
 mod commands;
@@ -20,8 +21,8 @@ use commands::ai_commands::{
     set_api_key,
 };
 use commands::app_commands::{
-    get_compiler_config, get_iteration, greet, list_iteration_history, save_iteration,
-    set_compiler_config,
+    get_app_data_root, get_app_settings, get_compiler_config, get_iteration, greet,
+    list_iteration_history, save_iteration, set_app_settings, set_compiler_config,
 };
 use commands::git_commands::{
     git_commit, git_commit_files, git_diff_file, git_diff_file_staged, git_head_commit, git_init,
@@ -47,8 +48,8 @@ use commands::project::{
     list_component_libraries, list_instantiable_classes, list_mo_files, list_mo_tree,
     open_project_dir, pick_component_library_files, pick_component_library_folder,
     query_component_library_types, read_component_type_source, read_project_file,
-    remove_component_library, search_in_project, set_component_library_enabled,
-    write_project_file,
+    remove_component_library, reopen_project_dir, search_in_project,
+    set_component_library_enabled, write_project_file,
 };
 use commands::source_commands::{
     compiler_file_git_diff, compiler_file_git_log, create_iteration_branch,
@@ -81,6 +82,7 @@ pub fn run() {
             apply_patch_to_workspace,
             commit_patch,
             open_project_dir,
+            reopen_project_dir,
             pick_component_library_folder,
             pick_component_library_files,
             list_mo_files,
@@ -156,6 +158,9 @@ pub fn run() {
             run_full_regression,
             get_compiler_config,
             set_compiler_config,
+            get_app_data_root,
+            get_app_settings,
+            set_app_settings,
             index_build,
             index_update_file,
             index_search_symbols,

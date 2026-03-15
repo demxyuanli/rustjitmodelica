@@ -30,15 +30,17 @@ export function EditorTabBar({
   if (tabs.length === 0) return null;
 
   return (
-    <div className="shrink-0 flex items-center gap-0 border-b border-border bg-surface-alt overflow-x-auto scroll-vscode">
+    <div className="panel-header-min-height flex-1 min-w-0 flex items-center gap-0 overflow-x-auto scroll-vscode">
       {tabs.map((tab, i) => {
         const isActive = i === activeIndex;
         const label = tabLabel(tab.path);
         return (
           <div
             key={tab.path + String(i)}
-            className={`flex items-center gap-1 shrink-0 px-2 py-1.5 text-xs border-r border-border max-w-[160px] min-w-0 group ${
-              isActive ? "bg-surface text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text)]"
+            className={`flex items-center gap-[var(--toolbar-gap)] shrink-0 px-2 py-1.5 text-xs max-w-[160px] min-w-0 group ${
+              isActive
+                ? "bg-[var(--surface)] text-[var(--text)]"
+                : "bg-[var(--surface-alt)] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
             }`}
           >
             <FileIcon name={label} size={14} />

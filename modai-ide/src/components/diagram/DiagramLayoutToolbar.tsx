@@ -16,7 +16,7 @@ export interface DiagramLayoutToolbarProps {
 
 export function DiagramLayoutToolbar({ onApplyLayout, disabled }: DiagramLayoutToolbarProps) {
   return (
-    <div className="flex items-center gap-1 shrink-0">
+    <div className="flex items-center gap-[var(--toolbar-gap)] shrink-0">
       <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide mr-1">
         {t("diagramAutoLayout")}
       </span>
@@ -25,7 +25,7 @@ export function DiagramLayoutToolbar({ onApplyLayout, disabled }: DiagramLayoutT
           <button
             key={kind}
             type="button"
-            className="rounded p-1.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] disabled:opacity-50 disabled:pointer-events-none"
+            className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] disabled:opacity-50 disabled:pointer-events-none"
             onClick={() => onApplyLayout(kind)}
             disabled={disabled}
             title={t(labelKey)}

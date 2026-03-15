@@ -3,10 +3,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { useJitLayout, type JitCenterView } from "../hooks/useJitLayout";
 import { useJitAI } from "../hooks/useAI";
 import { JitLeftSidebar } from "./JitLeftSidebar";
-import { JitEditorWorkbench, type OpenFileTab, type SettingsViewProps, type JitEditorWorkbenchRef } from "./JitEditorWorkbench";
+import { JitEditorWorkbench, type OpenFileTab, type JitEditorWorkbenchRef } from "./JitEditorWorkbench";
 import { JitRightPanel, type JitDiffTarget } from "./JitRightPanel";
 import { JitBottomPanel } from "./JitBottomPanel";
 import { loadTraceabilityConfig } from "../data/jit_regression_metadata";
+import {
+  getWorkspaceStateKey,
+  loadJitWorkspaceMeta,
+  saveJitWorkspaceMeta,
+  loadWorkspaceDrafts,
+  saveWorkspaceDrafts,
+  getJitWorkspaceDraftsKey,
+} from "../utils/workspacePersistence";
 
 interface TestRunResult {
   name: string;
@@ -21,9 +29,6 @@ interface JitIdeWorkspaceProps {
   targetPrefill?: string | null;
   onClearPrefill?: () => void;
   repoRoot?: string | null;
-  showSettings?: boolean;
-  onSettingsHandled?: () => void;
-  settingsProps?: SettingsViewProps;
   requestedCenterView?: JitCenterView | null;
   onRequestedCenterViewHandled?: () => void;
   onActiveCenterViewChange?: (view: JitCenterView | null) => void;
@@ -34,9 +39,6 @@ export function JitIdeWorkspace({
   targetPrefill,
   onClearPrefill,
   repoRoot,
-  showSettings,
-  onSettingsHandled,
-  settingsProps,
   requestedCenterView,
   onRequestedCenterViewHandled,
   onActiveCenterViewChange,
@@ -57,6 +59,8 @@ export function JitIdeWorkspace({
   const [jitDiffTarget, setJitDiffTarget] = useState<JitDiffTarget | null>(null);
 
   const workbenchRef = useRef<JitEditorWorkbenchRef | null>(null);
+  const appliedJitRestoreRef = useRef<string | null>(null);
+
   const jitLog = useCallback((msg: string) => {
     const ts = new Date().toISOString().slice(11, 19);
     setBuildOutput((prev) => [...prev, `[${ts}] ${msg}`]);
@@ -73,13 +77,6 @@ export function JitIdeWorkspace({
       layout.setShowRightPanel(true);
     }
   }, [targetPrefill]);
-
-  useEffect(() => {
-    if (showSettings) {
-      layout.setActiveCenterView("settings");
-      onSettingsHandled?.();
-    }
-  }, [showSettings]);
 
   useEffect(() => {
     if (requestedCenterView === undefined) return;
@@ -118,6 +115,100 @@ export function JitIdeWorkspace({
   useEffect(() => {
     refreshGitStatus();
   }, [refreshGitStatus]);
+
+  useEffect(() => {
+    if (!repoRoot) {
+      appliedJitRestoreRef.current = null;
+      return;
+    }
+    const repoKey = getWorkspaceStateKey(repoRoot);
+    if (!repoKey) return;
+    if (appliedJitRestoreRef.current === repoRoot) return;
+    const meta = loadJitWorkspaceMeta(repoKey);
+    loadWorkspaceDrafts(getJitWorkspaceDraftsKey(repoRoot)).then((drafts) => {
+      if (meta && meta.openFiles.length > 0) {
+        appliedJitRestoreRef.current = repoRoot;
+        const openFilesRestored: OpenFileTab[] = meta.openFiles.map((tab) => {
+          const content = tab.dirty ? (drafts[tab.path] ?? "") : "";
+          return {
+            path: tab.path,
+            type: tab.type,
+            dirty: tab.dirty,
+            content,
+            originalContent: content,
+          };
+        });
+        setOpenFiles(openFilesRestored);
+        setActiveFilePath(meta.activeFilePath);
+      }
+    });
+  }, [repoRoot]);
+
+  useEffect(() => {
+    if (!repoRoot || !activeFilePath) return;
+    const file = openFiles.find((f) => f.path === activeFilePath);
+    if (!file || file.content !== "" || file.dirty) return;
+    let cancelled = false;
+    if (file.type === "rust") {
+      invoke<string>("read_compiler_file", { path: file.path })
+        .then((content) => {
+          if (!cancelled) {
+            setOpenFiles((prev) =>
+              prev.map((f) =>
+                f.path === file.path ? { ...f, content, originalContent: content } : f
+              )
+            );
+          }
+        })
+        .catch(() => {});
+    } else {
+      invoke<string>("read_test_file", { name: file.path })
+        .then((content) => {
+          if (!cancelled) {
+            setOpenFiles((prev) =>
+              prev.map((f) =>
+                f.path === file.path ? { ...f, content, originalContent: content } : f
+              )
+            );
+          }
+        })
+        .catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [repoRoot, activeFilePath, openFiles]);
+
+  const persistJitWorkspaceState = useCallback(() => {
+    if (!repoRoot) return;
+    const repoKey = getWorkspaceStateKey(repoRoot);
+    if (!repoKey) return;
+    const meta = {
+      version: 1 as const,
+      openFiles: openFiles.map((f) => ({ path: f.path, type: f.type, dirty: f.dirty })),
+      activeFilePath,
+    };
+    saveJitWorkspaceMeta(repoKey, meta);
+    const drafts: Record<string, string> = {};
+    for (const f of openFiles) {
+      if (f.dirty) drafts[f.path] = f.content;
+    }
+    saveWorkspaceDrafts(getJitWorkspaceDraftsKey(repoRoot), drafts);
+  }, [repoRoot, openFiles, activeFilePath]);
+
+  useEffect(() => {
+    if (!repoRoot) return;
+    const id = setInterval(persistJitWorkspaceState, 2000);
+    return () => clearInterval(id);
+  }, [repoRoot, persistJitWorkspaceState]);
+
+  useEffect(() => {
+    const onUnload = () => persistJitWorkspaceState();
+    window.addEventListener("beforeunload", onUnload);
+    window.addEventListener("pagehide", onUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onUnload);
+      window.removeEventListener("pagehide", onUnload);
+    };
+  }, [persistJitWorkspaceState]);
 
   const openSourceFile = useCallback(async (path: string) => {
     setSelectedSourcePath(path);
@@ -317,7 +408,6 @@ export function JitIdeWorkspace({
               diffOverlay={diffOverlay}
               activeCenterView={layout.activeCenterView}
               onCenterViewChange={layout.setActiveCenterView}
-              settingsProps={settingsProps}
               onSelectionChange={(sel) => setCurrentSelection(sel)}
               repoRoot={repoRoot ?? null}
               theme={theme}

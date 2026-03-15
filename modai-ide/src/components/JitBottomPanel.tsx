@@ -27,12 +27,13 @@ export function JitBottomPanel({ activeTab, onTabChange, buildOutput, testResult
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-surface-alt">
-      <div className="flex items-center justify-start gap-1 px-2 py-0.5 border-b border-border shrink-0">
+      <div className="jit-tab-bar panel-header-min-height shrink-0 flex items-center justify-start gap-[var(--toolbar-gap)] border-b border-border w-full panel-header-padding bg-transparent">
         <IconButton
           icon={<AppIcon name="run" aria-hidden="true" />}
           variant="tab"
           size="xs"
           active={activeTab === "output"}
+          className={activeTab === "output" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("output")}
           title={TAB_ITEMS[0].label}
           aria-label={TAB_ITEMS[0].label}
@@ -42,6 +43,7 @@ export function JitBottomPanel({ activeTab, onTabChange, buildOutput, testResult
           variant="tab"
           size="xs"
           active={activeTab === "testResults"}
+          className={activeTab === "testResults" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("testResults")}
           title={TAB_ITEMS[1].label}
           aria-label={TAB_ITEMS[1].label}

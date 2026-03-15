@@ -119,7 +119,7 @@ function SectionHeader({
   toolbar,
 }: SectionHeaderProps) {
   return (
-    <div className="flex shrink-0 items-center border-b border-border bg-surface-alt px-2 py-1">
+    <div className="panel-header-bar flex shrink-0 items-center border-b border-border bg-surface-alt">
       <button
         type="button"
         className="flex flex-1 items-center gap-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]"
@@ -134,7 +134,7 @@ function SectionHeader({
         {badge}
       </button>
       {toolbar && (
-        <div className="ml-auto flex items-center gap-1">{toolbar}</div>
+        <div className="ml-auto flex items-center gap-[var(--toolbar-gap)]">{toolbar}</div>
       )}
     </div>
   );

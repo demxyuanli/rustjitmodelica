@@ -25,6 +25,7 @@ export interface EditorWorkbenchRef {
   openType: (typeName: string, groupIndex?: number, libraryId?: string) => void;
   save: () => void;
   setViewModeRequest?: (mode: DiagramViewModeRequest) => void;
+  getWorkspaceState: () => WorkspaceStateSnapshot | null;
 }
 
 function normalizePath(path: string): string {
@@ -48,6 +49,13 @@ function tabModelName(tab: EditorTab | null | undefined): string {
   return "BouncingBall";
 }
 
+export interface WorkspaceStateSnapshot {
+  editorGroups: EditorGroupState[];
+  contentByPath: Record<string, string>;
+  focusedGroupIndex: number;
+  splitRatio: number;
+}
+
 export interface EditorWorkbenchProps {
   projectDir: string | null;
   gitStatus?: { modified: string[]; staged: string[] } | null;
@@ -67,6 +75,11 @@ export interface EditorWorkbenchProps {
   onViewModeChange?: (mode: "code" | "icon" | "diagram" | "diagramReadOnly") => void;
   libraryRefreshToken?: number;
   theme?: "dark" | "light";
+  initialEditorGroups?: EditorGroupState[];
+  initialContentByPath?: Record<string, string>;
+  initialFocusedGroupIndex?: number;
+  initialSplitRatio?: number;
+  initialProjectDir?: string | null;
 }
 
 export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchProps>(function EditorWorkbench(
@@ -89,22 +102,69 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     onViewModeChange,
     libraryRefreshToken = 0,
     theme = "dark",
+    initialEditorGroups,
+    initialContentByPath,
+    initialFocusedGroupIndex = 0,
+    initialSplitRatio = 0.5,
+    initialProjectDir = null,
   },
   ref
 ) {
-  const [editorGroups, setEditorGroups] = useState<EditorGroupState[]>([{ tabs: [], activeIndex: 0 }]);
-  const [focusedGroupIndex, setFocusedGroupIndex] = useState(0);
+  const [editorGroups, setEditorGroups] = useState<EditorGroupState[]>(
+    () => initialEditorGroups ?? [{ tabs: [], activeIndex: 0 }]
+  );
+  const [focusedGroupIndex, setFocusedGroupIndex] = useState(initialFocusedGroupIndex);
   const [viewModeRequest, setViewModeRequest] = useState<DiagramViewModeRequest>(null);
-  const [contentByPath, setContentByPath] = useState<Record<string, string>>({});
+  const [contentByPath, setContentByPath] = useState<Record<string, string>>(
+    () => initialContentByPath ?? {}
+  );
+  const [splitRatio, setSplitRatio] = useState(initialSplitRatio);
+  const appliedInitialRef = useRef(false);
+
   useEffect(() => {
     onContentByPathChange?.(contentByPath);
   }, [contentByPath, onContentByPathChange]);
-  const [splitRatio, setSplitRatio] = useState(0.5);
+
+  useEffect(() => {
+    const norm = (p: string) => p.replace(/\\/g, "/").trim();
+    const dirMatch = projectDir && initialProjectDir && norm(projectDir) === norm(initialProjectDir);
+    const hasTabs = initialEditorGroups != null && initialEditorGroups.some((g) => g.tabs?.length > 0);
+    if (projectDir && dirMatch && hasTabs && !appliedInitialRef.current) {
+      setEditorGroups(initialEditorGroups!);
+      if (initialContentByPath != null) setContentByPath(initialContentByPath);
+      setFocusedGroupIndex(initialFocusedGroupIndex);
+      setSplitRatio(initialSplitRatio);
+      appliedInitialRef.current = true;
+    }
+    if (!dirMatch) {
+      appliedInitialRef.current = false;
+    }
+  }, [
+    projectDir,
+    initialProjectDir,
+    initialEditorGroups,
+    initialContentByPath,
+    initialFocusedGroupIndex,
+    initialSplitRatio,
+  ]);
+
   const splitResizeRef = useRef<{ startX: number; startRatio: number } | null>(null);
   const editorRef0 = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const editorRef1 = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef0 = useRef<typeof monaco | null>(null);
   const monacoRef1 = useRef<typeof monaco | null>(null);
+  const stateSnapshotRef = useRef<WorkspaceStateSnapshot>({
+    editorGroups: [],
+    contentByPath: {},
+    focusedGroupIndex: 0,
+    splitRatio: 0.5,
+  });
+  stateSnapshotRef.current = {
+    editorGroups,
+    contentByPath,
+    focusedGroupIndex,
+    splitRatio,
+  };
 
   useEffect(() => {
     editorRef.current = focusedGroupIndex === 0 ? editorRef0.current : editorRef1.current;
@@ -126,6 +186,19 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     }
     else setModelName("BouncingBall");
   }, [focusedPath, focusedContent, focusedTab, onFocusedChange, setModelName]);
+
+  useEffect(() => {
+    if (!projectDir || !focusedTab?.projectPath) return;
+    const contentKey = tabContentKey(focusedTab);
+    if ((contentByPath[contentKey] ?? "") !== "") return;
+    let cancelled = false;
+    invoke<string>("read_project_file", { projectDir, relativePath: normalizePath(focusedTab.projectPath) })
+      .then((content) => {
+        if (!cancelled) setContentByPath((prev) => ({ ...prev, [contentKey]: content }));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectDir, focusedTab, contentByPath]);
 
   const handleOpenFile = useCallback(
     async (relativePath: string, groupIndex?: number) => {
@@ -281,8 +354,9 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
       openType: handleOpenType,
       save: () => handleSave(),
       setViewModeRequest,
+      getWorkspaceState: () => (projectDir ? { ...stateSnapshotRef.current } : null),
     }),
-    [handleOpenFile, handleOpenType, handleSave]
+    [handleOpenFile, handleOpenType, handleSave, projectDir]
   );
 
   const handleContentChange = useCallback(
@@ -302,9 +376,15 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
   );
 
   const handleSplit = useCallback(() => {
-    setEditorGroups((prev) => (prev.length >= MAX_EDITOR_GROUPS ? prev : [...prev, { tabs: [], activeIndex: 0 }]));
-    setFocusedGroupIndex(editorGroups.length);
-  }, [editorGroups.length]);
+    setEditorGroups((prev) => {
+      if (prev.length >= MAX_EDITOR_GROUPS) return prev;
+      const first = prev[0];
+      const activeTab = first?.tabs[first.activeIndex];
+      const secondTabs = activeTab ? [{ ...activeTab }] : [];
+      return [...prev, { tabs: secondTabs, activeIndex: 0 }];
+    });
+    setFocusedGroupIndex(1);
+  }, []);
 
   const handleUnsplit = useCallback((groupIndex: number) => {
     if (groupIndex === 0) return;
@@ -358,7 +438,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
             contentByPath={contentByPath}
             projectDir={projectDir}
             pathToModelName={pathToModelName}
-            showSplitButton={gi === 0 && editorGroups.length < MAX_EDITOR_GROUPS}
+            showSplitButton={gi === 0 && editorGroups.length < MAX_EDITOR_GROUPS && (editorGroups[0]?.tabs.length ?? 0) > 0}
             showCloseSplitButton={gi === 1}
             flexStyle={isSplit ? { flex: gi === 0 ? `${splitRatio} 1 0%` : `${1 - splitRatio} 1 0%` } : { flex: "1 1 0%" }}
             onSelectTab={(ti) => {

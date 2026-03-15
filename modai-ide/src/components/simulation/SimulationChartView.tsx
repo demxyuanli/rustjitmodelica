@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import type { EChartsOption } from "echarts";
 import EChartsReact from "echarts-for-react";
 import { t } from "../../i18n";
+import { useDiagramScheme } from "../../contexts/DiagramSchemeContext";
 import type { SimulationChartMeta, SimulationChartSeries } from "./types";
 
 export interface SimulationChartHandle {
@@ -38,6 +39,7 @@ function formatTooltipValue(value: unknown): string {
 export const SimulationChartView = forwardRef<SimulationChartHandle, SimulationChartViewProps>(
   function SimulationChartView({ theme, timeValues, series, meta, minHeight = 420, showSummary = true }, ref) {
     const chartRef = useRef<EChartsReact | null>(null);
+    const { scheme } = useDiagramScheme();
 
     const chartOption = useMemo<EChartsOption>(() => {
       const paperBg = readThemeColor("--surface", theme === "light" ? "#f3f4f6" : "#1e1e1e");
@@ -45,9 +47,7 @@ export const SimulationChartView = forwardRef<SimulationChartHandle, SimulationC
       const textColor = readThemeColor("--text", theme === "light" ? "#111827" : "#d1d5db");
       const mutedText = readThemeColor("--text-muted", theme === "light" ? "#6b7280" : "#9ca3af");
       const borderColor = readThemeColor("--border", theme === "light" ? "#d1d5db" : "#353b45");
-      const palette = theme === "light"
-        ? ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#4f46e5", "#ca8a04"]
-        : ["#60a5fa", "#f87171", "#4ade80", "#c084fc", "#fb923c", "#22d3ee", "#818cf8", "#facc15"];
+      const palette = theme === "light" ? scheme.chartPaletteLight : scheme.chartPaletteDark;
 
       return {
         animation: false,
@@ -193,7 +193,7 @@ export const SimulationChartView = forwardRef<SimulationChartHandle, SimulationC
           },
         })),
       };
-    }, [meta.xMax, meta.xMin, series, theme, timeValues]);
+    }, [meta.xMax, meta.xMin, scheme, series, theme, timeValues]);
 
     useImperativeHandle(ref, () => ({
       resetView() {

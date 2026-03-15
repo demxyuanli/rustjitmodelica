@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { dia, shapes } from "@joint/core";
-import { createPaper, createPaperHandle, resolveThemeColors, type JointPaperHandle } from "../utils/jointUtils";
+import { createPaper, createPaperHandle, resolveDiagramColors, type JointPaperHandle } from "../utils/jointUtils";
+import { useDiagramScheme } from "../contexts/DiagramSchemeContext";
 import { getEquationGraph } from "../api/tauri";
 import type { EquationGraph } from "../types";
 import { t } from "../i18n";
@@ -141,6 +142,7 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
   const paperRef = useRef<dia.Paper | null>(null);
   const initializedRef = useRef(false);
   const layoutOptions = externalLayout ?? DEFAULT_LAYOUT;
+  const { schemeId } = useDiagramScheme();
 
   useEffect(() => {
     let cancelled = false;
@@ -183,7 +185,7 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
     return () => {
       cancelled = true;
     };
-  }, [graph, layoutOptions.algorithm, layoutOptions.direction]);
+  }, [graph, layoutOptions.algorithm, layoutOptions.direction, schemeId]);
 
   function renderGraph(result: LayoutResult) {
     const container = containerRef.current;
@@ -213,9 +215,9 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
     paperRef.current = paper;
     initializedRef.current = true;
 
-    const theme = resolveThemeColors();
-    const equationFill = colorToRgba(theme.primary, 0.25);
-    const variableFill = theme.bgElevated;
+    const theme = resolveDiagramColors();
+    const equationFill = colorToRgba(theme.primary, 0.35);
+    const variableFill = colorToRgba(theme.border, 0.2);
 
     for (const node of result.nodes) {
       const isEquation = node.data.kind === "equation";
@@ -229,7 +231,7 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
             ry: 4,
             fill: isEquation ? equationFill : variableFill,
             stroke: isEquation ? theme.primary : theme.border,
-            strokeWidth: 1,
+            strokeWidth: isEquation ? 2 : 1.5,
           },
           label: {
             text: node.data.label,
@@ -262,7 +264,7 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
 
     for (const edge of result.edges) {
       const isSolves = edge.kind === "solves";
-      const strokeColor = isSolves ? theme.primary : theme.textMuted;
+      const strokeColor = isSolves ? theme.primary : theme.border;
       const link = new shapes.standard.Link({
         id: edge.id,
         source: { id: edge.source, port: `${edge.source}_out` },
@@ -272,8 +274,9 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
         attrs: {
           line: {
             stroke: strokeColor,
-            strokeWidth: isSolves ? 1.8 : 1.4,
-            strokeDasharray: isSolves ? "6 3" : undefined,
+            strokeWidth: isSolves ? 2.5 : 1.2,
+            strokeDasharray: isSolves ? "8 4" : undefined,
+            ...(isSolves ? { class: "joint-dep-link-line-animated" } : {}),
             targetMarker: {
               type: "path",
               d: "M 10 -5 0 0 10 5 Z",
@@ -286,7 +289,7 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
               {
                 position: 0.5,
                 attrs: {
-                  text: { text: "solves", fontSize: 9, fill: theme.text },
+                  text: { text: "solves", fontSize: 9, fontWeight: 600, fill: theme.primary },
                   rect: { fill: "transparent" },
                 },
               },

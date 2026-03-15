@@ -55,6 +55,10 @@ export async function openProjectDir(): Promise<string | null> {
   return invoke<string | null>("open_project_dir");
 }
 
+export async function reopenProjectDir(path: string): Promise<string> {
+  return invoke<string>("reopen_project_dir", { path });
+}
+
 export async function pickComponentLibraryFolder(): Promise<string | null> {
   return invoke<string | null>("pick_component_library_folder");
 }
@@ -349,6 +353,37 @@ export async function indexSearchInProject(
 }
 
 // --- AI / config helpers ---
+
+export interface AppSettings {
+  storage?: {
+    indexPathPolicy?: string;
+    allowProjectWrites?: boolean;
+  };
+  resources?: {
+    librarySearchPaths?: string[];
+    packageCacheDir?: string;
+  };
+  documentation?: {
+    helpBaseUrl?: string;
+    showWelcomeOnFirstLaunch?: boolean;
+  };
+  extensions?: {
+    pluginDir?: string;
+    modelicaStdlibPath?: string;
+  };
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>("get_app_settings");
+}
+
+export async function setAppSettings(settings: AppSettings): Promise<void> {
+  await invoke("set_app_settings", { settings });
+}
+
+export async function getAppDataRoot(): Promise<string> {
+  return invoke<string>("get_app_data_root");
+}
 
 export async function getApiKey(): Promise<string> {
   return invoke<string>("get_api_key");

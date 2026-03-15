@@ -9,9 +9,10 @@ import {
 import {
   createPaper,
   createPaperHandle,
-  resolveThemeColors,
+  resolveDiagramColors,
   type JointPaperHandle,
 } from "../utils/jointUtils";
+import { useDiagramScheme } from "../contexts/DiagramSchemeContext";
 import { JointMiniMap } from "./diagram/JointMiniMap";
 import type { AnnotationPoint, IconDiagramAnnotation } from "./DiagramSvgRenderer";
 
@@ -97,6 +98,7 @@ export function DiagramEditorView({
   linksRef.current = links;
 
   const [, forceUpdate] = useState(0);
+  const { schemeId } = useDiagramScheme();
 
   useEffect(() => {
     const container = containerRef.current;
@@ -199,7 +201,7 @@ export function DiagramEditorView({
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
-    const colors = resolveThemeColors();
+    const colors = resolveDiagramColors();
 
     graph.getElements().forEach((el) => {
       const elId = el.id as string;
@@ -219,7 +221,7 @@ export function DiagramEditorView({
         el.attr("body/strokeWidth", 1);
       }
     });
-  }, [selectedId, hoveredId, nodes]);
+  }, [selectedId, hoveredId, nodes, schemeId]);
 
   useEffect(() => {
     if (!readOnly) {

@@ -13,6 +13,7 @@ interface TitlebarProps {
   modelName: string;
   showProjectMenu: boolean;
   setShowProjectMenu: (v: boolean) => void;
+  isSettingsOpen?: boolean;
   onOpenSettings: () => void;
   showLeftSidebar: boolean;
   setShowLeftSidebar: (v: boolean) => void;
@@ -35,6 +36,7 @@ export function Titlebar({
   modelName,
   showProjectMenu,
   setShowProjectMenu,
+  isSettingsOpen = false,
   onOpenSettings,
   showLeftSidebar,
   setShowLeftSidebar,
@@ -55,7 +57,6 @@ export function Titlebar({
     { id: "trace", label: t("traceabilityTitle"), icon: <AppIcon name="sourceControl" aria-hidden="true" /> },
     { id: "overview", label: t("jitOverviewTitle"), icon: <AppIcon name="columns" aria-hidden="true" /> },
     { id: "map", label: t("featureCaseMapTitle"), icon: <AppIcon name="table" aria-hidden="true" /> },
-    { id: "settings", label: t("settings"), icon: <AppIcon name="settings" aria-hidden="true" /> },
   ];
 
   return (
@@ -181,7 +182,7 @@ export function Titlebar({
         />
         <button
           type="button"
-          className="titlebar-btn w-7 h-7 flex items-center justify-center text-[var(--titlebar-fg)] hover:bg-[var(--surface-hover)]"
+          className={`titlebar-btn w-7 h-7 flex items-center justify-center text-[var(--titlebar-fg)] hover:bg-[var(--surface-hover)] ${isSettingsOpen ? "bg-[var(--surface-active)]" : ""}`}
           onClick={onOpenSettings}
           title={t("settings")}
           aria-label={t("settings")}

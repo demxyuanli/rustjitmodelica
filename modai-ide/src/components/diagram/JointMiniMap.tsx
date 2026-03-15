@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { dia } from "@joint/core";
+import { useDiagramScheme } from "../../contexts/DiagramSchemeContext";
 
 interface JointMiniMapProps {
   paper: dia.Paper | null;
@@ -70,6 +71,9 @@ export const JointMiniMap = React.memo(function JointMiniMap({
   const svgRef = useRef<SVGSVGElement>(null);
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
+  const { scheme } = useDiagramScheme();
+  const viewportStroke = scheme.diagramPrimary ?? "var(--primary)";
+  const viewportFill = scheme.diagramPrimary ? `${scheme.diagramPrimary}14` : "rgba(59,130,246,0.08)";
 
   const computeState = useCallback(() => {
     if (!paper || !graph) return;
@@ -258,8 +262,8 @@ export const JointMiniMap = React.memo(function JointMiniMap({
           y={state.viewport.y}
           width={Math.max(1, state.viewport.w)}
           height={Math.max(1, state.viewport.h)}
-          fill="rgba(59,130,246,0.08)"
-          stroke="var(--primary)"
+          fill={viewportFill}
+          stroke={viewportStroke}
           strokeWidth={1}
           rx={1}
         />

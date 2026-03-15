@@ -1,5 +1,12 @@
 import { useState, useCallback, useEffect } from "react";
-import { gitIsRepo, gitStatus as fetchGitStatus, openProjectDir, listMoTree } from "../api/tauri";
+import {
+  gitIsRepo,
+  gitStatus as fetchGitStatus,
+  openProjectDir,
+  reopenProjectDir,
+  listMoTree,
+} from "../api/tauri";
+import { PREFS_KEYS, writePref } from "../utils/prefsConstants";
 
 export interface MoTreeEntry {
   name: string;
@@ -75,6 +82,21 @@ export function useProject() {
       const dir = await openProjectDir();
       if (!dir) return;
       setProjectDir(dir);
+      writePref(PREFS_KEYS.lastProjectDir, dir);
+      const tree = (await listMoTree(dir)) as MoTreeEntry;
+      setMoTree(tree);
+      setMoFiles(flattenMoTree(tree));
+    } catch {
+      setMoTree(null);
+      setMoFiles([]);
+    }
+  }, []);
+
+  const setProjectDirFromPath = useCallback(async (path: string) => {
+    try {
+      const dir = await reopenProjectDir(path);
+      setProjectDir(dir);
+      writePref(PREFS_KEYS.lastProjectDir, dir);
       const tree = (await listMoTree(dir)) as MoTreeEntry;
       setMoTree(tree);
       setMoFiles(flattenMoTree(tree));
@@ -100,11 +122,17 @@ export function useProject() {
   }, [projectDir]);
 
   return {
-    projectDir, setProjectDir,
-    moFiles, moTree,
-    gitBranch, gitStatus, setGitStatus,
-    diffTarget, setDiffTarget,
+    projectDir,
+    setProjectDir,
+    moFiles,
+    moTree,
+    gitBranch,
+    gitStatus,
+    setGitStatus,
+    diffTarget,
+    setDiffTarget,
     openProject,
+    setProjectDirFromPath,
     refreshGitStatus,
   };
 }

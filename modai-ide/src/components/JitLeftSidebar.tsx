@@ -125,12 +125,13 @@ export function JitLeftSidebar({
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-surface-alt">
-      <div className="shrink-0 flex border-b border-border justify-around py-0.5">
+      <div className="jit-tab-bar panel-header-min-height shrink-0 flex items-center justify-around border-b border-border w-full bg-transparent">
         <IconButton
           icon={<AppIcon name="explorer" aria-hidden="true" />}
           variant="tab"
           size="xs"
           active={activeTab === "source"}
+          className={activeTab === "source" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("source")}
           title={TAB_ITEMS[0]?.label ?? t("jitLeftSource" as Parameters<typeof t>[0])}
           aria-label={TAB_ITEMS[0]?.label ?? t("jitLeftSource" as Parameters<typeof t>[0])}
@@ -140,6 +141,7 @@ export function JitLeftSidebar({
           variant="tab"
           size="xs"
           active={activeTab === "tests"}
+          className={activeTab === "tests" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("tests")}
           title={TAB_ITEMS[1]?.label ?? t("jitLeftTests" as Parameters<typeof t>[0])}
           aria-label={TAB_ITEMS[1]?.label ?? t("jitLeftTests" as Parameters<typeof t>[0])}
@@ -149,6 +151,7 @@ export function JitLeftSidebar({
           variant="tab"
           size="xs"
           active={activeTab === "links"}
+          className={activeTab === "links" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("links")}
           title={TAB_ITEMS[2]?.label ?? t("jitLeftLinks" as Parameters<typeof t>[0])}
           aria-label={TAB_ITEMS[2]?.label ?? t("jitLeftLinks" as Parameters<typeof t>[0])}
@@ -158,6 +161,7 @@ export function JitLeftSidebar({
           variant="tab"
           size="xs"
           active={activeTab === "sourceControl"}
+          className={activeTab === "sourceControl" ? "jit-tab-active" : undefined}
           onClick={() => onTabChange("sourceControl")}
           title={t("sourceControl")}
           aria-label={t("sourceControl")}
