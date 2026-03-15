@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { ZoomIn, ZoomOut, Maximize2, Maximize } from "lucide-react";
 import { t } from "../i18n";
+import type { JointPaperHandle } from "../utils/jointUtils";
 import { AppIcon } from "./Icon";
 import { IconButton } from "./IconButton";
 import { EquationGraphView } from "./EquationGraphView";
+import { DependencyGraphModal } from "./DependencyGraphModal";
 import type { JitValidateResult, SimulationResult } from "../types";
 import { SimulationRunView } from "./simulation/SimulationRunView";
 import type { SimulationChartMeta, SimulationChartSeries } from "./simulation/types";
@@ -181,6 +184,11 @@ export function SimulationPanel({
   );
 
   const [showSettings, setShowSettings] = useState(false);
+  const [dependencyGraphModalOpen, setDependencyGraphModalOpen] = useState(false);
+  const [depPaperHandle, setDepPaperHandle] = useState<JointPaperHandle | null>(null);
+  const handleDepZoomIn = useCallback(() => depPaperHandle?.zoomIn(), [depPaperHandle]);
+  const handleDepZoomOut = useCallback(() => depPaperHandle?.zoomOut(), [depPaperHandle]);
+  const handleDepFitView = useCallback(() => depPaperHandle?.fitView(), [depPaperHandle]);
   const [bottomTab, setBottomTab] = useState<BottomTab>("problems");
   const [logSearch, setLogSearch] = useState("");
   const [compilationExpanded, setCompilationExpanded] = useState(true);
@@ -766,7 +774,36 @@ export function SimulationPanel({
         {/* Dependencies tab */}
         {bottomTab === "deps" && canShowDeps && (
           <div className="flex flex-1 min-h-0 flex-col">
-            <EquationGraphView
+            <div className="shrink-0 flex items-center justify-between px-2 py-1 border-b border-border">
+              <span className="text-[10px] text-[var(--text-muted)]">{t("dependencyGraphTitle")}</span>
+              <div className="flex items-center gap-0.5">
+                <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("zoomIn")} onClick={handleDepZoomIn}>
+                  <ZoomIn className="h-3 w-3" />
+                </button>
+                <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("zoomOut")} onClick={handleDepZoomOut}>
+                  <ZoomOut className="h-3 w-3" />
+                </button>
+                <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("fitView")} onClick={handleDepFitView}>
+                  <Maximize2 className="h-3 w-3" />
+                </button>
+                <div className="w-px h-3 bg-[var(--border)] mx-0.5" />
+                <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("expandToWindow")} onClick={() => setDependencyGraphModalOpen(true)}>
+                  <Maximize className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 relative overflow-hidden">
+              <EquationGraphView
+                code={code}
+                modelName={modelName}
+                projectDir={projectDir}
+                layoutOptions={{ algorithm: "layered", direction: "RIGHT" }}
+                onReady={setDepPaperHandle}
+              />
+            </div>
+            <DependencyGraphModal
+              open={dependencyGraphModalOpen}
+              onClose={() => setDependencyGraphModalOpen(false)}
               code={code}
               modelName={modelName}
               projectDir={projectDir}

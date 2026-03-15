@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listInstantiableClasses } from "../api/tauri";
 import type { InstantiableClass } from "../types";
 import type { MoTreeEntry } from "../hooks/useProject";
 import { t } from "../i18n";
 import { FileIcon } from "./FileIcon";
+import { CONNECTOR_COLORS } from "./diagramConnectorColors";
 
 export const MODELICA_DRAG_TYPE = "application/modelica-type";
 
@@ -33,6 +34,52 @@ export function decodeModelicaDragPayload(raw: string): ModelicaDragPayload | nu
   } catch {
     return null;
   }
+}
+
+type CategoryKey = "all" | "electrical" | "mechanical" | "thermal" | "signal" | "math" | "other";
+
+const CATEGORY_KEYWORDS: Record<CategoryKey, string[]> = {
+  all: [],
+  electrical: ["electric", "circuit", "resistor", "capacitor", "inductor", "voltage", "current", "diode", "transistor", "opamp"],
+  mechanical: ["mechanic", "mass", "spring", "damper", "inertia", "torque", "force", "gear", "shaft", "bearing"],
+  thermal: ["thermal", "heat", "temperature", "convect", "conduct", "radiation", "insulation"],
+  signal: ["signal", "input", "output", "block", "gain", "integrator", "transfer", "pid", "controller", "feedback"],
+  math: ["math", "sin", "cos", "sqrt", "abs", "exp", "log", "function", "constant", "table"],
+  other: [],
+};
+
+const CATEGORY_COLORS: Record<CategoryKey, string> = {
+  all: "var(--text-muted)",
+  electrical: CONNECTOR_COLORS.electrical ?? "#2563eb",
+  mechanical: CONNECTOR_COLORS.mechanical ?? "#059669",
+  thermal: CONNECTOR_COLORS.thermal ?? "#dc2626",
+  signal: CONNECTOR_COLORS.signal_input ?? "#f59e0b",
+  math: "#8b5cf6",
+  other: "var(--text-muted)",
+};
+
+function classifyComponent(item: InstantiableClass): CategoryKey {
+  const text = `${item.qualifiedName} ${item.name} ${item.libraryName} ${item.summary ?? ""} ${item.kind}`.toLowerCase();
+  for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS) as [CategoryKey, string[]][]) {
+    if (cat === "all" || cat === "other") continue;
+    if (keywords.some((kw) => text.includes(kw))) return cat;
+  }
+  return "other";
+}
+
+const FAVORITES_KEY = "modai-library-favorites";
+
+function loadFavorites(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch { return new Set(); }
+}
+
+function saveFavorites(fav: Set<string>) {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...fav]));
+  } catch { /* ignore */ }
 }
 
 const TREE_INDENT = 14;
@@ -161,6 +208,9 @@ export function LibrariesBrowser({
 }: LibrariesBrowserProps) {
   const [query, setQuery] = useState("");
   const [classes, setClasses] = useState<InstantiableClass[]>([]);
+  const [category, setCategory] = useState<CategoryKey>("all");
+  const [favorites, setFavorites] = useState<Set<string>>(loadFavorites);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
   useEffect(() => {
     if (!projectDir || variant !== "standalone") {
@@ -184,21 +234,38 @@ export function LibrariesBrowser({
     };
   }, [projectDir, variant, libraryRefreshToken]);
 
+  const toggleFavorite = useCallback((qualifiedName: string) => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(qualifiedName)) next.delete(qualifiedName);
+      else next.add(qualifiedName);
+      saveFavorites(next);
+      return next;
+    });
+  }, []);
+
   const filteredClasses = useMemo(() => {
+    let result = classes;
     const term = query.trim().toLowerCase();
-    if (!term) {
-      return classes;
+    if (term) {
+      result = result.filter((item) =>
+        item.name.toLowerCase().includes(term)
+        || item.qualifiedName.toLowerCase().includes(term)
+        || item.libraryName.toLowerCase().includes(term)
+        || item.path?.toLowerCase().includes(term)
+        || item.summary?.toLowerCase().includes(term)
+        || item.usageHelp?.toLowerCase().includes(term)
+        || item.exampleTitles?.some((title) => title.toLowerCase().includes(term))
+      );
     }
-    return classes.filter((item) =>
-      item.name.toLowerCase().includes(term)
-      || item.qualifiedName.toLowerCase().includes(term)
-      || item.libraryName.toLowerCase().includes(term)
-      || item.path?.toLowerCase().includes(term)
-      || item.summary?.toLowerCase().includes(term)
-      || item.usageHelp?.toLowerCase().includes(term)
-      || item.exampleTitles?.some((title) => title.toLowerCase().includes(term))
-    );
-  }, [classes, query]);
+    if (category !== "all") {
+      result = result.filter((item) => classifyComponent(item) === category);
+    }
+    if (showFavoritesOnly) {
+      result = result.filter((item) => favorites.has(item.qualifiedName));
+    }
+    return result;
+  }, [classes, query, category, showFavoritesOnly, favorites]);
 
   const groupedClasses = useMemo(() => {
     const groups = new Map<string, InstantiableClass[]>();
@@ -231,6 +298,16 @@ export function LibrariesBrowser({
     }
   };
 
+  const categories: { key: CategoryKey; label: string }[] = [
+    { key: "all", label: t("allComponents") },
+    { key: "electrical", label: t("categoryElectrical") },
+    { key: "mechanical", label: t("categoryMechanical") },
+    { key: "thermal", label: t("categoryThermal") },
+    { key: "signal", label: t("categorySignal") },
+    { key: "math", label: t("categoryMath") },
+    { key: "other", label: t("categoryOther") },
+  ];
+
   return (
     <aside className={containerClass}>
       <div className="p-2 border-b border-[var(--border)] space-y-2">
@@ -249,13 +326,44 @@ export function LibrariesBrowser({
           )}
         </div>
         {showLibraryGroups && (
-          <input
-            type="text"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("tableSearch")}
-            className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1 text-xs text-[var(--text)]"
-          />
+          <>
+            <input
+              type="text"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("tableSearch")}
+              className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1 text-xs text-[var(--text)]"
+            />
+            <div className="flex flex-wrap gap-1">
+              {categories.map((cat) => (
+                <button
+                  key={cat.key}
+                  type="button"
+                  className={`px-1.5 py-0.5 rounded text-[9px] border transition-colors ${
+                    category === cat.key
+                      ? "border-primary bg-primary/15 text-[var(--text)]"
+                      : "border-transparent text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/5"
+                  }`}
+                  onClick={() => setCategory(cat.key)}
+                >
+                  <span className="inline-block w-1.5 h-1.5 rounded-full mr-0.5" style={{ backgroundColor: CATEGORY_COLORS[cat.key] }} />
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={`text-[10px] px-1.5 py-0.5 rounded ${showFavoritesOnly ? "bg-yellow-500/20 text-yellow-400" : "text-[var(--text-muted)] hover:text-[var(--text)]"}`}
+                onClick={() => setShowFavoritesOnly(!showFavoritesOnly)}
+              >
+                {showFavoritesOnly ? "\u2605" : "\u2606"} {t("favorites")} ({favorites.size})
+              </button>
+              <span className="text-[10px] text-[var(--text-muted)]">
+                {filteredClasses.length} / {classes.length}
+              </span>
+            </div>
+          </>
         )}
       </div>
 
@@ -295,38 +403,54 @@ export function LibrariesBrowser({
                       {groupTitle(group)}
                     </div>
                     <div className="space-y-0.5">
-                      {items.map((item) => (
-                        <div
-                          key={`${group}:${item.libraryId}:${item.qualifiedName}`}
-                          className="px-2 py-1.5 rounded hover:bg-[var(--surface-hover)] text-xs text-[var(--text)] flex items-center justify-between gap-2"
-                          draggable={!readOnly}
-                          onDragStart={(event) => {
-                            if (readOnly) return;
-                            const payload: ModelicaDragPayload = {
-                              typeName: item.qualifiedName,
-                              displayName: item.name,
-                              source: item.source,
-                              libraryId: item.libraryId,
-                              libraryName: item.libraryName,
-                              path: item.path,
-                            };
-                            event.dataTransfer.setData(MODELICA_DRAG_TYPE, JSON.stringify(payload));
-                            event.dataTransfer.effectAllowed = "copy";
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className="min-w-0 flex-1 text-left"
-                            title={item.qualifiedName}
-                            onClick={() => onOpenType?.(item.qualifiedName, item.libraryId)}
+                      {items.map((item) => {
+                        const cat = classifyComponent(item);
+                        const isFav = favorites.has(item.qualifiedName);
+                        return (
+                          <div
+                            key={`${group}:${item.libraryId}:${item.qualifiedName}`}
+                            className="px-2 py-1.5 rounded hover:bg-[var(--surface-hover)] text-xs text-[var(--text)] flex items-center gap-2 group/item"
+                            draggable={!readOnly}
+                            onDragStart={(event) => {
+                              if (readOnly) return;
+                              const payload: ModelicaDragPayload = {
+                                typeName: item.qualifiedName,
+                                displayName: item.name,
+                                source: item.source,
+                                libraryId: item.libraryId,
+                                libraryName: item.libraryName,
+                                path: item.path,
+                              };
+                              event.dataTransfer.setData(MODELICA_DRAG_TYPE, JSON.stringify(payload));
+                              event.dataTransfer.effectAllowed = "copy";
+                            }}
                           >
-                            <div className="truncate">{item.name}</div>
-                            <div className="truncate text-[10px] text-[var(--text-muted)]">{item.libraryName}</div>
-                            <div className="truncate text-[10px] text-[var(--text-muted)]">{item.qualifiedName}</div>
-                          </button>
-                          <span className="shrink-0 text-[10px] text-[var(--text-muted)]">{item.kind}</span>
-                        </div>
-                      ))}
+                            <span
+                              className="shrink-0 w-2 h-2 rounded-full"
+                              style={{ backgroundColor: CATEGORY_COLORS[cat] }}
+                              title={cat}
+                            />
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 text-left"
+                              title={item.qualifiedName}
+                              onClick={() => onOpenType?.(item.qualifiedName, item.libraryId)}
+                            >
+                              <div className="truncate">{item.name}</div>
+                              <div className="truncate text-[10px] text-[var(--text-muted)]">{item.libraryName}</div>
+                            </button>
+                            <button
+                              type="button"
+                              className={`shrink-0 text-sm opacity-0 group-hover/item:opacity-100 transition-opacity ${isFav ? "text-yellow-400 !opacity-100" : "text-[var(--text-muted)]"}`}
+                              onClick={(e) => { e.stopPropagation(); toggleFavorite(item.qualifiedName); }}
+                              title={t("favorites")}
+                            >
+                              {isFav ? "\u2605" : "\u2606"}
+                            </button>
+                            <span className="shrink-0 text-[10px] text-[var(--text-muted)]">{item.kind}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}

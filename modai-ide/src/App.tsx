@@ -24,6 +24,7 @@ import { IconButton } from "./components/IconButton";
 const DiffView = lazy(() => import("./components/DiffView").then((m) => ({ default: m.DiffView })));
 const GitGraphView = lazy(() => import("./components/GitGraphView").then((m) => ({ default: m.GitGraphView })));
 const SimulationPanel = lazy(() => import("./components/SimulationPanel").then((m) => ({ default: m.SimulationPanel })));
+import { NewModelDialog } from "./components/diagram/NewModelDialog";
 import { JitIdeWorkspace } from "./components/JitIdeWorkspace";
 import { SettingsContent, type IndexActionState } from "./components/SettingsContent";
 import { t } from "./i18n";
@@ -77,6 +78,7 @@ function App() {
   const [requestedSimulationTab, setRequestedSimulationTab] = useState<WorkbenchBottomTab | null>(null);
   const [focusedDiagramSymbol, setFocusedDiagramSymbol] = useState<string | null>(null);
   const [libraryRefreshToken, setLibraryRefreshToken] = useState(0);
+  const [showNewModelDialog, setShowNewModelDialog] = useState(false);
 
   useEffect(() => {
     indexRepoRoot().then((r) => setRepoRoot(r)).catch(() => {});
@@ -222,6 +224,12 @@ function App() {
         case "j":
           e.preventDefault();
           layout.setShowBottomPanel(!layout.showBottomPanel);
+          break;
+        case "n":
+          if (layout.workspaceMode === "modelica" && project.projectDir) {
+            e.preventDefault();
+            setShowNewModelDialog(true);
+          }
           break;
       }
     };
@@ -399,6 +407,19 @@ function App() {
                   <div className="flex-1 min-h-0 overflow-auto flex flex-col scroll-vscode">
                     {layout.leftSidebarTab === "explorer" && (
                       <>
+                        {project.projectDir && (
+                          <div className="shrink-0 flex items-center gap-1 px-2 py-1 border-b border-border">
+                            <button
+                              type="button"
+                              className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]"
+                              onClick={() => setShowNewModelDialog(true)}
+                              title={t("newModelTooltip")}
+                            >
+                              <span className="text-sm leading-none">+</span>
+                              {t("newModel")}
+                            </button>
+                          </div>
+                        )}
                         <FileTree
                           projectDir={project.projectDir}
                           moTree={project.moTree}
@@ -722,6 +743,12 @@ function App() {
           layout.setShowLeftSidebar(true);
         }}
         indexStatus={indexStatus}
+      />
+      <NewModelDialog
+        projectDir={project.projectDir}
+        open={showNewModelDialog}
+        onClose={() => setShowNewModelDialog(false)}
+        onCreateModel={handleCreateMoFile}
       />
     </div>
   );

@@ -566,26 +566,22 @@ export function AnnotationGraphicsSvg({
   );
 }
 
-export const CONNECTOR_COLORS: Record<string, string> = {
-  mechanical: "#555",
-  electrical: "#2563eb",
-  thermal: "#dc2626",
-  fluid: "#0891b2",
-  signal_input: "#16a34a",
-  signal_output: "#ca8a04",
-};
+export { CONNECTOR_COLORS } from "./diagramConnectorColors";
+import { CONNECTOR_COLORS } from "./diagramConnectorColors";
 
 export function connectorHandleStyle(
   kind?: string,
   side: "left" | "right" = "left",
 ): React.CSSProperties {
   const color = (kind && CONNECTOR_COLORS[kind]) || "var(--text-muted)";
+  const size = 6;
+  const offset = -(size / 2);
   const base: React.CSSProperties = {
-    width: 8,
-    height: 8,
-    borderRadius: kind === "mechanical" ? 2 : "50%",
+    width: size,
+    height: size,
+    borderRadius: 0,
     backgroundColor: color,
-    border: "1px solid var(--border)",
+    border: "none",
   };
-  return side === "left" ? { ...base, left: -5 } : { ...base, right: -5 };
+  return side === "left" ? { ...base, left: offset } : { ...base, right: offset };
 }

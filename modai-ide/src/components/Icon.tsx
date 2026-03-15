@@ -27,6 +27,12 @@ import {
   BookOpenText,
   ScrollText,
   Loader2,
+  User,
+  Copy,
+  Check,
+  SendHorizontal,
+  MessageSquarePlus,
+  ArrowDown,
 } from "lucide-react";
 
 export type AppIconName =
@@ -59,7 +65,13 @@ export type AppIconName =
   | "link"
   | "library"
   | "output"
-  | "spinner";
+  | "spinner"
+  | "user"
+  | "copy"
+  | "check"
+  | "send"
+  | "newChat"
+  | "arrowDown";
 
 type IconProps = Omit<ComponentProps<"svg">, "ref">;
 
@@ -127,6 +139,18 @@ export function AppIcon({ name, className, ...rest }: { name: AppIconName } & Ic
       return <ScrollText className={mergedClassName} {...rest} />;
     case "spinner":
       return <Loader2 className={mergedClassName} {...rest} />;
+    case "user":
+      return <User className={mergedClassName} {...rest} />;
+    case "copy":
+      return <Copy className={mergedClassName} {...rest} />;
+    case "check":
+      return <Check className={mergedClassName} {...rest} />;
+    case "send":
+      return <SendHorizontal className={mergedClassName} {...rest} />;
+    case "newChat":
+      return <MessageSquarePlus className={mergedClassName} {...rest} />;
+    case "arrowDown":
+      return <ArrowDown className={mergedClassName} {...rest} />;
     default:
       return null;
   }

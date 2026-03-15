@@ -35,9 +35,13 @@ use commands::index_commands::{
     index_update_file,
 };
 use commands::iterate_commands::{apply_patch_to_workspace, commit_patch, self_iterate};
-use commands::jit::{get_equation_graph, jit_validate, run_simulation_cmd};
+use commands::jit::{
+    get_equation_graph, get_simulation_state, jit_validate, run_simulation_cmd,
+    simulation_command, simulation_step, start_simulation_session,
+};
 use commands::project::{
-    add_component_library, apply_diagram_edits, apply_graphical_document_edits,
+    add_component_library, apply_diagram_edits, apply_equation_edits,
+    apply_graphical_document_edits, extract_equations_from_source,
     get_component_type_details, get_component_type_relation_graph, get_diagram_data,
     get_diagram_data_from_source, get_graphical_document, get_graphical_document_from_source,
     list_component_libraries, list_instantiable_classes, list_mo_files, list_mo_tree,
@@ -85,12 +89,18 @@ pub fn run() {
             write_project_file,
             search_in_project,
             get_equation_graph,
+            start_simulation_session,
+            simulation_step,
+            simulation_command,
+            get_simulation_state,
             get_diagram_data,
             get_diagram_data_from_source,
             apply_diagram_edits,
             get_graphical_document,
             get_graphical_document_from_source,
             apply_graphical_document_edits,
+            extract_equations_from_source,
+            apply_equation_edits,
             list_component_libraries,
             add_component_library,
             remove_component_library,

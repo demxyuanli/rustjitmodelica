@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { addEdge, type Connection, type Edge, type Node, useEdgesState, useNodesState } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import { t } from "../i18n";
 import {
   type AnnotationPoint,
@@ -12,8 +10,23 @@ import { applyGraphicalDocumentEdits, getGraphicalDocumentFromSource } from "../
 import type { GraphicalDocumentModel } from "../types";
 import { GraphicalCanvas, type GraphicalMessage } from "./GraphicalCanvas";
 import { decodeModelicaDragPayload, MODELICA_DRAG_TYPE } from "./LibrariesBrowser";
-import { DiagramEditorView, type DiagramNodeData } from "./DiagramEditorView";
+import {
+  DiagramEditorView,
+  type DiagramNode,
+  type DiagramLink,
+} from "./DiagramEditorView";
 import { IconEditorView } from "./IconEditorView";
+import { useUndoRedo } from "../hooks/useUndoRedo";
+import { useStepDebug } from "../hooks/useStepDebug";
+import { useDiagramSimulation } from "../hooks/useDiagramSimulation";
+import { applyDiagramLayout, type DiagramLayoutKind } from "../utils/diagramLayout";
+import { DiagramToolbar } from "./diagram/DiagramToolbar";
+import type { JointPaperHandle } from "../utils/jointUtils";
+
+interface DiagramUndoSnapshot {
+  nodes: DiagramNode[];
+  links: DiagramLink[];
+}
 
 export interface LayoutPoint {
   x: number;
@@ -95,10 +108,10 @@ function documentToDiagram(document: DiagramDocument): DiagramModel {
   };
 }
 
-function diagramToFlow(
+function diagramToNodes(
   diagram: DiagramModel,
   onDoubleClick?: (typeName: string, libraryId?: string) => void
-): { nodes: Node<DiagramNodeData>[]; edges: Edge[] } {
+): { nodes: DiagramNode[]; links: DiagramLink[] } {
   const portUsage: Record<string, Set<string>> = {};
   for (const c of diagram.connections) {
     const { nodeId: fromId, handleId: fromH } = pathToNodeAndHandle(c.from);
@@ -109,8 +122,11 @@ function diagramToFlow(
     portUsage[toId].add(toH);
   }
 
+  const hasIncoming = new Set(diagram.connections.map((c) => pathToNodeAndHandle(c.to).nodeId));
+  const hasOutgoing = new Set(diagram.connections.map((c) => pathToNodeAndHandle(c.from).nodeId));
+
   const layout = diagram.layout ?? {};
-  const nodes: Node<DiagramNodeData>[] = diagram.components.map((comp, i) => {
+  const nodes: DiagramNode[] = diagram.components.map((comp, i) => {
     let position: { x: number; y: number };
     if (layout[comp.name]) {
       position = { x: layout[comp.name].x, y: layout[comp.name].y };
@@ -126,10 +142,11 @@ function diagramToFlow(
     }
 
     const ports = portUsage[comp.name] ? Array.from(portUsage[comp.name]) : [DEFAULT_HANDLE_ID];
+    const incoming = hasIncoming.has(comp.name);
+    const outgoing = hasOutgoing.has(comp.name);
 
     return {
       id: comp.name,
-      type: "component",
       position,
       data: {
         typeName: comp.typeName,
@@ -141,31 +158,32 @@ function diagramToFlow(
         connectorKind: comp.connectorKind,
         isInput: comp.isInput,
         isOutput: comp.isOutput,
+        isSourceNode: !incoming && outgoing,
+        isSinkNode: incoming && !outgoing,
         onDoubleClick,
       },
     };
   });
 
-  const edges: Edge[] = diagram.connections.map((conn, i) => {
+  const links: DiagramLink[] = diagram.connections.map((conn, i) => {
     const a = pathToNodeAndHandle(conn.from);
     const b = pathToNodeAndHandle(conn.to);
     return {
       id: `e-${conn.from}-${conn.to}-${i}`,
       source: a.nodeId,
+      sourcePort: a.handleId,
       target: b.nodeId,
-      sourceHandle: a.handleId,
-      targetHandle: b.handleId,
-      type: conn.line ? "polyline" : "default",
-      data: conn.line ? { linePoints: conn.line.points } : undefined,
+      targetPort: b.handleId,
+      vertices: conn.line?.points,
     };
   });
 
-  return { nodes, edges };
+  return { nodes, links };
 }
 
-function flowToDiagram(
-  nodes: Node<DiagramNodeData>[],
-  edges: Edge[]
+function nodesToDiagram(
+  nodes: DiagramNode[],
+  links: DiagramLink[]
 ): {
   components: {
     name: string;
@@ -180,18 +198,16 @@ function flowToDiagram(
 } {
   const components = nodes.map((n) => ({
     name: n.id,
-    typeName: (n.data?.typeName as string) || "Block",
+    typeName: n.data?.typeName || "Block",
     libraryId: n.data?.libraryId as string | undefined,
     params: n.data?.params,
     isInput: Boolean(n.data?.isInput),
     isOutput: Boolean(n.data?.isOutput),
   }));
-  const connections = edges.map((e) => ({
-    from: nodeAndHandleToPath(e.source, e.sourceHandle ?? DEFAULT_HANDLE_ID),
-    to: nodeAndHandleToPath(e.target, e.targetHandle ?? DEFAULT_HANDLE_ID),
-    line: (e.data as { linePoints?: AnnotationPoint[] } | undefined)?.linePoints
-      ? { points: (e.data as { linePoints?: AnnotationPoint[] }).linePoints ?? [] }
-      : undefined,
+  const connections = links.map((l) => ({
+    from: nodeAndHandleToPath(l.source, l.sourcePort),
+    to: nodeAndHandleToPath(l.target, l.targetPort),
+    line: l.vertices?.length ? { points: l.vertices } : undefined,
   }));
   const layout: Record<string, LayoutPoint> = {};
   nodes.forEach((n) => {
@@ -265,23 +281,98 @@ export function DiagramView({
 
   const diagram = useMemo(() => (document ? documentToDiagram(document) : null), [document]);
   const initial = useMemo(() => {
-    const { nodes, edges } = diagramToFlow(
+    const { nodes, links } = diagramToNodes(
       diagram ?? { modelName: "", components: [], connections: [] },
       handleDoubleClickRef.current
     );
-    return { nodes, edges };
+    return { nodes, links };
   }, [!!diagram]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<DiagramNodeData>>(initial.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+  const [nodes, setNodes] = useState<DiagramNode[]>(initial.nodes);
+  const [links, setLinks] = useState<DiagramLink[]>(initial.links);
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
-  const edgesRef = useRef(edges);
-  edgesRef.current = edges;
+  const linksRef = useRef(links);
+  linksRef.current = links;
   const documentRef = useRef(document);
   documentRef.current = document;
   const [selectedGraphicIndex, setSelectedGraphicIndex] = useState(-1);
+  const [paperHandle, setPaperHandle] = useState<JointPaperHandle | null>(null);
+  const [showMiniMap, setShowMiniMap] = useState(true);
+
+  const undoRedo = useUndoRedo<DiagramUndoSnapshot>();
+  const undoRedoSkip = useRef(false);
+
+  const stepDebug = useStepDebug();
+  const simOverlay = useDiagramSimulation(stepDebug);
+
+  const handleStartDebug = useCallback(() => {
+    stepDebug.startSession(sourceRef.current, diagram?.modelName, projectDirRef.current);
+  }, [diagram?.modelName, stepDebug]);
+
+  const handleApplyLayout = useCallback(
+    (kind: DiagramLayoutKind) => {
+      const currentNodes = nodesRef.current;
+      const currentLinks = linksRef.current;
+      if (currentNodes.length === 0) return;
+      const nodeIds = currentNodes.map((n) => n.id);
+      const edges = currentLinks.map((l) => ({ source: l.source, target: l.target }));
+      const positions = applyDiagramLayout(kind, { nodeIds, edges });
+      undoRedoSkip.current = true;
+      setNodes((prev) =>
+        prev.map((node) => ({
+          ...node,
+          position: positions[node.id] ?? node.position,
+        }))
+      );
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (undoRedoSkip.current) {
+      undoRedoSkip.current = false;
+      return;
+    }
+    if (nodes.length > 0 || links.length > 0) {
+      undoRedo.push({
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        links: JSON.parse(JSON.stringify(links)),
+      });
+    }
+  }, [nodes, links]);
+
+  useEffect(() => {
+    if (readOnly) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === "z" && !e.shiftKey && undoRedo.canUndo) {
+        e.preventDefault();
+        e.stopPropagation();
+        const snapshot = undoRedo.undo();
+        if (snapshot) {
+          undoRedoSkip.current = true;
+          setNodes(snapshot.nodes);
+          setLinks(snapshot.links);
+        }
+      } else if (
+        ((e.key === "z" && e.shiftKey) || e.key === "y") &&
+        undoRedo.canRedo
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        const snapshot = undoRedo.redo();
+        if (snapshot) {
+          undoRedoSkip.current = true;
+          setNodes(snapshot.nodes);
+          setLinks(snapshot.links);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [readOnly, undoRedo.canUndo, undoRedo.canRedo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,7 +386,7 @@ export function DiagramView({
     )
       .then((data) => {
         if (cancelled) return;
-        const current = flowToDiagram(nodesRef.current, edgesRef.current);
+        const current = nodesToDiagram(nodesRef.current, linksRef.current);
         const hasCurrentState = current.components.length > 0 || current.connections.length > 0;
         const sameComponents =
           current.components.length === data.components.length &&
@@ -317,9 +408,9 @@ export function DiagramView({
         if (!hasCurrentState || inSync) {
           setDocument(data);
           setSelectedGraphicIndex(-1);
-          const { nodes: n, edges: e } = diagramToFlow(documentToDiagram(data), handleDoubleClickRef.current);
+          const { nodes: n, links: l } = diagramToNodes(documentToDiagram(data), handleDoubleClickRef.current);
           setNodes(n);
-          setEdges(e);
+          setLinks(l);
           setConflictPending(null);
           lastAppliedRef.current = JSON.stringify({
             components: data.components.map((c) => ({ name: c.name, typeName: c.typeName })),
@@ -335,7 +426,7 @@ export function DiagramView({
           setError(String(err));
           setDocument(null);
           setNodes([]);
-          setEdges([]);
+          setLinks([]);
           setConflictPending(null);
         }
       })
@@ -345,53 +436,79 @@ export function DiagramView({
     return () => {
       cancelled = true;
     };
-  }, [source, setNodes, setEdges]);
+  }, [source]);
 
-  const onConnect = useCallback(
-    (conn: Connection) => {
+  const handleNodePositionChange = useCallback(
+    (id: string, position: { x: number; y: number }) => {
+      setNodes((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, position } : n))
+      );
+    },
+    []
+  );
+
+  const handleConnect = useCallback(
+    (source: string, sourcePort: string, target: string, targetPort: string) => {
       if (readOnly || mode === "icon") return;
-      const sourceNode = nodesRef.current.find((node) => node.id === conn.source);
-      const targetNode = nodesRef.current.find((node) => node.id === conn.target);
+      const sourceNode = nodesRef.current.find((n) => n.id === source);
+      const targetNode = nodesRef.current.find((n) => n.id === target);
       const sourceKind = sourceNode?.data?.connectorKind;
       const targetKind = targetNode?.data?.connectorKind;
       const signalPair =
-        (sourceKind === "signal_output" && targetKind === "signal_input")
-        || (sourceKind === "signal_input" && targetKind === "signal_output");
+        (sourceKind === "signal_output" && targetKind === "signal_input") ||
+        (sourceKind === "signal_input" && targetKind === "signal_output");
       const sameKind = sourceKind && targetKind && sourceKind === targetKind;
       if (sourceKind && targetKind && !sameKind && !signalPair) {
-        setMessages((prev) => [
-          {
-            severity: "error",
-            text: `Incompatible connectors: ${sourceKind} -> ${targetKind}`,
-          } as GraphicalMessage,
-          ...prev,
-        ].slice(0, 20));
+        setMessages((prev) =>
+          [
+            { severity: "error", text: `Incompatible connectors: ${sourceKind} -> ${targetKind}` } as GraphicalMessage,
+            ...prev,
+          ].slice(0, 20)
+        );
         return;
       }
-      setMessages((prev) => prev.filter((message) => !message.text.startsWith("Incompatible connectors")));
-      const sourcePosition = sourceNode?.position ?? { x: 0, y: 0 };
-      const targetPosition = targetNode?.position ?? { x: 0, y: 0 };
-      const elbowX = (sourcePosition.x + targetPosition.x) / 2;
-      const linePoints = [
-        { x: sourcePosition.x + 80, y: sourcePosition.y + 20 },
-        { x: elbowX, y: sourcePosition.y + 20 },
-        { x: elbowX, y: targetPosition.y + 20 },
-        { x: targetPosition.x + 20, y: targetPosition.y + 20 },
-      ];
-      setEdges((eds) =>
-        addEdge(
-          {
-            ...conn,
-            sourceHandle: conn.sourceHandle ?? DEFAULT_HANDLE_ID,
-            targetHandle: conn.targetHandle ?? DEFAULT_HANDLE_ID,
-            type: "polyline",
-            data: { linePoints },
-          },
-          eds
+      setMessages((prev) => prev.filter((m) => !m.text.startsWith("Incompatible connectors")));
+      const newLink: DiagramLink = {
+        id: `e-${nodeAndHandleToPath(source, sourcePort)}-${nodeAndHandleToPath(target, targetPort)}-${Date.now()}`,
+        source,
+        sourcePort,
+        target,
+        targetPort,
+      };
+      setLinks((prev) => [...prev, newLink]);
+    },
+    [mode, readOnly]
+  );
+
+  const handleSelectNode = useCallback(
+    (id: string | null) => {
+      setNodes((prev) =>
+        prev.map((n) => ({
+          ...n,
+          selected: id != null && n.id === id,
+        }))
+      );
+      setSelectedGraphicIndex(-1);
+    },
+    []
+  );
+
+  const handleDeleteElements = useCallback(
+    (nodeIds: string[], linkIds: string[]) => {
+      if (readOnly) return;
+      const nodeIdSet = new Set(nodeIds);
+      const linkIdSet = new Set(linkIds);
+      setNodes((prev) => prev.filter((n) => !nodeIdSet.has(n.id)));
+      setLinks((prev) =>
+        prev.filter(
+          (l) =>
+            !linkIdSet.has(l.id) &&
+            !nodeIdSet.has(l.source) &&
+            !nodeIdSet.has(l.target)
         )
       );
     },
-    [mode, readOnly, setEdges]
+    [readOnly]
   );
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -399,7 +516,7 @@ export function DiagramView({
 
   const syncToSource = useCallback(() => {
     if (readOnly || !onContentChangeRef.current) return;
-    const { components, connections, layout } = flowToDiagram(nodesRef.current, edgesRef.current);
+    const { components, connections, layout } = nodesToDiagram(nodesRef.current, linksRef.current);
     const key = JSON.stringify({ components, connections, layout });
     if (key === lastAppliedRef.current) return;
     lastAppliedRef.current = key;
@@ -423,10 +540,12 @@ export function DiagramView({
         onContentChangeRef.current?.(newSource);
       })
       .catch((syncError) => {
-        setMessages((prev) => [
-          { severity: "error", text: `Sync failed: ${String(syncError)}` } as GraphicalMessage,
-          ...prev,
-        ].slice(0, 20));
+        setMessages((prev) =>
+          [
+            { severity: "error", text: `Sync failed: ${String(syncError)}` } as GraphicalMessage,
+            ...prev,
+          ].slice(0, 20)
+        );
       });
   }, [diagram?.modelName, readOnly]);
 
@@ -434,9 +553,9 @@ export function DiagramView({
     (data: DiagramDocument) => {
       setDocument(data);
       setSelectedGraphicIndex(-1);
-      const { nodes: n, edges: e } = diagramToFlow(documentToDiagram(data), handleDoubleClickRef.current);
+      const { nodes: n, links: l } = diagramToNodes(documentToDiagram(data), handleDoubleClickRef.current);
       setNodes(n);
-      setEdges(e);
+      setLinks(l);
       setConflictPending(null);
       lastAppliedRef.current = JSON.stringify({
         components: data.components.map((c) => ({ name: c.name, typeName: c.typeName })),
@@ -444,7 +563,7 @@ export function DiagramView({
         layout: data.graphical.layout ?? {},
       });
     },
-    [setNodes, setEdges]
+    []
   );
 
   const activeGraphics = mode === "icon"
@@ -511,7 +630,7 @@ export function DiagramView({
         return { ...node, data: { ...node.data, params } };
       })
     );
-  }, [selectedNode, setNodes]);
+  }, [selectedNode]);
 
   const updateSelectedPlacement = useCallback((patch: { x?: number; y?: number; rotation?: number }) => {
     if (!selectedNode) return;
@@ -532,7 +651,7 @@ export function DiagramView({
             }
       )
     );
-  }, [selectedNode, setNodes]);
+  }, [selectedNode]);
 
   const handleUpdateGraphic = useCallback((index: number, next: GraphicItem) => {
     const graphics = [...activeGraphics];
@@ -559,7 +678,24 @@ export function DiagramView({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [nodes, edges, diagram?.diagramAnnotation, diagram?.iconAnnotation, readOnly, onContentChange, diagram, syncToSource]);
+  }, [nodes, links, diagram?.diagramAnnotation, diagram?.iconAnnotation, readOnly, onContentChange, diagram, syncToSource]);
+
+  useEffect(() => {
+    if (!simOverlay.isActive || !simOverlay.overlayData) return;
+    setNodes((prev) =>
+      prev.map((node) => {
+        const vals = simOverlay.getNodeValues(node.id);
+        if (!vals) return node;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            simValues: vals ?? undefined,
+          },
+        };
+      }),
+    );
+  }, [simOverlay.isActive, simOverlay.overlayData]);
 
   useEffect(() => {
     if (!focusSymbolQuery) return;
@@ -570,7 +706,24 @@ export function DiagramView({
         selected: node.id === targetNode,
       })),
     );
-  }, [focusSymbolQuery, setNodes]);
+  }, [focusSymbolQuery]);
+
+  const nodesWithFlowRole = useMemo(() => {
+    const hasIncoming = new Set(links.map((l) => l.target));
+    const hasOutgoing = new Set(links.map((l) => l.source));
+    return nodes.map((node) => {
+      const incoming = hasIncoming.has(node.id);
+      const outgoing = hasOutgoing.has(node.id);
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          isSourceNode: !incoming && outgoing,
+          isSinkNode: incoming && !outgoing,
+        },
+      };
+    });
+  }, [nodes, links]);
 
   if (loading) {
     return (
@@ -618,6 +771,9 @@ export function DiagramView({
         onUpdatePlacement={updateSelectedPlacement}
         onOpenType={handleDoubleClick}
         libraryRefreshToken={libraryRefreshToken}
+        stepDebug={stepDebug}
+        onStartDebug={handleStartDebug}
+        source={source}
         onDrop={(event) => {
           if (readOnly || mode === "icon") return;
           const payload = decodeModelicaDragPayload(event.dataTransfer.getData(MODELICA_DRAG_TYPE));
@@ -633,7 +789,6 @@ export function DiagramView({
             const id = uniqueInstanceName(payload.displayName, existingIds);
             return nds.concat({
               id,
-              type: "component",
               position,
               data: {
                 typeName: payload.typeName,
@@ -659,14 +814,30 @@ export function DiagramView({
             onUpdateGraphic={handleUpdateGraphic}
           />
         ) : (
-          <DiagramEditorView
-            nodes={nodes}
-            edges={edges}
-            readOnly={readOnly}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-          />
+          <div className="flex flex-col flex-1 min-h-0">
+            <DiagramToolbar
+              readOnly={readOnly}
+              hasNodes={nodes.length > 0}
+              onAddGraphic={handleAddGraphic}
+              onApplyLayout={handleApplyLayout}
+              paperHandle={paperHandle}
+              showMiniMap={showMiniMap}
+              onToggleMiniMap={() => setShowMiniMap((v) => !v)}
+            />
+            <div className="flex-1 min-h-0">
+              <DiagramEditorView
+                nodes={nodesWithFlowRole}
+                links={links}
+                readOnly={readOnly}
+                onNodePositionChange={handleNodePositionChange}
+                onConnect={handleConnect}
+                onDeleteElements={handleDeleteElements}
+                onSelectNode={handleSelectNode}
+                onPaperReady={setPaperHandle}
+                showMiniMap={showMiniMap}
+              />
+            </div>
+          </div>
         )}
       </GraphicalCanvas>
   );

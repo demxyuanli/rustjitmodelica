@@ -947,3 +947,20 @@ pub fn list_mo_tree(project_dir: String) -> Result<MoTreeEntry, String> {
         extends: None,
     })
 }
+
+#[tauri::command]
+pub fn extract_equations_from_source(
+    source: String,
+) -> Result<diagram::ModelEquationsAndVars, String> {
+    diagram::extract_equations_from_source(&source)
+}
+
+#[tauri::command]
+pub fn apply_equation_edits(
+    source: String,
+    variables: Vec<diagram::VariableDecl>,
+    equations: Vec<diagram::EquationEntry>,
+) -> Result<serde_json::Value, String> {
+    let new_source = diagram::apply_equation_edits(&source, &variables, &equations)?;
+    Ok(serde_json::json!({ "newSource": new_source }))
+}
