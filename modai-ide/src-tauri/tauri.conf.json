@@ -15,7 +15,9 @@
         "title": "ModAI IDE",
         "width": 1280,
         "height": 800,
-        "decorations": false
+        "resizable": true,
+        "decorations": false,
+        "center": true
       }
     ],
     "security": {

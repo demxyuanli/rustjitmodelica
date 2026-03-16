@@ -1,6 +1,7 @@
 mod app_data;
 mod app_settings;
 mod ai;
+mod ai_tools;
 mod chunker;
 mod commands;
 mod component_library;
@@ -22,7 +23,7 @@ use commands::ai_commands::{
 };
 use commands::app_commands::{
     get_app_data_root, get_app_settings, get_compiler_config, get_iteration, greet,
-    list_iteration_history, save_iteration, set_app_settings, set_compiler_config,
+    list_iteration_history, open_devtools, save_iteration, set_app_settings, set_compiler_config,
 };
 use commands::git_commands::{
     git_commit, git_commit_files, git_diff_file, git_diff_file_staged, git_head_commit, git_init,
@@ -35,7 +36,7 @@ use commands::index_commands::{
     index_repo_stats, index_search_symbols, index_start_watcher, index_stats, index_stop_watcher,
     index_update_file,
 };
-use commands::iterate_commands::{apply_patch_to_workspace, commit_patch, self_iterate};
+use commands::iterate_commands::{apply_patch_to_project, apply_patch_to_workspace, commit_patch, self_iterate};
 use commands::jit::{
     get_equation_graph, get_simulation_state, jit_validate, run_simulation_cmd,
     simulation_command, simulation_step, start_simulation_session,
@@ -45,11 +46,12 @@ use commands::project::{
     apply_graphical_document_edits, extract_equations_from_source,
     get_component_type_details, get_component_type_relation_graph, get_diagram_data,
     get_diagram_data_from_source, get_graphical_document, get_graphical_document_from_source,
-    list_component_libraries, list_instantiable_classes, list_mo_files, list_mo_tree,
-    open_project_dir, pick_component_library_files, pick_component_library_folder,
-    query_component_library_types, read_component_type_source, read_project_file,
-    remove_component_library, reopen_project_dir, search_in_project,
-    set_component_library_enabled, write_project_file,
+    install_third_party_library_from_git, list_component_libraries, list_instantiable_classes,
+    list_mo_files, list_mo_tree, open_project_dir, pick_component_library_files,
+    pick_component_library_folder, query_component_library_types, read_component_type_source,
+    read_project_file, remove_component_library, reopen_project_dir, search_in_project,
+    set_component_library_enabled, suggest_library_for_missing_type,
+    sync_all_third_party_libraries, sync_third_party_library, write_project_file,
 };
 use commands::source_commands::{
     compiler_file_git_diff, compiler_file_git_log, create_iteration_branch,
@@ -73,12 +75,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            open_devtools,
             jit_validate,
             run_simulation_cmd,
             get_api_key,
             set_api_key,
             ai_code_gen,
             self_iterate,
+            apply_patch_to_project,
             apply_patch_to_workspace,
             commit_patch,
             open_project_dir,
@@ -107,6 +111,10 @@ pub fn run() {
             add_component_library,
             remove_component_library,
             set_component_library_enabled,
+            install_third_party_library_from_git,
+            sync_third_party_library,
+            sync_all_third_party_libraries,
+            suggest_library_for_missing_type,
             list_instantiable_classes,
             query_component_library_types,
             get_component_type_details,

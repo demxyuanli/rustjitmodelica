@@ -139,6 +139,14 @@ export interface ComponentLibrary {
   priority: number;
   builtIn: boolean;
   componentCount: number;
+  sourceUrl?: string;
+  sourceRef?: string;
+}
+
+export interface LibrarySuggestion {
+  displayName: string;
+  url: string;
+  refName: string;
 }
 
 export interface ComponentLibraryTypeQueryResult {

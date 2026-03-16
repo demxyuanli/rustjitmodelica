@@ -5,6 +5,7 @@ import { setLang } from "./i18n";
 
 import { useLayout } from "./hooks/useLayout";
 import { useProject, pathToModelName } from "./hooks/useProject";
+import { useRecentProjects } from "./hooks/useRecentProjects";
 import { useDiagramScheme } from "./contexts/DiagramSchemeContext";
 import { useSimulation } from "./hooks/useSimulation";
 import { useModelicaAI, type AiContextBlock } from "./hooks/useAI";
@@ -15,12 +16,14 @@ import { OutlineSection } from "./components/OutlineSection";
 import { TimelineSection } from "./components/TimelineSection";
 import { SourceControlView } from "./components/SourceControlView";
 import { EditorWorkbench, type EditorWorkbenchRef } from "./components/EditorWorkbench";
+import { WelcomeView } from "./components/WelcomeView";
 import { ComponentLibraryWorkspace } from "./components/ComponentLibraryWorkspace";
 import { StatusBar, type IndexStatusInfo } from "./components/StatusBar";
 import { AIPanel } from "./components/AIPanel";
 import { SearchPanel } from "./components/SearchPanel";
 import { AppIcon } from "./components/Icon";
 import { IconButton } from "./components/IconButton";
+import { emit } from "@tauri-apps/api/event";
 
 const DiffView = lazy(() => import("./components/DiffView").then((m) => ({ default: m.DiffView })));
 const GitGraphView = lazy(() => import("./components/GitGraphView").then((m) => ({ default: m.GitGraphView })));
@@ -47,7 +50,10 @@ import {
   getAppSettings,
   setAppSettings,
   getAppDataRoot,
+  applyPatchToProject,
+  readProjectFile,
 } from "./api/tauri";
+import { parsePathsFromDiff } from "./components/ai/ai-markdown";
 import type { AppSettings } from "./api/tauri";
 import { PREFS_KEYS, readPref, writePref } from "./utils/prefsConstants";
 import {
@@ -113,6 +119,7 @@ function App() {
 
   const layout = useLayout();
   const project = useProject();
+  const { recentProjects, addRecentProject } = useRecentProjects();
   const diagramScheme = useDiagramScheme();
   const sim = useSimulation(log);
   const ai = useModelicaAI(log);
@@ -140,6 +147,32 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handler = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        return;
+      }
+      if (target.isContentEditable) {
+        return;
+      }
+      let el: HTMLElement | null = target;
+      while (el) {
+        if (el.dataset && el.dataset.allowBrowserContextmenu === "true") {
+          return;
+        }
+        el = el.parentElement;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener("contextmenu", handler);
+    return () => {
+      window.removeEventListener("contextmenu", handler);
+    };
+  }, []);
+
+  useEffect(() => {
     getAppSettings().then(setAppSettingsState).catch(() => {});
     getAppDataRoot().then(setAppDataRoot).catch(() => {});
   }, []);
@@ -147,6 +180,14 @@ function App() {
   useEffect(() => {
     scheduleRestoreLastProjectOnce(layout.setWorkspaceMode, project.setProjectDirFromPath);
   }, [layout.setWorkspaceMode, project.setProjectDirFromPath]);
+
+  useEffect(() => {
+    if (project.projectDir) addRecentProject(project.projectDir);
+  }, [project.projectDir, addRecentProject]);
+
+  useEffect(() => {
+    ai.setProjectDir(project.projectDir ?? null);
+  }, [ai.setProjectDir, project.projectDir]);
 
   useEffect(() => {
     if (!project.projectDir) {
@@ -286,6 +327,7 @@ function App() {
   const fontUiStack = layout.fontUi === "code"
     ? "Consolas, Monaco, \"Courier New\", \"Liberation Mono\", monospace"
     : "\"Microsoft JhengHei Light\", \"Microsoft JhengHei\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", system-ui, sans-serif";
+
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty("--font-ui", fontUiStack);
@@ -295,6 +337,10 @@ function App() {
       localStorage.setItem("modai-font-size-percent", String(layout.fontSizePercent));
     } catch { /* ignore */ }
   }, [layout.fontUi, layout.fontSizePercent, fontUiStack]);
+
+  useEffect(() => {
+    emit("frontend-ready").catch(() => {});
+  }, []);
 
   useEffect(() => {
     const syncFontFromStorage = () => {
@@ -426,6 +472,13 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [layout.showLeftSidebar, layout.showBottomPanel]);
 
+  const handleOpenRecentProject = useCallback(
+    (path: string) => {
+      project.setProjectDirFromPath(path).then(() => layout.setWorkspaceMode("modelica"));
+    },
+    [project.setProjectDirFromPath, layout.setWorkspaceMode]
+  );
+
   const handleOpenMoFile = useCallback((relativePath: string, groupIndex?: number) => {
     workbenchRef.current?.openFile(relativePath, groupIndex);
   }, []);
@@ -527,6 +580,26 @@ function App() {
     ai.clearPendingPatch?.();
   }, [ai.aiResponse, ai.pendingPatch, ai.clearPendingPatch]);
 
+  const handleApplyDiff = useCallback(
+    async (diff: string) => {
+      const projectDir = project.projectDir;
+      if (!projectDir) return;
+      await applyPatchToProject(projectDir, diff);
+      const paths = parsePathsFromDiff(diff);
+      const normPaths = paths.map((p) => p.replace(/\\/g, "/")).filter((norm) => norm in contentByPath);
+      if (normPaths.length === 0) return;
+      const updates = await Promise.all(
+        normPaths.map(async (norm) => ({ norm, content: await readProjectFile(projectDir, norm) }))
+      );
+      setContentByPath((prev) => {
+        const next = { ...prev };
+        for (const { norm, content } of updates) next[norm] = content;
+        return next;
+      });
+    },
+    [project.projectDir, contentByPath, setContentByPath]
+  );
+
   return (
     <div className="flex flex-col h-screen bg-surface text-[var(--text)] overflow-hidden">
       <Titlebar
@@ -546,14 +619,16 @@ function App() {
         lang={layout.lang}
         onToggleLang={toggleLang}
         onOpenProject={project.openProject}
+        recentProjects={recentProjects}
+        onOpenRecentProject={handleOpenRecentProject}
         showJitViewMenu={showJitViewMenu}
         setShowJitViewMenu={setShowJitViewMenu}
         jitActiveCenterView={jitActiveCenterView}
         onJitCenterViewSelect={(view) => setJitCenterViewRequest(view)}
       />
       <div className="relative flex flex-1 min-h-0 min-w-0">
-      {layout.workspaceMode === "modelica" ? (
-          <div className="flex flex-1 min-h-0 min-w-0">
+      <>
+      <div className={layout.workspaceMode === "modelica" ? "flex flex-1 min-h-0 min-w-0" : "hidden"}>
             {layout.showLeftSidebar && (
               <>
                 <div className="shrink-0 border-r border-border bg-surface-alt overflow-hidden flex flex-col w-full" style={{ width: layout.leftSidebarWidth }}>
@@ -586,7 +661,7 @@ function App() {
                       aria-label={t("search")}
                     />
                   </div>
-                  <div className="flex-1 min-h-0 overflow-auto flex flex-col scroll-vscode">
+                  <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     {layout.leftSidebarTab === "explorer" && (
                       <>
                         {project.projectDir && (
@@ -602,31 +677,45 @@ function App() {
                             </button>
                           </div>
                         )}
-                        <FileTree
-                          projectDir={project.projectDir}
-                          moTree={project.moTree}
-                          moFiles={project.moFiles}
-                          onOpenProject={project.openProject}
-                          onOpenFile={handleOpenMoFile}
-                        />
-                        <OutlineSection
-                          code={code}
-                          openFilePath={openFilePath}
-                          editorRef={editorRef}
-                          projectDir={project.projectDir}
-                          onOpenDiagram={() => workbenchRef.current?.setViewModeRequest?.("diagramReadOnly")}
-                        />
-                        <TimelineSection
-                          projectDir={project.projectDir}
-                          openFilePath={openFilePath}
-                          onOpenDiffAtRevision={(revision) => {
-                            if (project.projectDir && openFilePath) {
-                              project.setDiffTarget({ projectDir: project.projectDir, relativePath: openFilePath, isStaged: false, revision });
-                              layout.setRightPanelTab("diff");
-                              layout.setShowRightPanel(true);
-                            }
-                          }}
-                        />
+                        <div className="flex-1 min-h-0 overflow-auto scroll-vscode">
+                          <FileTree
+                            projectDir={project.projectDir}
+                            moTree={project.moTree}
+                            moFiles={project.moFiles}
+                            onOpenProject={project.openProject}
+                            onOpenFile={handleOpenMoFile}
+                            recentProjects={recentProjects}
+                            onOpenRecentProject={handleOpenRecentProject}
+                            onNewModel={() => setShowNewModelDialog(true)}
+                          />
+                        </div>
+                        <div className="shrink-0 max-h-64 overflow-auto scroll-vscode">
+                          <OutlineSection
+                            code={code}
+                            openFilePath={openFilePath}
+                            editorRef={editorRef}
+                            projectDir={project.projectDir}
+                            onOpenDiagram={() => workbenchRef.current?.setViewModeRequest?.("diagramReadOnly")}
+                          />
+                        </div>
+                        <div className="shrink-0 max-h-64 overflow-auto scroll-vscode">
+                          <TimelineSection
+                            projectDir={project.projectDir}
+                            openFilePath={openFilePath}
+                            onOpenDiffAtRevision={(revision) => {
+                              if (project.projectDir && openFilePath) {
+                                project.setDiffTarget({
+                                  projectDir: project.projectDir,
+                                  relativePath: openFilePath,
+                                  isStaged: false,
+                                  revision,
+                                });
+                                layout.setRightPanelTab("diff");
+                                layout.setShowRightPanel(true);
+                              }
+                            }}
+                          />
+                        </div>
                       </>
                     )}
                     {layout.leftSidebarTab === "sourceControl" && (
@@ -677,8 +766,9 @@ function App() {
               </>
             )}
             <div className="flex min-w-0 flex-col flex-1 min-h-0">
+              {project.projectDir ? (
               <EditorWorkbench
-                key={project.projectDir ?? "no-project"}
+                key={project.projectDir}
                 ref={workbenchRef}
                 projectDir={project.projectDir}
                 gitStatus={project.gitStatus}
@@ -729,7 +819,14 @@ function App() {
                   restoredWorkspace?.projectDir === project.projectDir ? project.projectDir : undefined
                 }
               />
-              {layout.showBottomPanel && (
+              ) : (
+                <WelcomeView
+                  onOpenProject={project.openProject}
+                  recentProjects={recentProjects}
+                  onOpenRecentProject={handleOpenRecentProject}
+                />
+              )}
+              {layout.showBottomPanel && project.projectDir && (
                 <>
                   <div className="resize-handle-h shrink-0" onMouseDown={layout.startResizeBottom} aria-hidden />
                   <div className="shrink-0 overflow-hidden flex flex-col border-t border-border bg-surface-alt" style={{ height: layout.bottomPanelHeight }}>
@@ -843,6 +940,7 @@ function App() {
                           pendingPatch={ai.pendingPatch}
                           clearPendingPatch={ai.clearPendingPatch}
                           onCreateMoFile={project.projectDir ? handleCreateMoFile : undefined}
+                          onApplyDiff={project.projectDir ? handleApplyDiff : undefined}
                           iterationDiff={ai.iterationDiff}
                           iterationRunResult={ai.iterationRunResult}
                           iterationHistory={ai.iterationHistory}
@@ -873,7 +971,7 @@ function App() {
               </>
             )}
           </div>
-      ) : layout.workspaceMode === "component-library" ? (
+      <div className={layout.workspaceMode === "component-library" ? "flex flex-1 min-h-0 min-w-0" : "hidden"}>
         <ComponentLibraryWorkspace
           projectDir={project.projectDir}
           theme={layout.theme}
@@ -886,7 +984,8 @@ function App() {
             layout.setWorkspaceMode("modelica");
           }}
         />
-      ) : (
+      </div>
+      <div className={layout.workspaceMode === "compiler-iterate" ? "flex flex-1 min-h-0 min-w-0" : "hidden"}>
         <JitIdeWorkspace
           repoRoot={repoRoot}
           requestedCenterView={jitCenterViewRequest}
@@ -894,7 +993,9 @@ function App() {
           onActiveCenterViewChange={setJitActiveCenterView}
           theme={layout.theme}
         />
-      )}
+      </div>
+      </>
+      </div>
       <GlobalSettingsPanel
         open={layout.showSettings}
         onClose={() => layout.setShowSettings(false)}
@@ -940,7 +1041,6 @@ function App() {
         appSettings={appSettings ?? undefined}
         onAppSettingsChange={handleAppSettingsChange}
       />
-      </div>
       <StatusBar
         gitBranch={project.gitBranch}
         openFilePath={layout.workspaceMode === "modelica" ? openFilePath : null}

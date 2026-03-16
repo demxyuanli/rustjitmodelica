@@ -45,6 +45,7 @@ export interface AIPanelProps {
   pendingPatch?: PendingPatch | null;
   clearPendingPatch?: () => void;
   onCreateMoFile?: (relativePath: string, content: string) => Promise<void>;
+  onApplyDiff?: (diff: string) => Promise<void>;
   iterationDiff?: string | null;
   iterationRunResult?: IterationRunResult | null;
   iterationHistory?: IterationRecord[];
@@ -82,6 +83,7 @@ export function AIPanel({
   pendingPatch,
   clearPendingPatch: _clearPendingPatch,
   onCreateMoFile,
+  onApplyDiff,
   iterationDiff,
   iterationRunResult,
   iterationHistory = [],
@@ -179,6 +181,7 @@ export function AIPanel({
           projectDir={projectDir}
           onCreateMoFile={onCreateMoFile}
           onRegenerate={handleSendWithContext}
+          onApplyDiff={onApplyDiff}
         />
       ) : (
         <AIChatEmptyState

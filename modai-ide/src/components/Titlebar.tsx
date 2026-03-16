@@ -1,9 +1,13 @@
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import type { JitCenterView } from "../hooks/useJitLayout";
+import { recentProjectDisplayName } from "../hooks/useRecentProjects";
 import { AppIcon } from "./Icon";
 import { IconButton } from "./IconButton";
+
+const RECENT_MENU_MAX = 10;
 
 export type WorkspaceMode = "modelica" | "component-library" | "compiler-iterate";
 
@@ -24,6 +28,8 @@ interface TitlebarProps {
   lang: "en" | "zh";
   onToggleLang: () => void;
   onOpenProject?: () => void;
+  recentProjects?: string[];
+  onOpenRecentProject?: (path: string) => void;
   showJitViewMenu: boolean;
   setShowJitViewMenu: (v: boolean) => void;
   jitActiveCenterView: JitCenterView | null;
@@ -47,6 +53,8 @@ export function Titlebar({
   lang,
   onToggleLang,
   onOpenProject,
+  recentProjects = [],
+  onOpenRecentProject,
   showJitViewMenu,
   setShowJitViewMenu,
   jitActiveCenterView,
@@ -111,7 +119,7 @@ export function Titlebar({
             </svg>
           </button>
           {showProjectMenu && (
-            <div className="absolute left-0 top-full mt-0 bg-[var(--menu-bg)] border border-border shadow-lg z-50 min-w-[200px] py-1 rounded text-[var(--text)]">
+            <div className="absolute left-0 top-full mt-0 bg-[var(--menu-bg)] border border-border shadow-lg z-50 min-w-[200px] max-w-[320px] py-1 rounded text-[var(--text)]">
               <button
                 type="button"
                 className="w-full text-left px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[var(--menu-hover)]"
@@ -119,6 +127,25 @@ export function Titlebar({
               >
                 {t("openProject")}
               </button>
+              {recentProjects.length > 0 && (
+                <>
+                  <div className="border-t border-border my-1" />
+                  <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
+                    {t("recentProjects")}
+                  </div>
+                  {recentProjects.slice(0, RECENT_MENU_MAX).map((dir) => (
+                    <button
+                      key={dir}
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[var(--menu-hover)] truncate block"
+                      title={dir}
+                      onClick={() => { onOpenRecentProject?.(dir); setShowProjectMenu(false); }}
+                    >
+                      {recentProjectDisplayName(dir)}
+                    </button>
+                  ))}
+                </>
+              )}
               <div className="border-t border-border my-1" />
               <button
                 type="button"
@@ -172,6 +199,49 @@ export function Titlebar({
         )}
       </div>
       <div className="flex-1 flex items-center justify-end gap-1 px-2" data-tauri-drag-region>
+        <button
+          type="button"
+          className="titlebar-btn px-2 h-6 flex items-center justify-center text-[var(--titlebar-fg)] hover:bg-[var(--surface-hover)]"
+          onClick={() => window.location.reload()}
+          title="Refresh"
+          aria-label="Refresh"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 7.5 4" />
+            <path d="M21 3v5h-5" />
+            <path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-7.5-4" />
+            <path d="M3 21v-5h5" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="titlebar-btn px-2 h-6 flex items-center justify-center text-[var(--titlebar-fg)] hover:bg-[var(--surface-hover)]"
+          onClick={() => {
+            void invoke("open_devtools").catch(() => {});
+          }}
+          title="Inspect"
+          aria-label="Inspect"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M9 3v18" />
+            <path d="M3 9h18" />
+          </svg>
+        </button>
         <IconButton
           icon={<AppIcon name="language" aria-hidden="true" />}
           size="xs"

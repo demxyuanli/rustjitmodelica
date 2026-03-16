@@ -37,3 +37,11 @@ pub fn app_data_root() -> Result<PathBuf, String> {
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
+
+/// Root directory for third-party libraries installed from Git URLs.
+/// Used by component_library::install_library_from_git. Creates the directory if missing.
+pub fn installed_libraries_root() -> Result<PathBuf, String> {
+    let root = app_data_root()?.join("libraries");
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(root)
+}

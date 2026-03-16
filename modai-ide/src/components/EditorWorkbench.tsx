@@ -421,6 +421,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
   return (
     <div
       className={`editor-workbench flex-1 min-w-0 min-h-0 flex overflow-hidden ${isSplit ? "flex-row" : "flex-col"}`}
+      data-allow-browser-contextmenu="true"
     >
       {editorGroups.map((group, gi) => (
         <React.Fragment key={gi}>

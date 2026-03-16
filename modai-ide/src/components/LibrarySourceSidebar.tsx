@@ -3,6 +3,18 @@ import { t } from "../i18n";
 import type { ComponentLibrary } from "../types";
 import { AppIcon } from "./Icon";
 
+function SectionIcon({ letter, bg, title }: { letter: string; bg: string; title: string }) {
+  return (
+    <span
+      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${bg}`}
+      title={title}
+      aria-hidden="true"
+    >
+      {letter}
+    </span>
+  );
+}
+
 interface LibrarySourceSidebarProps {
   libraries: ComponentLibrary[];
   selectedLibraryId: string;
@@ -15,6 +27,7 @@ interface LibrarySourceSidebarProps {
   onEnabledOnlyChange: (value: boolean) => void;
   onToggleLibrary: (library: ComponentLibrary) => void;
   onRemoveLibrary: (library: ComponentLibrary) => void;
+  onSyncLibrary?: (library: ComponentLibrary) => void;
 }
 
 type ScopeGroup = "system" | "global" | "project";
@@ -44,6 +57,7 @@ export function LibrarySourceSidebar({
   onEnabledOnlyChange,
   onToggleLibrary,
   onRemoveLibrary,
+  onSyncLibrary,
 }: LibrarySourceSidebarProps) {
   const [collapsed, setCollapsed] = useState<Record<ScopeGroup, boolean>>({
     system: false,
@@ -85,7 +99,10 @@ export function LibrarySourceSidebar({
   return (
     <aside className="w-[248px] shrink-0 border-r border-border bg-[var(--bg-elevated)]">
       <div className="panel-header-bar-tall flex flex-col items-stretch border-b border-border">
-        <div className="text-sm font-medium">{t("componentLibraryManager")}</div>
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <SectionIcon letter="L" bg="bg-violet-500/85" title={t("componentLibraryManager")} />
+          {t("componentLibraryManager")}
+        </div>
         <div className="mt-2 flex flex-col gap-2">
           <input
             value={query}
@@ -184,7 +201,17 @@ export function LibrarySourceSidebar({
                                   </div>
                                 )}
                                 {!library.builtIn && (
-                                  <div className="flex gap-1">
+                                  <div className="flex flex-wrap gap-1">
+                                    {library.sourceUrl != null && onSyncLibrary && (
+                                      <button
+                                        type="button"
+                                        onClick={() => onSyncLibrary(library)}
+                                        disabled={busy}
+                                        className="rounded border border-border px-1.5 py-0.5 text-[10px] hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                      >
+                                        {t("componentLibrarySync")}
+                                      </button>
+                                    )}
                                     <button
                                       type="button"
                                       onClick={() => onToggleLibrary(library)}

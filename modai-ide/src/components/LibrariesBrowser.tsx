@@ -1,8 +1,11 @@
+import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listInstantiableClasses } from "../api/tauri";
 import type { InstantiableClass } from "../types";
 import type { MoTreeEntry } from "../hooks/useProject";
+import { recentProjectDisplayName } from "../hooks/useRecentProjects";
 import { t } from "../i18n";
+import { AppIcon } from "./Icon";
 import { FileIcon } from "./FileIcon";
 import { useDiagramScheme } from "../contexts/DiagramSchemeContext";
 
@@ -81,11 +84,15 @@ function TreeNode({
   depth,
   onOpenFile,
   defaultExpanded,
+  onFileContextMenu,
+  onFolderContextMenu,
 }: {
   entry: MoTreeEntry;
   depth: number;
   onOpenFile?: (path: string) => void;
   defaultExpanded: boolean;
+  onFileContextMenu?: (info: { path: string; name: string; event: React.MouseEvent }) => void;
+  onFolderContextMenu?: (info: { name: string; event: React.MouseEvent }) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const hasChildren = entry.children && entry.children.length > 0;
@@ -102,6 +109,8 @@ function TreeNode({
             depth={0}
             onOpenFile={onOpenFile}
             defaultExpanded={depth < 1}
+            onFileContextMenu={onFileContextMenu}
+            onFolderContextMenu={onFolderContextMenu}
           />
         ))}
       </>
@@ -130,6 +139,11 @@ function TreeNode({
             type="button"
             className="tree-label text-left text-[var(--text)] hover:bg-white/10 rounded px-1"
             onClick={() => entry.path && onOpenFile?.(entry.path)}
+            onContextMenu={(event) => {
+              if (!entry.path || !onFileContextMenu) return;
+              event.preventDefault();
+              onFileContextMenu({ path: entry.path, name: entry.name, event });
+            }}
             title={entry.path ?? undefined}
           >
             <span>{entry.name}</span>
@@ -143,6 +157,11 @@ function TreeNode({
           <span
             className="tree-label font-medium text-[var(--text-muted)] cursor-default px-1"
             onClick={() => hasChildren && setExpanded((value) => !value)}
+            onContextMenu={(event) => {
+              if (!onFolderContextMenu) return;
+              event.preventDefault();
+              onFolderContextMenu({ name: entry.name, event });
+            }}
           >
             {entry.name}
           </span>
@@ -157,6 +176,8 @@ function TreeNode({
               depth={depth + 1}
               onOpenFile={onOpenFile}
               defaultExpanded={depth < 0}
+              onFileContextMenu={onFileContextMenu}
+              onFolderContextMenu={onFolderContextMenu}
             />
           ))}
         </div>
@@ -183,6 +204,10 @@ export interface LibrariesBrowserProps {
   onOpenProject?: () => void;
   onOpenFile?: (relativePath: string) => void;
   onOpenType?: (typeName: string, libraryId?: string) => void;
+  recentProjects?: string[];
+  onOpenRecentProject?: (path: string) => void;
+  onFileContextMenu?: (info: { path: string; name: string; event: React.MouseEvent }) => void;
+  onFolderContextMenu?: (info: { name: string; event: React.MouseEvent }) => void;
 }
 
 export function LibrariesBrowser({
@@ -195,6 +220,10 @@ export function LibrariesBrowser({
   onOpenProject,
   onOpenFile,
   onOpenType,
+  recentProjects = [],
+  onOpenRecentProject,
+  onFileContextMenu,
+  onFolderContextMenu,
 }: LibrariesBrowserProps) {
   const [query, setQuery] = useState("");
   const [classes, setClasses] = useState<InstantiableClass[]>([]);
@@ -371,13 +400,42 @@ export function LibrariesBrowser({
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto">
+        {showProjectFiles && !projectDir && recentProjects.length > 0 && (
+          <div className="p-2 border-b border-[var(--border)]">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1.5">
+              {t("recentProjects")}
+            </div>
+            <ul className="text-xs space-y-0.5">
+              {recentProjects.slice(0, 10).map((dir) => (
+                <li key={dir}>
+                  <button
+                    type="button"
+                    className="tree-row w-full text-left rounded px-1 py-1 hover:bg-white/10 text-[var(--text)] flex items-center gap-1.5"
+                    title={dir}
+                    onClick={() => onOpenRecentProject?.(dir)}
+                  >
+                    <AppIcon name="explorer" className="w-3.5 h-3.5 shrink-0 text-[var(--text-muted)]" aria-hidden />
+                    <span className="truncate">{recentProjectDisplayName(dir)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {projectDir ? (
           <>
             {showProjectFiles && (
               <div className="p-2">
                 {showProjectTree ? (
                   <div className="text-xs">
-                    <TreeNode entry={moTree!} depth={0} onOpenFile={onOpenFile} defaultExpanded={true} />
+                    <TreeNode
+                      entry={moTree!}
+                      depth={0}
+                      onOpenFile={onOpenFile}
+                      defaultExpanded={true}
+                      onFileContextMenu={onFileContextMenu}
+                      onFolderContextMenu={onFolderContextMenu}
+                    />
                   </div>
                 ) : (
                   <ul className="text-xs space-y-0.5">
@@ -460,9 +518,7 @@ export function LibrariesBrowser({
               </div>
             )}
           </>
-        ) : (
-          <div className="p-3 text-xs text-[var(--text-muted)]">{t("noProjectOpen")}</div>
-        )}
+        ) : null}
       </div>
     </aside>
   );

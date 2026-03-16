@@ -167,6 +167,64 @@ export function parseNewFileDiff(diff: string): { path: string; content: string 
   return { path, content: contentLines.join("\n") };
 }
 
+/**
+ * Returns true if the unified diff touches at least one existing file
+ * (i.e. has a "---" line that is not /dev/null).
+ */
+export function isExistingFileDiff(diff: string): boolean {
+  if (!diff.trim()) return false;
+  const lines = diff.split("\n");
+  for (const line of lines) {
+    if (line.startsWith("--- ")) {
+      const path = line.slice(4).trim().split(/\s+/)[0] ?? "";
+      if (path !== "/dev/null" && path !== "a/dev/null") return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Returns relative paths of files touched by the unified diff (from +++ b/ or --- a/).
+ * Normalized with forward slashes for consistency.
+ */
+export function parsePathsFromDiff(diff: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  const lines = diff.split("\n");
+  for (const line of lines) {
+    if (line.startsWith("--- a/")) {
+      const p = line.slice(6).trim().split(/\s+/)[0] ?? "";
+      const norm = p.replace(/\\/g, "/");
+      if (norm && !seen.has(norm)) {
+        seen.add(norm);
+        paths.push(norm);
+      }
+    } else if (line.startsWith("+++ b/")) {
+      const p = line.slice(6).trim().split(/\s+/)[0] ?? "";
+      const norm = p.replace(/\\/g, "/");
+      if (norm && !seen.has(norm)) {
+        seen.add(norm);
+        paths.push(norm);
+      }
+    } else if (line.startsWith("--- ") && !line.startsWith("--- a/") && !line.startsWith("--- /dev/null")) {
+      const p = (line.slice(4).trim().split(/\s+/)[0] ?? "").replace(/^a\//, "");
+      const norm = p.replace(/\\/g, "/");
+      if (norm && norm !== "/dev/null" && !seen.has(norm)) {
+        seen.add(norm);
+        paths.push(norm);
+      }
+    } else if (line.startsWith("+++ ") && !line.startsWith("+++ b/") && !line.startsWith("+++ /dev/null")) {
+      const p = (line.slice(4).trim().split(/\s+/)[0] ?? "").replace(/^b\//, "");
+      const norm = p.replace(/\\/g, "/");
+      if (norm && norm !== "/dev/null" && !seen.has(norm)) {
+        seen.add(norm);
+        paths.push(norm);
+      }
+    }
+  }
+  return paths;
+}
+
 export function renderInlineDiff(diff: string): React.ReactElement | null {
   if (!diff.trim()) return null;
   const lines = diff.split("\n");
