@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { t } from "../i18n";
 import { FileIcon } from "./FileIcon";
+import { ContextMenu } from "./ContextMenu";
 
 export interface EditorTab {
   id: string;
@@ -27,6 +29,10 @@ export function EditorTabBar({
   onSelectTab,
   onCloseTab,
 }: EditorTabBarProps) {
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [menuIndex, setMenuIndex] = useState<number | null>(null);
+
   if (tabs.length === 0) return null;
 
   return (
@@ -42,6 +48,12 @@ export function EditorTabBar({
                 ? "bg-[var(--surface)] text-[var(--text)]"
                 : "bg-[var(--surface-alt)] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
             }`}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setMenuPosition({ x: event.clientX, y: event.clientY });
+              setMenuIndex(i);
+              setMenuVisible(true);
+            }}
           >
             <FileIcon name={label} size={14} />
             <button
@@ -70,6 +82,65 @@ export function EditorTabBar({
           </div>
         );
       })}
+      <ContextMenu
+        visible={menuVisible}
+        x={menuPosition.x}
+        y={menuPosition.y}
+        onClose={() => setMenuVisible(false)}
+        items={
+          menuIndex != null
+            ? [
+                {
+                  id: "close",
+                  label: t("closeTab"),
+                  onClick: () => onCloseTab(menuIndex),
+                },
+                {
+                  id: "close-others",
+                  label: t("closeOthers") ?? "Close others",
+                  onClick: () => {
+                    for (let index = tabs.length - 1; index >= 0; index -= 1) {
+                      if (index !== menuIndex) {
+                        onCloseTab(index);
+                      }
+                    }
+                  },
+                },
+                {
+                  id: "close-right",
+                  label: t("contextCloseTabsRight"),
+                  onClick: () => {
+                    for (let index = tabs.length - 1; index > menuIndex; index -= 1) {
+                      onCloseTab(index);
+                    }
+                  },
+                },
+                {
+                  id: "close-saved",
+                  label: t("contextCloseSaved"),
+                  onClick: () => {
+                    for (let index = tabs.length - 1; index >= 0; index -= 1) {
+                      if (index === menuIndex) continue;
+                      const tab = tabs[index];
+                      if (!tab.dirty) {
+                        onCloseTab(index);
+                      }
+                    }
+                  },
+                },
+                {
+                  id: "copy-path",
+                  label: t("contextCopyRelativePath"),
+                  onClick: () => {
+                    const tab = tabs[menuIndex];
+                    const path = (tab.projectPath ?? tab.path) || "";
+                    void navigator.clipboard.writeText(path);
+                  },
+                },
+              ]
+            : []
+        }
+      />
     </div>
   );
 }

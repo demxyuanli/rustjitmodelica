@@ -4,6 +4,7 @@ import { useGit, type GitStatus } from "../hooks/useGit";
 import { FileIcon } from "./FileIcon";
 import { AppIcon } from "./Icon";
 import { IconButton } from "./IconButton";
+import { ContextMenu } from "./ContextMenu";
 
 export type { GitStatus };
 export type { GitLogEntry, GitCommitFile } from "../hooks/useGit";
@@ -72,6 +73,9 @@ export function SourceControlView({
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [stagedOpen, setStagedOpen] = useState(true);
   const [changesOpen, setChangesOpen] = useState(true);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [menuTarget, setMenuTarget] = useState<{ path: string; isStaged: boolean } | null>(null);
 
   useEffect(() => {
     if (!git.status) return;
@@ -195,6 +199,13 @@ export function SourceControlView({
               <div
                 className={`tree-row group rounded ${isFile ? statusRowClass(st, staged) : ""}`}
                 style={{ paddingLeft }}
+                onContextMenu={(event) => {
+                  if (!isFile || !child.fullPath) return;
+                  event.preventDefault();
+                  setMenuPosition({ x: event.clientX, y: event.clientY });
+                  setMenuTarget({ path: child.fullPath, isStaged: staged });
+                  setMenuVisible(true);
+                }}
               >
                 {hasChildren ? (
                   <IconButton
@@ -382,6 +393,56 @@ export function SourceControlView({
           )}
         </div>
       </div>
+      <ContextMenu
+        visible={menuVisible}
+        x={menuPosition.x}
+        y={menuPosition.y}
+        onClose={() => setMenuVisible(false)}
+        items={
+          menuTarget
+            ? [
+                {
+                  id: "open-diff",
+                  label: t("viewDiff"),
+                  onClick: () => {
+                    onOpenDiff(menuTarget.path, menuTarget.isStaged);
+                  },
+                },
+                {
+                  id: "open-editor",
+                  label: t("openInEditor"),
+                  onClick: () => {
+                    onOpenInEditor?.(menuTarget.path);
+                  },
+                },
+                !menuTarget.isStaged
+                  ? {
+                      id: "stage",
+                      label: t("stage"),
+                      onClick: () => {
+                        git.stage([menuTarget.path]);
+                      },
+                    }
+                  : {
+                      id: "unstage",
+                      label: t("unstage"),
+                      onClick: () => {
+                        git.unstage([menuTarget.path]);
+                      },
+                    },
+                {
+                  id: "discard",
+                  label: t("contextDiscardChanges"),
+                  disabled: menuTarget.isStaged,
+                  onClick: () => {
+                    if (menuTarget.isStaged) return;
+                    // discard logic to be implemented with git helper if available
+                  },
+                },
+              ]
+            : []
+        }
+      />
     </div>
   );
 }

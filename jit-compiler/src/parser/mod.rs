@@ -14,7 +14,10 @@ pub struct ModelicaParser;
 pub fn parse(input: &str) -> Result<ClassItem, pest::error::Error<Rule>> {
     let mut pairs = ModelicaParser::parse(Rule::model_file, input)?;
     let program = pairs.next().unwrap();
-    let model_pair = program.into_inner().next().unwrap();
+    let model_pair = program
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::model_definition)
+        .expect("model_file must contain model_definition");
     parse_model(model_pair)
 }
 

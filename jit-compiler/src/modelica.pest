@@ -3,11 +3,14 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)* }
 
-model_file = { SOI ~ model_definition ~ EOI }
+within_clause = { "within" ~ WHITESPACE? ~ (dotted_identifier)? ~ WHITESPACE? ~ ";" }
+
+model_file = { SOI ~ within_clause? ~ model_definition ~ EOI }
 
 model_definition = {
     class_prefixes
     ~ identifier
+    ~ (string_comment ~ WHITESPACE?)?
     ~ (";" ~ WHITESPACE?)?
     ~ WHITESPACE?
     ~ declaration_section
@@ -26,7 +29,8 @@ class_prefixes = { "partial"? ~ ("operator"? ~ "record" | "model" | "connector" 
 
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 dotted_identifier = { identifier ~ ("." ~ identifier)* }
-declaration_section = { (extends_clause | declaration | model_definition | type_definition)* }
+annotation_clause = { annotation ~ ";" }
+declaration_section = { (extends_clause | declaration | model_definition | type_definition | annotation_clause)* }
 type_definition = { "type" ~ identifier ~ "=" ~ type_name ~ array_subscript? ~ modification_part? ~ ";" }
 
 extends_clause = { "extends" ~ dotted_identifier ~ modification_part? ~ ";" }
@@ -51,7 +55,7 @@ output_kw = { "output" }
 // Allow arbitrary identifiers as type names for models/connectors
 type_name = { !keyword ~ ("Real" | "Integer" | "Boolean" | dotted_identifier) }
 
-keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "each" | "redeclare" | "annotation" | "assert" | "terminate" | "operator" | "type" | "external" | "replaceable") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "each" | "redeclare" | "annotation" | "assert" | "terminate" | "operator" | "type" | "external" | "replaceable" | "within") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 value_assignment = { "=" ~ expression }
 // attribute_modification removed
@@ -99,8 +103,9 @@ for_loop = { "for" ~ identifier ~ "in" ~ range ~ "loop" ~ equation_stmt+ ~ "end"
 range = { expression ~ (":" ~ expression)+ }
 
 annotation = { "annotation" ~ "(" ~ annotation_content ~ ")" }
-annotation_content = { ("(" ~ annotation_content ~ ")" | annotation_inner_char)* }
-annotation_inner_char = { (!"(" ~ !")" ~ ANY) }
+annotation_content = { ("(" ~ annotation_content ~ ")" | annotation_string | annotation_inner_char)* }
+annotation_string = @{ "\"" ~ (("\\" ~ ANY) | (!"\\" ~ !"\"" ~ ANY))* ~ "\"" }
+annotation_inner_char = { (!"(" ~ !")" ~ !"\"" ~ ANY) }
 
 expression = { if_expression | logical_or }
 

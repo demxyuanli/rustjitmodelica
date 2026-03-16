@@ -12,7 +12,8 @@ pub fn set_api_key(api_key: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
-    use ai::{AiCodeGenPayload, AiOptions, ChatMessage, ChatRequest};
+    use ai::{AiCodeGenPayload, AiOptions};
+    use serde_json::json;
 
     let api_key = ai::get_api_key().map_err(|e| e.to_string())?;
     if let Some(prompt_str) = payload.as_str() {
@@ -32,12 +33,9 @@ pub async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
         requested_model
     };
 
-    let mut messages: Vec<ChatMessage> = Vec::new();
+    let mut messages: Vec<serde_json::Value> = Vec::new();
     if let Some(system) = parsed.system.as_ref() {
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: system.clone(),
-        });
+        messages.push(json!({ "role": "system", "content": system }));
     }
     if let Some(blocks) = parsed.context_blocks.as_ref() {
         if !blocks.is_empty() {
@@ -49,46 +47,39 @@ pub async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
                 ctx.push_str(&b.content);
                 ctx.push_str("\n\n");
             }
-            messages.push(ChatMessage {
-                role: "system".to_string(),
-                content: format!("Relevant code/context:\n\n{}", ctx),
-            });
+            messages.push(json!({ "role": "system", "content": format!("Relevant code/context:\n\n{}", ctx) }));
         }
     }
-    messages.push(ChatMessage {
-        role: "user".to_string(),
-        content: parsed.prompt,
-    });
-
-    let mut body = ChatRequest {
-        model: model.clone(),
-        messages,
-    };
+    messages.push(json!({ "role": "user", "content": parsed.prompt }));
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut res = client
-        .post(ai::DEEPSEEK_URL)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let base_dir = parsed
+        .project_dir
+        .clone()
+        .or_else(|| crate::commands::common::repo_root().ok().map(|p| p.to_string_lossy().to_string()))
+        .unwrap_or_default();
+    let tools = crate::ai_tools::tools_schema();
 
-    let mut status = res.status();
-    let mut text = res.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success()
-        && status.as_u16() == 400
-        && text.contains("Model Not Exist")
-        && model != ai::DEFAULT_MODEL
-    {
-        model = ai::DEFAULT_MODEL.to_string();
-        body.model = model.clone();
-        res = client
+    let mut steps: u32 = 0;
+    let max_steps: u32 = 8;
+    loop {
+        steps += 1;
+        if steps > max_steps {
+            return Err("tool loop limit reached".to_string());
+        }
+
+        let body = json!({
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto"
+        });
+
+        let mut res = client
             .post(ai::DEEPSEEK_URL)
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
@@ -96,21 +87,78 @@ pub async fn ai_code_gen(payload: serde_json::Value) -> Result<String, String> {
             .send()
             .await
             .map_err(|e| e.to_string())?;
-        status = res.status();
-        text = res.text().await.map_err(|e| e.to_string())?;
-    }
 
-    if !status.is_success() {
-        return Err(format!("API error {}: {}", status, text));
-    }
+        let mut status = res.status();
+        let mut text = res.text().await.map_err(|e| e.to_string())?;
+        if !status.is_success()
+            && status.as_u16() == 400
+            && text.contains("Model Not Exist")
+            && model != ai::DEFAULT_MODEL
+        {
+            model = ai::DEFAULT_MODEL.to_string();
+            let body_retry = json!({
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto"
+            });
+            res = client
+                .post(ai::DEEPSEEK_URL)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&body_retry)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            status = res.status();
+            text = res.text().await.map_err(|e| e.to_string())?;
+        }
 
-    let parsed: ai::ChatResponse =
-        serde_json::from_str(&text).map_err(|e| format!("parse: {}", e))?;
-    parsed
-        .choices
-        .and_then(|c| c.into_iter().next())
-        .map(|c| c.message.content)
-        .ok_or_else(|| "No choices in response".to_string())
+        if !status.is_success() {
+            return Err(format!("API error {}: {}", status, text));
+        }
+
+        let v: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("parse: {}", e))?;
+        let msg = v
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c0| c0.get("message"))
+            .ok_or_else(|| "No choices in response".to_string())?;
+
+        let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+        let tool_calls = msg.get("tool_calls").and_then(|tc| tc.as_array()).cloned().unwrap_or_default();
+
+        if tool_calls.is_empty() {
+            return Ok(content);
+        }
+
+        // Save assistant message to keep context.
+        messages.push(json!({ "role": "assistant", "content": content }));
+
+        for tc in tool_calls {
+            let call_id = tc.get("id").and_then(|x| x.as_str()).unwrap_or("tool_call").to_string();
+            let func = tc.get("function").cloned().unwrap_or(json!({}));
+            let name = func.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let arg_str = func.get("arguments").and_then(|x| x.as_str()).unwrap_or("{}");
+            let mut args_v: serde_json::Value =
+                serde_json::from_str(arg_str).unwrap_or_else(|_| json!({}));
+
+            // Enforce base_dir.
+            if let serde_json::Value::Object(ref mut map) = args_v {
+                if !map.contains_key("base_dir") {
+                    map.insert("base_dir".to_string(), serde_json::Value::String(base_dir.clone()));
+                }
+            }
+
+            let tool_out = crate::ai_tools::exec_tool(&name, &args_v)
+                .map_err(|e| format!("tool {} failed: {}", name, e))?;
+
+            // Return tool output back to model.
+            messages.push(json!({ "role": "tool", "tool_call_id": call_id, "content": tool_out }));
+        }
+    }
 }
 
 #[tauri::command]

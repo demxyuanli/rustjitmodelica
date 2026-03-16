@@ -112,6 +112,7 @@ function parsePatchFromResponse(
 }
 
 function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
+  const [projectDir, setProjectDir] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -245,6 +246,7 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
         prompt: promptForModel,
         system,
         contextBlocks: blocks.length > 0 ? blocks : undefined,
+        projectDir: projectDir ?? undefined,
         options: {
           model: model || DEFAULT_MODEL,
         },
@@ -267,7 +269,7 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
     } finally {
       setAiLoading(false);
     }
-  }, [aiPrompt, contextBlocks, log, agentMode, model, activeFilePath]);
+  }, [aiPrompt, contextBlocks, log, agentMode, model, activeFilePath, projectDir]);
 
   const tokenEstimate = estimateTokens(aiPrompt + (contextBlocks.length ? "\n" + contextBlocks.map((b) => b.content).join("\n") : ""));
   const sendDisabled = aiLoading || !apiKeySaved || dailyTokenUsed + estimateTokens(aiPrompt.trim()) > DAILY_TOKEN_LIMIT;
@@ -329,6 +331,8 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
   }, []);
 
   return {
+    projectDir,
+    setProjectDir,
     apiKey,
     setApiKey,
     apiKeySaved,

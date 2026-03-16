@@ -11,6 +11,7 @@ export const PREFS_KEYS = {
   defaultWorkspace: "modai-default-workspace",
   restoreLayout: "modai-restore-layout",
   lastProjectDir: "modai-last-project-dir",
+  recentProjectDirs: "modai-recent-project-dirs",
   showWelcomeOnFirstLaunch: "modai-show-welcome-on-first-launch",
   aiDaily: "modai-ai-daily",
   aiModel: "modai-ai-model",

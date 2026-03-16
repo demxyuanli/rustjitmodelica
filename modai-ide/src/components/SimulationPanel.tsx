@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { ZoomIn, ZoomOut, Maximize2, Maximize } from "lucide-react";
+import { suggestLibraryForMissingType, installThirdPartyLibraryFromGit } from "../api/tauri";
 import { t } from "../i18n";
 import type { JointPaperHandle } from "../utils/jointUtils";
 import { AppIcon } from "./Icon";
 import { IconButton } from "./IconButton";
 import { EquationGraphView } from "./EquationGraphView";
 import { DependencyGraphModal } from "./DependencyGraphModal";
-import type { JitValidateResult, SimulationResult } from "../types";
+import type { JitValidateResult, LibrarySuggestion, SimulationResult } from "../types";
 import { SimulationRunView } from "./simulation/SimulationRunView";
 import type { SimulationChartMeta, SimulationChartSeries } from "./simulation/types";
+import { ContextMenu } from "./ContextMenu";
 
 export interface TestAllResultItem {
   path: string;
@@ -69,6 +71,11 @@ function pathToModelName(relativePath: string | null | undefined): string {
   if (!relativePath) return "";
   const withoutExt = relativePath.replace(/\.mo$/i, "");
   return withoutExt.replace(/[/\\]/g, ".");
+}
+
+function parseUnknownTypeFromError(message: string): string | null {
+  const m = message.match(/Unknown type '([^']+)' for instance/);
+  return m ? m[1] : null;
 }
 
 interface TabButtonProps {
@@ -183,8 +190,47 @@ export function SimulationPanel({
     code && modelName && openFilePath?.toLowerCase().endsWith(".mo")
   );
 
+  useEffect(() => {
+    const errors = data.jitResult?.errors ?? [];
+    setSuggestionByIndex({});
+    setInstallMessage(null);
+    errors.forEach((err, i) => {
+      const typeName = parseUnknownTypeFromError(err);
+      if (typeName) {
+        void suggestLibraryForMissingType(typeName).then((s) => {
+          if (s) setSuggestionByIndex((prev) => ({ ...prev, [i]: s }));
+        });
+      }
+    });
+  }, [data.jitResult?.errors]);
+
+  const handleInstallSuggestedLibrary = useCallback(
+    async (suggestion: LibrarySuggestion) => {
+      setInstallBusy(true);
+      setInstallMessage(null);
+      try {
+        await installThirdPartyLibraryFromGit({
+          projectDir: projectDir ?? undefined,
+          scope: "global",
+          url: suggestion.url,
+          refName: suggestion.refName,
+          displayName: suggestion.displayName,
+        });
+        setInstallMessage(t("componentLibraryInstalledFromUrl") + " " + t("jitValidate") + ".");
+      } catch (e) {
+        setInstallMessage(String(e));
+      } finally {
+        setInstallBusy(false);
+      }
+    },
+    [projectDir]
+  );
+
   const [showSettings, setShowSettings] = useState(false);
   const [dependencyGraphModalOpen, setDependencyGraphModalOpen] = useState(false);
+  const [suggestionByIndex, setSuggestionByIndex] = useState<Record<number, LibrarySuggestion>>({});
+  const [installBusy, setInstallBusy] = useState(false);
+  const [installMessage, setInstallMessage] = useState<string | null>(null);
   const [depPaperHandle, setDepPaperHandle] = useState<JointPaperHandle | null>(null);
   const handleDepZoomIn = useCallback(() => depPaperHandle?.zoomIn(), [depPaperHandle]);
   const handleDepZoomOut = useCallback(() => depPaperHandle?.zoomOut(), [depPaperHandle]);
@@ -194,6 +240,11 @@ export function SimulationPanel({
   const [compilationExpanded, setCompilationExpanded] = useState(true);
   const [variablesExpanded, setVariablesExpanded] = useState(false);
   const [testResultsExpanded, setTestResultsExpanded] = useState(true);
+  const [outputMenuVisible, setOutputMenuVisible] = useState(false);
+  const [outputMenuPosition, setOutputMenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [errorMenuVisible, setErrorMenuVisible] = useState(false);
+  const [errorMenuPosition, setErrorMenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [errorMenuText, setErrorMenuText] = useState<string | null>(null);
 
   const togglePlotVar = (name: string) => {
     setSelectedPlotVars((prev) =>
@@ -519,9 +570,38 @@ export function SimulationPanel({
                   )}
                   {data.jitResult && !data.jitResult.success && (
                     <div className="space-y-1">
+                      {installMessage && (
+                        <div className="rounded border border-border bg-[var(--bg-elevated)] px-2 py-1.5 text-xs text-[var(--text-muted)]">
+                          {installMessage}
+                        </div>
+                      )}
                       {data.jitResult.errors.map((e, i) => (
-                        <div key={i} className="text-[var(--danger-text)]">
-                          {e}
+                        <div
+                          key={i}
+                          className="text-[var(--danger-text)]"
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            setErrorMenuPosition({ x: event.clientX, y: event.clientY });
+                            setErrorMenuText(e);
+                            setErrorMenuVisible(true);
+                          }}
+                        >
+                          <div>{e}</div>
+                          {suggestionByIndex[i] && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              <span className="text-[11px] text-[var(--text-muted)]">
+                                {t("suggestLibraryForType")}: {suggestionByIndex[i].displayName}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleInstallSuggestedLibrary(suggestionByIndex[i])}
+                                disabled={installBusy}
+                                className="rounded border border-border bg-primary/80 px-1.5 py-0.5 text-[10px] text-white hover:bg-primary disabled:opacity-50"
+                              >
+                                {t("installSuggestedLibrary")}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                       <button
@@ -709,7 +789,14 @@ export function SimulationPanel({
                 {t("clearLog")}
               </button>
             </div>
-            <div className="flex-1 overflow-auto p-2 font-mono text-xs scroll-vscode">
+            <div
+              className="flex-1 overflow-auto p-2 font-mono text-xs scroll-vscode"
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setOutputMenuPosition({ x: event.clientX, y: event.clientY });
+                setOutputMenuVisible(true);
+              }}
+            >
               {data.logLines.length === 0 ? (
                 <div className="text-[var(--text-muted)]">{t("tabOutput")}</div>
               ) : (
@@ -811,6 +898,58 @@ export function SimulationPanel({
           </div>
         )}
       </div>
+      <ContextMenu
+        visible={outputMenuVisible}
+        x={outputMenuPosition.x}
+        y={outputMenuPosition.y}
+        onClose={() => setOutputMenuVisible(false)}
+        items={[
+          {
+            id: "copy-all",
+            label: t("copyTestAllOutput"),
+            onClick: () => {
+              if (data.logLines.length === 0) return;
+              void navigator.clipboard.writeText(data.logLines.join("\n"));
+            },
+          },
+          {
+            id: "clear-log",
+            label: t("clearLog"),
+            onClick: () => {
+              actions.onClearLog?.();
+            },
+          },
+        ]}
+      />
+      <ContextMenu
+        visible={errorMenuVisible}
+        x={errorMenuPosition.x}
+        y={errorMenuPosition.y}
+        onClose={() => setErrorMenuVisible(false)}
+        items={
+          errorMenuText
+            ? [
+                {
+                  id: "copy-error",
+                  label: t("contextCopyError"),
+                  onClick: () => {
+                    void navigator.clipboard.writeText(errorMenuText);
+                  },
+                },
+                {
+                  id: "ai-fix-error",
+                  label: t("suggestFixWithAi"),
+                  onClick: () => {
+                    actions.onSuggestFixWithAi(
+                      "Fix the following Modelica compile error and suggest corrected code: " +
+                        errorMenuText
+                    );
+                  },
+                },
+              ]
+            : []
+        }
+      />
     </div>
   );
 }

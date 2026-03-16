@@ -50,7 +50,7 @@ export function TimelineSection({
   }, [load]);
 
   return (
-    <div className="shrink-0 border-t border-border">
+    <div className="shrink-0 border-t border-border bg-[var(--surface-alt)]">
       <button
         type="button"
         className="tree-row w-full text-left font-medium text-[var(--text-muted)] hover:bg-white/5 rounded-none"

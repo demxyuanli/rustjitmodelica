@@ -10,6 +10,7 @@ import type {
   InstantiableClass,
   JitValidateOptions,
   JitValidateResult,
+  LibrarySuggestion,
   SimulationResult,
 } from "../types";
 
@@ -143,6 +144,44 @@ export async function setComponentLibraryEnabled(params: {
     libraryId: params.libraryId,
     enabled: params.enabled,
   });
+}
+
+export async function installThirdPartyLibraryFromGit(params: {
+  projectDir?: string | null;
+  scope: string;
+  url: string;
+  refName?: string | null;
+  displayName?: string | null;
+}): Promise<ComponentLibrary> {
+  return invoke<ComponentLibrary>("install_third_party_library_from_git", {
+    projectDir: params.projectDir ?? undefined,
+    scope: params.scope,
+    url: params.url,
+    refName: params.refName ?? undefined,
+    displayName: params.displayName ?? undefined,
+  });
+}
+
+export async function syncThirdPartyLibrary(params: {
+  projectDir?: string | null;
+  scope: string;
+  libraryId: string;
+}): Promise<void> {
+  await invoke("sync_third_party_library", {
+    projectDir: params.projectDir ?? undefined,
+    scope: params.scope,
+    libraryId: params.libraryId,
+  });
+}
+
+export async function syncAllThirdPartyLibraries(projectDir?: string | null): Promise<number> {
+  return invoke<number>("sync_all_third_party_libraries", {
+    projectDir: projectDir ?? undefined,
+  });
+}
+
+export async function suggestLibraryForMissingType(typeName: string): Promise<LibrarySuggestion | null> {
+  return invoke<LibrarySuggestion | null>("suggest_library_for_missing_type", { typeName });
 }
 
 export async function getComponentTypeDetails(
@@ -455,6 +494,10 @@ export async function runSelfIterate(
 
 export async function applyPatchToWorkspace(diff: string): Promise<void> {
   await invoke("apply_patch_to_workspace", { diff });
+}
+
+export async function applyPatchToProject(projectDir: string, diff: string): Promise<void> {
+  await invoke("apply_patch_to_project", { projectDir, diff });
 }
 
 export async function commitIterationPatch(message: string): Promise<void> {

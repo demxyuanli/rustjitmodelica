@@ -2,7 +2,7 @@ use std::process::Command;
 
 use crate::iterate;
 
-use super::common::jit_compiler_root;
+use super::common::{jit_compiler_root, project_dir_canonical};
 
 #[tauri::command]
 pub fn self_iterate(
@@ -16,6 +16,12 @@ pub fn self_iterate(
 #[tauri::command]
 pub fn apply_patch_to_workspace(diff: String) -> Result<(), String> {
     let work_dir = jit_compiler_root()?;
+    iterate::apply_diff_to_dir(&diff, &work_dir)
+}
+
+#[tauri::command]
+pub fn apply_patch_to_project(project_dir: String, diff: String) -> Result<(), String> {
+    let work_dir = project_dir_canonical(&project_dir)?;
     iterate::apply_diff_to_dir(&diff, &work_dir)
 }
 

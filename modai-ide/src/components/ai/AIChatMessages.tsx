@@ -1,11 +1,36 @@
 import { useRef, useEffect, useState, useCallback } from "react";
+import { parseDiff, Diff, Hunk, type FileData } from "react-diff-view";
+import "react-diff-view/style/index.css";
 import type { ChatMessage } from "./ai-markdown";
-import { splitAnswerAndDiff, extractFirstCodeBlock, parseNewFileDiff, renderInlineDiff, suggestMoPathFromModelCode } from "./ai-markdown";
+import {
+  splitAnswerAndDiff,
+  extractFirstCodeBlock,
+  parseNewFileDiff,
+  renderInlineDiff,
+  suggestMoPathFromModelCode,
+  isExistingFileDiff,
+} from "./ai-markdown";
 import { AIChatMessage } from "./AIChatMessage";
 import { IterateDiffPreview } from "../IterateDiffPreview";
 import { t } from "../../i18n";
 import { AppIcon } from "../Icon";
 import type { AgentMode } from "../../hooks/useAI";
+import { ContextMenu } from "../ContextMenu";
+
+type DiffViewType = "split" | "unified";
+
+function AiDiffFileBlock({ file, viewType }: { file: FileData; viewType: DiffViewType }) {
+  return (
+    <Diff
+      key={`${file.oldRevision}-${file.newRevision}`}
+      viewType={viewType}
+      diffType={file.type}
+      hunks={file.hunks}
+    >
+      {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+    </Diff>
+  );
+}
 
 interface AIChatMessagesProps {
   messages: ChatMessage[];
@@ -15,6 +40,7 @@ interface AIChatMessagesProps {
   projectDir?: string | null;
   onCreateMoFile?: (relativePath: string, content: string) => Promise<void>;
   onRegenerate?: () => void;
+  onApplyDiff?: (diff: string) => Promise<void>;
 }
 
 export function AIChatMessages({
@@ -25,11 +51,20 @@ export function AIChatMessages({
   projectDir,
   onCreateMoFile,
   onRegenerate,
+  onApplyDiff,
 }: AIChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [createFileLoading, setCreateFileLoading] = useState(false);
   const [createFileError, setCreateFileError] = useState<string | null>(null);
+  const [diffViewType, setDiffViewType] = useState<DiffViewType>("split");
+  const [applyDiffLoading, setApplyDiffLoading] = useState(false);
+  const [applyDiffError, setApplyDiffError] = useState<string | null>(null);
+  const [applyDiffSuccess, setApplyDiffSuccess] = useState(false);
+  const [messageMenuVisible, setMessageMenuVisible] = useState(false);
+  const [messageMenuPosition, setMessageMenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [messageMenuText, setMessageMenuText] = useState<string | null>(null);
+  const [messageMenuRole, setMessageMenuRole] = useState<ChatMessage["role"] | null>(null);
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -86,6 +121,28 @@ export function AIChatMessages({
       .finally(() => setCreateFileLoading(false));
   }, [newFileFromDiff, projectDir, onCreateMoFile]);
 
+  const existingFileDiff = diff && isExistingFileDiff(diff);
+  const handleApplyDiff = useCallback(() => {
+    if (!diff || !onApplyDiff) return;
+    setApplyDiffError(null);
+    setApplyDiffSuccess(false);
+    setApplyDiffLoading(true);
+    onApplyDiff(diff)
+      .then(() => setApplyDiffSuccess(true))
+      .catch((e) => setApplyDiffError(String(e)))
+      .finally(() => setApplyDiffLoading(false));
+  }, [diff, onApplyDiff]);
+
+  let parsedDiffFiles: FileData[] = [];
+  let diffParseError = false;
+  if (existingFileDiff && diff) {
+    try {
+      parsedDiffFiles = parseDiff(diff, { nearbySequences: "zip" });
+    } catch {
+      diffParseError = true;
+    }
+  }
+
   return (
     <div className="agent-messages-container">
       <div
@@ -99,17 +156,76 @@ export function AIChatMessages({
             isAssistant && messages.slice(idx + 1).every((next) => next.role !== "assistant");
 
           return (
-            <AIChatMessage
+            <div
               key={m.id}
-              message={m}
-              isLastAssistant={isLastAssistant}
-              onRegenerate={isLastAssistant ? onRegenerate : undefined}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMessageMenuPosition({ x: event.clientX, y: event.clientY });
+                setMessageMenuText(m.text ?? "");
+                setMessageMenuRole(m.role);
+                setMessageMenuVisible(true);
+              }}
             >
+              <AIChatMessage
+                message={m}
+                isLastAssistant={isLastAssistant}
+                onRegenerate={isLastAssistant ? onRegenerate : undefined}
+              >
               {isAssistant && isLastAssistant && (
                 <>
                   {diff && agentMode !== "iterate" && (
-                    <div className="agent-inline-diff-wrapper">
-                      {renderInlineDiff(diff)}
+                    <div className="agent-inline-diff-wrapper mt-2">
+                      {existingFileDiff && !diffParseError && parsedDiffFiles.length > 0 ? (
+                        <div className="rounded-lg border border-border bg-[var(--surface-elevated)] overflow-hidden">
+                          <div className="shrink-0 flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border flex-wrap">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                className={`text-xs px-1.5 py-0.5 rounded ${diffViewType === "split" ? "bg-[var(--surface-active)] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"}`}
+                                onClick={() => setDiffViewType("split")}
+                              >
+                                {t("diffSplit")}
+                              </button>
+                              <button
+                                type="button"
+                                className={`text-xs px-1.5 py-0.5 rounded ${diffViewType === "unified" ? "bg-[var(--surface-active)] text-[var(--text)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"}`}
+                                onClick={() => setDiffViewType("unified")}
+                              >
+                                {t("diffUnified")}
+                              </button>
+                            </div>
+                            {projectDir && onApplyDiff && (
+                              <button
+                                type="button"
+                                className="agent-action-btn agent-action-btn-primary text-xs"
+                                disabled={applyDiffLoading}
+                                onClick={handleApplyDiff}
+                              >
+                                {applyDiffLoading ? "..." : t("aiApplyToProject")}
+                              </button>
+                            )}
+                          </div>
+                          <div className="max-h-[280px] overflow-auto p-2 scroll-vscode">
+                            <div className="diff" style={{ fontFamily: "var(--font-mono, Consolas, monospace)", fontSize: 12 }}>
+                              {parsedDiffFiles.map((file, i) => (
+                                <AiDiffFileBlock key={i} file={file} viewType={diffViewType} />
+                              ))}
+                            </div>
+                          </div>
+                          {applyDiffError && (
+                            <div className="px-2 py-1.5 border-t border-border text-[10px] text-[var(--danger-text)]">
+                              {applyDiffError}
+                            </div>
+                          )}
+                          {applyDiffSuccess && (
+                            <div className="px-2 py-1.5 border-t border-border text-[10px] text-[var(--success-text)]">
+                              {t("aiApplyToProjectSuccess")}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        renderInlineDiff(diff)
+                      )}
                     </div>
                   )}
                   {iterationDiff && agentMode === "iterate" && (
@@ -146,7 +262,8 @@ export function AIChatMessages({
                   )}
                 </>
               )}
-            </AIChatMessage>
+              </AIChatMessage>
+            </div>
           );
         })}
         {aiLoading && (
@@ -165,6 +282,41 @@ export function AIChatMessages({
           </div>
         )}
       </div>
+      <ContextMenu
+        visible={messageMenuVisible}
+        x={messageMenuPosition.x}
+        y={messageMenuPosition.y}
+        onClose={() => setMessageMenuVisible(false)}
+        items={
+          messageMenuText
+            ? [
+                {
+                  id: "copy-message",
+                  label: t("copyTestAllOutput"),
+                  onClick: () => {
+                    void navigator.clipboard.writeText(messageMenuText);
+                  },
+                },
+                ...(messageMenuRole === "assistant"
+                  ? (() => {
+                      const block = extractFirstCodeBlock(messageMenuText);
+                      return [
+                        {
+                          id: "copy-code",
+                          label: t("contextCopyCode"),
+                          disabled: !block?.content,
+                          onClick: () => {
+                            if (!block?.content) return;
+                            void navigator.clipboard.writeText(block.content);
+                          },
+                        },
+                      ];
+                    })()
+                  : []),
+              ]
+            : []
+        }
+      />
       {showScrollBtn && (
         <button
           type="button"

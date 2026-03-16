@@ -106,6 +106,48 @@ pub fn set_component_library_enabled(
     )
 }
 
+#[tauri::command]
+pub fn install_third_party_library_from_git(
+    project_dir: Option<String>,
+    scope: String,
+    url: String,
+    ref_name: Option<String>,
+    display_name: Option<String>,
+) -> Result<component_library::ComponentLibraryRecord, String> {
+    component_library::install_library_from_git(
+        project_dir.as_deref().map(Path::new),
+        &scope,
+        &url,
+        ref_name.as_deref(),
+        display_name,
+    )
+}
+
+#[tauri::command]
+pub fn sync_third_party_library(
+    project_dir: Option<String>,
+    scope: String,
+    library_id: String,
+) -> Result<(), String> {
+    component_library::sync_library(
+        project_dir.as_deref().map(Path::new),
+        &scope,
+        &library_id,
+    )
+}
+
+#[tauri::command]
+pub fn sync_all_third_party_libraries(
+    project_dir: Option<String>,
+) -> Result<usize, String> {
+    component_library::sync_all_managed_libraries(project_dir.as_deref().map(Path::new))
+}
+
+#[tauri::command]
+pub fn suggest_library_for_missing_type(type_name: String) -> Option<component_library::LibrarySuggestion> {
+    component_library::suggest_library_for_missing_type(&type_name)
+}
+
 fn list_mo_files_impl(dir: &Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     if !dir.is_dir() {

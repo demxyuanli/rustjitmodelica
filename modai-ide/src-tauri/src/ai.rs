@@ -78,6 +78,8 @@ pub struct AiCodeGenPayload {
     #[serde(default)]
     pub context_blocks: Option<Vec<AiContextBlock>>,
     #[serde(default)]
+    pub project_dir: Option<String>,
+    #[serde(default)]
     pub options: Option<AiOptions>,
 }
 

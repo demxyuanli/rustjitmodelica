@@ -40,6 +40,7 @@ function getIconDef(name: string): IconDef {
 export function FileIcon({ name, size = 16 }: FileIconProps) {
   const def = getIconDef(name);
   const fontSize = def.label.length > 1 ? size * 0.45 : size * 0.6;
+  const r = (size - 2) / 2;
   return (
     <svg
       width={size}
@@ -48,7 +49,7 @@ export function FileIcon({ name, size = 16 }: FileIconProps) {
       style={{ flexShrink: 0 }}
       aria-hidden
     >
-      <rect x={1} y={1} width={size - 2} height={size - 2} rx={3} fill={def.bg} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill={def.bg} />
       <text
         x={size / 2}
         y={size / 2}
