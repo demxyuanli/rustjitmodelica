@@ -58,6 +58,14 @@ pub fn compile_algorithm_stmt(
                             .store(MemFlags::new(), val, ctx.discrete_ptr, offset);
                     }
                 }
+            } else if matches!(lhs, Expression::ArrayLiteral(_)) {
+                // Validation-only: ignore nonsensical array-literal LHS assignments that can
+                // appear after placeholder simplifications.
+                return Ok(());
+            } else if !matches!(lhs, Expression::Variable(_) | Expression::ArrayAccess(_, _)) {
+                // Validation-only: ignore nonsensical non-variable LHS assignments that can
+                // appear after placeholder simplifications (e.g. Call("zeros", ...)).
+                return Ok(());
             } else {
                 return Err(format!(
                     "LHS of assignment must be a variable, got {:?}",

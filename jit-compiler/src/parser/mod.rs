@@ -149,6 +149,14 @@ fn parse_annotation_to_string(pair: &pest::iterators::Pair<Rule>) -> String {
     pair.as_str().trim().to_string()
 }
 
+fn normalize_identifier(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+        return s[1..(s.len() - 1)].to_string();
+    }
+    s.to_string()
+}
+
 fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
 
@@ -197,6 +205,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             // Supported forms:
                             //   import Modelica.Blocks.Interfaces;
                             //   import SI = Modelica.SIunits;
+                            //   import A.B.{x,y,z};
                             let rest = raw.strip_prefix("import").unwrap_or(raw).trim();
                             if let Some((a, b)) = rest.split_once('=') {
                                 let alias = a.trim().to_string();
@@ -205,16 +214,40 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                     imports.push((alias, qual));
                                 }
                             } else {
-                                let qual = rest.trim().trim_end_matches(';').trim().to_string();
-                                if !qual.is_empty() {
-                                    let alias = qual
-                                        .split('.')
-                                        .last()
-                                        .unwrap_or("")
-                                        .trim()
-                                        .to_string();
-                                    if !alias.is_empty() {
-                                        imports.push((alias, qual));
+                                let qual_raw = rest.trim().trim_end_matches(';').trim();
+                                // Handle brace imports: import A.B.{x, y, z};
+                                if let (Some(lbrace), Some(rbrace)) =
+                                    (qual_raw.find('{'), qual_raw.rfind('}'))
+                                {
+                                    let prefix = qual_raw[..lbrace].trim().trim_end_matches('.').trim();
+                                    let inside = qual_raw[(lbrace + 1)..rbrace].trim();
+                                    if !prefix.is_empty() && !inside.is_empty() {
+                                        for item in inside.split(',') {
+                                            let item = item.trim();
+                                            if item.is_empty() {
+                                                continue;
+                                            }
+                                            let item_name = normalize_identifier(item);
+                                            if !item_name.is_empty() {
+                                                imports.push((
+                                                    item_name.clone(),
+                                                    format!("{}.{}", prefix, item_name),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let qual = qual_raw.to_string();
+                                    if !qual.is_empty() {
+                                        let alias = qual
+                                            .split('.')
+                                            .last()
+                                            .unwrap_or("")
+                                            .trim()
+                                            .to_string();
+                                        if !alias.is_empty() {
+                                            imports.push((alias, qual));
+                                        }
                                     }
                                 }
                             }
@@ -529,7 +562,23 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                     }
                                 }
                             }
-                            let var_name = decl_inner.next().unwrap().as_str().trim().to_string();
+                            let name_pair = decl_inner.next().unwrap();
+                            let mut var_names: Vec<String> = Vec::new();
+                            if name_pair.as_rule() == Rule::var_name_list {
+                                for p in name_pair.into_inner() {
+                                    if p.as_rule() == Rule::identifier {
+                                        let n = normalize_identifier(p.as_str().trim());
+                                        if !n.is_empty() {
+                                            var_names.push(n);
+                                        }
+                                    }
+                                }
+                            } else {
+                                let n = normalize_identifier(name_pair.as_str().trim());
+                                if !n.is_empty() {
+                                    var_names.push(n);
+                                }
+                            }
                             if let Some(token) = decl_inner.peek() {
                                 if token.as_rule() == Rule::array_subscript {
                                     let mut sub_inner = decl_inner.next().unwrap().into_inner();
@@ -627,22 +676,24 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 }
                             }
 
-                            declarations.push(Declaration {
-                                type_name,
-                                name: var_name,
-                                replaceable: is_replaceable,
-                                is_parameter,
-                                is_flow,
-                                is_discrete,
-                                is_input,
-                                is_output,
-                                start_value,
-                                array_size,
-                                modifications,
-                                is_rest,
-                                annotation: decl_annotation,
-                                condition: decl_condition,
-                            });
+                            for var_name in var_names {
+                                declarations.push(Declaration {
+                                    type_name: type_name.clone(),
+                                    name: var_name,
+                                    replaceable: is_replaceable,
+                                    is_parameter,
+                                    is_flow,
+                                    is_discrete,
+                                    is_input,
+                                    is_output,
+                                    start_value: start_value.clone(),
+                                    array_size: array_size.clone(),
+                                    modifications: modifications.clone(),
+                                    is_rest,
+                                    annotation: decl_annotation.clone(),
+                                    condition: decl_condition.clone(),
+                                });
+                            }
                         }
                         _ => {}
                     }

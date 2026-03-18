@@ -2,15 +2,19 @@ use crate::ast::Model;
 use crate::diag::ParseErrorInfo;
 use crate::parser;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum LoadError {
     #[error("Model not found: {0}")]
     NotFound(String),
+    #[error("Recursive model load detected: {0}")]
+    RecursiveLoad(String),
     #[error("{0}")]
     ParseFailedAt(ParseErrorInfo),
     #[error("IO error loading {0}: {1}")]
@@ -22,16 +26,39 @@ pub struct ModelLoader {
     loaded_models: HashMap<String, Arc<Model>>,
     /// DBG-4: path used to load each model (for source location in errors).
     loaded_paths: HashMap<String, PathBuf>,
+    currently_loading: HashSet<String>,
     /// When true, suppress "Loading dependency" and "Resolved inner class" so validate output is JSON-only.
     pub quiet: bool,
 }
 
 impl ModelLoader {
+    fn clone_model_without_inner_classes(m: &Model) -> Model {
+        Model {
+            name: m.name.clone(),
+            is_connector: m.is_connector,
+            is_function: m.is_function,
+            is_record: m.is_record,
+            is_block: m.is_block,
+            extends: m.extends.clone(),
+            declarations: m.declarations.clone(),
+            equations: m.equations.clone(),
+            algorithms: m.algorithms.clone(),
+            initial_equations: m.initial_equations.clone(),
+            initial_algorithms: m.initial_algorithms.clone(),
+            annotation: m.annotation.clone(),
+            inner_classes: Vec::new(),
+            is_operator_record: m.is_operator_record,
+            type_aliases: m.type_aliases.clone(),
+            imports: m.imports.clone(),
+            external_info: m.external_info.clone(),
+        }
+    }
     pub fn new() -> Self {
         ModelLoader {
             library_paths: Vec::new(),
             loaded_models: HashMap::new(),
             loaded_paths: HashMap::new(),
+            currently_loading: HashSet::new(),
             quiet: false,
         }
     }
@@ -63,11 +90,136 @@ impl ModelLoader {
     }
 
     fn load_model_impl(&mut self, name: &str, silent: bool) -> Result<Arc<Model>, LoadError> {
+        fn trace_enabled() -> bool {
+            static ENABLED: OnceLock<bool> = OnceLock::new();
+            *ENABLED.get_or_init(|| {
+                std::env::var("RUSTMODLICA_LOAD_TRACE")
+                    .ok()
+                    .map(|v| {
+                        let v = v.trim();
+                        v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+                    })
+                    .unwrap_or(false)
+            })
+        }
+        if trace_enabled() && !silent {
+            eprintln!("[load-trace] {}", name);
+        }
+        // Compatibility aliases for Modelica Standard Library version differences.
+        // Some packages were moved between versions; map old qualified names to the existing ones.
+        if name == "Modelica.Electrical.Analog.Interfaces.Source" {
+            let new_name = "Modelica.Electrical.Analog.Interfaces.VoltageSource";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Electrical.Analog.Interfaces.TwoPlug" {
+            let new_name = "Modelica.Electrical.Analog.Interfaces.TwoPin";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Electrical.Analog.Interfaces.PositivePlug" {
+            let new_name = "Modelica.Electrical.Analog.Interfaces.PositivePin";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Electrical.Analog.Interfaces.NegativePlug" {
+            let new_name = "Modelica.Electrical.Analog.Interfaces.NegativePin";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Electrical.Analog.Interfaces.Plug" {
+            let new_name = "Modelica.Electrical.Analog.Interfaces.Pin";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent"
+            || name.starts_with("Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent.")
+        {
+            let rest = name
+                .strip_prefix("Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent")
+                .unwrap_or("");
+            let new_name = format!(
+                "Modelica.Fluid.Pipes.BaseClasses.WallFriction.QuadraticTurbulent{}",
+                rest
+            );
+            let arc = self.load_model_impl(&new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Fluid.Pipes.BaseClasses.WallFriction.QuadraticTurbulent.BaseModel"
+            || name == "Modelica.Fluid.Pipes.BaseClasses.WallFriction.QuadraticTurbulent.BaseModelNonconstantCrossSectionArea"
+        {
+            let new_name = "Modelica.Fluid.Pipes.BaseClasses.WallFriction.PartialWallFriction";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Electrical.Machines.Utilities.PartialControlledDCPM" {
+            let new_name =
+                "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.PartialControlledDCPM";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Electrical.Machines.Utilities.LimitedPI" {
+            let new_name =
+                "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.LimitedPI";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
         if let Some(arc) = self.loaded_models.get(name) {
             return Ok(Arc::clone(arc));
         }
+        if self.currently_loading.contains(name) {
+            return Err(LoadError::RecursiveLoad(name.to_string()));
+        }
+        let name_key = name.to_string();
+        self.currently_loading.insert(name_key.clone());
 
-        let relative_path = name.replace('.', "/");
+        let result = (|| {
+            let relative_path = name.replace('.', "/");
         // Modelica libraries commonly represent packages as directories containing `package.mo`,
         // even when the qualified name contains '.'.
         // Always try both forms to support both layouts:
@@ -143,6 +295,12 @@ impl ModelLoader {
         // `<Package>.mo` (e.g. `Modelica/Blocks/Sources.mo`) and contains many inner classes.
         if let Some((prefix, suffix)) = name.rsplit_once('.') {
             let base = self.load_model_impl(prefix, silent)?;
+            // `load_model_impl(prefix, ..)` registers all inner classes under `prefix.*` into
+            // `loaded_models`. Prefer returning the already-registered Arc to avoid deep cloning
+            // large inner-class trees (which can cause stack overflow).
+            if let Some(arc) = self.loaded_models.get(name) {
+                return Ok(Arc::clone(arc));
+            }
             let inner = base
                 .inner_classes
                 .iter()
@@ -185,6 +343,10 @@ impl ModelLoader {
             );
         }
         Err(LoadError::NotFound(name.to_string()))
+        })();
+
+        self.currently_loading.remove(&name_key);
+        result
     }
 
     /// Load a model from source code in memory (for IDE / single-file compile).
@@ -224,21 +386,33 @@ impl ModelLoader {
     }
 
     fn register_inner_classes(&mut self, prefix: &str, model: &Model) {
-        for inner in &model.inner_classes {
-            let full_name = format!("{}.{}", prefix, inner.name);
+        // Iterative to avoid stack overflow on large package trees (e.g. Modelica.Media.*).
+        // Also avoid deep cloning `inner_classes` trees: we register each inner class as a shallow
+        // model (without its own `inner_classes`) and traverse children by reference.
+        let mut stack: Vec<(String, &Model)> = model
+            .inner_classes
+            .iter()
+            .map(|m| (prefix.to_string(), m))
+            .collect();
+
+        while let Some((parent_prefix, inner)) = stack.pop() {
+            let full_name = format!("{}.{}", parent_prefix, inner.name);
             if self.loaded_models.contains_key(&full_name) {
                 continue;
             }
-            let arc = Arc::new(inner.clone());
+            let arc = Arc::new(Self::clone_model_without_inner_classes(inner));
             self.loaded_models
                 .insert(full_name.clone(), Arc::clone(&arc));
             let path = self
                 .loaded_paths
-                .get(prefix)
+                .get(&parent_prefix)
                 .cloned()
-                .unwrap_or_else(|| PathBuf::from(prefix));
+                .unwrap_or_else(|| PathBuf::from(&parent_prefix));
             self.loaded_paths.insert(full_name.clone(), path);
-            self.register_inner_classes(&full_name, inner);
+
+            for child in &inner.inner_classes {
+                stack.push((full_name.clone(), child));
+            }
         }
     }
 }
