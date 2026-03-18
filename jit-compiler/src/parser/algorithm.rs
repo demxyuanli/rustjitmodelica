@@ -7,6 +7,8 @@ use super::Rule;
 pub(super) fn parse_algorithm_stmt(pair: Pair<Rule>) -> AlgorithmStatement {
     match pair.as_rule() {
         Rule::annotation_clause => AlgorithmStatement::NoOp,
+        Rule::break_stmt => AlgorithmStatement::NoOp,
+        Rule::return_stmt => AlgorithmStatement::NoOp,
         Rule::assignment_stmt => {
             let mut inner = pair.into_inner();
             let lhs_pair = inner.next().unwrap();

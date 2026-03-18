@@ -3,6 +3,14 @@ use pest::iterators::Pair;
 
 use super::Rule;
 
+fn normalize_identifier(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+        return s[1..(s.len() - 1)].to_string();
+    }
+    s.to_string()
+}
+
 pub(super) fn parse_expression(pair: Pair<Rule>) -> Expression {
     match pair.as_rule() {
         Rule::expression => parse_expression(pair.into_inner().next().unwrap()),
@@ -13,6 +21,7 @@ pub(super) fn parse_expression(pair: Pair<Rule>) -> Expression {
         Rule::logical_and => parse_logical_and(pair),
         Rule::relation => parse_relation(pair),
         Rule::arithmetic_expression => parse_arithmetic(pair),
+        Rule::component_ref => parse_component_ref(pair),
         _ => unreachable!("Unexpected expression rule: {:?}", pair.as_rule()),
     }
 }
@@ -44,7 +53,7 @@ fn parse_if_expression(pair: Pair<Rule>) -> Expression {
 fn parse_iterator_expression(pair: Pair<Rule>) -> Expression {
     let mut inner = pair.into_inner();
     let expr = parse_expression(inner.next().unwrap());
-    let iter_var = inner.next().unwrap().as_str().to_string();
+    let iter_var = normalize_identifier(inner.next().unwrap().as_str());
     let range_or_expr = inner.next().unwrap();
     let iter_range = match range_or_expr.as_rule() {
         Rule::range => {
@@ -124,7 +133,9 @@ fn parse_arithmetic(pair: Pair<Rule>) -> Expression {
         let rhs = parse_term(inner.next().unwrap());
         let operator = match op.as_str() {
             "+" => Operator::Add,
+            ".+" => Operator::Add,
             "-" => Operator::Sub,
+            ".-" => Operator::Sub,
             _ => unreachable!(),
         };
         lhs = Expression::BinaryOp(Box::new(lhs), operator, Box::new(rhs));
@@ -212,7 +223,12 @@ pub(super) fn parse_function_call_expr(pair: Pair<Rule>) -> Expression {
                                 }
                         Rule::named_arg => {
                             let mut ni = item.into_inner();
-                            let name = ni.next().unwrap().as_str().to_string();
+                            let first = ni.next().unwrap();
+                            let name = if first.as_rule() == Rule::final_kw {
+                                ni.next().unwrap().as_str().to_string()
+                            } else {
+                                first.as_str().to_string()
+                            };
                             let val = parse_expression(ni.next().unwrap());
                             args.push(Expression::Call(
                                 "named".to_string(),
@@ -384,7 +400,7 @@ fn parse_factor(pair: Pair<Rule>) -> Expression {
 
 pub(super) fn parse_component_ref(pair: Pair<Rule>) -> Expression {
     let mut pairs = pair.into_inner();
-    let mut expr = Expression::Variable(pairs.next().unwrap().as_str().to_string());
+    let mut expr = Expression::Variable(normalize_identifier(pairs.next().unwrap().as_str()));
 
     for part in pairs {
         match part.as_rule() {
@@ -401,7 +417,7 @@ pub(super) fn parse_component_ref(pair: Pair<Rule>) -> Expression {
                 expr = Expression::ArrayAccess(Box::new(expr), Box::new(idx));
             }
             Rule::member_access => {
-                let name = part.into_inner().next().unwrap().as_str().to_string();
+                let name = normalize_identifier(part.into_inner().next().unwrap().as_str());
                 expr = Expression::Dot(Box::new(expr), name);
             }
             _ => unreachable!("Unexpected component_ref part"),

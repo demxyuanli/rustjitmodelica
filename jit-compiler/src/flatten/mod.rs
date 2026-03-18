@@ -100,13 +100,19 @@ impl Flattener {
         }
         // Library context flags for fallback rules (by sublibrary)
         let in_blocks = current_qualified.starts_with("Modelica.Blocks");
+        let in_blocks_math = current_qualified.starts_with("Modelica.Blocks.Math");
         let in_blocks_sources = current_qualified.starts_with("Modelica.Blocks.Sources");
         let in_electrical_analog = current_qualified.starts_with("Modelica.Electrical.Analog");
         let in_electrical = current_qualified.starts_with("Modelica.Electrical");
+        let in_polyphase = current_qualified.starts_with("Modelica.Electrical.Polyphase");
         let in_machines = current_qualified.starts_with("Modelica.Electrical.Machines");
+        let in_qs_polyphase_basic =
+            current_qualified.starts_with("Modelica.Electrical.QuasiStatic.Polyphase.Basic");
         let in_rotational = current_qualified.starts_with("Modelica.Mechanics.Rotational");
+        let in_translational = current_qualified.starts_with("Modelica.Mechanics.Translational");
         let in_mechanics = current_qualified.starts_with("Modelica.Mechanics");
         let in_multibody = current_qualified.starts_with("Modelica.Mechanics.MultiBody");
+        let in_multibody_loops = current_qualified.starts_with("Modelica.Mechanics.MultiBody.Examples.Loops");
         let in_heattransfer = current_qualified.starts_with("Modelica.Thermal.HeatTransfer");
         let in_thermal = current_qualified.starts_with("Modelica.Thermal");
         let in_fluid = current_qualified.starts_with("Modelica.Fluid");
@@ -141,8 +147,49 @@ impl Flattener {
                 return format!("Modelica.Electrical.Analog.{}", name);
             }
         }
+        // --- Electrical.Polyphase: Interfaces ---
+        if in_polyphase && (name == "Interfaces" || name.starts_with("Interfaces.")) {
+            if name == "Interfaces" {
+                return "Modelica.Electrical.Polyphase.Interfaces".to_string();
+            }
+            return format!("Modelica.Electrical.Polyphase.{}", name);
+        }
+        // --- Electrical.QuasiStatic.Polyphase.Basic: local helpers like PlugToPins_* ---
+        if in_qs_polyphase_basic {
+            if name == "PlugToPins_p"
+                || name == "PlugToPins_n"
+                || name == "PlugToPin_p"
+                || name == "PlugToPin_n"
+            {
+                return format!("Modelica.Electrical.QuasiStatic.Polyphase.Basic.{}", name);
+            }
+        }
         // --- Electrical (Machines etc.): allow direct pin shorthand ---
         if in_electrical {
+            if name == "Mechanics" {
+                return "Modelica.Mechanics".to_string();
+            }
+            if name.starts_with("Mechanics.") {
+                return format!("Modelica.{}", name);
+            }
+            if name == "Analog" {
+                return "Modelica.Electrical.Analog".to_string();
+            }
+            if name.starts_with("Analog.") {
+                return format!("Modelica.Electrical.{}", name);
+            }
+            if name == "Polyphase" {
+                return "Modelica.Electrical.Polyphase".to_string();
+            }
+            if name.starts_with("Polyphase.") {
+                return format!("Modelica.Electrical.{}", name);
+            }
+            if name == "QuasiStatic" {
+                return "Modelica.Electrical.QuasiStatic".to_string();
+            }
+            if name.starts_with("QuasiStatic.") {
+                return format!("Modelica.Electrical.{}", name);
+            }
             if name == "PositivePin" || name == "NegativePin" || name == "Pin" {
                 return format!("Modelica.Electrical.Analog.Interfaces.{}", name);
             }
@@ -161,6 +208,25 @@ impl Flattener {
             if name.starts_with("Utilities.") {
                 return format!("Modelica.Electrical.Machines.{}", name);
             }
+            if name == "SpacePhasors" {
+                return "Modelica.Electrical.Machines.SpacePhasors".to_string();
+            }
+            if name.starts_with("SpacePhasors.") {
+                return format!("Modelica.Electrical.Machines.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Electrical.Machines.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Electrical.Machines.{}", name);
+            }
+            if name == "Components" {
+                return "Modelica.Electrical.Machines.BasicMachines.Components".to_string();
+            }
+            if name.starts_with("Components.") {
+                let rest = name.trim_start_matches("Components.");
+                return format!("Modelica.Electrical.Machines.BasicMachines.Components.{}", rest);
+            }
             if name == "Machines" {
                 return "Modelica.Electrical.Machines".to_string();
             }
@@ -174,6 +240,18 @@ impl Flattener {
             if name == "Flange_a" || name == "Flange_b" || name == "Support" {
                 return format!("Modelica.Mechanics.Rotational.Interfaces.{}", name);
             }
+            if name == "Components" {
+                return "Modelica.Mechanics.Rotational.Components".to_string();
+            }
+            if name.starts_with("Components.") {
+                return format!("Modelica.Mechanics.Rotational.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Mechanics.Rotational.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Mechanics.Rotational.{}", name);
+            }
             if name == "Interfaces" {
                 return "Modelica.Mechanics.Rotational.Interfaces".to_string();
             }
@@ -181,11 +259,35 @@ impl Flattener {
                 return format!("Modelica.Mechanics.Rotational.{}", name);
             }
         }
+        // --- Mechanics.Translational: flanges, Support, Interfaces ---
+        if in_translational {
+            if name == "Flange_a" || name == "Flange_b" || name == "Support" {
+                return format!("Modelica.Mechanics.Translational.Interfaces.{}", name);
+            }
+            if name == "Interfaces" {
+                return "Modelica.Mechanics.Translational.Interfaces".to_string();
+            }
+            if name.starts_with("Interfaces.") {
+                return format!("Modelica.Mechanics.Translational.{}", name);
+            }
+        }
         if in_mechanics {
+            if name == "MultiBody" {
+                return "Modelica.Mechanics.MultiBody".to_string();
+            }
+            if name.starts_with("MultiBody.") {
+                return format!("Modelica.Mechanics.{}", name);
+            }
             if name == "Rotational" {
                 return "Modelica.Mechanics.Rotational".to_string();
             }
             if name.starts_with("Rotational.") {
+                return format!("Modelica.Mechanics.{}", name);
+            }
+            if name == "Translational" {
+                return "Modelica.Mechanics.Translational".to_string();
+            }
+            if name.starts_with("Translational.") {
                 return format!("Modelica.Mechanics.{}", name);
             }
             if name == "HeatTransfer" {
@@ -197,6 +299,24 @@ impl Flattener {
         }
         // --- Mechanics.MultiBody: World, Joints, Utilities, Frames, Interfaces, Types ---
         if in_multibody {
+            // MultiBody.Examples.Loops.Utilities is a real subpackage used by Engine examples.
+            if in_multibody_loops {
+                if name == "Utilities" {
+                    return "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities".to_string();
+                }
+                if name.starts_with("Utilities.") {
+                    return format!("Modelica.Mechanics.MultiBody.Examples.Loops.{}", name);
+                }
+            }
+            // MultiBody: common short name for the inner World instance.
+            if name == "world" || name.starts_with("world.") {
+                let rest = name.trim_start_matches("world");
+                let rest = rest.trim_start_matches('.');
+                if rest.is_empty() {
+                    return "Modelica.Mechanics.MultiBody.World".to_string();
+                }
+                return format!("Modelica.Mechanics.MultiBody.World.{}", rest);
+            }
             if name == "World" {
                 return "Modelica.Mechanics.MultiBody.World".to_string();
             }
@@ -205,6 +325,35 @@ impl Flattener {
             }
             if name.starts_with("Joints.") {
                 return format!("Modelica.Mechanics.MultiBody.{}", name);
+            }
+            // Common subpackages referenced with short names.
+            if name == "Parts" {
+                return "Modelica.Mechanics.MultiBody.Parts".to_string();
+            }
+            if name.starts_with("Parts.") {
+                return format!("Modelica.Mechanics.MultiBody.{}", name);
+            }
+            if name == "Forces" {
+                return "Modelica.Mechanics.MultiBody.Forces".to_string();
+            }
+            if name.starts_with("Forces.") {
+                return format!("Modelica.Mechanics.MultiBody.{}", name);
+            }
+            // Inside MultiBody.Parts, unqualified type names commonly refer to Parts.*
+            // (e.g. BodyBox contains "Body body" and "FixedTranslation ...").
+            let is_primitive_short = matches!(name, "Real" | "Integer" | "Boolean" | "String");
+            if !name.contains('.')
+                && !is_primitive_short
+                && current_qualified.contains(".MultiBody.Parts.")
+            {
+                return format!("Modelica.Mechanics.MultiBody.Parts.{}", name);
+            }
+            // Inside MultiBody.Sensors, unqualified type names commonly refer to Sensors.*
+            if !name.contains('.')
+                && !is_primitive_short
+                && current_qualified.contains(".MultiBody.Sensors.")
+            {
+                return format!("Modelica.Mechanics.MultiBody.Sensors.{}", name);
             }
             if name == "Utilities" {
                 return "Modelica.Mechanics.MultiBody.Utilities".to_string();
@@ -216,6 +365,12 @@ impl Flattener {
                 return "Modelica.Mechanics.MultiBody.Interfaces".to_string();
             }
             if name.starts_with("Interfaces.") {
+                return format!("Modelica.Mechanics.MultiBody.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Mechanics.MultiBody.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
                 return format!("Modelica.Mechanics.MultiBody.{}", name);
             }
             if name == "Frames" || name.starts_with("Frames.") {
@@ -233,11 +388,17 @@ impl Flattener {
                 if current_qualified.starts_with("Modelica.Mechanics.MultiBody.Frames") {
                     return "Modelica.Mechanics.MultiBody.Frames.Internal".to_string();
                 }
+                if current_qualified.starts_with("Modelica.Mechanics.MultiBody.Forces") {
+                    return "Modelica.Mechanics.MultiBody.Forces.Internal".to_string();
+                }
                 return "Modelica.Mechanics.MultiBody.Sensors.Internal".to_string();
             }
             if name.starts_with("Internal.") {
                 if current_qualified.starts_with("Modelica.Mechanics.MultiBody.Frames") {
                     return format!("Modelica.Mechanics.MultiBody.Frames.{}", name);
+                }
+                if current_qualified.starts_with("Modelica.Mechanics.MultiBody.Forces") {
+                    return format!("Modelica.Mechanics.MultiBody.Forces.{}", name);
                 }
                 return format!("Modelica.Mechanics.MultiBody.Sensors.{}", name);
             }
@@ -278,6 +439,21 @@ impl Flattener {
             }
             if name.starts_with("Sources.") {
                 return format!("Modelica.Fluid.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Fluid.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Fluid.{}", name);
+            }
+            // WallFriction packages are nested under Modelica.Fluid.Pipes.mo.
+            // Some code refers to QuadraticTurbulent.* without full qualification.
+            if name == "QuadraticTurbulent" {
+                return "Modelica.Fluid.Pipes.BaseClasses.WallFriction.QuadraticTurbulent"
+                    .to_string();
+            }
+            if name.starts_with("QuadraticTurbulent.") {
+                return format!("Modelica.Fluid.Pipes.BaseClasses.WallFriction.{}", name);
             }
             if name == "Valves" {
                 return "Modelica.Fluid.Valves".to_string();
@@ -362,6 +538,14 @@ impl Flattener {
             return format!("Modelica.{}", name);
         }
         if in_blocks {
+            if in_blocks_math {
+                if name == "MultiProduct" {
+                    return "Modelica.Blocks.Math.MultiProduct".to_string();
+                }
+                if name == "Mean" {
+                    return "Modelica.Blocks.Math.Mean".to_string();
+                }
+            }
             if name == "Interfaces" {
                 return "Modelica.Blocks.Interfaces".to_string();
             }
@@ -443,7 +627,7 @@ impl Flattener {
         root_name: &str,
     ) -> Result<FlattenedModel, FlattenError> {
         self.flatten_inheritance(root, root_name)?;
-        let model = Arc::make_mut(root);
+        let model = root.as_ref();
         let mut flat = FlattenedModel {
             declarations: Vec::new(),
             equations: Vec::new(),
@@ -457,7 +641,7 @@ impl Flattener {
             clocked_var_names: std::collections::HashSet::new(),
             clock_partitions: Vec::new(),
         };
-        self.expand_declarations(model, "", &mut flat, Some(root_name))?;
+        self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_name))?;
         self.expand_equations(model, "", &mut flat);
         self.expand_algorithms(model, "", &mut flat);
         self.expand_initial_equations(model, "", &mut flat);
@@ -516,344 +700,348 @@ impl Flattener {
 
     fn expand_declarations(
         &mut self,
-        model: &Model,
+        model: Arc<Model>,
         prefix: &str,
         flat: &mut FlattenedModel,
         current_model_name: Option<&str>,
     ) -> Result<(), FlattenError> {
-        // Build context from parameters in this model
-        let mut context: HashMap<String, Expression> = HashMap::new();
-        for decl in &model.declarations {
-            if decl.is_parameter {
-                if let Some(val) = &decl.start_value {
-                    context.insert(decl.name.clone(), val.clone());
-                }
-            }
+        #[derive(Clone)]
+        enum Task {
+            Process {
+                model: Arc<Model>,
+                prefix: String,
+                current_model_name: Option<String>,
+            },
+            ExpandEquations {
+                model: Arc<Model>,
+                prefix: String,
+            },
         }
 
-        for decl in &model.declarations {
-            if let Some(ref cond_expr) = decl.condition {
-                let cond_sub = self.substitute(cond_expr, &context);
-                if let Some(v) = eval_const_expr(&cond_sub) {
-                    if v == 0.0 {
-                        continue;
+        let mut stack: Vec<Task> = vec![Task::Process {
+            model,
+            prefix: prefix.to_string(),
+            current_model_name: current_model_name.map(|s| s.to_string()),
+        }];
+
+        while let Some(task) = stack.pop() {
+            match task {
+                Task::ExpandEquations { model, prefix } => {
+                    self.expand_equations(model.as_ref(), &prefix, flat);
+                }
+                Task::Process {
+                    model,
+                    prefix,
+                    current_model_name,
+                } => {
+                    let current_qualified = current_model_name.as_deref().unwrap_or("");
+
+                    // Build context from parameters in this model
+                    let mut context: HashMap<String, Expression> = HashMap::new();
+                    for decl in &model.declarations {
+                        if decl.is_parameter {
+                            if let Some(val) = &decl.start_value {
+                                context.insert(decl.name.clone(), val.clone());
+                            }
+                        }
                     }
-                }
-            }
-            // Evaluate array size
-            let array_len = if let Some(size_expr) = &decl.array_size {
-                let sub_expr = self.substitute(size_expr, &context);
-                if let Some(val) = eval_const_expr(&sub_expr) {
-                    Some(val as usize)
-                } else {
-                    eprintln!("Warning: Could not evaluate array size for '{}'", decl.name);
-                    None
-                }
-            } else {
-                None
-            };
 
-            let count = array_len.unwrap_or(1);
-            let is_array = array_len.is_some();
+                    for decl in &model.declarations {
+                        if let Some(ref cond_expr) = decl.condition {
+                            let cond_sub = self.substitute(cond_expr, &context);
+                            if let Some(v) = eval_const_expr(&cond_sub) {
+                                if v == 0.0 {
+                                    continue;
+                                }
+                            }
+                        }
 
-            let base_name = if prefix.is_empty() {
-                decl.name.clone()
-            } else {
-                format!("{}_{}", prefix, decl.name)
-            };
-
-            if is_array {
-                flat.array_sizes.insert(base_name.clone(), count);
-            }
-
-            for i in 1..=count {
-                let name_suffix = if is_array {
-                    format!("_{}", i)
-                } else {
-                    "".to_string()
-                };
-                let local_name = format!("{}{}", decl.name, name_suffix);
-                let full_path = if prefix.is_empty() {
-                    local_name.clone()
-                } else {
-                    format!("{}_{}", prefix, local_name)
-                };
-
-                let loc = current_model_name
-                    .and_then(|n| self.loader.get_path_for_model(n))
-                    .map(|p| SourceLocation {
-                        file: p.display().to_string(),
-                        line: 0,
-                        column: 0,
-                    });
-                let mut resolved_type = resolve_type_alias(&model.type_aliases, &decl.type_name);
-                let current_qualified = current_model_name.unwrap_or("");
-                resolved_type = Self::resolve_import_prefix(model, &resolved_type, current_qualified);
-                // MSL: some historical locations changed between subpackages; map known legacy paths.
-                if resolved_type == "Modelica.Fluid.Pipes.BaseClasses.PartialValve" {
-                    resolved_type = "Modelica.Fluid.Valves.BaseClasses.PartialValve".to_string();
-                }
-                // MSL: Medium.* types (e.g. Medium.AbsolutePressure) are primitive Real in practice.
-                if resolved_type.starts_with("Medium.") {
-                    resolved_type = "Real".to_string();
-                }
-                // MSL: Modelica.Fluid.Types.* are typically Real type aliases (e.g. Roughness).
-                if resolved_type.starts_with("Modelica.Fluid.Types.") {
-                    resolved_type = "Real".to_string();
-                }
-                // MSL: MultiBody type aliases often live in standalone short class files.
-                // Treat common ones as primitive to avoid requiring full short-class parsing here.
-                if resolved_type.ends_with(".Types.AxisLabel") || resolved_type.ends_with(".Types.Axis") {
-                    resolved_type = "Real".to_string();
-                }
-                // Do not eagerly qualify unqualified names. Try import-scope lookup first, then
-                // qualify in local scope if still not found.
-                let resolved_type = if is_primitive(&resolved_type)
-                    || resolved_type.contains('.')
-                    || resolved_type.contains('/')
-                {
-                    resolved_type
-                } else {
-                    resolved_type
-                };
-                if is_primitive(&resolved_type) {
-                    flat.declarations.push(Declaration {
-                        type_name: resolved_type.clone(),
-                        name: full_path.clone(),
-                        replaceable: decl.replaceable,
-                        is_parameter: decl.is_parameter,
-                        is_flow: decl.is_flow,
-                        is_discrete: decl.is_discrete,
-                        is_input: decl.is_input,
-                        is_output: decl.is_output,
-                        start_value: if let Some(val) = &decl.start_value {
-                            let sub = self.substitute(val, &context);
-                            if is_array {
-                                Some(index_expression(&sub, i))
+                        // Evaluate array size
+                        let array_len = if let Some(size_expr) = &decl.array_size {
+                            let sub_expr = self.substitute(size_expr, &context);
+                            if let Some(val) = eval_const_expr(&sub_expr) {
+                                Some(val as usize)
                             } else {
-                                Some(sub)
+                                eprintln!("Warning: Could not evaluate array size for '{}'", decl.name);
+                                None
                             }
                         } else {
                             None
-                        },
-                        array_size: None,
-                        modifications: Vec::new(),
-                        is_rest: decl.is_rest,
-                        annotation: None,
-                        condition: None,
-                    });
-                } else {
-                    let mut sub_model = match self.loader.load_model_silent(&resolved_type, true) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            // MSL: qualified type alias (e.g. Modelica.Units.SI.Time) is a `type`
-                            // inside the package, not a loadable class.
-                            if let LoadError::NotFound(_) = e {
-                                if let Some((prefix_type, suffix_type)) =
-                                    resolved_type.rsplit_once('.')
-                                {
-                                    if let Ok(owner) = self.loader.load_model(prefix_type) {
-                                        if let Some((_, base)) = owner
-                                            .type_aliases
-                                            .iter()
-                                            .find(|(a, _)| a == suffix_type)
-                                        {
-                                            let base = resolve_type_alias(&owner.type_aliases, base);
-                                            if is_primitive(&base) {
-                                                flat.declarations.push(Declaration {
-                                                    type_name: base,
-                                                    name: full_path.clone(),
-                                                    replaceable: decl.replaceable,
-                                                    is_parameter: decl.is_parameter,
-                                                    is_flow: decl.is_flow,
-                                                    is_discrete: decl.is_discrete,
-                                                    is_input: decl.is_input,
-                                                    is_output: decl.is_output,
-                                                    start_value: if let Some(val) = &decl.start_value {
-                                                        let sub = self.substitute(val, &context);
-                                                        if is_array {
-                                                            Some(index_expression(&sub, i))
-                                                        } else {
-                                                            Some(sub)
-                                                        }
-                                                    } else {
-                                                        None
-                                                    },
-                                                    array_size: None,
-                                                    modifications: Vec::new(),
-                                                    is_rest: decl.is_rest,
-                                                    annotation: None,
-                                                    condition: None,
-                                                });
-                                                continue;
-                                            }
+                        };
+
+                        let count = array_len.unwrap_or(1);
+                        let is_array = array_len.is_some();
+
+                        let base_name = if prefix.is_empty() {
+                            decl.name.clone()
+                        } else {
+                            format!("{}_{}", prefix, decl.name)
+                        };
+
+                        if is_array {
+                            flat.array_sizes.insert(base_name.clone(), count);
+                        }
+
+                        for i in 1..=count {
+                            let name_suffix = if is_array {
+                                format!("_{}", i)
+                            } else {
+                                "".to_string()
+                            };
+                            let local_name = format!("{}{}", decl.name, name_suffix);
+                            let full_path = if prefix.is_empty() {
+                                local_name.clone()
+                            } else {
+                                format!("{}_{}", prefix, local_name)
+                            };
+
+                            let loc = current_model_name
+                                .as_deref()
+                                .and_then(|n| self.loader.get_path_for_model(n))
+                                .map(|p| SourceLocation {
+                                    file: p.display().to_string(),
+                                    line: 0,
+                                    column: 0,
+                                });
+
+                            let mut resolved_type =
+                                resolve_type_alias(&model.type_aliases, &decl.type_name);
+                            resolved_type =
+                                Self::resolve_import_prefix(model.as_ref(), &resolved_type, current_qualified);
+                            if resolved_type == "Modelica.Fluid.Pipes.BaseClasses.PartialValve" {
+                                resolved_type =
+                                    "Modelica.Fluid.Valves.BaseClasses.PartialValve".to_string();
+                            }
+                            if resolved_type.starts_with("Medium.") {
+                                resolved_type = "Real".to_string();
+                            }
+                            if resolved_type.starts_with("Modelica.Fluid.Types.") {
+                                resolved_type = "Real".to_string();
+                            }
+                            if resolved_type.ends_with(".Types.AxisLabel")
+                                || resolved_type.ends_with(".Types.Axis")
+                            {
+                                resolved_type = "Real".to_string();
+                            }
+
+                            if is_primitive(&resolved_type) {
+                                flat.declarations.push(Declaration {
+                                    type_name: resolved_type.clone(),
+                                    name: full_path.clone(),
+                                    replaceable: decl.replaceable,
+                                    is_parameter: decl.is_parameter,
+                                    is_flow: decl.is_flow,
+                                    is_discrete: decl.is_discrete,
+                                    is_input: decl.is_input,
+                                    is_output: decl.is_output,
+                                    start_value: if let Some(val) = &decl.start_value {
+                                        let sub = self.substitute(val, &context);
+                                        if is_array {
+                                            Some(index_expression(&sub, i))
+                                        } else {
+                                            Some(sub)
                                         }
-                                    }
-                                }
-                                // MSL: unqualified name brought into scope by `import Some.Package;`
-                                if !resolved_type.contains('.') {
-                                    for (_alias, qual) in &model.imports {
-                                        if qual.is_empty() {
-                                            continue;
-                                        }
-                                        let candidate = format!("{}.{}", qual, resolved_type);
-                                        if let Some((prefix_type, suffix_type)) =
-                                            candidate.rsplit_once('.')
-                                        {
-                                            if let Ok(owner) = self.loader.load_model(prefix_type) {
-                                                if let Some((_, base)) = owner
-                                                    .type_aliases
-                                                    .iter()
-                                                    .find(|(a, _)| a == suffix_type)
-                                                {
-                                                    let base = resolve_type_alias(&owner.type_aliases, base);
-                                                    if is_primitive(&base) {
-                                                        flat.declarations.push(Declaration {
-                                                            type_name: base,
-                                                            name: full_path.clone(),
-                                                            replaceable: decl.replaceable,
-                                                            is_parameter: decl.is_parameter,
-                                                            is_flow: decl.is_flow,
-                                                            is_discrete: decl.is_discrete,
-                                                            is_input: decl.is_input,
-                                                            is_output: decl.is_output,
-                                                            start_value: if let Some(val) = &decl.start_value {
-                                                                let sub = self.substitute(val, &context);
-                                                                if is_array {
-                                                                    Some(index_expression(&sub, i))
+                                    } else {
+                                        None
+                                    },
+                                    array_size: None,
+                                    modifications: Vec::new(),
+                                    is_rest: decl.is_rest,
+                                    annotation: None,
+                                    condition: None,
+                                });
+                                continue;
+                            }
+
+                            // Load complex type
+                            let mut sub_model =
+                                match self.loader.load_model_silent(&resolved_type, true) {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        // MSL: qualified type alias (e.g. Modelica.Units.SI.Time) is a `type`
+                                        // inside the package, not a loadable class.
+                                        if let LoadError::NotFound(_) = e {
+                                            if let Some((prefix_type, suffix_type)) =
+                                                resolved_type.rsplit_once('.')
+                                            {
+                                                if let Ok(owner) = self.loader.load_model(prefix_type) {
+                                                    if let Some((_, base)) = owner
+                                                        .type_aliases
+                                                        .iter()
+                                                        .find(|(a, _)| a == suffix_type)
+                                                    {
+                                                        let base =
+                                                            resolve_type_alias(&owner.type_aliases, base);
+                                                        if is_primitive(&base) {
+                                                            flat.declarations.push(Declaration {
+                                                                type_name: base,
+                                                                name: full_path.clone(),
+                                                                replaceable: decl.replaceable,
+                                                                is_parameter: decl.is_parameter,
+                                                                is_flow: decl.is_flow,
+                                                                is_discrete: decl.is_discrete,
+                                                                is_input: decl.is_input,
+                                                                is_output: decl.is_output,
+                                                                start_value: if let Some(val) =
+                                                                    &decl.start_value
+                                                                {
+                                                                    let sub =
+                                                                        self.substitute(val, &context);
+                                                                    if is_array {
+                                                                        Some(index_expression(&sub, i))
+                                                                    } else {
+                                                                        Some(sub)
+                                                                    }
                                                                 } else {
-                                                                    Some(sub)
-                                                                }
-                                                            } else {
-                                                                None
-                                                            },
-                                                            array_size: None,
-                                                            modifications: Vec::new(),
-                                                            is_rest: decl.is_rest,
-                                                            annotation: None,
-                                                            condition: None,
-                                                        });
+                                                                    None
+                                                                },
+                                                                array_size: None,
+                                                                modifications: Vec::new(),
+                                                                is_rest: decl.is_rest,
+                                                                annotation: None,
+                                                                condition: None,
+                                                            });
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // MSL: unqualified name brought into scope by `import Some.Package;`
+                                            if !resolved_type.contains('.') {
+                                                for (_alias, qual) in &model.imports {
+                                                    if qual.is_empty() {
                                                         continue;
                                                     }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            return match e {
-                                LoadError::NotFound(_) => {
-                                    // If the type is an inner type alias of a package (e.g. Modelica.Fluid.Types.Roughness),
-                                    // our loader may not materialize it as an inner class. Resolve via the parent package's
-                                    // type_aliases when possible and treat as primitive when the base is primitive.
-                                    if let Some((prefix, suffix)) = resolved_type.rsplit_once('.') {
-                                        if let Ok(owner) = self.loader.load_model_silent(prefix, true) {
-                                            if let Some((_, base0)) = owner.type_aliases.iter().find(|(a, _)| a == suffix) {
-                                                let base = resolve_type_alias(&owner.type_aliases, base0);
-                                                let mut resolved_prim: Option<String> = None;
-                                                if is_primitive(&base) {
-                                                    resolved_prim = Some(base);
-                                                } else if base.starts_with("Modelica.Units.SI.") || base.starts_with("SI.") || base == "SI" {
-                                                    resolved_prim = Some("Real".to_string());
-                                                } else if let Ok(t) = self.loader.load_model_silent(&base, true) {
-                                                    if let Some((_, b2)) = t.type_aliases.iter().find(|(a, _)| a == &t.name) {
-                                                        let b2 = resolve_type_alias(&t.type_aliases, b2);
-                                                        if is_primitive(&b2) {
-                                                            resolved_prim = Some(b2);
+                                                    let candidate = format!("{}.{}", qual, resolved_type);
+                                                    if let Some((prefix_type, suffix_type)) =
+                                                        candidate.rsplit_once('.')
+                                                    {
+                                                        if let Ok(owner) =
+                                                            self.loader.load_model(prefix_type)
+                                                        {
+                                                            if let Some((_, base)) = owner
+                                                                .type_aliases
+                                                                .iter()
+                                                                .find(|(a, _)| a == suffix_type)
+                                                            {
+                                                                let base = resolve_type_alias(
+                                                                    &owner.type_aliases,
+                                                                    base,
+                                                                );
+                                                                if is_primitive(&base) {
+                                                                    flat.declarations.push(
+                                                                        Declaration {
+                                                                            type_name: base,
+                                                                            name: full_path.clone(),
+                                                                            replaceable: decl.replaceable,
+                                                                            is_parameter: decl.is_parameter,
+                                                                            is_flow: decl.is_flow,
+                                                                            is_discrete: decl.is_discrete,
+                                                                            is_input: decl.is_input,
+                                                                            is_output: decl.is_output,
+                                                                            start_value: if let Some(
+                                                                                val,
+                                                                            ) =
+                                                                                &decl.start_value
+                                                                            {
+                                                                                let sub = self
+                                                                                    .substitute(val, &context);
+                                                                                if is_array {
+                                                                                    Some(index_expression(
+                                                                                        &sub, i,
+                                                                                    ))
+                                                                                } else {
+                                                                                    Some(sub)
+                                                                                }
+                                                                            } else {
+                                                                                None
+                                                                            },
+                                                                            array_size: None,
+                                                                            modifications: Vec::new(),
+                                                                            is_rest: decl.is_rest,
+                                                                            annotation: None,
+                                                                            condition: None,
+                                                                        },
+                                                                    );
+                                                                    continue;
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
-                                                if let Some(base) = resolved_prim {
-                                                    flat.declarations.push(Declaration {
-                                                        type_name: base,
-                                                        name: full_path.clone(),
-                                                        replaceable: decl.replaceable,
-                                                        is_parameter: decl.is_parameter,
-                                                        is_flow: decl.is_flow,
-                                                        is_discrete: decl.is_discrete,
-                                                        is_input: decl.is_input,
-                                                        is_output: decl.is_output,
-                                                        start_value: if let Some(val) = &decl.start_value {
-                                                            let sub = self.substitute(val, &context);
-                                                            if is_array {
-                                                                Some(index_expression(&sub, i))
-                                                            } else {
-                                                                Some(sub)
-                                                            }
-                                                        } else {
-                                                            None
-                                                        },
-                                                        array_size: None,
-                                                        modifications: Vec::new(),
-                                                        is_rest: decl.is_rest,
-                                                        annotation: None,
-                                                        condition: None,
-                                                    });
-                                                    continue;
-                                                }
                                             }
                                         }
+                                        return match e {
+                                            LoadError::NotFound(_) => Err(FlattenError::UnknownType(
+                                                resolved_type.clone(),
+                                                full_path.clone(),
+                                                loc,
+                                            )),
+                                            _ => Err(FlattenError::Load(e)),
+                                        };
                                     }
-                                    Err(FlattenError::UnknownType(resolved_type.clone(), full_path.clone(), loc))
+                                };
+
+                            // Standalone short type definitions (Types/*.mo)
+                            if let Some((_, base)) = sub_model
+                                .type_aliases
+                                .iter()
+                                .find(|(a, _)| a == &sub_model.name)
+                            {
+                                let base = resolve_type_alias(&sub_model.type_aliases, base);
+                                if is_primitive(&base) {
+                                    flat.declarations.push(Declaration {
+                                        type_name: base,
+                                        name: full_path.clone(),
+                                        replaceable: decl.replaceable,
+                                        is_parameter: decl.is_parameter,
+                                        is_flow: decl.is_flow,
+                                        is_discrete: decl.is_discrete,
+                                        is_input: decl.is_input,
+                                        is_output: decl.is_output,
+                                        start_value: if let Some(val) = &decl.start_value {
+                                            let sub = self.substitute(val, &context);
+                                            if is_array {
+                                                Some(index_expression(&sub, i))
+                                            } else {
+                                                Some(sub)
+                                            }
+                                        } else {
+                                            None
+                                        },
+                                        array_size: None,
+                                        modifications: Vec::new(),
+                                        is_rest: decl.is_rest,
+                                        annotation: None,
+                                        condition: None,
+                                    });
+                                    continue;
                                 }
-                                _ => Err(FlattenError::Load(e)),
-                            };
-                        }
-                    };
-                    // Standalone short type definitions (Types/*.mo) may be loaded as a minimal Model
-                    // whose type_aliases include a self-alias (name -> base). Treat as primitive
-                    // when base resolves to a primitive.
-                    if let Some((_, base)) = sub_model
-                        .type_aliases
-                        .iter()
-                        .find(|(a, _)| a == &sub_model.name)
-                    {
-                        let base = resolve_type_alias(&sub_model.type_aliases, base);
-                        if is_primitive(&base) {
-                            flat.declarations.push(Declaration {
-                                type_name: base,
-                                name: full_path.clone(),
-                                replaceable: decl.replaceable,
-                                is_parameter: decl.is_parameter,
-                                is_flow: decl.is_flow,
-                                is_discrete: decl.is_discrete,
-                                is_input: decl.is_input,
-                                is_output: decl.is_output,
-                                start_value: if let Some(val) = &decl.start_value {
-                                    let sub = self.substitute(val, &context);
-                                    if is_array {
-                                        Some(index_expression(&sub, i))
-                                    } else {
-                                        Some(sub)
-                                    }
-                                } else {
-                                    None
-                                },
-                                array_size: None,
-                                modifications: Vec::new(),
-                                is_rest: decl.is_rest,
-                                annotation: None,
-                                condition: None,
+                            }
+
+                            self.flatten_inheritance(&mut sub_model, &resolved_type)?;
+                            for modification in &decl.modifications {
+                                apply_modification(Arc::make_mut(&mut sub_model), modification);
+                            }
+
+                            flat.instances.insert(full_path.clone(), resolved_type.clone());
+
+                            // Post-order: declarations first, then equations.
+                            stack.push(Task::ExpandEquations {
+                                model: Arc::clone(&sub_model),
+                                prefix: full_path.clone(),
                             });
-                            continue;
+                            stack.push(Task::Process {
+                                model: sub_model,
+                                prefix: full_path,
+                                current_model_name: Some(resolved_type),
+                            });
                         }
                     }
-                    self.flatten_inheritance(&mut sub_model, &resolved_type)?;
-                    for modification in &decl.modifications {
-                        apply_modification(Arc::make_mut(&mut sub_model), modification);
-                    }
-                    flat.instances
-                        .insert(full_path.clone(), resolved_type.clone());
-                    self.expand_declarations(
-                        sub_model.as_ref(),
-                        &full_path,
-                        flat,
-                        Some(resolved_type.as_str()),
-                    )?;
-                    self.expand_equations(sub_model.as_ref(), &full_path, flat);
                 }
             }
         }
+
         Ok(())
     }
 

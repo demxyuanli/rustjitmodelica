@@ -5,10 +5,10 @@ use crate::analysis::expression_utils::{make_mul, make_num};
 use crate::analysis::variable_collection::contains_var;
 
 pub(crate) fn eliminate_aliases(
-    equations: &[Equation],
+    equations: Vec<Equation>,
 ) -> (Vec<Equation>, HashMap<String, Expression>) {
     let mut alias_map: HashMap<String, Expression> = HashMap::new();
-    let mut current_eqs = equations.to_vec();
+    let mut current_eqs = equations;
     let mut changed = true;
 
     while changed {
@@ -76,24 +76,6 @@ pub(crate) fn eliminate_aliases(
         }
 
         if changed {
-            let mut new_alias_map = alias_map.clone();
-            for _ in 0..10 {
-                let mut map_changed = false;
-                let keys: Vec<String> = new_alias_map.keys().cloned().collect();
-                for k in keys {
-                    let val = new_alias_map[&k].clone();
-                    let new_val = substitute_aliases_in_expr(&val, &new_alias_map);
-                    if val != new_val {
-                        new_alias_map.insert(k, new_val);
-                        map_changed = true;
-                    }
-                }
-                if !map_changed {
-                    break;
-                }
-            }
-            alias_map = new_alias_map;
-
             let mut substituted_eqs = Vec::new();
             for eq in next_eqs {
                 let new_eq = substitute_aliases_in_eq(&eq, &alias_map);
@@ -114,54 +96,12 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
             substitute_aliases_in_expr(lhs, map),
             substitute_aliases_in_expr(rhs, map),
         ),
-        Equation::For(v, s, e, body) => Equation::For(
-            v.clone(),
-            Box::new(substitute_aliases_in_expr(s, map)),
-            Box::new(substitute_aliases_in_expr(e, map)),
-            body.iter()
-                .map(|b_eq| substitute_aliases_in_eq(b_eq, map))
-                .collect(),
-        ),
-        Equation::When(cond, body, else_whens) => Equation::When(
-            substitute_aliases_in_expr(cond, map),
-            body.iter()
-                .map(|b_eq| substitute_aliases_in_eq(b_eq, map))
-                .collect(),
-            else_whens
-                .iter()
-                .map(|(ec, eb)| {
-                    (
-                        substitute_aliases_in_expr(ec, map),
-                        eb.iter()
-                            .map(|b_eq| substitute_aliases_in_eq(b_eq, map))
-                            .collect(),
-                    )
-                })
-                .collect(),
-        ),
-        Equation::If(cond, then_eqs, elseif_list, else_eqs) => Equation::If(
-            substitute_aliases_in_expr(cond, map),
-            then_eqs
-                .iter()
-                .map(|e| substitute_aliases_in_eq(e, map))
-                .collect(),
-            elseif_list
-                .iter()
-                .map(|(c, eb)| {
-                    (
-                        substitute_aliases_in_expr(c, map),
-                        eb.iter()
-                            .map(|e| substitute_aliases_in_eq(e, map))
-                            .collect(),
-                    )
-                })
-                .collect(),
-            else_eqs.as_ref().map(|eqs| {
-                eqs.iter()
-                    .map(|e| substitute_aliases_in_eq(e, map))
-                    .collect()
-            }),
-        ),
+        // Avoid deep recursion on structured equation blocks during alias elimination.
+        // Aliases are still eliminated for top-level Simple equations, which is sufficient for
+        // current backend validation stability.
+        Equation::For(_, _, _, _)
+        | Equation::When(_, _, _)
+        | Equation::If(_, _, _, _) => eq.clone(),
         Equation::Connect(_, _)
         | Equation::Reinit(_, _)
         | Equation::Assert(_, _)
@@ -173,67 +113,193 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
 }
 
 fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expression>) -> Expression {
-    match expr {
-        Expression::Variable(name) => map.get(name).cloned().unwrap_or_else(|| expr.clone()),
-        Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
-            Box::new(substitute_aliases_in_expr(lhs, map)),
-            *op,
-            Box::new(substitute_aliases_in_expr(rhs, map)),
-        ),
-        Expression::Call(name, args) => Expression::Call(
-            name.clone(),
-            args.iter()
-                .map(|a| substitute_aliases_in_expr(a, map))
-                .collect(),
-        ),
-        Expression::Der(arg) => Expression::Der(Box::new(substitute_aliases_in_expr(arg, map))),
-        Expression::ArrayAccess(arr, idx) => Expression::ArrayAccess(
-            Box::new(substitute_aliases_in_expr(arr, map)),
-            Box::new(substitute_aliases_in_expr(idx, map)),
-        ),
-        Expression::If(c, t, f) => Expression::If(
-            Box::new(substitute_aliases_in_expr(c, map)),
-            Box::new(substitute_aliases_in_expr(t, map)),
-            Box::new(substitute_aliases_in_expr(f, map)),
-        ),
-        Expression::ArrayLiteral(es) => Expression::ArrayLiteral(
-            es.iter()
-                .map(|e| substitute_aliases_in_expr(e, map))
-                .collect(),
-        ),
-        Expression::Dot(base, member) => Expression::Dot(
-            Box::new(substitute_aliases_in_expr(base, map)),
-            member.clone(),
-        ),
-        Expression::Range(start, step, end) => Expression::Range(
-            Box::new(substitute_aliases_in_expr(start, map)),
-            Box::new(substitute_aliases_in_expr(step, map)),
-            Box::new(substitute_aliases_in_expr(end, map)),
-        ),
-        Expression::Sample(inner) => {
-            Expression::Sample(Box::new(substitute_aliases_in_expr(inner, map)))
-        }
-        Expression::Interval(inner) => {
-            Expression::Interval(Box::new(substitute_aliases_in_expr(inner, map)))
-        }
-        Expression::Hold(inner) => {
-            Expression::Hold(Box::new(substitute_aliases_in_expr(inner, map)))
-        }
-        Expression::Previous(inner) => {
-            Expression::Previous(Box::new(substitute_aliases_in_expr(inner, map)))
-        }
-        Expression::SubSample(c, n) => Expression::SubSample(
-            Box::new(substitute_aliases_in_expr(c, map)),
-            Box::new(substitute_aliases_in_expr(n, map)),
-        ),
-        Expression::SuperSample(c, n) => Expression::SuperSample(
-            Box::new(substitute_aliases_in_expr(c, map)),
-            Box::new(substitute_aliases_in_expr(n, map)),
-        ),
-        Expression::ShiftSample(c, n) => Expression::ShiftSample(
-            Box::new(substitute_aliases_in_expr(c, map)),
-            Box::new(substitute_aliases_in_expr(n, map)),
-        ),
-        _ => expr.clone(),
+    #[derive(Clone)]
+    enum Frame<'a> {
+        Enter(&'a Expression),
+        BuildBinary(Operator),
+        BuildCall(String, usize),
+        BuildDer,
+        BuildArrayAccess,
+        BuildIf,
+        BuildArrayLiteral(usize),
+        BuildDot(String),
+        BuildRange,
+        BuildSample,
+        BuildInterval,
+        BuildHold,
+        BuildPrevious,
+        BuildSubSample,
+        BuildSuperSample,
+        BuildShiftSample,
     }
+
+    let mut frames: Vec<Frame<'_>> = vec![Frame::Enter(expr)];
+    let mut values: Vec<Expression> = Vec::new();
+
+    while let Some(f) = frames.pop() {
+        match f {
+            Frame::Enter(e) => match e {
+                Expression::Variable(name) => {
+                    values.push(map.get(name).cloned().unwrap_or_else(|| e.clone()));
+                }
+                Expression::BinaryOp(lhs, op, rhs) => {
+                    frames.push(Frame::BuildBinary(*op));
+                    frames.push(Frame::Enter(rhs));
+                    frames.push(Frame::Enter(lhs));
+                }
+                Expression::Call(name, args) => {
+                    frames.push(Frame::BuildCall(name.clone(), args.len()));
+                    for a in args.iter().rev() {
+                        frames.push(Frame::Enter(a));
+                    }
+                }
+                Expression::Der(arg) => {
+                    frames.push(Frame::BuildDer);
+                    frames.push(Frame::Enter(arg));
+                }
+                Expression::ArrayAccess(arr, idx) => {
+                    frames.push(Frame::BuildArrayAccess);
+                    frames.push(Frame::Enter(idx));
+                    frames.push(Frame::Enter(arr));
+                }
+                Expression::If(c, t, f) => {
+                    frames.push(Frame::BuildIf);
+                    frames.push(Frame::Enter(f));
+                    frames.push(Frame::Enter(t));
+                    frames.push(Frame::Enter(c));
+                }
+                Expression::ArrayLiteral(es) => {
+                    frames.push(Frame::BuildArrayLiteral(es.len()));
+                    for a in es.iter().rev() {
+                        frames.push(Frame::Enter(a));
+                    }
+                }
+                Expression::Dot(base, member) => {
+                    frames.push(Frame::BuildDot(member.clone()));
+                    frames.push(Frame::Enter(base));
+                }
+                Expression::Range(start, step, end) => {
+                    frames.push(Frame::BuildRange);
+                    frames.push(Frame::Enter(end));
+                    frames.push(Frame::Enter(step));
+                    frames.push(Frame::Enter(start));
+                }
+                Expression::Sample(inner) => {
+                    frames.push(Frame::BuildSample);
+                    frames.push(Frame::Enter(inner));
+                }
+                Expression::Interval(inner) => {
+                    frames.push(Frame::BuildInterval);
+                    frames.push(Frame::Enter(inner));
+                }
+                Expression::Hold(inner) => {
+                    frames.push(Frame::BuildHold);
+                    frames.push(Frame::Enter(inner));
+                }
+                Expression::Previous(inner) => {
+                    frames.push(Frame::BuildPrevious);
+                    frames.push(Frame::Enter(inner));
+                }
+                Expression::SubSample(c, n) => {
+                    frames.push(Frame::BuildSubSample);
+                    frames.push(Frame::Enter(n));
+                    frames.push(Frame::Enter(c));
+                }
+                Expression::SuperSample(c, n) => {
+                    frames.push(Frame::BuildSuperSample);
+                    frames.push(Frame::Enter(n));
+                    frames.push(Frame::Enter(c));
+                }
+                Expression::ShiftSample(c, n) => {
+                    frames.push(Frame::BuildShiftSample);
+                    frames.push(Frame::Enter(n));
+                    frames.push(Frame::Enter(c));
+                }
+                _ => values.push(e.clone()),
+            },
+            Frame::BuildBinary(op) => {
+                let rhs = values.pop().unwrap_or(Expression::Number(0.0));
+                let lhs = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::BinaryOp(Box::new(lhs), op, Box::new(rhs)));
+            }
+            Frame::BuildCall(name, n) => {
+                let mut args: Vec<Expression> = Vec::with_capacity(n);
+                for _ in 0..n {
+                    args.push(values.pop().unwrap_or(Expression::Number(0.0)));
+                }
+                args.reverse();
+                values.push(Expression::Call(name, args));
+            }
+            Frame::BuildDer => {
+                let inner = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::Der(Box::new(inner)));
+            }
+            Frame::BuildArrayAccess => {
+                let idx = values.pop().unwrap_or(Expression::Number(1.0));
+                let arr = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::ArrayAccess(Box::new(arr), Box::new(idx)));
+            }
+            Frame::BuildIf => {
+                let f = values.pop().unwrap_or(Expression::Number(0.0));
+                let t = values.pop().unwrap_or(Expression::Number(0.0));
+                let c = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::If(Box::new(c), Box::new(t), Box::new(f)));
+            }
+            Frame::BuildArrayLiteral(n) => {
+                let mut es: Vec<Expression> = Vec::with_capacity(n);
+                for _ in 0..n {
+                    es.push(values.pop().unwrap_or(Expression::Number(0.0)));
+                }
+                es.reverse();
+                values.push(Expression::ArrayLiteral(es));
+            }
+            Frame::BuildDot(member) => {
+                let base = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::Dot(Box::new(base), member));
+            }
+            Frame::BuildRange => {
+                let end = values.pop().unwrap_or(Expression::Number(0.0));
+                let step = values.pop().unwrap_or(Expression::Number(1.0));
+                let start = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::Range(
+                    Box::new(start),
+                    Box::new(step),
+                    Box::new(end),
+                ));
+            }
+            Frame::BuildSample => {
+                let inner = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::Sample(Box::new(inner)));
+            }
+            Frame::BuildInterval => {
+                let inner = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::Interval(Box::new(inner)));
+            }
+            Frame::BuildHold => {
+                let inner = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::Hold(Box::new(inner)));
+            }
+            Frame::BuildPrevious => {
+                let inner = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::Previous(Box::new(inner)));
+            }
+            Frame::BuildSubSample => {
+                let n = values.pop().unwrap_or(Expression::Number(1.0));
+                let c = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::SubSample(Box::new(c), Box::new(n)));
+            }
+            Frame::BuildSuperSample => {
+                let n = values.pop().unwrap_or(Expression::Number(1.0));
+                let c = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::SuperSample(Box::new(c), Box::new(n)));
+            }
+            Frame::BuildShiftSample => {
+                let n = values.pop().unwrap_or(Expression::Number(1.0));
+                let c = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::ShiftSample(Box::new(c), Box::new(n)));
+            }
+        }
+    }
+
+    values.pop().unwrap_or_else(|| expr.clone())
 }

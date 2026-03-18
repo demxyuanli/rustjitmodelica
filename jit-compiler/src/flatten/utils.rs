@@ -63,6 +63,7 @@ pub fn is_primitive(type_name: &str) -> bool {
     matches!(type_name, "Real" | "Integer" | "Boolean" | "String")
         || type_name.starts_with("Modelica.SIunits.")
         || type_name.starts_with("Modelica.Units.SI.")
+        || type_name.starts_with("Modelica.Units.NonSI.")
         || type_name == "Modelica.StateSelect"
         || type_name.ends_with("ExternalObject")
 }
@@ -104,6 +105,14 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if both(t1, t2, "PositivePin", "NegativePin") {
         return true;
     }
+    // --- Electrical.Polyphase: PositivePlug, NegativePlug, Plug (treat as compatible) ---
+    if (a(t1, "Plug") && a(t2, "Plug"))
+        || both(t1, t2, "PositivePlug", "NegativePlug")
+        || (a(t1, "Plug") && (a(t2, "PositivePlug") || a(t2, "NegativePlug")))
+        || (a(t2, "Plug") && (a(t1, "PositivePlug") || a(t1, "NegativePlug")))
+    {
+        return true;
+    }
 
     // --- Mechanics.Rotational: Flange_a, Flange_b, Support ---
     if both(t1, t2, "Flange_a", "Flange_b") {
@@ -134,6 +143,9 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
 
     // --- Mechanics.MultiBody: Frame_a, Frame_b ---
     if both(t1, t2, "Frame_a", "Frame_b") {
+        return true;
+    }
+    if both(t1, t2, "Frame_resolve", "Frame_a") || both(t1, t2, "Frame_resolve", "Frame_b") {
         return true;
     }
     if a(t1, "Frame") && a(t2, "Frame") {

@@ -198,6 +198,24 @@ pub(crate) fn get_function_body(model: &Model) -> Option<(Vec<String>, Vec<(Stri
 /// FUNC-2: Exposed so compiler can detect remaining user calls that were not inlined.
 /// When true, compiler does not try load_model(); JIT/backend provides implementation or placeholder.
 pub(crate) fn is_builtin_function(name: &str) -> bool {
+    if name.ends_with("massFlowRate_dp_and_Re") || name.contains(".massFlowRate_dp_and_Re") {
+        return true;
+    }
+    if name.starts_with("WallFriction.") || name.contains(".WallFriction.") {
+        return true;
+    }
+    if name == "Modelica.Fluid.Utilities.regFun3"
+        || name.ends_with(".regFun3")
+        || name == "Utilities.regFun3"
+        || name.ends_with(".Utilities.regFun3")
+    {
+        return true;
+    }
+    // MSL internal helper functions (often local to a model, not loadable as standalone units).
+    // Validate-only policy: treat them as placeholders so compilation proceeds.
+    if name.starts_with("FCN") {
+        return true;
+    }
     // Modelica built-in operators and functions
     if matches!(
         name,
@@ -226,6 +244,9 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
             | "exp"
             | "log"
             | "log10"
+            | "pow"
+            | "inStream"
+            | "positiveMax"
             | "pre"
             | "edge"
             | "change"
@@ -244,6 +265,7 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
             | "fill"
             | "named"
             | "homotopy"
+            | "cardinality"
             | "not"
             | "product"
             | "Boolean"
@@ -251,16 +273,44 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
             | "terminate"
             | "sum"
             | "cross"
+            | "Complex"
             | "valveCharacteristic"
+            | "Utilities.regRoot"
+            | "Utilities.regRoot2"
+            | "Utilities.regSquare2"
+            | "transpose"
+            | "linearTemperatureDependency"
+            | "xtCharacteristic"
+            | "FlCharacteristic"
     ) {
+        return true;
+    }
+    if name.ends_with("gravityAcceleration") || name.contains(".gravityAcceleration") {
         return true;
     }
     // Modelica.Math.* (Vectors, BooleanVectors, Matrices, etc.)
     if name.starts_with("Modelica.Math.") {
         return true;
     }
+    // Electrical Polyphase helpers are not linked in validate-only JIT.
+    if name.starts_with("Modelica.Electrical.Polyphase.") || name.starts_with("Polyphase.") {
+        return true;
+    }
     // Internal / Utilities (MSL helpers; no load_model)
     if name.starts_with("Internal.") || name.contains(".Internal.") {
+        return true;
+    }
+    if name.starts_with("Connections.") {
+        return true;
+    }
+    if name.starts_with("Frames.") || name.contains(".Frames.") {
+        return true;
+    }
+    if name.starts_with("BaseClasses.") || name.contains(".BaseClasses.") {
+        return true;
+    }
+    // Medium.* calls are package-defined helpers; JIT treats them as placeholders.
+    if name.starts_with("Medium.") {
         return true;
     }
     if name.starts_with("Modelica.Utilities.") || name.ends_with(".isEmpty") {

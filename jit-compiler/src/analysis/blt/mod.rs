@@ -1,6 +1,4 @@
 use crate::ast::{Equation, Expression, Operator};
-use petgraph::algo::tarjan_scc;
-use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet};
 
 use crate::analysis::derivative::collect_states_from_eq;
@@ -170,17 +168,30 @@ pub struct SortAlgebraicResult {
 }
 
 pub fn sort_algebraic_equations(
-    equations: &[Equation],
+    equations: Vec<Equation>,
     known_vars: &HashSet<String>,
     params: &[String],
     options: &AnalysisOptions,
 ) -> SortAlgebraicResult {
+    let blt_trace = std::env::var("RUSTMODLICA_BLT_TRACE")
+        .ok()
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false);
+    if blt_trace {
+        eprintln!("[blt] start");
+    }
     let mut current_known = known_vars.clone();
     for p in params {
         current_known.insert(p.clone());
     }
     current_known.insert("time".to_string());
 
+    if blt_trace {
+        eprintln!("[blt] eliminate_aliases");
+    }
     let (equations, alias_map): (Vec<Equation>, HashMap<String, Expression>) =
         eliminate_aliases(equations);
 
@@ -207,6 +218,9 @@ pub fn sort_algebraic_equations(
         collect_states_from_eq(eq, &mut state_set);
     }
     let state_vars: Vec<String> = state_set.into_iter().collect();
+    if blt_trace {
+        eprintln!("[blt] build_eq_info");
+    }
     if options.index_reduction_method == "debugPrint" && !state_vars.is_empty() {
         for eq in equations.iter() {
             if let Equation::Simple(lhs, rhs) = eq {
@@ -300,6 +314,13 @@ pub fn sort_algebraic_equations(
         assigned_var = vec![None; eq_infos.len()];
         assigned_eq = vec![None; unknown_list.len()];
 
+        if blt_trace {
+            eprintln!(
+                "[blt] matching setup eqs={} unknowns={}",
+                eq_infos.len(),
+                unknown_list.len()
+            );
+        }
         for (i, info) in eq_infos.iter().enumerate() {
             let eq = &equations[info.original_idx];
             if let Equation::Simple(lhs, _) = eq {
@@ -371,8 +392,12 @@ pub fn sort_algebraic_equations(
 
     let constraint_equation_count = assigned_var.iter().filter(|o| o.is_none()).count();
 
-    let mut dep_graph = DiGraph::<usize, ()>::new();
-    let node_indices: Vec<NodeIndex> = (0..eq_infos.len()).map(|i| dep_graph.add_node(i)).collect();
+    if blt_trace {
+        eprintln!("[blt] build_dependency_graph");
+    }
+    let n_nodes = eq_infos.len();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n_nodes];
+    let mut radj: Vec<Vec<usize>> = vec![Vec::new(); n_nodes];
 
     for (i, info) in eq_infos.iter().enumerate() {
         for u in &info.unknowns {
@@ -381,7 +406,10 @@ pub fn sort_algebraic_equations(
                     continue;
                 }
                 if let Some(solver_eq_idx) = assigned_eq[v_idx] {
-                    dep_graph.add_edge(node_indices[i], node_indices[solver_eq_idx], ());
+                    if i < n_nodes && solver_eq_idx < n_nodes {
+                        adj[i].push(solver_eq_idx);
+                        radj[solver_eq_idx].push(i);
+                    }
                 }
             }
         }
@@ -399,18 +427,70 @@ pub fn sort_algebraic_equations(
                 .iter()
                 .any(|u| eq_infos[j].unknowns.contains(u));
             if shared {
-                dep_graph.add_edge(node_indices[i], node_indices[j], ());
-                dep_graph.add_edge(node_indices[j], node_indices[i], ());
+                adj[i].push(j);
+                radj[j].push(i);
+                adj[j].push(i);
+                radj[i].push(j);
             }
         }
     }
 
-    let sccs = tarjan_scc(&dep_graph);
+    if blt_trace {
+        eprintln!("[blt] scc");
+    }
+    // Iterative SCC to avoid stack overflow on large graphs.
+    // Kosaraju: order by finish time on adj, then DFS on reversed graph.
+    let mut visited = vec![false; n_nodes];
+    let mut order: Vec<usize> = Vec::with_capacity(n_nodes);
+    for start in 0..n_nodes {
+        if visited[start] {
+            continue;
+        }
+        visited[start] = true;
+        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+        while let Some((v, next_i)) = stack.pop() {
+            if next_i < adj[v].len() {
+                // Put back current with advanced iterator
+                stack.push((v, next_i + 1));
+                let to = adj[v][next_i];
+                if !visited[to] {
+                    visited[to] = true;
+                    stack.push((to, 0));
+                }
+            } else {
+                order.push(v);
+            }
+        }
+    }
+
+    let mut visited2 = vec![false; n_nodes];
+    let mut sccs: Vec<Vec<usize>> = Vec::new();
+    for &v in order.iter().rev() {
+        if visited2[v] {
+            continue;
+        }
+        visited2[v] = true;
+        let mut comp: Vec<usize> = Vec::new();
+        let mut stack: Vec<usize> = vec![v];
+        while let Some(x) = stack.pop() {
+            comp.push(x);
+            for &to in &radj[x] {
+                if !visited2[to] {
+                    visited2[to] = true;
+                    stack.push(to);
+                }
+            }
+        }
+        sccs.push(comp);
+    }
 
     let mut sorted_equations = Vec::new();
 
+    if blt_trace {
+        eprintln!("[blt] solve_blocks");
+    }
     for scc in sccs {
-        let block_indices: Vec<usize> = scc.iter().map(|n| dep_graph[*n]).collect();
+        let block_indices: Vec<usize> = scc;
 
         if block_indices.is_empty() {
             continue;

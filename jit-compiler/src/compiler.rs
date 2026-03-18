@@ -465,6 +465,14 @@ impl Compiler {
         if root_model.as_ref().is_function {
             return Err("Equation graph is not supported for functions.".into());
         }
+        let stage_trace = std::env::var("RUSTMODLICA_STAGE_TRACE")
+            .ok()
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false);
+
         let mut flattener = Flattener::new();
         for path in &self.loader.library_paths {
             flattener.loader.add_path(path.clone());
@@ -510,6 +518,14 @@ impl Compiler {
         &mut self,
         model_name: &str,
     ) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
+        let stage_trace = std::env::var("RUSTMODLICA_STAGE_TRACE")
+            .ok()
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false);
+
         self.warnings.clear();
         self.loader.set_quiet(self.options.quiet);
         let opts = &self.options;
@@ -548,8 +564,14 @@ impl Compiler {
             flattener.loader.register_path(model_name, p);
         }
         flattener.loader.set_quiet(self.options.quiet);
+        if stage_trace {
+            eprintln!("[stage] flatten");
+        }
         let mut flat_model = flattener.flatten(&mut root_model, model_name)?;
 
+        if stage_trace {
+            eprintln!("[stage] inline");
+        }
         inline::inline_function_calls(&mut flat_model, &mut self.loader);
 
         // Output detailed statistics
@@ -564,6 +586,9 @@ impl Compiler {
             println!("{}", i18n::msg0("analyzing_variables"));
         }
 
+        if stage_trace {
+            eprintln!("[stage] classify_vars");
+        }
         // 2. Identify Variables
         let mut state_vars = HashSet::new();
         let mut discrete_vars = HashSet::new();
@@ -601,6 +626,10 @@ impl Compiler {
             .enumerate()
             .map(|(i, d)| (d.name.clone(), i))
             .collect();
+
+        if stage_trace {
+            eprintln!("[stage] referenced_vars");
+        }
 
         // Include variables referenced in equations but not yet in state/discrete/param
         // (e.g. boundary_Medium_X_default from unexpanded Medium) so JIT can resolve them.
@@ -906,6 +935,9 @@ impl Compiler {
         }
 
         // 4. Structure Analysis (BLT)
+        if stage_trace {
+            eprintln!("[stage] structure_analysis");
+        }
         if !self.options.quiet {
             println!("{}", i18n::msg0("performing_structure_analysis"));
         }
@@ -947,8 +979,11 @@ impl Compiler {
             tearing_method: opts.tearing_method.clone(),
             quiet: opts.quiet,
         };
+        if stage_trace {
+            eprintln!("[stage] sort_equations");
+        }
         let sort_result =
-            sort_algebraic_equations(&continuous_eqs, &known_vars, &param_vars, &analysis_opts);
+            sort_algebraic_equations(continuous_eqs, &known_vars, &param_vars, &analysis_opts);
         let mut alg_eqs = sort_result.sorted_equations;
         for out_var in &output_vars {
             if let Some(alias_expr) = sort_result.alias_map.get(out_var) {
@@ -1117,6 +1152,10 @@ impl Compiler {
             // the default linear characteristic for JIT stubs.
             let load_name = if name == "valveCharacteristic" {
                 "Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string()
+            } else if name.starts_with("world.") {
+                format!("Modelica.Mechanics.MultiBody.World.{}", name.trim_start_matches("world."))
+            } else if name.starts_with("BaseClasses.") {
+                format!("Modelica.Fluid.Utilities.{}", name)
             } else if name.starts_with("Machines.") {
                 format!("Modelica.Electrical.{}", name)
             } else if name.starts_with("Mechanics.") {
@@ -1166,7 +1205,7 @@ impl Compiler {
                 &param_vars,
                 &output_vars,
                 &flat_model.clocked_var_names,
-                &continuous_eqs,
+                &flat_model.equations,
                 &alg_equations,
                 &flat_model.equations,
                 &flat_model.algorithms,

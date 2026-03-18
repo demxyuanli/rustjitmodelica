@@ -18,7 +18,7 @@ pub fn analyze_initial_equations(
     initial_equations: &[Equation],
     known_at_initial: &HashSet<String>,
 ) -> InitialSystemInfo {
-    let (eqs_after_alias, alias_map) = eliminate_aliases(initial_equations);
+    let (eqs_after_alias, alias_map) = eliminate_aliases(initial_equations.to_vec());
     let mut var_set = HashSet::new();
     for eq in &eqs_after_alias {
         collect_vars_eq(eq, &mut var_set);

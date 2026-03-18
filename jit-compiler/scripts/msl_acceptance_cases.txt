@@ -90,8 +90,25 @@ Modelica.Electrical.Machines.Examples.DCMachines.DCPM_CurrentControlled
 Modelica.Electrical.Machines.Examples.DCMachines.DCPM_QuasiStatic
 Modelica.Electrical.Machines.Examples.DCMachines.DCSE_Start
 Modelica.Electrical.Machines.Examples.InductionMachines.IMC_DOL
-Modelica.Electrical.Machines.Examples.InductionMachines.IMC_Start
+Modelica.Electrical.Machines.Examples.InductionMachines.IMS_Start
 Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_NoLoad
 Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_Inverter
 Modelica.Electrical.Machines.Examples.ControlledDCDrives.SpeedControlledDCPM
 Modelica.Electrical.Machines.Examples.ControlledDCDrives.CurrentControlledDCPM
+
+# Stage 2: broaden coverage (validate-only)
+Modelica.Electrical.Analog.Examples.AD_DA_conversion
+Modelica.Electrical.Analog.Examples.AmplifierWithOpAmpDetailed
+Modelica.Electrical.Analog.Examples.CauerLowPassOPV
+Modelica.Electrical.Analog.Examples.CauerLowPassSC
+Modelica.Electrical.Analog.Examples.CharacteristicIdealDiodes
+Modelica.Mechanics.Rotational.Examples.Backlash
+Modelica.Mechanics.Rotational.Examples.EddyCurrentBrake
+Modelica.Mechanics.Rotational.Examples.ElasticBearing
+Modelica.Mechanics.Rotational.Examples.FirstGrounded
+Modelica.Mechanics.Rotational.Examples.Friction
+Modelica.Thermal.HeatTransfer.Examples.ControlledTemperature
+Modelica.Thermal.HeatTransfer.Examples.Motor
+Modelica.Mechanics.MultiBody.Examples.Constraints.SphericalConstraint
+Modelica.Mechanics.MultiBody.Examples.Constraints.UniversalConstraint
+Modelica.Electrical.Machines.Examples.ControlledDCDrives.PositionControlledDCPM

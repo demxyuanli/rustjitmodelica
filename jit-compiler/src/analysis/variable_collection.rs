@@ -129,33 +129,56 @@ pub(crate) fn equation_contains_var(eq: &Equation, var: &str) -> bool {
 }
 
 pub fn contains_var(expr: &Expression, var_name: &str) -> bool {
-    match expr {
-        Expression::Variable(name) => name == var_name,
-        Expression::BinaryOp(lhs, _, rhs) => {
-            contains_var(lhs, var_name) || contains_var(rhs, var_name)
+    let mut stack: Vec<&Expression> = vec![expr];
+    while let Some(e) = stack.pop() {
+        match e {
+            Expression::Variable(name) => {
+                if name == var_name {
+                    return true;
+                }
+            }
+            Expression::BinaryOp(lhs, _, rhs) => {
+                stack.push(rhs);
+                stack.push(lhs);
+            }
+            Expression::Call(_, args) => {
+                for a in args {
+                    stack.push(a);
+                }
+            }
+            Expression::Der(arg) => stack.push(arg),
+            Expression::ArrayAccess(arr, idx) => {
+                stack.push(idx);
+                stack.push(arr);
+            }
+            Expression::Dot(base, _) => stack.push(base),
+            Expression::If(c, t, f) => {
+                stack.push(f);
+                stack.push(t);
+                stack.push(c);
+            }
+            Expression::ArrayLiteral(es) => {
+                for a in es {
+                    stack.push(a);
+                }
+            }
+            Expression::Range(start, step, end) => {
+                stack.push(end);
+                stack.push(step);
+                stack.push(start);
+            }
+            Expression::Sample(inner)
+            | Expression::Interval(inner)
+            | Expression::Hold(inner)
+            | Expression::Previous(inner) => stack.push(inner),
+            Expression::SubSample(c, n)
+            | Expression::SuperSample(c, n)
+            | Expression::ShiftSample(c, n) => {
+                stack.push(n);
+                stack.push(c);
+            }
+            _ => {}
         }
-        Expression::Call(_, args) => args.iter().any(|arg| contains_var(arg, var_name)),
-        Expression::Der(arg) => contains_var(arg, var_name),
-        Expression::ArrayAccess(arr, idx) => {
-            contains_var(arr, var_name) || contains_var(idx, var_name)
-        }
-        Expression::Dot(base, _) => contains_var(base, var_name),
-        Expression::If(c, t, f) => {
-            contains_var(c, var_name) || contains_var(t, var_name) || contains_var(f, var_name)
-        }
-        Expression::ArrayLiteral(es) => es.iter().any(|e| contains_var(e, var_name)),
-        Expression::Range(start, step, end) => {
-            contains_var(start, var_name)
-                || contains_var(step, var_name)
-                || contains_var(end, var_name)
-        }
-        Expression::Sample(inner) => contains_var(inner, var_name),
-        Expression::Interval(inner) => contains_var(inner, var_name),
-        Expression::Hold(inner) => contains_var(inner, var_name),
-        Expression::Previous(inner) => contains_var(inner, var_name),
-        Expression::SubSample(c, n)
-        | Expression::SuperSample(c, n)
-        | Expression::ShiftSample(c, n) => contains_var(c, var_name) || contains_var(n, var_name),
-        _ => false,
     }
+    false
 }
