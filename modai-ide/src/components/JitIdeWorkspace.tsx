@@ -33,7 +33,15 @@ interface JitIdeWorkspaceProps {
   onRequestedCenterViewHandled?: () => void;
   onActiveCenterViewChange?: (view: JitCenterView | null) => void;
   theme?: "dark" | "light";
+  /** Min interval (ms) between git status refreshes; initial refresh is delayed by 400ms */
+  gitStatusThrottleMs?: number;
+  /** Open global settings to AI Rules & Skills section */
+  onOpenRulesAndSkills?: () => void;
+  /** Model IDs enabled in settings for AI panel dropdown */
+  enabledModelIds?: string[] | null;
 }
+
+const GIT_STATUS_INITIAL_DELAY_MS = 400;
 
 export function JitIdeWorkspace({
   targetPrefill,
@@ -43,6 +51,9 @@ export function JitIdeWorkspace({
   onRequestedCenterViewHandled,
   onActiveCenterViewChange,
   theme = "dark",
+  gitStatusThrottleMs = 2000,
+  onOpenRulesAndSkills,
+  enabledModelIds,
 }: JitIdeWorkspaceProps) {
   const layout = useJitLayout();
 
@@ -60,6 +71,15 @@ export function JitIdeWorkspace({
 
   const workbenchRef = useRef<JitEditorWorkbenchRef | null>(null);
   const appliedJitRestoreRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const start = performance.now?.() ?? Date.now();
+    return () => {
+      const end = performance.now?.() ?? Date.now();
+      // eslint-disable-next-line no-console
+      console.log("[modai-prof] JitIdeWorkspace session took", end - start, "ms");
+    };
+  }, []);
 
   const jitLog = useCallback((msg: string) => {
     const ts = new Date().toISOString().slice(11, 19);
@@ -113,8 +133,17 @@ export function JitIdeWorkspace({
   }, [repoRoot]);
 
   useEffect(() => {
-    refreshGitStatus();
-  }, [refreshGitStatus]);
+    if (!repoRoot) return;
+    const throttle = Math.max(500, gitStatusThrottleMs);
+    const initial = window.setTimeout(() => {
+      refreshGitStatus();
+    }, GIT_STATUS_INITIAL_DELAY_MS);
+    const interval = window.setInterval(refreshGitStatus, throttle);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+    };
+  }, [repoRoot, refreshGitStatus, gitStatusThrottleMs]);
 
   useEffect(() => {
     if (!repoRoot) {
@@ -124,8 +153,12 @@ export function JitIdeWorkspace({
     const repoKey = getWorkspaceStateKey(repoRoot);
     if (!repoKey) return;
     if (appliedJitRestoreRef.current === repoRoot) return;
+    const start = performance.now?.() ?? Date.now();
     const meta = loadJitWorkspaceMeta(repoKey);
     loadWorkspaceDrafts(getJitWorkspaceDraftsKey(repoRoot)).then((drafts) => {
+      const end = performance.now?.() ?? Date.now();
+      // eslint-disable-next-line no-console
+      console.log("[modai-prof] restore JIT workspace state took", end - start, "ms");
       if (meta && meta.openFiles.length > 0) {
         appliedJitRestoreRef.current = repoRoot;
         const openFilesRestored: OpenFileTab[] = meta.openFiles.map((tab) => {
@@ -490,6 +523,13 @@ export function JitIdeWorkspace({
                   onAdoptIteration: ai.adoptIteration,
                   onCommitIteration: ai.commitIteration,
                   onReuseIteration: ai.reuseIteration,
+                  onNewChat: ai.newChat,
+                  sessions: ai.sessions,
+                  onLoadSession: ai.loadSessionById,
+                  onDeleteSession: ai.deleteSession,
+                  lastToolCallsUsed: ai.lastToolCallsUsed,
+                  onOpenRulesAndSkills,
+                  enabledModelIds,
                 }}
                 currentFilePath={activeFilePath}
                 currentSelectionText={currentSelection.text ?? null}

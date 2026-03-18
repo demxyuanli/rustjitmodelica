@@ -41,6 +41,7 @@ interface AIChatMessagesProps {
   onCreateMoFile?: (relativePath: string, content: string) => Promise<void>;
   onRegenerate?: () => void;
   onApplyDiff?: (diff: string) => Promise<void>;
+  lastToolCallsUsed?: string[] | null;
 }
 
 export function AIChatMessages({
@@ -52,6 +53,7 @@ export function AIChatMessages({
   onCreateMoFile,
   onRegenerate,
   onApplyDiff,
+  lastToolCallsUsed,
 }: AIChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -258,6 +260,11 @@ export function AIChatMessages({
                       {createFileError && (
                         <span className="text-[var(--danger-text)] text-[10px]">{createFileError}</span>
                       )}
+                    </div>
+                  )}
+                  {lastToolCallsUsed && lastToolCallsUsed.length > 0 && (
+                    <div className="mt-1.5 px-2 py-1 rounded bg-[var(--surface-muted)]/50 text-[10px] text-[var(--text-muted)]">
+                      {t("aiToolsUsed")}: {lastToolCallsUsed.join(", ")}
                     </div>
                   )}
                 </>

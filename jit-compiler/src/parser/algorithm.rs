@@ -1,17 +1,37 @@
-use pest::iterators::Pair;
 use crate::ast::{AlgorithmStatement, Expression};
+use pest::iterators::Pair;
 
 use super::expression;
 use super::Rule;
 
 pub(super) fn parse_algorithm_stmt(pair: Pair<Rule>) -> AlgorithmStatement {
     match pair.as_rule() {
+        Rule::annotation_clause => AlgorithmStatement::NoOp,
         Rule::assignment_stmt => {
             let mut inner = pair.into_inner();
             let lhs_pair = inner.next().unwrap();
             let lhs_expr = expression::parse_component_ref(lhs_pair);
             let rhs_expr = expression::parse_expression(inner.next().unwrap());
             AlgorithmStatement::Assignment(lhs_expr, rhs_expr)
+        }
+        Rule::multi_assign_stmt => {
+            let mut inner = pair.into_inner();
+            let mut lhss: Vec<Expression> = Vec::new();
+            while let Some(p) = inner.peek() {
+                if p.as_rule() == Rule::component_ref {
+                    lhss.push(expression::parse_component_ref(inner.next().unwrap()));
+                } else {
+                    break;
+                }
+            }
+            let rhs = expression::parse_expression(inner.next().unwrap());
+            AlgorithmStatement::MultiAssign(lhss, rhs)
+        }
+        Rule::call_stmt => {
+            let inner = pair.into_inner().next().unwrap();
+            // call_stmt = function_call ';'
+            let expr = expression::parse_function_call_expr(inner);
+            AlgorithmStatement::CallStmt(expr)
         }
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
@@ -117,6 +137,46 @@ pub(super) fn parse_algorithm_stmt(pair: Pair<Rule>) -> AlgorithmStatement {
                 }
             }
             AlgorithmStatement::When(cond, body, else_whens)
+        }
+        Rule::reinit_clause => {
+            let mut inner = pair.into_inner();
+            let var_expr = expression::parse_component_ref(inner.next().unwrap());
+            let val_expr = expression::parse_expression(inner.next().unwrap());
+            let var_name = super::helpers::expr_to_string(var_expr);
+            AlgorithmStatement::Reinit(var_name, val_expr)
+        }
+        Rule::assert_stmt => {
+            let mut args: Vec<Expression> = Vec::new();
+            if let Some(arg_list) = pair.into_inner().next() {
+                for item in arg_list.into_inner() {
+                    let item = if item.as_rule() == Rule::arg_item {
+                        item.into_inner().next().unwrap()
+                    } else {
+                        item
+                    };
+                    match item.as_rule() {
+                        Rule::named_arg => {
+                            let mut ni = item.into_inner();
+                            let name = ni.next().unwrap().as_str().to_string();
+                            let val = expression::parse_expression(ni.next().unwrap());
+                            args.push(Expression::Call(
+                                "named".to_string(),
+                                vec![Expression::StringLiteral(name), val],
+                            ));
+                        }
+                        Rule::expression => args.push(expression::parse_expression(item)),
+                        _ => {}
+                    }
+                }
+            }
+            let cond = args.get(0).cloned().unwrap_or(Expression::Number(0.0));
+            let msg = args.get(1).cloned().unwrap_or(Expression::Number(0.0));
+            AlgorithmStatement::Assert(cond, msg)
+        }
+        Rule::terminate_stmt => {
+            let mut inner = pair.into_inner();
+            let msg = expression::parse_expression(inner.next().unwrap());
+            AlgorithmStatement::Terminate(msg)
         }
         _ => unreachable!("Unknown algorithm stmt rule: {:?}", pair.as_rule()),
     }

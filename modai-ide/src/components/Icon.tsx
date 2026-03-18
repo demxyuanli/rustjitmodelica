@@ -33,6 +33,7 @@ import {
   SendHorizontal,
   MessageSquarePlus,
   ArrowDown,
+  History,
 } from "lucide-react";
 
 export type AppIconName =
@@ -71,7 +72,8 @@ export type AppIconName =
   | "check"
   | "send"
   | "newChat"
-  | "arrowDown";
+  | "arrowDown"
+  | "history";
 
 type IconProps = Omit<ComponentProps<"svg">, "ref">;
 
@@ -151,6 +153,8 @@ export function AppIcon({ name, className, ...rest }: { name: AppIconName } & Ic
       return <MessageSquarePlus className={mergedClassName} {...rest} />;
     case "arrowDown":
       return <ArrowDown className={mergedClassName} {...rest} />;
+    case "history":
+      return <History className={mergedClassName} {...rest} />;
     default:
       return null;
   }

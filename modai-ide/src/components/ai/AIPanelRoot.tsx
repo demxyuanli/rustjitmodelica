@@ -1,7 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { indexRepoGetContext, indexGetContext } from "../../api/tauri";
+import {
+  indexRepoGetContext,
+  indexGetContext,
+  indexComponentLibraryGetContext,
+} from "../../api/tauri";
 import type { IterationRecord, IterationRunResult } from "../../api/tauri";
 import type { AgentMode, AiContextBlock, PendingPatch } from "../../hooks/useAI";
+import type { AISession } from "../../hooks/useAISessions";
 import type { ChatMessage, ChunkInfo } from "./ai-markdown";
 
 import { AIChatHeader } from "./AIChatHeader";
@@ -53,6 +58,14 @@ export interface AIPanelProps {
   onAdoptIteration?: () => Promise<unknown>;
   onCommitIteration?: (message?: string) => Promise<unknown>;
   onReuseIteration?: (record: IterationRecord) => Promise<unknown>;
+  onNewChat?: () => void;
+  sessions?: AISession[];
+  onLoadSession?: (id: string) => void;
+  onDeleteSession?: (id: string) => void;
+  lastToolCallsUsed?: string[] | null;
+  onOpenRulesAndSkills?: () => void;
+  /** Model IDs enabled in settings. Undefined = all built-in shown. */
+  enabledModelIds?: string[] | null;
   theme?: "dark" | "light";
 }
 
@@ -91,6 +104,13 @@ export function AIPanel({
   onAdoptIteration,
   onCommitIteration,
   onReuseIteration,
+  onNewChat,
+  sessions = [],
+  onLoadSession,
+  onDeleteSession,
+  lastToolCallsUsed,
+  onOpenRulesAndSkills,
+  enabledModelIds,
   theme = "dark",
 }: AIPanelProps) {
   const [contextChunks, setContextChunks] = useState<ChunkInfo[]>([]);
@@ -108,15 +128,17 @@ export function AIPanel({
     }
     setContextLoading(true);
     try {
-      let chunks: ChunkInfo[] = [];
-      if (repoRoot) {
-        chunks = (await indexRepoGetContext(aiPrompt.trim(), 8)) as ChunkInfo[];
-      } else if (projectDir) {
-        chunks = (await indexGetContext(projectDir, aiPrompt.trim(), 8)) as ChunkInfo[];
-      } else {
-        setContextChunks([]);
-        return [];
-      }
+      const query = aiPrompt.trim();
+      const [projectChunks, repoChunks, compChunks] = await Promise.all([
+        projectDir ? indexGetContext(projectDir, query, 8).catch(() => []) : Promise.resolve([]),
+        repoRoot ? indexRepoGetContext(query, 8).catch(() => []) : Promise.resolve([]),
+        indexComponentLibraryGetContext(query, 4).catch(() => []),
+      ]);
+      const chunks: ChunkInfo[] = [
+        ...(projectChunks as ChunkInfo[]),
+        ...(repoChunks as ChunkInfo[]),
+        ...(compChunks as ChunkInfo[]),
+      ];
       setContextChunks(chunks);
       return chunks;
     } catch {
@@ -133,7 +155,7 @@ export function AIPanel({
     if (messagesProp === undefined) {
       setLocalMessages((prev) => [...prev, { id: Date.now(), role: "user", text: promptText }]);
     }
-    if (useContext && (projectDir || repoRoot)) {
+    if (useContext) {
       fetchContext().then((chunks) => {
         const extra = chunks.map((c) => ({ path: c.filePath, content: c.content ?? "" }));
         onSend(extra.length > 0 ? extra : undefined);
@@ -153,10 +175,11 @@ export function AIPanel({
   }, [aiResponse, messagesProp]);
 
   const handleNewChat = useCallback(() => {
+    onNewChat?.();
     setLocalMessages([]);
     lastAssistantRef.current = null;
     setAiPrompt("");
-  }, [setAiPrompt]);
+  }, [onNewChat, setAiPrompt]);
 
   const hasConversation = messages.length > 0;
 
@@ -170,6 +193,10 @@ export function AIPanel({
         agentMode={agentMode}
         hasMessages={hasConversation}
         onNewChat={handleNewChat}
+        sessions={sessions}
+        onLoadSession={onLoadSession}
+        onDeleteSession={onDeleteSession}
+        onOpenRulesAndSkills={onOpenRulesAndSkills}
       />
 
       {hasConversation ? (
@@ -182,6 +209,7 @@ export function AIPanel({
           onCreateMoFile={onCreateMoFile}
           onRegenerate={handleSendWithContext}
           onApplyDiff={onApplyDiff}
+          lastToolCallsUsed={lastToolCallsUsed}
         />
       ) : (
         <AIChatEmptyState
@@ -245,6 +273,7 @@ export function AIPanel({
         dailyTokenUsed={dailyTokenUsed}
         dailyTokenLimit={dailyTokenLimit}
         onSend={handleSendWithContext}
+        enabledModelIds={enabledModelIds}
       />
     </div>
   );

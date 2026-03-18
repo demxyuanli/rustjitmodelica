@@ -1,5 +1,5 @@
-use pest::iterators::Pair;
 use crate::ast::{Equation, Expression};
+use pest::iterators::Pair;
 
 use super::expression;
 use super::helpers;
@@ -139,14 +139,38 @@ pub(super) fn parse_equation_stmt_inner(inner_stmt: Pair<Rule>) -> Equation {
         }
         Rule::assert_stmt => {
             let mut inner = inner_stmt.into_inner();
-            let cond = expression::parse_expression(inner.next().unwrap());
-            let msg = expression::parse_expression(inner.next().unwrap());
+            let arg_list = inner.next().unwrap();
+            let mut positional: Vec<Expression> = Vec::new();
+            for item in arg_list.into_inner() {
+                let item = if item.as_rule() == Rule::arg_item {
+                    item.into_inner().next().unwrap()
+                } else {
+                    item
+                };
+                match item.as_rule() {
+                    Rule::expression => positional.push(expression::parse_expression(item)),
+                    Rule::named_arg => {
+                        // Ignore named args for now (MSL compatibility).
+                    }
+                    _ => {}
+                }
+                if positional.len() >= 2 {
+                    break;
+                }
+            }
+            let cond = positional.get(0).cloned().unwrap_or(Expression::Number(1.0));
+            let msg = positional.get(1).cloned().unwrap_or(Expression::StringLiteral(String::new()));
             Equation::Assert(cond, msg)
         }
         Rule::terminate_stmt => {
             let mut inner = inner_stmt.into_inner();
             let msg = expression::parse_expression(inner.next().unwrap());
             Equation::Terminate(msg)
+        }
+        Rule::call_stmt => {
+            let inner = inner_stmt.into_inner().next().unwrap();
+            let expr = expression::parse_function_call_expr(inner);
+            Equation::CallStmt(expr)
         }
         Rule::multi_assign_equation => parse_multi_assign_equation(inner_stmt),
         _ => unreachable!("Unknown equation stmt rule: {:?}", inner_stmt.as_rule()),

@@ -5,7 +5,7 @@ use std::io::BufRead;
 use std::io::Read;
 
 use crate::ast::{Expression, Operator};
-use crate::compiler::{Compiler, CompileOutput};
+use crate::compiler::{CompileOutput, Compiler};
 use crate::expr_eval::eval_expr;
 use crate::simulation::run_simulation;
 
@@ -95,7 +95,9 @@ pub fn parse_script_line(line: &str) -> Option<ScriptCommand> {
         if name.is_empty() {
             return None;
         }
-        return Some(ScriptCommand::Load(line["load ".len()..].trim().to_string()));
+        return Some(ScriptCommand::Load(
+            line["load ".len()..].trim().to_string(),
+        ));
     }
     if let Some(rest) = lower.strip_prefix("loadclass ") {
         let name = rest.trim();
@@ -154,14 +156,22 @@ pub fn parse_script_line(line: &str) -> Option<ScriptCommand> {
     }
     if let Some(rest) = lower.strip_prefix("saveresult ") {
         let path = rest.trim();
-        let path = path.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(path).trim();
+        let path = path
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(path)
+            .trim();
         if !path.is_empty() {
             return Some(ScriptCommand::SaveResult(path.to_string()));
         }
     }
     if let Some(rest) = lower.strip_prefix("save ") {
         let path = rest.trim();
-        let path = path.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(path).trim();
+        let path = path
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(path)
+            .trim();
         if !path.is_empty() {
             return Some(ScriptCommand::SaveResult(path.to_string()));
         }
@@ -176,7 +186,11 @@ pub fn parse_script_line(line: &str) -> Option<ScriptCommand> {
         }
     }
     if let Some(rest) = lower.strip_prefix("plot ") {
-        let vars: Vec<String> = rest.trim().split_whitespace().map(|s| s.to_string()).collect();
+        let vars: Vec<String> = rest
+            .trim()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
         if !vars.is_empty() {
             return Some(ScriptCommand::Plot(vars));
         }
@@ -215,13 +229,27 @@ impl ScriptRunner {
     }
 
     fn current_artifacts(&mut self) -> Result<&mut crate::compiler::Artifacts, RunError> {
-        let name = self.current_model.as_deref().ok_or("no model loaded (run load first)")?;
-        self.artifacts_map.get_mut(name).ok_or_else(|| format!("model '{}' not loaded (use 'use {}' after loading)", name, name).into())
+        let name = self
+            .current_model
+            .as_deref()
+            .ok_or("no model loaded (run load first)")?;
+        self.artifacts_map.get_mut(name).ok_or_else(|| {
+            format!(
+                "model '{}' not loaded (use 'use {}' after loading)",
+                name, name
+            )
+            .into()
+        })
     }
 
     fn current_artifacts_ref(&self) -> Result<&crate::compiler::Artifacts, RunError> {
-        let name = self.current_model.as_deref().ok_or("no model loaded (run load first)")?;
-        self.artifacts_map.get(name).ok_or_else(|| format!("model '{}' not loaded", name).into())
+        let name = self
+            .current_model
+            .as_deref()
+            .ok_or("no model loaded (run load first)")?;
+        self.artifacts_map
+            .get(name)
+            .ok_or_else(|| format!("model '{}' not loaded", name).into())
     }
 
     pub fn run_command(&mut self, cmd: ScriptCommand) -> Result<bool, RunError> {
@@ -248,7 +276,10 @@ impl ScriptRunner {
                         Ok(true)
                     }
                     CompileOutput::FunctionRun(v) => {
-                        eprintln!("Script mode expects a simulation model, got function result: {}", v);
+                        eprintln!(
+                            "Script mode expects a simulation model, got function result: {}",
+                            v
+                        );
                         Err("load: model is a function, not a simulation model".into())
                     }
                 }
@@ -269,13 +300,23 @@ impl ScriptRunner {
                         return Ok(true);
                     }
                 }
-                if let Some((i, _)) = arts.param_vars.iter().enumerate().find(|(_, s)| s.as_str() == name) {
+                if let Some((i, _)) = arts
+                    .param_vars
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.as_str() == name)
+                {
                     if i < arts.params.len() {
                         arts.params[i] = value;
                         return Ok(true);
                     }
                 }
-                if let Some((i, _)) = arts.discrete_vars.iter().enumerate().find(|(_, s)| s.as_str() == name) {
+                if let Some((i, _)) = arts
+                    .discrete_vars
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.as_str() == name)
+                {
                     if i < arts.discrete_vals.len() {
                         arts.discrete_vals[i] = value;
                         return Ok(true);
@@ -291,13 +332,23 @@ impl ScriptRunner {
                         return Ok(true);
                     }
                 }
-                if let Some((i, _)) = arts.param_vars.iter().enumerate().find(|(_, s)| s.as_str() == name) {
+                if let Some((i, _)) = arts
+                    .param_vars
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.as_str() == name)
+                {
                     if i < arts.params.len() {
                         arts.params[i] = value;
                         return Ok(true);
                     }
                 }
-                if let Some((i, _)) = arts.discrete_vars.iter().enumerate().find(|(_, s)| s.as_str() == name) {
+                if let Some((i, _)) = arts
+                    .discrete_vars
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.as_str() == name)
+                {
                     if i < arts.discrete_vals.len() {
                         arts.discrete_vals[i] = value;
                         return Ok(true);
@@ -312,7 +363,12 @@ impl ScriptRunner {
             }
             ScriptCommand::GetParameter(name) => {
                 let arts = self.current_artifacts_ref()?;
-                if let Some((i, _)) = arts.param_vars.iter().enumerate().find(|(_, s)| s.as_str() == name) {
+                if let Some((i, _)) = arts
+                    .param_vars
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.as_str() == name)
+                {
                     if i < arts.params.len() {
                         println!("{}", arts.params[i]);
                         return Ok(true);
@@ -328,13 +384,23 @@ impl ScriptRunner {
                         return Ok(true);
                     }
                 }
-                if let Some((i, _)) = arts.param_vars.iter().enumerate().find(|(_, s)| s.as_str() == name) {
+                if let Some((i, _)) = arts
+                    .param_vars
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.as_str() == name)
+                {
                     if i < arts.params.len() {
                         println!("{}", arts.params[i]);
                         return Ok(true);
                     }
                 }
-                if let Some((i, _)) = arts.discrete_vars.iter().enumerate().find(|(_, s)| s.as_str() == name) {
+                if let Some((i, _)) = arts
+                    .discrete_vars
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.as_str() == name)
+                {
                     if i < arts.discrete_vals.len() {
                         println!("{}", arts.discrete_vals[i]);
                         return Ok(true);
@@ -344,7 +410,8 @@ impl ScriptRunner {
             }
             ScriptCommand::Eval(expr_str) => {
                 let arts = self.current_artifacts_ref()?;
-                let mut vars: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+                let mut vars: std::collections::HashMap<String, f64> =
+                    std::collections::HashMap::new();
                 for (i, name) in arts.state_vars.iter().enumerate() {
                     if i < arts.states.len() {
                         vars.insert(name.clone(), arts.states[i]);
@@ -386,7 +453,10 @@ impl ScriptRunner {
                 if vars.is_empty() {
                     return Ok(true);
                 }
-                eprintln!("plot: variables {} (run simulate and use result file for data)", vars.join(", "));
+                eprintln!(
+                    "plot: variables {} (run simulate and use result file for data)",
+                    vars.join(", ")
+                );
                 Ok(true)
             }
             ScriptCommand::Simulate => {

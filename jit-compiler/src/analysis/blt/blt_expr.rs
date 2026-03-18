@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use crate::ast::{Equation, Expression, Operator};
+use std::collections::HashMap;
 
-use crate::analysis::variable_collection::{equation_contains_var, contains_var};
-use crate::analysis::expression_utils::{make_num, make_binary, expression_is_zero};
+use crate::analysis::expression_utils::{expression_is_zero, make_binary, make_num};
+use crate::analysis::variable_collection::{contains_var, equation_contains_var};
 
 pub(super) fn select_tearing_variable(
     block_unknowns: &[String],
@@ -18,7 +18,10 @@ pub(super) fn select_tearing_variable(
             let mut best = block_unknowns[0].clone();
             let mut best_count = 0usize;
             for u in block_unknowns {
-                let count = block_eqs.iter().filter(|eq| equation_contains_var(eq, u)).count();
+                let count = block_eqs
+                    .iter()
+                    .filter(|eq| equation_contains_var(eq, u))
+                    .count();
                 if count > best_count {
                     best_count = count;
                     best = u.clone();
@@ -30,7 +33,10 @@ pub(super) fn select_tearing_variable(
             let mut best = block_unknowns[0].clone();
             let mut best_score = usize::MAX;
             for u in block_unknowns {
-                let count = block_eqs.iter().filter(|eq| equation_contains_var(eq, u)).count();
+                let count = block_eqs
+                    .iter()
+                    .filter(|eq| equation_contains_var(eq, u))
+                    .count();
                 if count < best_score {
                     best_score = count;
                     best = u.clone();
@@ -66,7 +72,10 @@ pub(super) fn make_residual(eq: &Equation) -> Expression {
     }
 }
 
-pub(super) fn substitute_der_in_expr(expr: &Expression, der_map: &HashMap<String, Expression>) -> Expression {
+pub(super) fn substitute_der_in_expr(
+    expr: &Expression,
+    der_map: &HashMap<String, Expression>,
+) -> Expression {
     match expr {
         Expression::Variable(name) => {
             if name.starts_with("der_") {
@@ -82,11 +91,11 @@ pub(super) fn substitute_der_in_expr(expr: &Expression, der_map: &HashMap<String
         ),
         Expression::Call(n, args) => Expression::Call(
             n.clone(),
-            args.iter().map(|a| substitute_der_in_expr(a, der_map)).collect(),
+            args.iter()
+                .map(|a| substitute_der_in_expr(a, der_map))
+                .collect(),
         ),
-        Expression::Der(inner) => {
-            Expression::Der(Box::new(substitute_der_in_expr(inner, der_map)))
-        }
+        Expression::Der(inner) => Expression::Der(Box::new(substitute_der_in_expr(inner, der_map))),
         Expression::If(c, t, f) => Expression::If(
             Box::new(substitute_der_in_expr(c, der_map)),
             Box::new(substitute_der_in_expr(t, der_map)),
@@ -143,7 +152,11 @@ pub(super) fn simplify_expr(expr: &Expression) -> Expression {
             }
             if let Number(n) = &sl {
                 if n.abs() < 1e-15 {
-                    return Expression::BinaryOp(Box::new(make_num(0.0)), Operator::Sub, Box::new(sr));
+                    return Expression::BinaryOp(
+                        Box::new(make_num(0.0)),
+                        Operator::Sub,
+                        Box::new(sr),
+                    );
                 }
             }
             Expression::BinaryOp(Box::new(sl), Operator::Sub, Box::new(sr))
@@ -204,38 +217,56 @@ pub(super) fn split_linear(expr: &Expression, var: &str) -> Option<(Expression, 
             if let BinaryOp(a, Operator::Mul, b) = mul_r.as_ref() {
                 if let Variable(n) = b.as_ref() {
                     if n == var && !contains_var(mul_l, var) && !contains_var(a, var) {
-                        return Some((make_binary((**mul_l).clone(), Operator::Mul, (**a).clone()), make_num(0.0)));
+                        return Some((
+                            make_binary((**mul_l).clone(), Operator::Mul, (**a).clone()),
+                            make_num(0.0),
+                        ));
                     }
                 }
                 if let Variable(n) = a.as_ref() {
                     if n == var && !contains_var(mul_l, var) && !contains_var(b, var) {
-                        return Some((make_binary((**mul_l).clone(), Operator::Mul, (**b).clone()), make_num(0.0)));
+                        return Some((
+                            make_binary((**mul_l).clone(), Operator::Mul, (**b).clone()),
+                            make_num(0.0),
+                        ));
                     }
                 }
             }
             if let BinaryOp(a, Operator::Mul, b) = mul_l.as_ref() {
                 if let Variable(n) = b.as_ref() {
                     if n == var && !contains_var(mul_r, var) && !contains_var(a, var) {
-                        return Some((make_binary((**a).clone(), Operator::Mul, (**mul_r).clone()), make_num(0.0)));
+                        return Some((
+                            make_binary((**a).clone(), Operator::Mul, (**mul_r).clone()),
+                            make_num(0.0),
+                        ));
                     }
                 }
                 if let Variable(n) = a.as_ref() {
                     if n == var && !contains_var(mul_r, var) && !contains_var(b, var) {
-                        return Some((make_binary((**b).clone(), Operator::Mul, (**mul_r).clone()), make_num(0.0)));
+                        return Some((
+                            make_binary((**b).clone(), Operator::Mul, (**mul_r).clone()),
+                            make_num(0.0),
+                        ));
                     }
                 }
             }
             if !contains_var(mul_r, var) {
                 if let Some((c_inner, r_inner)) = split_linear(mul_l, var) {
                     if expression_is_zero(&r_inner) {
-                        return Some((make_binary(c_inner, Operator::Mul, (**mul_r).clone()), make_num(0.0)));
+                        return Some((
+                            make_binary(c_inner, Operator::Mul, (**mul_r).clone()),
+                            make_num(0.0),
+                        ));
                     }
                 }
             }
             if !contains_var(mul_l, var) {
                 if let Some((c_inner, r_inner)) = split_linear(mul_r, var) {
                     if expression_is_zero(&r_inner) {
-                        return Some((make_binary((**mul_l).clone(), Operator::Mul, c_inner), make_num(0.0)));
+                        return Some((
+                            make_binary((**mul_l).clone(), Operator::Mul, c_inner),
+                            make_num(0.0),
+                        ));
                     }
                     return Some((
                         make_binary((**mul_l).clone(), Operator::Mul, c_inner),
@@ -246,7 +277,10 @@ pub(super) fn split_linear(expr: &Expression, var: &str) -> Option<(Expression, 
             if !contains_var(mul_r, var) {
                 if let Some((c_inner, r_inner)) = split_linear(mul_l, var) {
                     if expression_is_zero(&r_inner) {
-                        return Some((make_binary(c_inner, Operator::Mul, (**mul_r).clone()), make_num(0.0)));
+                        return Some((
+                            make_binary(c_inner, Operator::Mul, (**mul_r).clone()),
+                            make_num(0.0),
+                        ));
                     }
                     return Some((
                         make_binary(c_inner, Operator::Mul, (**mul_r).clone()),
@@ -259,18 +293,27 @@ pub(super) fn split_linear(expr: &Expression, var: &str) -> Option<(Expression, 
         BinaryOp(l, Operator::Add, r) => {
             let (c_l, r_l) = split_linear(l, var)?;
             let (c_r, r_r) = split_linear(r, var)?;
-            Some((make_binary(c_l.clone(), Operator::Add, c_r.clone()), make_binary(r_l, Operator::Add, r_r)))
+            Some((
+                make_binary(c_l.clone(), Operator::Add, c_r.clone()),
+                make_binary(r_l, Operator::Add, r_r),
+            ))
         }
         BinaryOp(l, Operator::Sub, r) => {
             if let Number(n) = l.as_ref() {
                 if n.abs() < 1e-15 {
                     let (c, rest) = split_linear(r, var)?;
-                    return Some((make_binary(make_num(0.0), Operator::Sub, c), make_binary(make_num(0.0), Operator::Sub, rest)));
+                    return Some((
+                        make_binary(make_num(0.0), Operator::Sub, c),
+                        make_binary(make_num(0.0), Operator::Sub, rest),
+                    ));
                 }
             }
             let (c_l, r_l) = split_linear(l, var)?;
             let (c_r, r_r) = split_linear(r, var)?;
-            Some((make_binary(c_l, Operator::Sub, c_r.clone()), make_binary(r_l, Operator::Sub, r_r)))
+            Some((
+                make_binary(c_l, Operator::Sub, c_r.clone()),
+                make_binary(r_l, Operator::Sub, r_r),
+            ))
         }
         BinaryOp(l, Operator::Div, r) => {
             if contains_var(r.as_ref(), var) {
@@ -294,7 +337,11 @@ pub(super) fn solve_residual_linear(expr: &Expression, var: &str) -> Option<Expr
         if expression_is_zero(&coeff) {
             return None;
         }
-        return Some(make_binary(make_binary(make_num(0.0), Operator::Sub, rest), Operator::Div, coeff));
+        return Some(make_binary(
+            make_binary(make_num(0.0), Operator::Sub, rest),
+            Operator::Div,
+            coeff,
+        ));
     }
     if let Expression::BinaryOp(lhs, op, rhs) = expr {
         let (rest, coeff) = match (op, lhs.as_ref(), rhs.as_ref()) {

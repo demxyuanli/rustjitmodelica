@@ -1,5 +1,5 @@
+use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression};
 use std::collections::{HashMap, HashSet};
-use crate::ast::{Declaration, Equation, AlgorithmStatement, Expression};
 
 /// SYNC-2: One clock partition: variables that are updated on the same clock (e.g. same when sample(...) branch).
 #[derive(Debug, Clone, Default)]

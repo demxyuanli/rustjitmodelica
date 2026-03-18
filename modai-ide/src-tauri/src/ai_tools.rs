@@ -28,7 +28,7 @@ pub fn tools_schema() -> serde_json::Value {
             "type": "function",
             "function": {
                 "name": "search_text",
-                "description": "Search text in files under base_dir and return matches. Uses ripgrep.",
+                "description": "Search text in files under base_dir and return matches.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -139,22 +139,24 @@ fn exec_search_text(args: &serde_json::Value) -> Result<String, String> {
     let max_results = args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(100).min(500) as usize;
     let base = canonical_base_dir(base_dir)?;
 
-    let mut cmd = Command::new("rg");
-    cmd.arg("--no-heading").arg("--line-number").arg("--color").arg("never");
-    if let Some(g) = glob {
-        cmd.arg("--glob").arg(g);
+    // Avoid external dependencies (e.g. rg). Use the built-in project search implementation.
+    // Note: file_pattern supports simple "*.ext" format.
+    let file_pattern = glob.map(|g| g.to_string());
+    let matches = crate::commands::project::search_in_project(
+        base.to_string_lossy().to_string(),
+        pattern.to_string(),
+        false,
+        file_pattern,
+        Some(max_results),
+    )?;
+
+    let mut lines: Vec<String> = Vec::new();
+    for m in matches.into_iter().take(max_results) {
+        // Align with rg-ish output: path:line:content
+        lines.push(format!("{}:{}:{}", m.file, m.line, m.line_content));
     }
-    cmd.arg(pattern).arg(base.as_os_str());
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    if !out.status.success() && out.status.code().unwrap_or(1) != 1 {
-        return Err(format!("rg failed: {}", stderr));
-    }
-    let mut lines: Vec<&str> = stdout.lines().collect();
-    if lines.len() > max_results {
-        lines.truncate(max_results);
-        lines.push("... truncated");
+    if lines.is_empty() {
+        return Ok(String::new());
     }
     Ok(lines.join("\n"))
 }

@@ -3,8 +3,11 @@ use rustmodlica::parser;
 use rustmodlica::SimulationResult;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::path::PathBuf;
 
 use crate::component_library;
+use crate::app_settings;
+use crate::profiler::ScopedTimer;
 
 use super::common::JitValidateOptions;
 
@@ -104,10 +107,53 @@ fn with_loader_paths(compiler: &mut rustmodlica::Compiler, project_dir: Option<&
             compiler.loader.add_path(path);
         }
     }
+
+    let mut added_modelica = false;
+    if let Ok(settings) = app_settings::load_settings() {
+        let raw = settings.extensions.modelica_stdlib_path;
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let p = PathBuf::from(trimmed);
+            // The loader expects library roots such that joining "Modelica/..." resolves.
+            // Accept either:
+            // - <root> where <root>/Modelica/package.mo exists
+            // - <root>/Modelica where <root>/Modelica/package.mo exists (then use parent)
+            let as_root = p.join("Modelica").join("package.mo");
+            let as_modelica = p.join("package.mo");
+            if as_root.is_file() {
+                compiler.loader.add_path(p);
+                added_modelica = true;
+            } else if as_modelica.is_file() {
+                if let Some(parent) = p.parent() {
+                    compiler.loader.add_path(parent.to_path_buf());
+                    added_modelica = true;
+                }
+            }
+        }
+    }
+
+    if !added_modelica {
+        // Fallback: auto-detect a Modelica stdlib under the installed libraries root.
+        if let Ok(root) = component_library::installed_libraries_root() {
+            let modelica_package = PathBuf::from("Modelica").join("package.mo");
+            if root.join(&modelica_package).is_file() {
+                compiler.loader.add_path(root);
+            } else if let Ok(entries) = std::fs::read_dir(&root) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() && path.join(&modelica_package).is_file() {
+                        compiler.loader.add_path(path);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[tauri::command]
 pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, String> {
+    let _timer = ScopedTimer::new("jit_validate");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
@@ -165,6 +211,7 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
 
 #[tauri::command]
 pub fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationResult, String> {
+    let _timer = ScopedTimer::new("run_simulation_cmd");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
@@ -260,6 +307,7 @@ pub struct StartSessionRequest {
 
 #[tauri::command]
 pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, String> {
+    let _timer = ScopedTimer::new("start_simulation_session");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);

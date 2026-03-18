@@ -46,6 +46,7 @@ import {
   indexRebuild,
   indexRefreshRepo,
   indexRebuildRepo,
+  indexRepoStats,
   writeProjectFile,
   getAppSettings,
   setAppSettings,
@@ -142,8 +143,23 @@ function App() {
     drafts: Record<string, string>;
   } | null>(null);
 
+  const indexRepoRootDoneRef = useRef(false);
   useEffect(() => {
-    indexRepoRoot().then((r) => setRepoRoot(r)).catch(() => {});
+    if (indexRepoRootDoneRef.current) return;
+    const start = performance.now?.() ?? Date.now();
+    const run = () => {
+      indexRepoRootDoneRef.current = true;
+      indexRepoRoot()
+        .then((r) => setRepoRoot(r))
+        .catch(() => {})
+        .finally(() => {
+          const end = performance.now?.() ?? Date.now();
+          // eslint-disable-next-line no-console
+          console.log("[modai-prof] indexRepoRoot took", end - start, "ms");
+        });
+    };
+    const t = window.setTimeout(run, 0);
+    return () => window.clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -178,7 +194,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const start = performance.now?.() ?? Date.now();
     scheduleRestoreLastProjectOnce(layout.setWorkspaceMode, project.setProjectDirFromPath);
+    const end = performance.now?.() ?? Date.now();
+    // eslint-disable-next-line no-console
+    console.log("[modai-prof] scheduleRestoreLastProjectOnce took", end - start, "ms");
   }, [layout.setWorkspaceMode, project.setProjectDirFromPath]);
 
   useEffect(() => {
@@ -196,8 +216,12 @@ function App() {
     }
     const projectKey = getWorkspaceStateKey(project.projectDir);
     if (!projectKey) return;
+    const start = performance.now?.() ?? Date.now();
     const meta = loadWorkspaceMeta(projectKey);
     loadWorkspaceDrafts(projectKey).then((drafts) => {
+      const end = performance.now?.() ?? Date.now();
+      // eslint-disable-next-line no-console
+      console.log("[modai-prof] restore modelica workspace state took", end - start, "ms");
       if (meta) {
         setRestoredWorkspace({ projectDir: project.projectDir!, meta, drafts });
       } else {
@@ -274,47 +298,124 @@ function App() {
       }
       const dir = project.projectDir;
       setIndexStatus({ fileCount: 0, symbolCount: 0, state: "building" });
-      indexBuild(dir)
+      let cancelled = false;
+      const setupWatcher = () => {
+        indexStartWatcher(dir).catch(() => {});
+        const unlistenPromise = listen("index-updated", () => {
+          indexStats(dir)
+            .then((stats: any) => {
+              if (cancelled) return;
+              setIndexStatus({
+                fileCount: stats.fileCount ?? 0,
+                symbolCount: stats.symbolCount ?? 0,
+                state: "ready",
+              });
+            })
+            .catch(() => {});
+        });
+        return unlistenPromise;
+      };
+
+      let unlisten: Promise<() => void> | null = null;
+
+      indexStats(dir)
         .then((stats: any) => {
-          setIndexStatus({
-            fileCount: stats.fileCount ?? 0,
-            symbolCount: stats.symbolCount ?? 0,
-            state: "ready",
-          });
-        })
-        .catch(() => setIndexStatus(null));
-
-      indexStartWatcher(dir).catch(() => {});
-
-      const unlisten = listen("index-updated", () => {
-        indexStats(dir)
-          .then((stats: any) => {
+          if (cancelled) {
+            return;
+          }
+          const hasIndex = (stats?.fileCount ?? 0) > 0;
+          if (hasIndex) {
             setIndexStatus({
               fileCount: stats.fileCount ?? 0,
               symbolCount: stats.symbolCount ?? 0,
               state: "ready",
             });
-          })
-          .catch(() => {});
-      });
+            unlisten = setupWatcher();
+          } else {
+            indexBuild(dir)
+              .then((buildStats: any) => {
+                if (cancelled) return;
+                setIndexStatus({
+                  fileCount: buildStats.fileCount ?? 0,
+                  symbolCount: buildStats.symbolCount ?? 0,
+                  state: "ready",
+                });
+                unlisten = setupWatcher();
+              })
+              .catch(() => {
+                if (cancelled) return;
+                setIndexStatus(null);
+              });
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // fallback: build from scratch
+          indexBuild(dir)
+            .then((buildStats: any) => {
+              if (cancelled) return;
+              setIndexStatus({
+                fileCount: buildStats.fileCount ?? 0,
+                symbolCount: buildStats.symbolCount ?? 0,
+                state: "ready",
+              });
+              unlisten = setupWatcher();
+            })
+            .catch(() => {
+              if (cancelled) return;
+              setIndexStatus(null);
+            });
+        });
 
       return () => {
+        cancelled = true;
         indexStopWatcher().catch(() => {});
-        unlisten.then((fn) => fn());
+        if (unlisten) {
+          unlisten.then((fn) => fn()).catch(() => {});
+        }
       };
     } else {
       setIndexStatus({ fileCount: 0, symbolCount: 0, state: "building" });
-      indexBuildRepo()
+      if (!repoRoot) {
+        return;
+      }
+      indexRepoStats()
         .then((stats: any) => {
-          setIndexStatus({
-            fileCount: stats.fileCount ?? 0,
-            symbolCount: stats.symbolCount ?? 0,
-            state: "ready",
-          });
+          const hasIndex = (stats?.fileCount ?? 0) > 0;
+          if (hasIndex) {
+            setIndexStatus({
+              fileCount: stats.fileCount ?? 0,
+              symbolCount: stats.symbolCount ?? 0,
+              state: "ready",
+            });
+            if (appSettings?.indexCache?.repoIndexRefreshOnJitLoad !== false) {
+              indexRefreshRepo().catch(() => {});
+            }
+          } else {
+            indexBuildRepo()
+              .then((buildStats: any) => {
+                setIndexStatus({
+                  fileCount: buildStats.fileCount ?? 0,
+                  symbolCount: buildStats.symbolCount ?? 0,
+                  state: "ready",
+                });
+              })
+              .catch(() => setIndexStatus(null));
+          }
         })
-        .catch(() => setIndexStatus(null));
+        .catch(() => {
+          indexBuildRepo()
+            .then((buildStats: any) => {
+              setIndexStatus({
+                fileCount: buildStats.fileCount ?? 0,
+                symbolCount: buildStats.symbolCount ?? 0,
+                state: "ready",
+              });
+            })
+            .catch(() => setIndexStatus(null));
+        });
     }
-  }, [project.projectDir, layout.workspaceMode]);
+  }, [project.projectDir, layout.workspaceMode, repoRoot, appSettings]);
 
   // Theme effect
   useEffect(() => {
@@ -487,9 +588,10 @@ function App() {
     async (relativePath: string, content: string) => {
       if (!project.projectDir) throw new Error("No project directory");
       await writeProjectFile(project.projectDir, relativePath, content);
+      await project.refreshMoTree?.();
       handleOpenMoFile(relativePath);
     },
-    [project.projectDir, handleOpenMoFile]
+    [project.projectDir, project.refreshMoTree, handleOpenMoFile]
   );
 
   const handleValidate = useCallback(async () => {
@@ -596,8 +698,10 @@ function App() {
         for (const { norm, content } of updates) next[norm] = content;
         return next;
       });
+      const firstPath = paths.map((p) => p.replace(/\\/g, "/"))[0];
+      if (firstPath) handleOpenMoFile(firstPath);
     },
-    [project.projectDir, contentByPath, setContentByPath]
+    [project.projectDir, contentByPath, setContentByPath, handleOpenMoFile]
   );
 
   return (
@@ -948,6 +1052,16 @@ function App() {
                           onAdoptIteration={ai.adoptIteration}
                           onCommitIteration={ai.commitIteration}
                           onReuseIteration={ai.reuseIteration}
+                          onNewChat={ai.newChat}
+                          sessions={ai.sessions}
+                          onLoadSession={ai.loadSessionById}
+                          onDeleteSession={ai.deleteSession}
+                          lastToolCallsUsed={ai.lastToolCallsUsed}
+                          onOpenRulesAndSkills={() => {
+                            layout.setShowSettings(true);
+                            layout.setOpenSettingsToGroup("ai-config");
+                          }}
+                          enabledModelIds={appSettings?.ai?.modelIdsEnabled ?? undefined}
                           theme={layout.theme}
                         />
                       </div>
@@ -974,6 +1088,7 @@ function App() {
       <div className={layout.workspaceMode === "component-library" ? "flex flex-1 min-h-0 min-w-0" : "hidden"}>
         <ComponentLibraryWorkspace
           projectDir={project.projectDir}
+          isActive={layout.workspaceMode === "component-library"}
           theme={layout.theme}
           onLibrariesChanged={() => setLibraryRefreshToken((value) => value + 1)}
           onOpenType={(typeName, libraryId) => {
@@ -992,13 +1107,23 @@ function App() {
           onRequestedCenterViewHandled={() => setJitCenterViewRequest(undefined)}
           onActiveCenterViewChange={setJitActiveCenterView}
           theme={layout.theme}
+          gitStatusThrottleMs={appSettings?.indexCache?.gitStatusThrottleMs ?? 2000}
+          onOpenRulesAndSkills={() => {
+            layout.setShowSettings(true);
+            layout.setOpenSettingsToGroup("ai-config");
+          }}
+          enabledModelIds={appSettings?.ai?.modelIdsEnabled ?? undefined}
         />
       </div>
       </>
       </div>
       <GlobalSettingsPanel
         open={layout.showSettings}
-        onClose={() => layout.setShowSettings(false)}
+        onClose={() => {
+          layout.setShowSettings(false);
+          layout.setOpenSettingsToGroup(null);
+        }}
+        initialGroupId={layout.openSettingsToGroup}
         theme={layout.theme}
         onThemeChange={layout.setTheme}
         fontUi={layout.fontUi}
@@ -1040,6 +1165,7 @@ function App() {
         appDataRoot={appDataRoot ?? undefined}
         appSettings={appSettings ?? undefined}
         onAppSettingsChange={handleAppSettingsChange}
+        projectDir={project.projectDir ?? undefined}
       />
       <StatusBar
         gitBranch={project.gitBranch}

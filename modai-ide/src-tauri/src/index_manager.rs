@@ -55,8 +55,9 @@ impl CodeIndex {
         let existing = index_db::list_indexed_paths(&conn)?;
         let _existing_set: HashSet<String> = existing.iter().map(|(_, p, _)| p.clone()).collect();
 
+        let ignore_patterns = load_ignore_patterns(base);
         let mut disk_files: Vec<PathBuf> = Vec::new();
-        walk_source_files(base, &mut disk_files);
+        walk_source_files(base, base, &mut disk_files, &ignore_patterns);
 
         let disk_set: HashSet<String> = disk_files
             .iter()
@@ -447,7 +448,47 @@ impl CodeIndex {
 // File system helpers
 // ---------------------------------------------------------------------------
 
-fn walk_source_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn load_ignore_patterns(base: &Path) -> Vec<String> {
+    let mut patterns = Vec::new();
+    for name in [".modaiignore", ".cursorignore"] {
+        let p = base.join(name);
+        if let Ok(s) = std::fs::read_to_string(&p) {
+            for line in s.lines() {
+                let t = line.trim().replace('\\', "/");
+                if t.is_empty() || t.starts_with('#') {
+                    continue;
+                }
+                patterns.push(t);
+            }
+        }
+    }
+    patterns
+}
+
+fn path_matches_ignore(rel_path: &str, patterns: &[String]) -> bool {
+    let normalized = rel_path.replace('\\', "/");
+    for p in patterns {
+        let pat = p.trim_end_matches('/');
+        if pat.is_empty() {
+            continue;
+        }
+        let segment_match = normalized == pat
+            || normalized.starts_with(&format!("{}/", pat))
+            || normalized.ends_with(&format!("/{}", pat))
+            || normalized.contains(&format!("/{}/", pat));
+        if segment_match {
+            return true;
+        }
+    }
+    false
+}
+
+fn walk_source_files(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    ignore_patterns: &[String],
+) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -459,8 +500,14 @@ fn walk_source_files(dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         }
         if path.is_dir() {
-            walk_source_files(&path, out);
+            walk_source_files(root, &path, out, ignore_patterns);
         } else if is_indexable_file(&name) {
+            if let Ok(rel) = path.strip_prefix(root) {
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                if path_matches_ignore(&rel_str, ignore_patterns) {
+                    continue;
+                }
+            }
             out.push(path);
         }
     }

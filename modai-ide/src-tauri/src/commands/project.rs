@@ -6,12 +6,12 @@ use rustmodlica::annotation;
 use rustmodlica::ast::ClassItem;
 use rustmodlica::parser;
 
-use crate::{component_library, diagram};
+use crate::{app_settings, component_library, diagram, profiler::ScopedTimer};
 
-use super::jit::parse_modelica_deps;
 
 #[tauri::command]
 pub fn open_project_dir() -> Option<String> {
+    let _timer = ScopedTimer::new("open_project_dir");
     rfd::FileDialog::new()
         .pick_folder()
         .and_then(|p| p.to_str().map(String::from))
@@ -19,6 +19,7 @@ pub fn open_project_dir() -> Option<String> {
 
 #[tauri::command]
 pub fn reopen_project_dir(path: String) -> Result<String, String> {
+    let _timer = ScopedTimer::new("reopen_project_dir");
     let p = Path::new(&path);
     if !p.exists() {
         return Err("Path does not exist".to_string());
@@ -58,7 +59,13 @@ pub fn pick_component_library_files() -> Vec<String> {
 pub fn list_component_libraries(
     project_dir: Option<String>,
 ) -> Result<Vec<component_library::ComponentLibraryRecord>, String> {
-    component_library::list_component_libraries(project_dir.as_deref().map(Path::new))
+    let _timer = ScopedTimer::new("list_component_libraries");
+    let settings = app_settings::load_settings().unwrap_or_default();
+    let use_index = settings.index_cache.component_library_index_enabled;
+    component_library::list_component_libraries(
+        project_dir.as_deref().map(Path::new),
+        use_index,
+    )
 }
 
 #[tauri::command]
@@ -179,6 +186,7 @@ fn list_mo_files_impl(dir: &Path) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub fn list_mo_files(project_dir: String) -> Result<Vec<String>, String> {
+    let _timer = ScopedTimer::new("list_mo_files");
     let mut out = Vec::new();
     let dir = Path::new(&project_dir);
     if !dir.is_dir() {
@@ -208,6 +216,7 @@ pub fn list_mo_files(project_dir: String) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub fn read_project_file(project_dir: String, relative_path: String) -> Result<String, String> {
+    let _timer = ScopedTimer::new("read_project_file");
     let path = Path::new(&project_dir).join(&relative_path);
     let canonical = path.canonicalize().map_err(|e| e.to_string())?;
     let dir_canonical = Path::new(&project_dir)
@@ -225,6 +234,7 @@ pub fn write_project_file(
     relative_path: String,
     content: String,
 ) -> Result<(), String> {
+    let _timer = ScopedTimer::new("write_project_file");
     let project_canonical = Path::new(&project_dir)
         .canonicalize()
         .map_err(|e| e.to_string())?;
@@ -243,10 +253,10 @@ pub fn write_project_file(
 
 #[derive(Serialize)]
 pub struct SearchMatch {
-    file: String,
-    line: u32,
-    column: u32,
-    line_content: String,
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+    pub line_content: String,
 }
 
 fn walk_dir_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
@@ -281,6 +291,7 @@ pub fn search_in_project(
     file_pattern: Option<String>,
     max_results: Option<usize>,
 ) -> Result<Vec<SearchMatch>, String> {
+    let _timer = ScopedTimer::new("search_in_project");
     let base = Path::new(&project_dir);
     if !base.is_dir() {
         return Err("Project directory does not exist".to_string());
@@ -672,6 +683,8 @@ pub fn query_component_library_types(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<ComponentLibraryTypeQueryResult, String> {
+    let settings = app_settings::load_settings().unwrap_or_default();
+    let use_index = settings.index_cache.component_library_index_enabled;
     let result = component_library::query_component_types(
         project_dir.as_deref().map(Path::new),
         component_library::QueryComponentTypesOptions {
@@ -682,6 +695,7 @@ pub fn query_component_library_types(
             offset: offset.unwrap_or(0),
             limit: limit.unwrap_or(100),
         },
+        use_index,
     )?;
     Ok(ComponentLibraryTypeQueryResult {
         items: result
@@ -963,25 +977,12 @@ fn list_mo_tree_impl(
             }
         } else if p.extension().is_some_and(|e| e == "mo") {
             let rel = format!("{}{}", prefix, name);
-            let full = project_dir.join(&rel);
-            let (class_name, extends) = fs::read_to_string(&full)
-                .ok()
-                .and_then(|c| parse_modelica_deps(&c))
-                .unwrap_or((String::new(), Vec::new()));
-            let (class_name, extends) = if class_name.is_empty() {
-                (None, None)
-            } else {
-                (
-                    Some(class_name),
-                    if extends.is_empty() { None } else { Some(extends) },
-                )
-            };
             entries.push(MoTreeEntry {
                 name: name.clone(),
                 path: Some(rel),
                 children: None,
-                class_name,
-                extends,
+                class_name: None,
+                extends: None,
             });
         }
     }

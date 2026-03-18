@@ -1,5 +1,5 @@
-use pest::iterators::Pair;
 use crate::ast::{Expression, Operator};
+use pest::iterators::Pair;
 
 use super::expression;
 use super::Rule;

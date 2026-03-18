@@ -9,7 +9,13 @@ fn eval_builtin(name: &str, args: &[f64]) -> Result<f64, String> {
     let a = |i: usize| args.get(i).copied().unwrap_or(0.0);
     match n {
         "abs" => Ok(a(0).abs()),
-        "sign" => Ok(if a(0) > 0.0 { 1.0 } else if a(0) < 0.0 { -1.0 } else { 0.0 }),
+        "sign" => Ok(if a(0) > 0.0 {
+            1.0
+        } else if a(0) < 0.0 {
+            -1.0
+        } else {
+            0.0
+        }),
         "sqrt" => {
             if a(0) < 0.0 {
                 return Err("sqrt of negative".into());
@@ -71,8 +77,16 @@ fn eval_builtin(name: &str, args: &[f64]) -> Result<f64, String> {
                 "cos" => Ok(a(0).cos()),
                 "tan" => Ok(a(0).tan()),
                 "exp" => Ok(a(0).exp()),
-                "log" => Ok(if a(0) <= 0.0 { return Err("log <= 0".into()); } else { a(0).ln() }),
-                "sqrt" => Ok(if a(0) < 0.0 { return Err("sqrt negative".into()); } else { a(0).sqrt() }),
+                "log" => Ok(if a(0) <= 0.0 {
+                    return Err("log <= 0".into());
+                } else {
+                    a(0).ln()
+                }),
+                "sqrt" => Ok(if a(0) < 0.0 {
+                    return Err("sqrt negative".into());
+                } else {
+                    a(0).sqrt()
+                }),
                 "abs" => Ok(a(0).abs()),
                 _ => Err(format!("unknown built-in: {}", n)),
             }
@@ -119,7 +133,7 @@ pub fn eval_expr(expr: &Expression, vars: &HashMap<String, f64>) -> Result<f64, 
             eval_builtin(name, &args_f)
         }
         Der(_) => Err("der() not supported in function entry eval".into()),
-        ArrayAccess(..) | Dot(..) | Range(..) | ArrayLiteral(..) => {
+        ArrayAccess(..) | Dot(..) | Range(..) | ArrayLiteral(..) | ArrayComprehension { .. } => {
             Err("array/dot/range not supported in function entry eval".into())
         }
         StringLiteral(_) => Err("string literal not supported in function entry eval (use JIT or C)".into()),

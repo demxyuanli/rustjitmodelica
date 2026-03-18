@@ -1,12 +1,12 @@
 // Equation/variable dependency graph for analysis and debugging.
 // Builds nodes (equations, variables) and edges (depends, solves) from a flattened model.
 
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
+use crate::analysis::extract_unknowns;
 use crate::ast::{Equation, Expression};
 use crate::flatten::FlattenedModel;
-use crate::analysis::extract_unknowns;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

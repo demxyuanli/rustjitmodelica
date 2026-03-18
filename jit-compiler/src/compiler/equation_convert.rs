@@ -1,4 +1,4 @@
-use crate::ast::{Equation, Expression, AlgorithmStatement};
+use crate::ast::{AlgorithmStatement, Equation, Expression};
 
 /// CG1-4: Substitute all array indices in expr: every Variable(base_j) becomes Variable(base_{j+shift}).
 /// Used for run detection when RHS involves multiple arrays (e.g. x_i = p_i or y_i = x_i).
@@ -28,9 +28,18 @@ pub fn expr_substitute_all_array_indices(expr: &Expression, shift: usize) -> Exp
         Interval(inner) => Interval(Box::new(expr_substitute_all_array_indices(inner, shift))),
         Hold(inner) => Hold(Box::new(expr_substitute_all_array_indices(inner, shift))),
         Previous(inner) => Previous(Box::new(expr_substitute_all_array_indices(inner, shift))),
-        SubSample(c, n) => SubSample(Box::new(expr_substitute_all_array_indices(c, shift)), Box::new(expr_substitute_all_array_indices(n, shift))),
-        SuperSample(c, n) => SuperSample(Box::new(expr_substitute_all_array_indices(c, shift)), Box::new(expr_substitute_all_array_indices(n, shift))),
-        ShiftSample(c, n) => ShiftSample(Box::new(expr_substitute_all_array_indices(c, shift)), Box::new(expr_substitute_all_array_indices(n, shift))),
+        SubSample(c, n) => SubSample(
+            Box::new(expr_substitute_all_array_indices(c, shift)),
+            Box::new(expr_substitute_all_array_indices(n, shift)),
+        ),
+        SuperSample(c, n) => SuperSample(
+            Box::new(expr_substitute_all_array_indices(c, shift)),
+            Box::new(expr_substitute_all_array_indices(n, shift)),
+        ),
+        ShiftSample(c, n) => ShiftSample(
+            Box::new(expr_substitute_all_array_indices(c, shift)),
+            Box::new(expr_substitute_all_array_indices(n, shift)),
+        ),
         ArrayAccess(arr, idx) => ArrayAccess(
             Box::new(expr_substitute_all_array_indices(arr, shift)),
             Box::new(expr_substitute_all_array_indices(idx, shift)),
@@ -40,7 +49,10 @@ pub fn expr_substitute_all_array_indices(expr: &Expression, shift: usize) -> Exp
             Box::new(expr_substitute_all_array_indices(t, shift)),
             Box::new(expr_substitute_all_array_indices(e, shift)),
         ),
-        Dot(e, s) => Dot(Box::new(expr_substitute_all_array_indices(e, shift)), s.clone()),
+        Dot(e, s) => Dot(
+            Box::new(expr_substitute_all_array_indices(e, shift)),
+            s.clone(),
+        ),
         Range(a, b, c) => Range(
             Box::new(expr_substitute_all_array_indices(a, shift)),
             Box::new(expr_substitute_all_array_indices(b, shift)),
@@ -51,6 +63,11 @@ pub fn expr_substitute_all_array_indices(expr: &Expression, shift: usize) -> Exp
                 .map(|e| expr_substitute_all_array_indices(e, shift))
                 .collect(),
         ),
+        ArrayComprehension { expr, iter_var, iter_range } => ArrayComprehension {
+            expr: Box::new(expr_substitute_all_array_indices(expr, shift)),
+            iter_var: iter_var.clone(),
+            iter_range: Box::new(expr_substitute_all_array_indices(iter_range, shift)),
+        },
         StringLiteral(s) => StringLiteral(s.clone()),
     }
 }
@@ -85,9 +102,18 @@ pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) 
         Interval(inner) => Interval(Box::new(expr_substitute_array_shift(inner, base, shift))),
         Hold(inner) => Hold(Box::new(expr_substitute_array_shift(inner, base, shift))),
         Previous(inner) => Previous(Box::new(expr_substitute_array_shift(inner, base, shift))),
-        SubSample(c, n) => SubSample(Box::new(expr_substitute_array_shift(c, base, shift)), Box::new(expr_substitute_array_shift(n, base, shift))),
-        SuperSample(c, n) => SuperSample(Box::new(expr_substitute_array_shift(c, base, shift)), Box::new(expr_substitute_array_shift(n, base, shift))),
-        ShiftSample(c, n) => ShiftSample(Box::new(expr_substitute_array_shift(c, base, shift)), Box::new(expr_substitute_array_shift(n, base, shift))),
+        SubSample(c, n) => SubSample(
+            Box::new(expr_substitute_array_shift(c, base, shift)),
+            Box::new(expr_substitute_array_shift(n, base, shift)),
+        ),
+        SuperSample(c, n) => SuperSample(
+            Box::new(expr_substitute_array_shift(c, base, shift)),
+            Box::new(expr_substitute_array_shift(n, base, shift)),
+        ),
+        ShiftSample(c, n) => ShiftSample(
+            Box::new(expr_substitute_array_shift(c, base, shift)),
+            Box::new(expr_substitute_array_shift(n, base, shift)),
+        ),
         ArrayAccess(arr, idx) => ArrayAccess(
             Box::new(expr_substitute_array_shift(arr, base, shift)),
             Box::new(expr_substitute_array_shift(idx, base, shift)),
@@ -97,7 +123,10 @@ pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) 
             Box::new(expr_substitute_array_shift(t, base, shift)),
             Box::new(expr_substitute_array_shift(e, base, shift)),
         ),
-        Dot(e, s) => Dot(Box::new(expr_substitute_array_shift(e, base, shift)), s.clone()),
+        Dot(e, s) => Dot(
+            Box::new(expr_substitute_array_shift(e, base, shift)),
+            s.clone(),
+        ),
         Range(a, b, c) => Range(
             Box::new(expr_substitute_array_shift(a, base, shift)),
             Box::new(expr_substitute_array_shift(b, base, shift)),
@@ -108,6 +137,11 @@ pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) 
                 .map(|e| expr_substitute_array_shift(e, base, shift))
                 .collect(),
         ),
+        ArrayComprehension { expr, iter_var, iter_range } => ArrayComprehension {
+            expr: Box::new(expr_substitute_array_shift(expr, base, shift)),
+            iter_var: iter_var.clone(),
+            iter_range: Box::new(expr_substitute_array_shift(iter_range, base, shift)),
+        },
         StringLiteral(s) => StringLiteral(s.clone()),
     }
 }
@@ -115,6 +149,7 @@ pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) 
 pub fn convert_eq_to_alg_stmt(eq: Equation) -> AlgorithmStatement {
     match eq {
         Equation::Simple(lhs, rhs) => AlgorithmStatement::Assignment(lhs, rhs),
+        Equation::CallStmt(expr) => AlgorithmStatement::CallStmt(expr),
         Equation::Reinit(var, val) => AlgorithmStatement::Reinit(var, val),
         Equation::For(var, start, end, body) => {
             let alg_body = body.into_iter().map(convert_eq_to_alg_stmt).collect();

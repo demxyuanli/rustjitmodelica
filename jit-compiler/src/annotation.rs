@@ -2,7 +2,7 @@
 // Parses raw annotation strings into typed graphical data
 // (Placement, Icon, Diagram, Line, Polygon, Ellipse, Rectangle, Text).
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Point {
@@ -688,7 +688,9 @@ fn extract_graphic_item(v: &AVal) -> Option<GraphicItem> {
                     .or_else(|| v.as_ident().map(|s| s.to_string()))
             }),
             font_size: v.field("fontSize").and_then(|v| v.as_num()),
-            font_name: v.field("fontName").and_then(|v| v.as_str().map(|s| s.to_string())),
+            font_name: v
+                .field("fontName")
+                .and_then(|v| v.as_str().map(|s| s.to_string())),
             text_color: v.field("textColor").and_then(extract_color),
             line_color: v.field("lineColor").and_then(extract_color),
             fill_color: v.field("fillColor").and_then(extract_color),
@@ -699,7 +701,9 @@ fn extract_graphic_item(v: &AVal) -> Option<GraphicItem> {
         })),
         "Bitmap" => Some(GraphicItem::Bitmap(GraphicBitmap {
             extent: v.field("extent").and_then(extract_extent),
-            file_name: v.field("fileName").and_then(|v| v.as_str().map(|s| s.to_string())),
+            file_name: v
+                .field("fileName")
+                .and_then(|v| v.as_str().map(|s| s.to_string())),
             image_source: v
                 .field("imageSource")
                 .and_then(|v| v.as_str().map(|s| s.to_string())),
@@ -762,16 +766,24 @@ fn extract_line_annotation(fields: &[(String, AVal)]) -> Option<LineAnnotation> 
 fn extract_selector_annotation(v: &AVal) -> Option<SelectorAnnotation> {
     let (_, _) = v.as_record()?;
     Some(SelectorAnnotation {
-        filter: v.field("filter").and_then(|x| x.as_str().map(|s| s.to_string())),
-        caption: v.field("caption").and_then(|x| x.as_str().map(|s| s.to_string())),
+        filter: v
+            .field("filter")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
+        caption: v
+            .field("caption")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
     })
 }
 
 fn extract_dialog_annotation(v: &AVal) -> Option<DialogAnnotation> {
     let (_, _) = v.as_record()?;
     Some(DialogAnnotation {
-        tab: v.field("tab").and_then(|x| x.as_str().map(|s| s.to_string())),
-        group: v.field("group").and_then(|x| x.as_str().map(|s| s.to_string())),
+        tab: v
+            .field("tab")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
+        group: v
+            .field("group")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
         group_image: v
             .field("groupImage")
             .and_then(|x| x.as_str().map(|s| s.to_string())),
@@ -779,8 +791,12 @@ fn extract_dialog_annotation(v: &AVal) -> Option<DialogAnnotation> {
         show_start_attribute: v.field("showStartAttribute").and_then(|x| x.as_bool()),
         connector_sizing: v.field("connectorSizing").and_then(|x| x.as_bool()),
         color_selector: v.field("colorSelector").and_then(|x| x.as_bool()),
-        load_selector: v.field("loadSelector").and_then(extract_selector_annotation),
-        save_selector: v.field("saveSelector").and_then(extract_selector_annotation),
+        load_selector: v
+            .field("loadSelector")
+            .and_then(extract_selector_annotation),
+        save_selector: v
+            .field("saveSelector")
+            .and_then(extract_selector_annotation),
     })
 }
 

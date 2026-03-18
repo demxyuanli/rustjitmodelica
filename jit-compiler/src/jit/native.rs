@@ -31,7 +31,13 @@ extern "C" fn modelica_rem(x: f64, y: f64) -> f64 {
     x % y
 }
 extern "C" fn modelica_sign(x: f64) -> f64 {
-    if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
 }
 extern "C" fn modelica_min(x: f64, y: f64) -> f64 {
     x.min(y)
@@ -41,7 +47,11 @@ extern "C" fn modelica_max(x: f64, y: f64) -> f64 {
 }
 #[allow(clippy::cast_precision_loss)]
 extern "C" fn modelica_div(x: f64, y: f64) -> f64 {
-    if y == 0.0 { 0.0 } else { (x / y).trunc() }
+    if y == 0.0 {
+        0.0
+    } else {
+        (x / y).trunc()
+    }
 }
 #[allow(clippy::cast_precision_loss)]
 extern "C" fn modelica_integer(x: f64) -> f64 {
@@ -54,7 +64,15 @@ extern "C" fn modelica_smooth(x: f64) -> f64 {
 }
 
 extern "C" fn modelica_boolean(x: f64) -> f64 {
-    if x != 0.0 { 1.0 } else { 0.0 }
+    if x != 0.0 {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+extern "C" fn modelica_pow(base: f64, exp: f64) -> f64 {
+    base.powf(exp)
 }
 
 extern "C" fn modelica_string(x: f64) -> f64 {
@@ -64,7 +82,12 @@ extern "C" fn modelica_string(x: f64) -> f64 {
 /// Solves J * dx = -r for dx (dense n x n). Returns 0 on success, non-zero if singular.
 /// Used by general Newton tearing (SolvableBlock with N > 3 residuals).
 #[allow(clippy::cast_possible_truncation)]
-extern "C" fn rustmodlica_solve_linear_n(n: i32, jac: *const f64, r: *const f64, dx: *mut f64) -> i32 {
+extern "C" fn rustmodlica_solve_linear_n(
+    n: i32,
+    jac: *const f64,
+    r: *const f64,
+    dx: *mut f64,
+) -> i32 {
     if n <= 0 || jac.is_null() || r.is_null() || dx.is_null() {
         return -1;
     }
@@ -153,13 +176,14 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("cosh", f64::cosh as *const u8);
     builder.symbol("tanh", f64::tanh as *const u8);
     builder.symbol("sqrt", f64::sqrt as *const u8);
+    builder.symbol("pow", modelica_pow as *const u8);
     builder.symbol("exp", f64::exp as *const u8);
     builder.symbol("log", f64::ln as *const u8);
     builder.symbol("log10", f64::log10 as *const u8);
     builder.symbol("abs", f64::abs as *const u8);
     builder.symbol("ceil", f64::ceil as *const u8);
     builder.symbol("floor", f64::floor as *const u8);
-    
+
     // Extended Math
     builder.symbol("mod", modelica_mod as *const u8);
     builder.symbol("rem", modelica_rem as *const u8);
@@ -185,6 +209,7 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("Modelica.Math.log", f64::ln as *const u8);
     builder.symbol("Modelica.Math.log10", f64::log10 as *const u8);
     builder.symbol("Modelica.Math.sqrt", f64::sqrt as *const u8);
+    builder.symbol("Modelica.Math.pow", modelica_pow as *const u8);
     builder.symbol("Modelica.Math.ceil", f64::ceil as *const u8);
     builder.symbol("Modelica.Math.floor", f64::floor as *const u8);
     builder.symbol("Modelica.Math.mod", modelica_mod as *const u8);
@@ -195,7 +220,10 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("Modelica.Math.div", modelica_div as *const u8);
     builder.symbol("Modelica.Math.integer", modelica_integer as *const u8);
 
-    builder.symbol("rustmodlica_solve_linear_n", rustmodlica_solve_linear_n as *const u8);
+    builder.symbol(
+        "rustmodlica_solve_linear_n",
+        rustmodlica_solve_linear_n as *const u8,
+    );
 
     builder.symbol("assert", modelica_assert as *const u8);
     builder.symbol("terminate", modelica_terminate as *const u8);
@@ -207,22 +235,60 @@ pub fn register_symbols(builder: &mut JITBuilder) {
 pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     let mut set = std::collections::HashSet::new();
     set.insert("rustmodlica_sample");
-    set.insert("sin"); set.insert("cos"); set.insert("tan");
-    set.insert("asin"); set.insert("acos"); set.insert("atan"); set.insert("atan2");
-    set.insert("sinh"); set.insert("cosh"); set.insert("tanh");
-    set.insert("sqrt"); set.insert("exp"); set.insert("log"); set.insert("log10");
-    set.insert("abs"); set.insert("ceil"); set.insert("floor");
-    set.insert("mod"); set.insert("rem"); set.insert("sign"); set.insert("min"); set.insert("max");
-    set.insert("div"); set.insert("integer"); set.insert("smooth");
-    set.insert("Modelica.Math.sin"); set.insert("Modelica.Math.cos"); set.insert("Modelica.Math.tan");
-    set.insert("Modelica.Math.asin"); set.insert("Modelica.Math.acos"); set.insert("Modelica.Math.atan");
-    set.insert("Modelica.Math.atan2"); set.insert("Modelica.Math.sinh"); set.insert("Modelica.Math.cosh");
-    set.insert("Modelica.Math.tanh"); set.insert("Modelica.Math.exp"); set.insert("Modelica.Math.log");
-    set.insert("Modelica.Math.log10"); set.insert("Modelica.Math.sqrt"); set.insert("Modelica.Math.ceil");
-    set.insert("Modelica.Math.floor"); set.insert("Modelica.Math.mod"); set.insert("Modelica.Math.rem");
-    set.insert("Modelica.Math.sign"); set.insert("Modelica.Math.min"); set.insert("Modelica.Math.max");
-    set.insert("Modelica.Math.div"); set.insert("Modelica.Math.integer");
+    set.insert("sin");
+    set.insert("cos");
+    set.insert("tan");
+    set.insert("asin");
+    set.insert("acos");
+    set.insert("atan");
+    set.insert("atan2");
+    set.insert("sinh");
+    set.insert("cosh");
+    set.insert("tanh");
+    set.insert("sqrt");
+    set.insert("pow");
+    set.insert("exp");
+    set.insert("log");
+    set.insert("log10");
+    set.insert("abs");
+    set.insert("ceil");
+    set.insert("floor");
+    set.insert("mod");
+    set.insert("rem");
+    set.insert("sign");
+    set.insert("min");
+    set.insert("max");
+    set.insert("div");
+    set.insert("integer");
+    set.insert("smooth");
+    set.insert("Modelica.Math.sin");
+    set.insert("Modelica.Math.cos");
+    set.insert("Modelica.Math.tan");
+    set.insert("Modelica.Math.asin");
+    set.insert("Modelica.Math.acos");
+    set.insert("Modelica.Math.atan");
+    set.insert("Modelica.Math.atan2");
+    set.insert("Modelica.Math.sinh");
+    set.insert("Modelica.Math.cosh");
+    set.insert("Modelica.Math.tanh");
+    set.insert("Modelica.Math.exp");
+    set.insert("Modelica.Math.log");
+    set.insert("Modelica.Math.log10");
+    set.insert("Modelica.Math.sqrt");
+    set.insert("Modelica.Math.pow");
+    set.insert("Modelica.Math.ceil");
+    set.insert("Modelica.Math.floor");
+    set.insert("Modelica.Math.mod");
+    set.insert("Modelica.Math.rem");
+    set.insert("Modelica.Math.sign");
+    set.insert("Modelica.Math.min");
+    set.insert("Modelica.Math.max");
+    set.insert("Modelica.Math.div");
+    set.insert("Modelica.Math.integer");
     set.insert("rustmodlica_solve_linear_n");
-    set.insert("assert"); set.insert("terminate"); set.insert("Boolean"); set.insert("String");
+    set.insert("assert");
+    set.insert("terminate");
+    set.insert("Boolean");
+    set.insert("String");
     set
 }

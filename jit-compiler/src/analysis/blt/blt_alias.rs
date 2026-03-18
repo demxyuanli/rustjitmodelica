@@ -1,10 +1,12 @@
-use std::collections::HashMap;
 use crate::ast::{Equation, Expression, Operator};
+use std::collections::HashMap;
 
-use crate::analysis::variable_collection::contains_var;
 use crate::analysis::expression_utils::{make_mul, make_num};
+use crate::analysis::variable_collection::contains_var;
 
-pub(crate) fn eliminate_aliases(equations: &[Equation]) -> (Vec<Equation>, HashMap<String, Expression>) {
+pub(crate) fn eliminate_aliases(
+    equations: &[Equation],
+) -> (Vec<Equation>, HashMap<String, Expression>) {
     let mut alias_map: HashMap<String, Expression> = HashMap::new();
     let mut current_eqs = equations.to_vec();
     let mut changed = true;
@@ -127,12 +129,14 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
                 .collect(),
             else_whens
                 .iter()
-                .map(|(ec, eb)| (
-                    substitute_aliases_in_expr(ec, map),
-                    eb.iter()
-                        .map(|b_eq| substitute_aliases_in_eq(b_eq, map))
-                        .collect(),
-                ))
+                .map(|(ec, eb)| {
+                    (
+                        substitute_aliases_in_expr(ec, map),
+                        eb.iter()
+                            .map(|b_eq| substitute_aliases_in_eq(b_eq, map))
+                            .collect(),
+                    )
+                })
                 .collect(),
         ),
         Equation::If(cond, then_eqs, elseif_list, else_eqs) => Equation::If(
@@ -143,12 +147,14 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
                 .collect(),
             elseif_list
                 .iter()
-                .map(|(c, eb)| (
-                    substitute_aliases_in_expr(c, map),
-                    eb.iter()
-                        .map(|e| substitute_aliases_in_eq(e, map))
-                        .collect(),
-                ))
+                .map(|(c, eb)| {
+                    (
+                        substitute_aliases_in_expr(c, map),
+                        eb.iter()
+                            .map(|e| substitute_aliases_in_eq(e, map))
+                            .collect(),
+                    )
+                })
                 .collect(),
             else_eqs.as_ref().map(|eqs| {
                 eqs.iter()
@@ -160,15 +166,13 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
         | Equation::Reinit(_, _)
         | Equation::Assert(_, _)
         | Equation::Terminate(_)
+        | Equation::CallStmt(_)
         | Equation::SolvableBlock { .. }
         | Equation::MultiAssign(_, _) => eq.clone(),
     }
 }
 
-fn substitute_aliases_in_expr(
-    expr: &Expression,
-    map: &HashMap<String, Expression>,
-) -> Expression {
+fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expression>) -> Expression {
     match expr {
         Expression::Variable(name) => map.get(name).cloned().unwrap_or_else(|| expr.clone()),
         Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
@@ -182,9 +186,7 @@ fn substitute_aliases_in_expr(
                 .map(|a| substitute_aliases_in_expr(a, map))
                 .collect(),
         ),
-        Expression::Der(arg) => {
-            Expression::Der(Box::new(substitute_aliases_in_expr(arg, map)))
-        }
+        Expression::Der(arg) => Expression::Der(Box::new(substitute_aliases_in_expr(arg, map))),
         Expression::ArrayAccess(arr, idx) => Expression::ArrayAccess(
             Box::new(substitute_aliases_in_expr(arr, map)),
             Box::new(substitute_aliases_in_expr(idx, map)),
@@ -208,13 +210,30 @@ fn substitute_aliases_in_expr(
             Box::new(substitute_aliases_in_expr(step, map)),
             Box::new(substitute_aliases_in_expr(end, map)),
         ),
-        Expression::Sample(inner) => Expression::Sample(Box::new(substitute_aliases_in_expr(inner, map))),
-        Expression::Interval(inner) => Expression::Interval(Box::new(substitute_aliases_in_expr(inner, map))),
-        Expression::Hold(inner) => Expression::Hold(Box::new(substitute_aliases_in_expr(inner, map))),
-        Expression::Previous(inner) => Expression::Previous(Box::new(substitute_aliases_in_expr(inner, map))),
-        Expression::SubSample(c, n) => Expression::SubSample(Box::new(substitute_aliases_in_expr(c, map)), Box::new(substitute_aliases_in_expr(n, map))),
-        Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(substitute_aliases_in_expr(c, map)), Box::new(substitute_aliases_in_expr(n, map))),
-        Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(substitute_aliases_in_expr(c, map)), Box::new(substitute_aliases_in_expr(n, map))),
+        Expression::Sample(inner) => {
+            Expression::Sample(Box::new(substitute_aliases_in_expr(inner, map)))
+        }
+        Expression::Interval(inner) => {
+            Expression::Interval(Box::new(substitute_aliases_in_expr(inner, map)))
+        }
+        Expression::Hold(inner) => {
+            Expression::Hold(Box::new(substitute_aliases_in_expr(inner, map)))
+        }
+        Expression::Previous(inner) => {
+            Expression::Previous(Box::new(substitute_aliases_in_expr(inner, map)))
+        }
+        Expression::SubSample(c, n) => Expression::SubSample(
+            Box::new(substitute_aliases_in_expr(c, map)),
+            Box::new(substitute_aliases_in_expr(n, map)),
+        ),
+        Expression::SuperSample(c, n) => Expression::SuperSample(
+            Box::new(substitute_aliases_in_expr(c, map)),
+            Box::new(substitute_aliases_in_expr(n, map)),
+        ),
+        Expression::ShiftSample(c, n) => Expression::ShiftSample(
+            Box::new(substitute_aliases_in_expr(c, map)),
+            Box::new(substitute_aliases_in_expr(n, map)),
+        ),
         _ => expr.clone(),
     }
 }

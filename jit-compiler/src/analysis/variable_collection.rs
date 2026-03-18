@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::ast::{Equation, Expression};
+use std::collections::HashSet;
 
 pub fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> {
     let mut vars = HashSet::new();
@@ -112,7 +112,9 @@ pub(crate) fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
         Expression::Interval(inner) => collect_vars_expr(inner, vars),
         Expression::Hold(inner) => collect_vars_expr(inner, vars),
         Expression::Previous(inner) => collect_vars_expr(inner, vars),
-        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+        Expression::SubSample(c, n)
+        | Expression::SuperSample(c, n)
+        | Expression::ShiftSample(c, n) => {
             collect_vars_expr(c, vars);
             collect_vars_expr(n, vars);
         }
@@ -129,25 +131,31 @@ pub(crate) fn equation_contains_var(eq: &Equation, var: &str) -> bool {
 pub fn contains_var(expr: &Expression, var_name: &str) -> bool {
     match expr {
         Expression::Variable(name) => name == var_name,
-        Expression::BinaryOp(lhs, _, rhs) => contains_var(lhs, var_name) || contains_var(rhs, var_name),
+        Expression::BinaryOp(lhs, _, rhs) => {
+            contains_var(lhs, var_name) || contains_var(rhs, var_name)
+        }
         Expression::Call(_, args) => args.iter().any(|arg| contains_var(arg, var_name)),
         Expression::Der(arg) => contains_var(arg, var_name),
-        Expression::ArrayAccess(arr, idx) => contains_var(arr, var_name) || contains_var(idx, var_name),
+        Expression::ArrayAccess(arr, idx) => {
+            contains_var(arr, var_name) || contains_var(idx, var_name)
+        }
         Expression::Dot(base, _) => contains_var(base, var_name),
         Expression::If(c, t, f) => {
             contains_var(c, var_name) || contains_var(t, var_name) || contains_var(f, var_name)
         }
         Expression::ArrayLiteral(es) => es.iter().any(|e| contains_var(e, var_name)),
         Expression::Range(start, step, end) => {
-            contains_var(start, var_name) || contains_var(step, var_name) || contains_var(end, var_name)
+            contains_var(start, var_name)
+                || contains_var(step, var_name)
+                || contains_var(end, var_name)
         }
         Expression::Sample(inner) => contains_var(inner, var_name),
         Expression::Interval(inner) => contains_var(inner, var_name),
         Expression::Hold(inner) => contains_var(inner, var_name),
         Expression::Previous(inner) => contains_var(inner, var_name),
-        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
-            contains_var(c, var_name) || contains_var(n, var_name)
-        }
+        Expression::SubSample(c, n)
+        | Expression::SuperSample(c, n)
+        | Expression::ShiftSample(c, n) => contains_var(c, var_name) || contains_var(n, var_name),
         _ => false,
     }
 }

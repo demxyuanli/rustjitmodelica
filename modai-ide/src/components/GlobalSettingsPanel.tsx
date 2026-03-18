@@ -4,13 +4,14 @@ import { SettingsContent, type SettingsContentProps } from "./SettingsContent";
 export interface GlobalSettingsPanelProps extends SettingsContentProps {
   open: boolean;
   onClose: () => void;
+  initialGroupId?: string | null;
 }
 
 /**
  * Single global settings panel: right-side floating, used once in App.
  * Not implemented per-workspace.
  */
-export function GlobalSettingsPanel({ open, onClose, ...settingsProps }: GlobalSettingsPanelProps) {
+export function GlobalSettingsPanel({ open, onClose, initialGroupId, ...settingsProps }: GlobalSettingsPanelProps) {
   if (!open) return null;
   return (
     <div
@@ -32,7 +33,7 @@ export function GlobalSettingsPanel({ open, onClose, ...settingsProps }: GlobalS
       </div>
       <div className="flex-1 min-h-0 overflow-auto">
         <div className="p-4">
-          <SettingsContent {...settingsProps} onClose={onClose} />
+          <SettingsContent {...settingsProps} initialGroupId={initialGroupId} onClose={onClose} />
         </div>
       </div>
     </div>

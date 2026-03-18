@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect } from "react";
 import {
   getApiKey,
   setApiKey as setApiKeyCommand,
-  aiCodeGen,
+  getGrokApiKey,
+  aiCodeGenStream,
   aiGenerateCompilerPatch,
   aiGenerateCompilerPatchWithContext,
   applyPatchToWorkspace,
@@ -14,6 +15,8 @@ import {
   type IterationRecord,
   type IterationRunResult,
 } from "../api/tauri";
+import { useAISessions } from "./useAISessions";
+import { listen } from "@tauri-apps/api/event";
 
 const DAILY_TOKEN_LIMIT = 50000;
 const DEFAULT_MODEL = "deepseek-chat";
@@ -115,6 +118,7 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
   const [projectDir, setProjectDir] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [grokApiKeySaved, setGrokApiKeySaved] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResponse, setAiResponse] = useState<string | null>(null);
@@ -137,6 +141,11 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
     }
   });
   const [contextBlocks, setContextBlocks] = useState<AiContextBlock[]>([]);
+  const [lastToolCallsUsed, setLastToolCallsUsed] = useState<string[] | null>(null);
+  const streamingCancelRef = useState<{ token: number }>(() => ({ token: 0 }))[0];
+  const streamReqRef = useState<{ id: string | null }>(() => ({ id: null }))[0];
+
+  const { sessions, saveCurrentSession, loadSession, deleteSession } = useAISessions(projectDir);
 
   useEffect(() => {
     getApiKey()
@@ -144,6 +153,9 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
         setApiKey(k ? "********" : "");
         setApiKeySaved(!!k);
       })
+      .catch(() => {});
+    getGrokApiKey()
+      .then((k) => setGrokApiKeySaved(!!k))
       .catch(() => {});
   }, []);
 
@@ -221,6 +233,7 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
     setAiLoading(true);
     setAiResponse(null);
     setPendingPatch(null);
+    streamingCancelRef.token += 1;
     const userMsgId = Date.now();
     setMessages((prev) => [...prev, { id: userMsgId, role: "user", text: basePrompt }]);
     try {
@@ -252,13 +265,94 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
         },
       };
 
-      const result = await aiCodeGen(payload);
-      setAiResponse(result);
+      const requestId = `r-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      streamReqRef.id = requestId;
       const asstId = Date.now();
-      setMessages((prev) => [...prev, { id: asstId, role: "assistant", text: result }]);
-      const patch = parsePatchFromResponse(result, agentMode, activeFilePath);
+      setAiResponse(null);
+      setMessages((prev) => [...prev, { id: asstId, role: "assistant", text: "..." }]);
+
+      let full = "";
+      let toolCallsUsed: string[] | null = null;
+      let firstDelta = true;
+
+      const unlistenDelta = await listen<{ requestId: string; delta: string }>("ai-stream-delta", (e) => {
+        if (e.payload?.requestId !== requestId) return;
+        const delta = String(e.payload?.delta ?? "");
+        if (!delta) return;
+        full += delta;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== asstId) return m;
+            const base = firstDelta ? "" : (m.text ?? "");
+            firstDelta = false;
+            return { ...m, text: base + delta };
+          })
+        );
+      });
+
+      const unlistenTool = await listen<{ requestId: string; stage: string; name: string }>("ai-stream-tool", (e) => {
+        if (e.payload?.requestId !== requestId) return;
+        const stage = String(e.payload?.stage ?? "");
+        const name = String(e.payload?.name ?? "");
+        if (!name) return;
+        const line = stage === "start" ? `[tool start] ${name}` : `[tool end] ${name}`;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === asstId ? { ...m, text: `${m.text ?? ""}\n${line}` } : m))
+        );
+      });
+
+      let resolveDone: (() => void) | null = null;
+      let rejectDone: ((err: Error) => void) | null = null;
+      const donePromise = new Promise<void>((resolve, reject) => {
+        resolveDone = resolve;
+        rejectDone = reject;
+      });
+
+      const unlistenDone = await listen<{ requestId: string; content: string; toolCallsUsed?: string[] }>("ai-stream-done", (e) => {
+        if (e.payload?.requestId !== requestId) return;
+        toolCallsUsed = Array.isArray(e.payload?.toolCallsUsed) ? e.payload.toolCallsUsed : null;
+        const content = String(e.payload?.content ?? "");
+        if (!content && full) {
+          // keep current
+        } else if (content && content.length > full.length) {
+          const extra = content.slice(full.length);
+          full = content;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === asstId ? { ...m, text: (m.text ?? "") + extra } : m))
+          );
+        } else if (content && content.length < full.length) {
+          full = content;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === asstId ? { ...m, text: content } : m))
+          );
+        } else if (!content && !full) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === asstId ? { ...m, text: "" } : m))
+          );
+        }
+        resolveDone?.();
+      });
+
+      const unlistenError = await listen<{ requestId: string; error: string }>("ai-stream-error", (e) => {
+        if (e.payload?.requestId !== requestId) return;
+        rejectDone?.(new Error(String(e.payload?.error ?? "Unknown error")));
+      });
+
+      await aiCodeGenStream(requestId, payload);
+      await donePromise;
+
+      unlistenDelta();
+      unlistenTool();
+      unlistenDone();
+      unlistenError();
+
+      setAiResponse(full);
+      setLastToolCallsUsed(toolCallsUsed);
+
+      const patch = parsePatchFromResponse(full, agentMode, activeFilePath);
       setPendingPatch(patch);
-      const newUsed = used + est + estimateTokens(result);
+
+      const newUsed = used + est + estimateTokens(full);
       setDailyUsedStorage(newUsed);
       setDailyTokenUsed(newUsed);
       log("AI response received");
@@ -269,10 +363,15 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
     } finally {
       setAiLoading(false);
     }
-  }, [aiPrompt, contextBlocks, log, agentMode, model, activeFilePath, projectDir]);
+  }, [aiPrompt, contextBlocks, log, agentMode, model, activeFilePath, projectDir, streamingCancelRef]);
 
   const tokenEstimate = estimateTokens(aiPrompt + (contextBlocks.length ? "\n" + contextBlocks.map((b) => b.content).join("\n") : ""));
-  const sendDisabled = aiLoading || !apiKeySaved || dailyTokenUsed + estimateTokens(aiPrompt.trim()) > DAILY_TOKEN_LIMIT;
+  const isOllama = model.startsWith("ollama/");
+  const isGrok = model.startsWith("grok/");
+  const keyOk = isOllama || (isGrok ? grokApiKeySaved : apiKeySaved);
+  const sendDisabled =
+    aiLoading ||
+    (!keyOk || (!isOllama && dailyTokenUsed + estimateTokens(aiPrompt.trim()) > DAILY_TOKEN_LIMIT));
 
   const resetDailyUsage = useCallback(() => {
     setDailyUsedStorage(0);
@@ -330,9 +429,39 @@ function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
     setAgentMode(m === "chat" ? "explain" : "edit-selection");
   }, []);
 
+  const newChat = useCallback(() => {
+    if (messages.length > 0) {
+      saveCurrentSession(messages as { id: number; role: "user" | "assistant"; text: string }[]);
+    }
+    setMessages([]);
+    setAiPrompt("");
+    setPendingPatch(null);
+    setAiResponse(null);
+    setLastToolCallsUsed(null);
+  }, [messages, saveCurrentSession, setAiPrompt]);
+
+  const loadSessionById = useCallback(
+    (id: string) => {
+      const s = loadSession(id);
+      if (!s) return;
+      setMessages(s.messages as AiMessage[]);
+      setAiPrompt("");
+      setPendingPatch(null);
+      const lastAsst = [...s.messages].reverse().find((m) => m.role === "assistant");
+      setAiResponse(lastAsst?.text ?? null);
+      setLastToolCallsUsed(null);
+    },
+    [loadSession]
+  );
+
   return {
     projectDir,
     setProjectDir,
+    sessions,
+    newChat,
+    loadSessionById,
+    deleteSession,
+    lastToolCallsUsed,
     apiKey,
     setApiKey,
     apiKeySaved,

@@ -348,6 +348,25 @@ export async function indexStats(projectDir: string) {
   return invoke("index_stats", { projectDir });
 }
 
+export interface IndexIncludedFiles {
+  total: number;
+  paths: string[];
+}
+
+export async function indexListIncludedFiles(
+  projectDir: string,
+  limit?: number
+): Promise<IndexIncludedFiles> {
+  return invoke<IndexIncludedFiles>("index_list_included_files", {
+    projectDir,
+    limit,
+  });
+}
+
+export async function indexRepoStats() {
+  return invoke("index_repo_stats");
+}
+
 export async function indexUpdateFile(projectDir: string, filePath: string): Promise<void> {
   await invoke("index_update_file", { projectDir, filePath });
 }
@@ -381,6 +400,10 @@ export async function indexRepoGetContext(query: string, maxChunks?: number) {
   return invoke("index_repo_get_context", { query, maxChunks });
 }
 
+export async function indexComponentLibraryGetContext(query: string, maxChunks?: number) {
+  return invoke("index_component_library_get_context", { query, maxChunks });
+}
+
 export async function indexSearchInProject(
   projectDir: string,
   query: string,
@@ -392,6 +415,64 @@ export async function indexSearchInProject(
 }
 
 // --- AI / config helpers ---
+
+export interface IndexCacheSettings {
+  componentLibraryIndexEnabled?: boolean;
+  repoIndexRefreshOnJitLoad?: boolean;
+  gitStatusThrottleMs?: number;
+}
+
+export interface IndexingSettings {
+  indexAutoNewFolders?: boolean;
+  indexAutoNewFoldersMaxFiles?: number;
+  indexRepoForGrep?: boolean;
+}
+
+export type AiScope = "user" | "project" | "rustmodlica" | "all";
+
+export interface AiRule {
+  id: string;
+  name: string;
+  scope: AiScope;
+  enabled: boolean;
+  content: string;
+}
+
+export interface AiSkill {
+  id: string;
+  name: string;
+  description: string;
+  scope: AiScope;
+  enabled: boolean;
+  content: string;
+}
+
+export interface AiSubagent {
+  id: string;
+  name: string;
+  description: string;
+  scope: AiScope;
+  enabled: boolean;
+  content: string;
+}
+
+export interface AiCommand {
+  id: string;
+  name: string;
+  description: string;
+  scope: AiScope;
+  enabled: boolean;
+  content: string;
+}
+
+export interface AiConfig {
+  rules: AiRule[];
+  skills: AiSkill[];
+  subagents: AiSubagent[];
+  commands: AiCommand[];
+  /** Model IDs enabled in the AI panel. If undefined or empty, all built-in models are shown. */
+  modelIdsEnabled?: string[] | null;
+}
 
 export interface AppSettings {
   storage?: {
@@ -410,6 +491,9 @@ export interface AppSettings {
     pluginDir?: string;
     modelicaStdlibPath?: string;
   };
+  indexCache?: IndexCacheSettings;
+  indexing?: IndexingSettings;
+  ai?: AiConfig;
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -424,6 +508,10 @@ export async function getAppDataRoot(): Promise<string> {
   return invoke<string>("get_app_data_root");
 }
 
+export async function rebuildComponentLibraryIndex(): Promise<void> {
+  await invoke("rebuild_component_library_index");
+}
+
 export async function getApiKey(): Promise<string> {
   return invoke<string>("get_api_key");
 }
@@ -432,8 +520,37 @@ export async function setApiKey(apiKey: string): Promise<void> {
   await invoke("set_api_key", { apiKey });
 }
 
-export async function aiCodeGen(payload: unknown): Promise<string> {
-  return invoke<string>("ai_code_gen", { payload });
+export async function getGrokApiKey(): Promise<string> {
+  return invoke<string>("get_grok_api_key");
+}
+
+export async function setGrokApiKey(apiKey: string): Promise<void> {
+  await invoke("set_grok_api_key", { apiKey });
+}
+
+export interface AiCodeGenResult {
+  content: string;
+  toolCallsUsed?: string[];
+}
+
+export async function aiCodeGen(payload: unknown): Promise<AiCodeGenResult> {
+  const raw = await invoke<string>("ai_code_gen", { payload });
+  try {
+    const obj = JSON.parse(raw) as { content?: string; tool_calls_used?: string[] };
+    if (typeof obj?.content === "string") {
+      return {
+        content: obj.content,
+        toolCallsUsed: Array.isArray(obj.tool_calls_used) ? obj.tool_calls_used : undefined,
+      };
+    }
+  } catch {
+    // not JSON, treat as plain content
+  }
+  return { content: raw };
+}
+
+export async function aiCodeGenStream(requestId: string, payload: unknown): Promise<void> {
+  await invoke("ai_code_gen_stream", { requestId, payload });
 }
 
 export async function aiGenerateCompilerPatch(target: string): Promise<string> {
