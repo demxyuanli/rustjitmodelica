@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::UNIX_EPOCH;
+
+use crate::component_library_index::{self, ComponentRow};
+use crate::profiler::ScopedTimer;
 
 const GLOBAL_CONFIG_FILENAME: &str = "component-libraries.json";
 const PROJECT_CONFIG_DIR: &str = ".modai";
@@ -639,6 +643,61 @@ fn resolved_component_libraries_from_records(
     libraries
 }
 
+fn library_path_mtime(path: &Path) -> i64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn discovered_to_component_row(d: &DiscoveredComponentType) -> ComponentRow {
+    ComponentRow {
+        library_id: d.library_id.clone(),
+        qualified_name: d.qualified_name.clone(),
+        name: d.name.clone(),
+        kind: d.kind.clone(),
+        rel_path: d.path.clone(),
+        summary: d.summary.clone(),
+        usage_help: d.usage_help.clone(),
+        example_titles: d.example_titles.clone(),
+        library_name: d.library_name.clone(),
+        library_scope: d.library_scope.clone(),
+    }
+}
+
+fn populate_component_index(
+    conn: &rusqlite::Connection,
+    libraries: &[ResolvedComponentLibrary],
+    discovered: &[DiscoveredComponentType],
+) -> Result<(), String> {
+    for lib in libraries {
+        let mtime = library_path_mtime(&lib.absolute_path);
+        let source_path = lib
+            .record
+            .source_path
+            .as_deref()
+            .unwrap_or("")
+            .to_string();
+        component_library_index::upsert_library_meta(
+            conn,
+            &lib.record.id,
+            &source_path,
+            &lib.record.display_name,
+            &lib.record.scope,
+            mtime,
+        )?;
+        let rows: Vec<ComponentRow> = discovered
+            .iter()
+            .filter(|d| d.library_id == lib.record.id)
+            .map(discovered_to_component_row)
+            .collect();
+        component_library_index::replace_components(conn, &lib.record.id, &rows)?;
+    }
+    Ok(())
+}
+
 fn discover_instantiable_components_from_libraries(
     libraries: &[ResolvedComponentLibrary],
 ) -> Result<Vec<DiscoveredComponentType>, String> {
@@ -661,11 +720,7 @@ fn discover_instantiable_components_from_libraries(
                             .as_deref()
                             .map(rel_path_to_qualified_name)
                             .unwrap_or_else(|| file_hint_to_qualified_name(&path));
-                        if let Some(component) =
-                            scan_modelica_file(&path, hint, relative_path, library)?
-                        {
-                            out.push(component);
-                        }
+                        out.extend(scan_modelica_file(&path, hint, relative_path, library)?);
                     }
                 }
             }
@@ -675,14 +730,12 @@ fn discover_instantiable_components_from_libraries(
                 .file_name()
                 .and_then(|value| value.to_str())
                 .map(|value| value.to_string());
-            if let Some(component) = scan_modelica_file(
+            out.extend(scan_modelica_file(
                 &library.absolute_path,
                 file_hint_to_qualified_name(&library.absolute_path),
                 relative_path,
                 library,
-            )? {
-                out.push(component);
-            }
+            )?);
         }
     }
     out.sort_by(|a, b| {
@@ -694,14 +747,38 @@ fn discover_instantiable_components_from_libraries(
     Ok(out)
 }
 
-pub fn list_component_libraries(project_dir: Option<&Path>) -> Result<Vec<ComponentLibraryRecord>, String> {
+pub fn list_component_libraries(
+    project_dir: Option<&Path>,
+    use_index: bool,
+) -> Result<Vec<ComponentLibraryRecord>, String> {
+    let _timer = ScopedTimer::new("component_library::list_component_libraries");
     let mut records = list_component_library_records(project_dir)?;
-    let libraries = resolved_component_libraries_from_records(records.clone(), false);
-    let discovered = discover_instantiable_components_from_libraries(&libraries)?;
-    let mut counts = HashMap::<String, usize>::new();
-    for item in discovered {
-        *counts.entry(item.library_id).or_insert(0) += 1;
-    }
+    let library_ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
+    let use_index = use_index
+        && match component_library_index::open_connection() {
+            Ok(conn) => library_ids
+                .iter()
+                .all(|id| component_library_index::get_library_mtime(&conn, id).ok().flatten().is_some()),
+            Err(_) => false,
+        };
+    let counts: HashMap<String, usize> = if use_index {
+        if let Ok(conn) = component_library_index::open_connection() {
+            component_library_index::get_component_counts(&conn, &library_ids).unwrap_or_default()
+        } else {
+            HashMap::new()
+        }
+    } else {
+        let libraries = resolved_component_libraries_from_records(records.clone(), false);
+        let discovered = discover_instantiable_components_from_libraries(&libraries)?;
+        let mut counts = HashMap::<String, usize>::new();
+        for item in &discovered {
+            *counts.entry(item.library_id.clone()).or_insert(0) += 1;
+        }
+        if let Ok(conn) = component_library_index::open_connection() {
+            let _ = populate_component_index(&conn, &libraries, &discovered);
+        }
+        counts
+    };
     for record in &mut records {
         record.component_count = counts.get(&record.id).copied().unwrap_or(0);
     }
@@ -1114,86 +1191,180 @@ fn class_kind(item: &ClassItem) -> String {
     }
 }
 
+fn collect_instantiable_from_model(
+    model: &rustmodlica::ast::Model,
+    qualified_name: String,
+    path: &Path,
+    relative_path: Option<&String>,
+    library: &ResolvedComponentLibrary,
+    content: &str,
+    out: &mut Vec<DiscoveredComponentType>,
+) {
+    if model.is_connector || model.is_function {
+        return;
+    }
+    let resolved = ResolvedComponentType {
+        qualified_name: qualified_name.clone(),
+        absolute_path: path.to_path_buf(),
+        relative_path: relative_path.cloned(),
+        source: library.record.scope.clone(),
+        library_id: library.record.id.clone(),
+        library_name: library.record.display_name.clone(),
+        library_scope: library.record.scope.clone(),
+        library_kind: library.record.kind.clone(),
+        library_absolute_path: library.absolute_path.clone(),
+    };
+    let metadata = load_resolved_component_metadata(
+        &resolved,
+        &ClassItem::Model(model.clone()),
+        content,
+    );
+    out.push(DiscoveredComponentType {
+        name: model.name.clone(),
+        qualified_name: qualified_name.clone(),
+        path: relative_path.cloned(),
+        source: library.record.scope.clone(),
+        kind: if model.is_block {
+            "block".to_string()
+        } else {
+            "model".to_string()
+        },
+        library_id: library.record.id.clone(),
+        library_name: library.record.display_name.clone(),
+        library_scope: library.record.scope.clone(),
+        summary: metadata.summary,
+        usage_help: metadata.usage_help,
+        example_titles: metadata.examples.into_iter().map(|e| e.title).collect(),
+    });
+    for inner in &model.inner_classes {
+        let inner_qualified = format!("{}.{}", qualified_name, inner.name);
+        collect_instantiable_from_model(
+            inner,
+            inner_qualified,
+            path,
+            relative_path,
+            library,
+            content,
+            out,
+        );
+    }
+}
+
 fn scan_modelica_file(
     path: &Path,
     qualified_name_hint: String,
     relative_path: Option<String>,
     library: &ResolvedComponentLibrary,
-) -> Result<Option<DiscoveredComponentType>, String> {
+) -> Result<Vec<DiscoveredComponentType>, String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let item = match parser::parse(&content) {
         Ok(value) => value,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok(Vec::new()),
     };
+    let mut out = Vec::new();
     if let ClassItem::Model(model) = item {
-        if model.is_connector || model.is_function {
-            return Ok(None);
-        }
-        let qualified_name = if library.record.kind == KIND_FILE {
+        let top_qualified = if library.record.kind == KIND_FILE {
             model.name.clone()
         } else {
             qualified_name_hint
         };
-        let resolved = ResolvedComponentType {
-            qualified_name: qualified_name.clone(),
-            absolute_path: path.to_path_buf(),
-            relative_path: relative_path.clone(),
-            source: library.record.scope.clone(),
-            library_id: library.record.id.clone(),
-            library_name: library.record.display_name.clone(),
-            library_scope: library.record.scope.clone(),
-            library_kind: library.record.kind.clone(),
-            library_absolute_path: library.absolute_path.clone(),
-        };
-        let metadata = load_resolved_component_metadata(&resolved, &ClassItem::Model(model.clone()), &content);
-        return Ok(Some(DiscoveredComponentType {
-            name: model.name,
-            qualified_name,
-            path: relative_path,
-            source: library.record.scope.clone(),
-            kind: if model.is_block {
-                "block".to_string()
-            } else {
-                "model".to_string()
-            },
-            library_id: library.record.id.clone(),
-            library_name: library.record.display_name.clone(),
-            library_scope: library.record.scope.clone(),
-            summary: metadata.summary,
-            usage_help: metadata.usage_help,
-            example_titles: metadata.examples.into_iter().map(|example| example.title).collect(),
-        }));
+        collect_instantiable_from_model(
+            &model,
+            top_qualified,
+            path,
+            relative_path.as_ref(),
+            library,
+            &content,
+            &mut out,
+        );
     }
-    Ok(None)
+    Ok(out)
 }
 
 pub fn discover_instantiable_components(project_dir: Option<&Path>) -> Result<Vec<DiscoveredComponentType>, String> {
+    let _timer = ScopedTimer::new("component_library::discover_instantiable_components");
     discover_instantiable_components_from_libraries(&resolved_component_libraries(project_dir)?)
+}
+
+fn component_row_to_discovered(row: &ComponentRow) -> DiscoveredComponentType {
+    DiscoveredComponentType {
+        name: row.name.clone(),
+        qualified_name: row.qualified_name.clone(),
+        path: row.rel_path.clone(),
+        source: row.library_scope.clone(),
+        kind: row.kind.clone(),
+        library_id: row.library_id.clone(),
+        library_name: row.library_name.clone(),
+        library_scope: row.library_scope.clone(),
+        summary: row.summary.clone(),
+        usage_help: row.usage_help.clone(),
+        example_titles: row.example_titles.clone(),
+    }
 }
 
 pub fn query_component_types(
     project_dir: Option<&Path>,
     options: QueryComponentTypesOptions,
+    use_index: bool,
 ) -> Result<QueryComponentTypesResult, String> {
-    let query_text = options
+    let _timer = ScopedTimer::new("component_library::query_component_types");
+    let query_lower = options
         .query
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_lowercase());
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase());
     let mut records = list_component_library_records(project_dir)?;
     if let Some(library_id) = options.library_id.as_deref() {
-        records.retain(|record| record.id == library_id);
+        records.retain(|r| r.id == library_id);
     }
     if let Some(scope) = options.scope.as_deref() {
-        records.retain(|record| record.scope == scope);
+        records.retain(|r| r.scope == scope);
     }
     if options.enabled_only {
-        records.retain(|record| record.enabled);
+        records.retain(|r| r.enabled);
     }
-    let libraries = resolved_component_libraries_from_records(records, false);
-    let mut items = discover_instantiable_components_from_libraries(&libraries)?;
-    if let Some(term) = query_text.as_deref() {
+    let libraries = resolved_component_libraries_from_records(records.clone(), false);
+    let library_ids: Vec<String> = libraries.iter().map(|l| l.record.id.clone()).collect();
+    if library_ids.is_empty() {
+        return Ok(QueryComponentTypesResult {
+            items: vec![],
+            total: 0,
+            has_more: false,
+        });
+    }
+    let use_index = use_index
+        && match component_library_index::open_connection() {
+            Ok(conn) => library_ids
+                .iter()
+                .all(|id| component_library_index::get_library_mtime(&conn, id).ok().flatten().is_some()),
+            Err(_) => false,
+        };
+    if use_index {
+        if let Ok(conn) = component_library_index::open_connection() {
+            let offset = options.offset;
+            let limit = options.limit.max(1);
+            let q = query_lower.as_deref();
+            if let Ok((rows, total)) =
+                component_library_index::query_components(&conn, &library_ids, q, offset, limit)
+            {
+                let items: Vec<DiscoveredComponentType> =
+                    rows.iter().map(component_row_to_discovered).collect();
+                let has_more = offset + items.len() < total;
+                return Ok(QueryComponentTypesResult {
+                    items,
+                    total,
+                    has_more,
+                });
+            }
+        }
+    }
+    let discovered = discover_instantiable_components_from_libraries(&libraries)?;
+    if let Ok(conn) = component_library_index::open_connection() {
+        let _ = populate_component_index(&conn, &libraries, &discovered);
+    }
+    let mut items = discovered;
+    if let Some(term) = query_lower.as_deref() {
         items.retain(|item| {
             item.name.to_lowercase().contains(term)
                 || item.qualified_name.to_lowercase().contains(term)

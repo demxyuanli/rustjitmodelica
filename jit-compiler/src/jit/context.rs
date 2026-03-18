@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use super::types::ArrayInfo;
+use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
-use cranelift::codegen::ir::StackSlot;
-use super::types::ArrayInfo;
+use std::collections::HashMap;
 
 pub struct TranslationContext<'a> {
     pub module: &'a mut JITModule,
@@ -73,7 +73,9 @@ impl<'a> TranslationContext<'a> {
             .module
             .declare_data(&name, Linkage::Local, false, false)
             .map_err(|e| e.to_string())?;
-        self.module.define_data(id, data_ctx).map_err(|e| e.to_string())?;
+        self.module
+            .define_data(id, data_ctx)
+            .map_err(|e| e.to_string())?;
         data_ctx.clear();
         cache.insert(s.to_string(), id);
         Ok(Some(id))

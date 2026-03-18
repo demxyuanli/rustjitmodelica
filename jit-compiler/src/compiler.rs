@@ -6,17 +6,22 @@ mod jacobian;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Equation, Expression, AlgorithmStatement};
-use crate::backend_dae::{build_simulation_dae, SimulationDae, ClockPartition as BackendClockPartition};
-use crate::loader::ModelLoader;
-use crate::flatten::{Flattener, eval_const_expr};
-use crate::analysis::{sort_algebraic_equations, collect_states_from_eq, analyze_initial_equations, AnalysisOptions};
+use crate::analysis::{
+    analyze_initial_equations, collect_states_from_eq, sort_algebraic_equations, extract_unknowns,
+    AnalysisOptions,
+};
+use crate::ast::{AlgorithmStatement, Equation, Expression};
+use crate::backend_dae::{
+    build_simulation_dae, ClockPartition as BackendClockPartition, SimulationDae,
+};
 use crate::diag::WarningInfo;
-use crate::jit::{Jit, CalcDerivsFunc, ArrayInfo, ArrayType};
-use crate::jit::native::builtin_jit_symbol_names;
 use crate::equation_graph;
 use crate::expr_eval;
+use crate::flatten::{eval_const_expr, Flattener};
 use crate::i18n;
+use crate::jit::native::builtin_jit_symbol_names;
+use crate::jit::{ArrayInfo, ArrayType, CalcDerivsFunc, Jit};
+use crate::loader::ModelLoader;
 
 #[derive(Clone, Debug)]
 pub struct CompilerOptions {
@@ -42,6 +47,8 @@ pub struct CompilerOptions {
     pub emit_c_dir: Option<String>,
     /// EXT-1: Paths to shared libraries for external function symbols (e.g. .dll, .so).
     pub external_libs: Vec<String>,
+    /// When true, suppress progress messages so only JSON (e.g. validate) is on stdout.
+    pub quiet: bool,
 }
 
 impl Default for CompilerOptions {
@@ -62,6 +69,7 @@ impl Default for CompilerOptions {
             warnings_level: "all".to_string(),
             emit_c_dir: None,
             external_libs: Vec::new(),
+            quiet: false,
         }
     }
 }
@@ -90,7 +98,10 @@ fn parse_annotation_library(annotation: Option<&String>) -> Option<String> {
     let s = s.trim();
     let idx = s.find("Library")?;
     let rest = s[idx + 7..].trim_start();
-    let rest = rest.strip_prefix('=').map(|r| r.trim_start()).unwrap_or(rest);
+    let rest = rest
+        .strip_prefix('=')
+        .map(|r| r.trim_start())
+        .unwrap_or(rest);
     let start = rest.find('"')?;
     let rest = &rest[start + 1..];
     let end = rest.find('"')?;
@@ -128,8 +139,13 @@ fn collect_all_called_names(
                 collect_calls_expr(a, out);
                 collect_calls_expr(i, out);
             }
-            Expression::Sample(inner) | Expression::Interval(inner) | Expression::Hold(inner) | Expression::Previous(inner) => collect_calls_expr(inner, out),
-            Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+            Expression::Sample(inner)
+            | Expression::Interval(inner)
+            | Expression::Hold(inner)
+            | Expression::Previous(inner) => collect_calls_expr(inner, out),
+            Expression::SubSample(c, n)
+            | Expression::SuperSample(c, n)
+            | Expression::ShiftSample(c, n) => {
                 collect_calls_expr(c, out);
                 collect_calls_expr(n, out);
             }
@@ -142,7 +158,14 @@ fn collect_all_called_names(
                 collect_calls_expr(lhs, out);
                 collect_calls_expr(rhs, out);
             }
-            Equation::SolvableBlock { equations, residuals, .. } => {
+            Equation::CallStmt(expr) => {
+                collect_calls_expr(expr, out);
+            }
+            Equation::SolvableBlock {
+                equations,
+                residuals,
+                ..
+            } => {
                 for e in equations {
                     if let Equation::Simple(l, r) = e {
                         collect_calls_expr(l, out);
@@ -159,6 +182,9 @@ fn collect_all_called_names(
     fn collect_calls_alg(stmt: &AlgorithmStatement, out: &mut HashSet<String>) {
         match stmt {
             AlgorithmStatement::Assignment(_, rhs) => collect_calls_expr(rhs, out),
+            AlgorithmStatement::MultiAssign(_, rhs) => collect_calls_expr(rhs, out),
+            AlgorithmStatement::CallStmt(expr) => collect_calls_expr(expr, out),
+            AlgorithmStatement::NoOp => {}
             AlgorithmStatement::If(cond, t, eifs, els) => {
                 collect_calls_expr(cond, out);
                 for s in t {
@@ -245,8 +271,13 @@ fn collect_external_calls(
                 collect_calls_expr(a, out);
                 collect_calls_expr(i, out);
             }
-            Expression::Sample(inner) | Expression::Interval(inner) | Expression::Hold(inner) | Expression::Previous(inner) => collect_calls_expr(inner, out),
-            Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+            Expression::Sample(inner)
+            | Expression::Interval(inner)
+            | Expression::Hold(inner)
+            | Expression::Previous(inner) => collect_calls_expr(inner, out),
+            Expression::SubSample(c, n)
+            | Expression::SuperSample(c, n)
+            | Expression::ShiftSample(c, n) => {
                 collect_calls_expr(c, out);
                 collect_calls_expr(n, out);
             }
@@ -259,7 +290,11 @@ fn collect_external_calls(
                 collect_calls_expr(lhs, out);
                 collect_calls_expr(rhs, out);
             }
-            Equation::SolvableBlock { equations, residuals, .. } => {
+            Equation::SolvableBlock {
+                equations,
+                residuals,
+                ..
+            } => {
                 for e in equations {
                     if let Equation::Simple(l, r) = e {
                         collect_calls_expr(l, out);
@@ -279,6 +314,9 @@ fn collect_external_calls(
     fn collect_calls_alg(stmt: &AlgorithmStatement, out: &mut HashSet<String>) {
         match stmt {
             AlgorithmStatement::Assignment(_, rhs) => collect_calls_expr(rhs, out),
+            AlgorithmStatement::MultiAssign(_, rhs) => collect_calls_expr(rhs, out),
+            AlgorithmStatement::CallStmt(expr) => collect_calls_expr(expr, out),
+            AlgorithmStatement::NoOp => {}
             AlgorithmStatement::If(cond, t, eifs, els) => {
                 collect_calls_expr(cond, out);
                 for s in t {
@@ -440,11 +478,20 @@ impl Compiler {
     }
 
     /// Run a function once with given inputs (or 0.0 per input if not provided) and return the output (F3-1).
-    fn run_function_once(&mut self, model_name: &str) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
-        let root_model = self.loader.load_model(model_name)
+    fn run_function_once(
+        &mut self,
+        model_name: &str,
+    ) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
+        let root_model = self
+            .loader
+            .load_model(model_name)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
         if let Some((input_names, outputs)) = inline::get_function_body(root_model.as_ref()) {
-            let body = outputs.first().ok_or("Function has no output expression.")?.1.clone();
+            let body = outputs
+                .first()
+                .ok_or("Function has no output expression.")?
+                .1
+                .clone();
             let args = self.options.function_args.as_deref().unwrap_or(&[]);
             let mut vars = HashMap::new();
             for (i, name) in input_names.iter().enumerate() {
@@ -459,25 +506,40 @@ impl Compiler {
         Err("Function must have at least one output and assignments in algorithm.".into())
     }
 
-    pub fn compile(&mut self, model_name: &str) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn compile(
+        &mut self,
+        model_name: &str,
+    ) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
         self.warnings.clear();
+        self.loader.set_quiet(self.options.quiet);
         let opts = &self.options;
         let model_file_path = format!("{}.mo", model_name.replace('.', "/"));
-        println!("{}", i18n::msg("loading_model", &[&model_name as &dyn std::fmt::Display]));
-        let mut root_model = self.loader.load_model(model_name)
+        if !self.options.quiet {
+            println!(
+                "{}",
+                i18n::msg("loading_model", &[&model_name as &dyn std::fmt::Display])
+            );
+        }
+        let mut root_model = self
+            .loader
+            .load_model(model_name)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
         if root_model.as_ref().is_function {
-            if self.options.function_args.is_some() {
-                println!("{}", i18n::msg0("evaluating_function_args"));
-            } else {
-                println!("{}", i18n::msg0("evaluating_function_default"));
+            if !self.options.quiet {
+                if self.options.function_args.is_some() {
+                    println!("{}", i18n::msg0("evaluating_function_args"));
+                } else {
+                    println!("{}", i18n::msg0("evaluating_function_default"));
+                }
             }
             let value = self.run_function_once(model_name)?;
             return Ok(CompileOutput::FunctionRun(value));
         }
 
-        println!("{}", i18n::msg0("flattening_model"));
+        if !self.options.quiet {
+            println!("{}", i18n::msg0("flattening_model"));
+        }
         let mut flattener = Flattener::new();
         for path in &self.loader.library_paths {
             flattener.loader.add_path(path.clone());
@@ -485,6 +547,7 @@ impl Compiler {
         if let Some(p) = self.loader.get_path_for_model(model_name) {
             flattener.loader.register_path(model_name, p);
         }
+        flattener.loader.set_quiet(self.options.quiet);
         let mut flat_model = flattener.flatten(&mut root_model, model_name)?;
 
         inline::inline_function_calls(&mut flat_model, &mut self.loader);
@@ -492,11 +555,16 @@ impl Compiler {
         // Output detailed statistics
         let total_equations = flat_model.equations.len();
         let total_declarations = flat_model.declarations.len();
-        println!("{}", i18n::msg("flattened_equations", &[&total_equations]));
-        println!("{}", i18n::msg("flattened_declarations", &[&total_declarations]));
+        if !self.options.quiet {
+            println!("{}", i18n::msg("flattened_equations", &[&total_equations]));
+            println!(
+                "{}",
+                i18n::msg("flattened_declarations", &[&total_declarations])
+            );
+            println!("{}", i18n::msg0("analyzing_variables"));
+        }
 
         // 2. Identify Variables
-        println!("{}", i18n::msg0("analyzing_variables"));
         let mut state_vars = HashSet::new();
         let mut discrete_vars = HashSet::new();
         let mut param_vars = Vec::new();
@@ -504,17 +572,21 @@ impl Compiler {
         let mut params = Vec::new();
         let mut states = Vec::new();
         let mut discrete_vals = Vec::new();
-        
+
         // Collect states from equations first (der(x))
         for eq in &flat_model.equations {
             collect_states_from_eq(eq, &mut state_vars);
         }
-        
+
         // Also check declarations
         for decl in &flat_model.declarations {
             if decl.is_parameter {
                 param_vars.push(decl.name.clone());
-                let val = decl.start_value.as_ref().and_then(|v| eval_const_expr(v)).unwrap_or(0.0);
+                let val = decl
+                    .start_value
+                    .as_ref()
+                    .and_then(|v| eval_const_expr(v))
+                    .unwrap_or(0.0);
                 params.push(val);
             } else if decl.is_discrete {
                 discrete_vars.insert(decl.name.clone());
@@ -522,49 +594,81 @@ impl Compiler {
                 // Algebraic
             }
         }
-        
+
+        let decl_index: HashMap<String, usize> = flat_model
+            .declarations
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.name.clone(), i))
+            .collect();
+
+        // Include variables referenced in equations but not yet in state/discrete/param
+        // (e.g. boundary_Medium_X_default from unexpanded Medium) so JIT can resolve them.
+        let mut refd_in_eqs: HashSet<String> = HashSet::new();
+        let empty_knowns: HashSet<String> = HashSet::new();
+        for eq in &flat_model.equations {
+            for v in extract_unknowns(eq, &empty_knowns) {
+                refd_in_eqs.insert(v);
+            }
+        }
+        let param_set: HashSet<String> = param_vars.iter().cloned().collect();
+        for v in &refd_in_eqs {
+            if state_vars.contains(v) || discrete_vars.contains(v) || param_set.contains(v) {
+                continue;
+            }
+            if v.starts_with("der_") {
+                continue;
+            }
+            param_vars.push(v.clone());
+            let val = decl_index
+                .get(v)
+                .and_then(|&idx| flat_model.declarations[idx].start_value.as_ref())
+                .and_then(|e| eval_const_expr(e))
+                .unwrap_or(0.0);
+            params.push(val);
+        }
+
         // Sort vars for deterministic order
         let mut state_vars_sorted: Vec<String> = state_vars.iter().cloned().collect();
         state_vars_sorted.sort();
-        
+
         let mut discrete_vars_sorted: Vec<String> = discrete_vars.iter().cloned().collect();
         discrete_vars_sorted.sort();
 
         let state_set: HashSet<&String> = state_vars_sorted.iter().collect();
         let discrete_set: HashSet<&String> = discrete_vars_sorted.iter().collect();
 
-        let decl_index: HashMap<String, usize> = flat_model.declarations
-            .iter()
-            .enumerate()
-            .map(|(i, d)| (d.name.clone(), i))
-            .collect();
-
         for var in &state_vars_sorted {
-            let val = decl_index.get(var)
+            let val = decl_index
+                .get(var)
                 .and_then(|&idx| flat_model.declarations[idx].start_value.as_ref())
                 .and_then(|v| eval_const_expr(v))
                 .unwrap_or(0.0);
             states.push(val);
         }
-        
+
         for var in &discrete_vars_sorted {
-            let val = decl_index.get(var)
+            let val = decl_index
+                .get(var)
                 .and_then(|&idx| flat_model.declarations[idx].start_value.as_ref())
                 .and_then(|v| eval_const_expr(v))
                 .unwrap_or(0.0);
             discrete_vals.push(val);
         }
-        
+
         let mut algebraic_vars = HashSet::new();
         let mut output_vars_set = HashSet::new();
         for decl in &flat_model.declarations {
-             if !decl.is_parameter && !discrete_set.contains(&decl.name) && !state_set.contains(&decl.name) {
-                 algebraic_vars.insert(decl.name.clone());
-                 output_vars.push(decl.name.clone());
-                 output_vars_set.insert(decl.name.clone());
-             }
+            if !decl.is_parameter
+                && !discrete_set.contains(&decl.name)
+                && !state_set.contains(&decl.name)
+            {
+                algebraic_vars.insert(decl.name.clone());
+                output_vars.push(decl.name.clone());
+                output_vars_set.insert(decl.name.clone());
+            }
         }
-        
+
         for var in &state_vars_sorted {
             let der_var = format!("der_{}", var);
             if output_vars_set.insert(der_var.clone()) {
@@ -572,7 +676,7 @@ impl Compiler {
                 algebraic_vars.insert(der_var);
             }
         }
-        
+
         let input_var_names: Vec<String> = flat_model
             .declarations
             .iter()
@@ -580,9 +684,21 @@ impl Compiler {
             .map(|d| d.name.clone())
             .collect();
 
-        let state_var_index: HashMap<String, usize> = state_vars_sorted.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
-        let discrete_var_index: HashMap<String, usize> = discrete_vars_sorted.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
-        let param_var_index: HashMap<String, usize> = param_vars.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
+        let state_var_index: HashMap<String, usize> = state_vars_sorted
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.clone(), i))
+            .collect();
+        let discrete_var_index: HashMap<String, usize> = discrete_vars_sorted
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.clone(), i))
+            .collect();
+        let param_var_index: HashMap<String, usize> = param_vars
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.clone(), i))
+            .collect();
 
         // Apply simple constant initial equations / algorithms to override defaults
         initial_conditions::apply_initial_conditions(
@@ -593,13 +709,18 @@ impl Compiler {
             &state_var_index,
             &discrete_var_index,
             &param_var_index,
+            opts.quiet,
         );
-        let mut output_var_index: HashMap<String, usize> = output_vars.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
-        
+        let mut output_var_index: HashMap<String, usize> = output_vars
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.clone(), i))
+            .collect();
+
         let mut array_info = HashMap::new();
         for (name, size) in &flat_model.array_sizes {
             let first_elem = format!("{}_1", name);
-            
+
             let (atype, start_idx) = if let Some(&pos) = state_var_index.get(&first_elem) {
                 (ArrayType::State, pos)
             } else if let Some(&pos) = discrete_var_index.get(&first_elem) {
@@ -609,67 +730,104 @@ impl Compiler {
             } else if let Some(&pos) = output_var_index.get(&first_elem) {
                 (ArrayType::Output, pos)
             } else {
-                 continue;
+                continue;
             };
-            
-            array_info.insert(name.clone(), ArrayInfo {
-                array_type: atype,
-                start_index: start_idx,
-                size: *size,
-            });
+
+            array_info.insert(
+                name.clone(),
+                ArrayInfo {
+                    array_type: atype,
+                    start_index: start_idx,
+                    size: *size,
+                },
+            );
         }
 
         // 3. Normalize Derivatives (der(x) -> der_x)
-        println!("{}", i18n::msg0("normalizing_derivatives"));
+        if !self.options.quiet {
+            println!("{}", i18n::msg0("normalizing_derivatives"));
+        }
         let mut normalized_eqs = Vec::new();
         for eq in &flat_model.equations {
-             match eq {
-                 Equation::Simple(lhs, rhs) => {
-                     normalized_eqs.push(Equation::Simple(crate::analysis::normalize_der(lhs), crate::analysis::normalize_der(rhs)));
-                 }
-                 Equation::For(v, s, e, b) => {
-                     let norm_body = b.iter().map(|eq| {
-                         if let Equation::Simple(l, r) = eq {
-                             Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r))
-                         } else {
-                             eq.clone()
-                         }
-                     }).collect();
-                     normalized_eqs.push(Equation::For(v.clone(), s.clone(), e.clone(), norm_body));
-                 }
-                 Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
-                     let norm_then = then_eqs.iter().map(|e| match e {
-                         Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
-                         _ => e.clone(),
-                     }).collect();
-                     let norm_elseif = elseif_list.iter().map(|(c, eb)| (
-                         crate::analysis::normalize_der(c),
-                         eb.iter().map(|e| match e {
-                             Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
-                             _ => e.clone(),
-                         }).collect::<Vec<_>>(),
-                     )).collect();
-                     let norm_else = else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| match e {
-                         Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
-                         _ => e.clone(),
-                     }).collect());
-                     normalized_eqs.push(Equation::If(
-                         crate::analysis::normalize_der(cond),
-                         norm_then,
-                         norm_elseif,
-                         norm_else,
-                     ));
-                 }
-                 _ => normalized_eqs.push(eq.clone()),
-             }
+            match eq {
+                Equation::Simple(lhs, rhs) => {
+                    normalized_eqs.push(Equation::Simple(
+                        crate::analysis::normalize_der(lhs),
+                        crate::analysis::normalize_der(rhs),
+                    ));
+                }
+                Equation::For(v, s, e, b) => {
+                    let norm_body = b
+                        .iter()
+                        .map(|eq| {
+                            if let Equation::Simple(l, r) = eq {
+                                Equation::Simple(
+                                    crate::analysis::normalize_der(l),
+                                    crate::analysis::normalize_der(r),
+                                )
+                            } else {
+                                eq.clone()
+                            }
+                        })
+                        .collect();
+                    normalized_eqs.push(Equation::For(v.clone(), s.clone(), e.clone(), norm_body));
+                }
+                Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+                    let norm_then = then_eqs
+                        .iter()
+                        .map(|e| match e {
+                            Equation::Simple(l, r) => Equation::Simple(
+                                crate::analysis::normalize_der(l),
+                                crate::analysis::normalize_der(r),
+                            ),
+                            _ => e.clone(),
+                        })
+                        .collect();
+                    let norm_elseif = elseif_list
+                        .iter()
+                        .map(|(c, eb)| {
+                            (
+                                crate::analysis::normalize_der(c),
+                                eb.iter()
+                                    .map(|e| match e {
+                                        Equation::Simple(l, r) => Equation::Simple(
+                                            crate::analysis::normalize_der(l),
+                                            crate::analysis::normalize_der(r),
+                                        ),
+                                        _ => e.clone(),
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                        .collect();
+                    let norm_else = else_eqs.as_ref().map(|eqs| {
+                        eqs.iter()
+                            .map(|e| match e {
+                                Equation::Simple(l, r) => Equation::Simple(
+                                    crate::analysis::normalize_der(l),
+                                    crate::analysis::normalize_der(r),
+                                ),
+                                _ => e.clone(),
+                            })
+                            .collect()
+                    });
+                    normalized_eqs.push(Equation::If(
+                        crate::analysis::normalize_der(cond),
+                        norm_then,
+                        norm_elseif,
+                        norm_else,
+                    ));
+                }
+                _ => normalized_eqs.push(eq.clone()),
+            }
         }
-        
+
         let alg_equations;
         let mut diff_equations = Vec::new();
-        
+
         // Generate implicit diff equations: der(x) = der_x
         // We need to add der_x to outputs if they are not there, and update array info.
-        
+
         for var in &state_vars_sorted {
             let der_var = format!("der_{}", var);
             if !output_var_index.contains_key(&der_var) {
@@ -677,108 +835,120 @@ impl Compiler {
                 output_vars.push(der_var.clone());
                 output_var_index.insert(der_var.clone(), pos);
             }
-            
+
             if let Some((base, _idx)) = equation_convert::parse_array_index(var) {
                 if let Some(info) = array_info.get(&base).cloned() {
                     if let ArrayType::State = info.array_type {
-                         let der_base = format!("der_{}", base);
-                         if !array_info.contains_key(&der_base) {
-                             let first_der = format!("der_{}_1", base);
-                             if let Some(&pos) = output_var_index.get(&first_der) {
-                                  array_info.insert(der_base, ArrayInfo {
-                                     array_type: ArrayType::Output,
-                                     start_index: pos,
-                                     size: info.size
-                                  });
-                             }
-                         }
+                        let der_base = format!("der_{}", base);
+                        if !array_info.contains_key(&der_base) {
+                            let first_der = format!("der_{}_1", base);
+                            if let Some(&pos) = output_var_index.get(&first_der) {
+                                array_info.insert(
+                                    der_base,
+                                    ArrayInfo {
+                                        array_type: ArrayType::Output,
+                                        start_index: pos,
+                                        size: info.size,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }
         }
-        
+
         for (name, info) in &array_info.clone() {
-             if let ArrayType::State = info.array_type {
-                 let der_name = format!("der_{}", name);
-                 let first_elem = format!("der_{}_1", name);
-                 if let Some(&pos) = output_var_index.get(&first_elem) {
-                     array_info.insert(der_name, ArrayInfo {
-                         array_type: ArrayType::Output, 
-                         start_index: pos,
-                         size: info.size,
-                     });
-                 }
-             }
+            if let ArrayType::State = info.array_type {
+                let der_name = format!("der_{}", name);
+                let first_elem = format!("der_{}_1", name);
+                if let Some(&pos) = output_var_index.get(&first_elem) {
+                    array_info.insert(
+                        der_name,
+                        ArrayInfo {
+                            array_type: ArrayType::Output,
+                            start_index: pos,
+                            size: info.size,
+                        },
+                    );
+                }
+            }
         }
-        
+
         // Second pass: Generate diff equations
         for var in &state_vars_sorted {
             // Check if var is part of an array
-             let rhs_expr = if let Some((base, idx)) = equation_convert::parse_array_index(var) {
-                  // Check if base is in array_info (as State)
-                  if array_info.contains_key(&base) {
-                      let der_base = format!("der_{}", base);
-                      // Check if der_base is in array_info (as Output/Algebraic)
-                      if array_info.contains_key(&der_base) {
-                          Expression::ArrayAccess(
-                              Box::new(Expression::Variable(der_base)), 
-                              Box::new(Expression::Number(idx as f64))
-                          )
-                      } else {
-                          Expression::Variable(format!("der_{}", var))
-                      }
-                  } else {
-                      Expression::Variable(format!("der_{}", var))
-                  }
-             } else {
-                  // Use der_var name
-                  Expression::Variable(format!("der_{}", var))
-             };
+            let rhs_expr = if let Some((base, idx)) = equation_convert::parse_array_index(var) {
+                // Check if base is in array_info (as State)
+                if array_info.contains_key(&base) {
+                    let der_base = format!("der_{}", base);
+                    // Check if der_base is in array_info (as Output/Algebraic)
+                    if array_info.contains_key(&der_base) {
+                        Expression::ArrayAccess(
+                            Box::new(Expression::Variable(der_base)),
+                            Box::new(Expression::Number(idx as f64)),
+                        )
+                    } else {
+                        Expression::Variable(format!("der_{}", var))
+                    }
+                } else {
+                    Expression::Variable(format!("der_{}", var))
+                }
+            } else {
+                // Use der_var name
+                Expression::Variable(format!("der_{}", var))
+            };
 
             diff_equations.push(Equation::Simple(
                 Expression::Der(Box::new(Expression::Variable(var.clone()))),
-                rhs_expr
+                rhs_expr,
             ));
         }
 
         // 4. Structure Analysis (BLT)
-        println!("{}", i18n::msg0("performing_structure_analysis"));
-        
-        let mut continuous_eqs = Vec::new();
-        
-        for eq in normalized_eqs {
-             match eq {
-                 Equation::When(_, _, _) | Equation::Reinit(_, _) | Equation::If(_, _, _, _)
-                 | Equation::Assert(_, _) | Equation::Terminate(_) => {
-                     // Converted to algorithms and handled later
-                 }
-                 _ => continuous_eqs.push(eq),
-             }
+        if !self.options.quiet {
+            println!("{}", i18n::msg0("performing_structure_analysis"));
         }
-        
+
+        let mut continuous_eqs = Vec::new();
+
+        for eq in normalized_eqs {
+            match eq {
+                Equation::When(_, _, _)
+                | Equation::Reinit(_, _)
+                | Equation::If(_, _, _, _)
+                | Equation::Assert(_, _)
+                | Equation::Terminate(_) => {
+                    // Converted to algorithms and handled later
+                }
+                _ => continuous_eqs.push(eq),
+            }
+        }
+
         // Sort continuous equations
         // We need to pass all known variables to sort_algebraic_equations.
         // Knowns = States + Discrete + Params + Time (added inside) + Inputs (if any)
         // Unknowns = Algebraic + Derivatives
-        
+
         let mut known_vars = HashSet::new();
-        for v in &state_vars_sorted { known_vars.insert(v.clone()); }
-        for v in &discrete_vars_sorted { known_vars.insert(v.clone()); }
+        for v in &state_vars_sorted {
+            known_vars.insert(v.clone());
+        }
+        for v in &discrete_vars_sorted {
+            known_vars.insert(v.clone());
+        }
         // params are passed separately
-        
+
         // IMPORTANT: Ensure der_x are NOT in known_vars!
         // (They are not in state_vars_sorted or discrete_vars_sorted, so we are good)
-        
+
         let analysis_opts = AnalysisOptions {
             index_reduction_method: opts.index_reduction_method.clone(),
             tearing_method: opts.tearing_method.clone(),
+            quiet: opts.quiet,
         };
-        let sort_result = sort_algebraic_equations(
-            &continuous_eqs,
-            &known_vars,
-            &param_vars,
-            &analysis_opts,
-        );
+        let sort_result =
+            sort_algebraic_equations(&continuous_eqs, &known_vars, &param_vars, &analysis_opts);
         let mut alg_eqs = sort_result.sorted_equations;
         for out_var in &output_vars {
             if let Some(alias_expr) = sort_result.alias_map.get(out_var) {
@@ -796,13 +966,19 @@ impl Compiler {
             let method_note = if opts.index_reduction_method == "none" {
                 "index reduction not applied (use --index-reduction-method=dummyDerivative); simulation may be unreliable".to_string()
             } else {
-                format!("{} constraint equation(s) before reduction; differential index {}", constraint_equation_count, differential_index)
+                format!(
+                    "{} constraint equation(s) before reduction; differential index {}",
+                    constraint_equation_count, differential_index
+                )
             };
             self.warnings.push(WarningInfo {
                 path: model_file_path.clone(),
                 line: 0,
                 column: 0,
-                message: format!("differential index is {}; {}", differential_index, method_note),
+                message: format!(
+                    "differential index is {}; {}",
+                    differential_index, method_note
+                ),
                 source: None,
             });
         }
@@ -812,8 +988,12 @@ impl Compiler {
         for p in &param_vars {
             known_at_initial.insert(p.clone());
         }
-        let initial_info = analyze_initial_equations(&flat_model.initial_equations, &known_at_initial);
-        if initial_info.is_underdetermined && initial_info.equation_count > 0 && opts.warnings_level != "none" {
+        let initial_info =
+            analyze_initial_equations(&flat_model.initial_equations, &known_at_initial);
+        if initial_info.is_underdetermined
+            && initial_info.equation_count > 0
+            && opts.warnings_level != "none"
+        {
             self.warnings.push(WarningInfo {
                 path: model_file_path.clone(),
                 line: 0,
@@ -837,23 +1017,33 @@ impl Compiler {
                 source: None,
             });
         }
-        let algebraic_loops = alg_equations.iter().filter(|e| matches!(e, Equation::SolvableBlock { .. })).count();
+        let algebraic_loops = alg_equations
+            .iter()
+            .filter(|e| matches!(e, Equation::SolvableBlock { .. }))
+            .count();
         if algebraic_loops > 0 && opts.warnings_level != "none" {
             self.warnings.push(WarningInfo {
                 path: model_file_path.clone(),
                 line: 0,
                 column: 0,
-                message: format!("{} algebraic loop(s) (strong component(s)) present, solved with tearing", algebraic_loops),
+                message: format!(
+                    "{} algebraic loop(s) (strong component(s)) present, solved with tearing",
+                    algebraic_loops
+                ),
                 source: None,
             });
         }
 
         let numeric_ode_jacobian =
             opts.generate_dynamic_jacobian == "numeric" || opts.generate_dynamic_jacobian == "both";
-        let symbolic_ode_jacobian_enabled =
-            opts.generate_dynamic_jacobian == "symbolic" || opts.generate_dynamic_jacobian == "both";
+        let symbolic_ode_jacobian_enabled = opts.generate_dynamic_jacobian == "symbolic"
+            || opts.generate_dynamic_jacobian == "both";
         let ode_jacobian_sparse = if symbolic_ode_jacobian_enabled {
-            jacobian::build_ode_jacobian_sparse(&state_vars_sorted, &alg_equations, &state_var_index)
+            jacobian::build_ode_jacobian_sparse(
+                &state_vars_sorted,
+                &alg_equations,
+                &state_var_index,
+            )
         } else {
             None
         };
@@ -862,7 +1052,11 @@ impl Compiler {
             .map(|s| s.to_dense())
             .or_else(|| {
                 if symbolic_ode_jacobian_enabled {
-                    jacobian::build_ode_jacobian_expressions(&state_vars_sorted, &alg_equations, &state_var_index)
+                    jacobian::build_ode_jacobian_expressions(
+                        &state_vars_sorted,
+                        &alg_equations,
+                        &state_var_index,
+                    )
                 } else {
                     None
                 }
@@ -906,8 +1100,10 @@ impl Compiler {
             &flat_model.algorithms,
         );
 
-        let all_called = collect_all_called_names(&alg_equations, &diff_equations, &flat_model.algorithms);
-        let external_names: HashSet<String> = external_list.iter().map(|(n, _, _)| n.clone()).collect();
+        let all_called =
+            collect_all_called_names(&alg_equations, &diff_equations, &flat_model.algorithms);
+        let external_names: HashSet<String> =
+            external_list.iter().map(|(n, _, _)| n.clone()).collect();
         let mut user_stub_jits: Vec<Jit> = Vec::new();
         let mut user_stub_ptrs: HashMap<String, *const u8> = HashMap::new();
         let mut user_function_bodies: HashMap<String, (Vec<String>, Expression)> = HashMap::new();
@@ -915,8 +1111,23 @@ impl Compiler {
             if inline::is_builtin_function(name) || external_names.contains(name) {
                 continue;
             }
-            let func_model = self.loader.load_model(name)
-                .map_err(|e| format!("Cannot load function '{}': {}", name, e))?;
+            // MSL Fluid: valveCharacteristic is usually provided via replaceable function
+            // bound to BaseClasses.ValveCharacteristics.linear/one/...; our current
+            // frontend does not track the specific binding here, so we fall back to
+            // the default linear characteristic for JIT stubs.
+            let load_name = if name == "valveCharacteristic" {
+                "Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string()
+            } else if name.starts_with("Machines.") {
+                format!("Modelica.Electrical.{}", name)
+            } else if name.starts_with("Mechanics.") {
+                format!("Modelica.{}", name)
+            } else {
+                name.to_string()
+            };
+            let func_model = self
+                .loader
+                .load_model(&load_name)
+                .map_err(|e| format!("Cannot load function '{}': {}", load_name, e))?;
             if func_model.external_info.is_some() {
                 continue;
             }
@@ -932,7 +1143,8 @@ impl Compiler {
                 ).into());
             }
             let mut stub_jit = Jit::new();
-            let ptr = stub_jit.compile_user_function_stub(name, &input_names, &outputs[0].1)
+            let ptr = stub_jit
+                .compile_user_function_stub(name, &input_names, &outputs[0].1)
                 .map_err(|e| format!("JIT stub for '{}': {}", name, e))?;
             user_stub_ptrs.insert(name.clone(), ptr);
             user_stub_jits.push(stub_jit);
@@ -975,7 +1187,10 @@ impl Compiler {
                 .iter()
                 .filter_map(|(name, &size)| {
                     let first = format!("{}_1", name);
-                    state_var_index.get(&first).copied().map(|start| (name.clone(), start, size))
+                    state_var_index
+                        .get(&first)
+                        .copied()
+                        .map(|start| (name.clone(), start, size))
                 })
                 .collect();
             let output_array_layout: Vec<(String, usize, usize)> = flat_model
@@ -983,7 +1198,10 @@ impl Compiler {
                 .iter()
                 .filter_map(|(name, &size)| {
                     let first = format!("{}_1", name);
-                    output_var_index.get(&first).copied().map(|start| (name.clone(), start, size))
+                    output_var_index
+                        .get(&first)
+                        .copied()
+                        .map(|start| (name.clone(), start, size))
                 })
                 .collect();
             let param_array_layout: Vec<(String, usize, usize)> = flat_model
@@ -991,16 +1209,43 @@ impl Compiler {
                 .iter()
                 .filter_map(|(name, &size)| {
                     let first = format!("{}_1", name);
-                    param_var_index.get(&first).copied().map(|start| (name.clone(), start, size))
+                    param_var_index
+                        .get(&first)
+                        .copied()
+                        .map(|start| (name.clone(), start, size))
                 })
                 .collect();
-            let state_layout_opt = if state_array_layout.is_empty() { None } else { Some(state_array_layout.as_slice()) };
-            let output_layout_opt = if output_array_layout.is_empty() { None } else { Some(output_array_layout.as_slice()) };
-            let param_layout_opt = if param_array_layout.is_empty() { None } else { Some(param_array_layout.as_slice()) };
-            let external_c_names: HashMap<String, String> = external_list.iter().map(|(m, c, _)| (m.clone(), c.clone())).collect();
-            let external_c_names_opt = if external_c_names.is_empty() { None } else { Some(external_c_names) };
-            let external_names_set: HashSet<String> = external_list.iter().map(|(n, _, _)| n.clone()).collect();
-            let user_fn_bodies_opt = if user_function_bodies.is_empty() { None } else { Some(&user_function_bodies) };
+            let state_layout_opt = if state_array_layout.is_empty() {
+                None
+            } else {
+                Some(state_array_layout.as_slice())
+            };
+            let output_layout_opt = if output_array_layout.is_empty() {
+                None
+            } else {
+                Some(output_array_layout.as_slice())
+            };
+            let param_layout_opt = if param_array_layout.is_empty() {
+                None
+            } else {
+                Some(param_array_layout.as_slice())
+            };
+            let external_c_names: HashMap<String, String> = external_list
+                .iter()
+                .map(|(m, c, _)| (m.clone(), c.clone()))
+                .collect();
+            let external_c_names_opt = if external_c_names.is_empty() {
+                None
+            } else {
+                Some(external_c_names)
+            };
+            let external_names_set: HashSet<String> =
+                external_list.iter().map(|(n, _, _)| n.clone()).collect();
+            let user_fn_bodies_opt = if user_function_bodies.is_empty() {
+                None
+            } else {
+                Some(&user_function_bodies)
+            };
             match c_codegen::emit_c_files(
                 path,
                 &state_vars_sorted,
@@ -1016,11 +1261,17 @@ impl Compiler {
                 user_fn_bodies_opt,
             ) {
                 Ok(files) => {
-                    let paths: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
+                    let paths: Vec<String> =
+                        files.iter().map(|p| p.display().to_string()).collect();
                     println!("{}", i18n::msg("c_codegen_emitted", &[&paths.join(", ")]));
                 }
                 Err(e) => {
-                    return Err(format!("C codegen failed: {}{}", e, self.source_loc_suffix(model_name)).into());
+                    return Err(format!(
+                        "C codegen failed: {}{}",
+                        e,
+                        self.source_loc_suffix(model_name)
+                    )
+                    .into());
                 }
             }
         }
@@ -1033,58 +1284,101 @@ impl Compiler {
         }
 
         // 5. JIT Compile
-        println!("{}", i18n::msg0("jit_compiling"));
-        println!("{}", i18n::msg("equations_after_sorting", &[&alg_equations.len()]));
-        println!("{}", i18n::msg("state_variables", &[&state_vars_sorted.len()]));
-        println!("{}", i18n::msg("discrete_variables", &[&discrete_vars_sorted.len()]));
-        println!("{}", i18n::msg("parameters_count", &[&param_vars.len()]));
-        
+        if !self.options.quiet {
+            println!("{}", i18n::msg0("jit_compiling"));
+            println!(
+                "{}",
+                i18n::msg("equations_after_sorting", &[&alg_equations.len()])
+            );
+            println!(
+                "{}",
+                i18n::msg("state_variables", &[&state_vars_sorted.len()])
+            );
+            println!(
+                "{}",
+                i18n::msg("discrete_variables", &[&discrete_vars_sorted.len()])
+            );
+            println!("{}", i18n::msg("parameters_count", &[&param_vars.len()]));
+        }
+
         let mut algorithms = flat_model.algorithms.clone();
-        
+
         // Convert When/Reinit to algorithms
         for eq in &flat_model.equations {
             match eq {
-                 Equation::When(c, b, e) => {
-                     let nb: Vec<Equation> = b.iter().map(|x| match x { Equation::Simple(l,r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)), _ => x.clone() }).collect();
-                     let norm_eq = Equation::When(crate::analysis::normalize_der(c), nb, e.clone());
-                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_eq));
-                 },
-                 Equation::Reinit(v, e) => {
-                     let norm_eq = Equation::Reinit(v.clone(), crate::analysis::normalize_der(e));
-                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_eq));
-                 }
-                 Equation::Assert(cond, msg) => {
-                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(Equation::Assert(
-                         crate::analysis::normalize_der(cond),
-                         crate::analysis::normalize_der(msg),
-                     )));
-                 }
-                 Equation::Terminate(msg) => {
-                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(Equation::Terminate(
-                         crate::analysis::normalize_der(msg),
-                     )));
-                 }
-                 Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
-                     let norm_if = Equation::If(
-                         crate::analysis::normalize_der(cond),
-                         then_eqs.iter().map(|e| match e {
-                             Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
-                             _ => e.clone(),
-                         }).collect(),
-                         elseif_list.iter().map(|(c, eb)| (
-                             crate::analysis::normalize_der(c),
-                             eb.iter().map(|e| match e {
-                                 Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
-                                 _ => e.clone(),
-                             }).collect(),
-                         )).collect(),
-                         else_eqs.as_ref().map(|eqs| eqs.iter().map(|e| match e {
-                             Equation::Simple(l, r) => Equation::Simple(crate::analysis::normalize_der(l), crate::analysis::normalize_der(r)),
-                             _ => e.clone(),
-                         }).collect()),
-                     );
-                     algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_if));
-                 }
+                Equation::When(c, b, e) => {
+                    let nb: Vec<Equation> = b
+                        .iter()
+                        .map(|x| match x {
+                            Equation::Simple(l, r) => Equation::Simple(
+                                crate::analysis::normalize_der(l),
+                                crate::analysis::normalize_der(r),
+                            ),
+                            _ => x.clone(),
+                        })
+                        .collect();
+                    let norm_eq = Equation::When(crate::analysis::normalize_der(c), nb, e.clone());
+                    algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_eq));
+                }
+                Equation::Reinit(v, e) => {
+                    let norm_eq = Equation::Reinit(v.clone(), crate::analysis::normalize_der(e));
+                    algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_eq));
+                }
+                Equation::Assert(cond, msg) => {
+                    algorithms.push(equation_convert::convert_eq_to_alg_stmt(Equation::Assert(
+                        crate::analysis::normalize_der(cond),
+                        crate::analysis::normalize_der(msg),
+                    )));
+                }
+                Equation::Terminate(msg) => {
+                    algorithms.push(equation_convert::convert_eq_to_alg_stmt(
+                        Equation::Terminate(crate::analysis::normalize_der(msg)),
+                    ));
+                }
+                Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+                    let norm_if = Equation::If(
+                        crate::analysis::normalize_der(cond),
+                        then_eqs
+                            .iter()
+                            .map(|e| match e {
+                                Equation::Simple(l, r) => Equation::Simple(
+                                    crate::analysis::normalize_der(l),
+                                    crate::analysis::normalize_der(r),
+                                ),
+                                _ => e.clone(),
+                            })
+                            .collect(),
+                        elseif_list
+                            .iter()
+                            .map(|(c, eb)| {
+                                (
+                                    crate::analysis::normalize_der(c),
+                                    eb.iter()
+                                        .map(|e| match e {
+                                            Equation::Simple(l, r) => Equation::Simple(
+                                                crate::analysis::normalize_der(l),
+                                                crate::analysis::normalize_der(r),
+                                            ),
+                                            _ => e.clone(),
+                                        })
+                                        .collect(),
+                                )
+                            })
+                            .collect(),
+                        else_eqs.as_ref().map(|eqs| {
+                            eqs.iter()
+                                .map(|e| match e {
+                                    Equation::Simple(l, r) => Equation::Simple(
+                                        crate::analysis::normalize_der(l),
+                                        crate::analysis::normalize_der(r),
+                                    ),
+                                    _ => e.clone(),
+                                })
+                                .collect()
+                        }),
+                    );
+                    algorithms.push(equation_convert::convert_eq_to_alg_stmt(norm_if));
+                }
                 _ => {}
             }
         }
@@ -1092,7 +1386,12 @@ impl Compiler {
         let newton_tearing_var_names: Vec<String> = alg_equations
             .iter()
             .filter_map(|eq| {
-                if let Equation::SolvableBlock { tearing_var: Some(ref t), residuals, .. } = eq {
+                if let Equation::SolvableBlock {
+                    tearing_var: Some(ref t),
+                    residuals,
+                    ..
+                } = eq
+                {
                     if residuals.len() == 1 {
                         Some(t.clone())
                     } else {
@@ -1105,9 +1404,14 @@ impl Compiler {
             .collect();
 
         let lib_paths: Vec<std::path::PathBuf> = if !self.options.external_libs.is_empty() {
-            self.options.external_libs.iter().map(|p| std::path::PathBuf::from(p)).collect()
+            self.options
+                .external_libs
+                .iter()
+                .map(|p| std::path::PathBuf::from(p))
+                .collect()
         } else {
-            let mut from_annotation: Vec<std::path::PathBuf> = external_list.iter()
+            let mut from_annotation: Vec<std::path::PathBuf> = external_list
+                .iter()
                 .filter_map(|(_, _, hint)| hint.as_ref())
                 .map(|lib_name| {
                     let ext = std::env::consts::DLL_EXTENSION;
@@ -1122,8 +1426,9 @@ impl Compiler {
             self.external_libraries.0.clear();
             self.external_symbol_ptrs.clear();
             for path in &lib_paths {
-                let lib = unsafe { libloading::Library::new(path.as_path()) }
-                    .map_err(|e| format!("Failed to load external lib '{}': {}", path.display(), e))?;
+                let lib = unsafe { libloading::Library::new(path.as_path()) }.map_err(|e| {
+                    format!("Failed to load external lib '{}': {}", path.display(), e)
+                })?;
                 for (modelica_name, c_name, _) in &external_list {
                     if self.external_symbol_ptrs.contains_key(modelica_name) {
                         continue;
@@ -1177,34 +1482,39 @@ impl Compiler {
         );
 
         match res {
-            Ok((calc_derivs, when_count, crossings_count)) => Ok(CompileOutput::Simulation(Artifacts {
-                calc_derivs,
-                states,
-                discrete_vals,
-                params,
-                state_vars: state_vars_sorted,
-                param_vars,
-                discrete_vars: discrete_vars_sorted,
-                output_vars,
-                state_var_index,
-                clock_partitions: backend_clock_partitions,
-                when_count,
-                crossings_count,
-                t_end,
-                dt,
-                numeric_ode_jacobian,
-                symbolic_ode_jacobian: symbolic_ode_jacobian_matrix,
-                newton_tearing_var_names,
-                atol: self.options.atol,
-                rtol: self.options.rtol,
-                solver: self.options.solver.clone(),
-                output_interval: self.options.output_interval,
-                result_file: self.options.result_file.clone(),
-                user_stub_jits,
-            })),
-            Err(e) => {
-                Err(format!("JIT compilation failed: {}{}", e, self.source_loc_suffix(model_name)).into())
+            Ok((calc_derivs, when_count, crossings_count)) => {
+                Ok(CompileOutput::Simulation(Artifacts {
+                    calc_derivs,
+                    states,
+                    discrete_vals,
+                    params,
+                    state_vars: state_vars_sorted,
+                    param_vars,
+                    discrete_vars: discrete_vars_sorted,
+                    output_vars,
+                    state_var_index,
+                    clock_partitions: backend_clock_partitions,
+                    when_count,
+                    crossings_count,
+                    t_end,
+                    dt,
+                    numeric_ode_jacobian,
+                    symbolic_ode_jacobian: symbolic_ode_jacobian_matrix,
+                    newton_tearing_var_names,
+                    atol: self.options.atol,
+                    rtol: self.options.rtol,
+                    solver: self.options.solver.clone(),
+                    output_interval: self.options.output_interval,
+                    result_file: self.options.result_file.clone(),
+                    user_stub_jits,
+                }))
             }
+            Err(e) => Err(format!(
+                "JIT compilation failed: {}{}",
+                e,
+                self.source_loc_suffix(model_name)
+            )
+            .into()),
         }
     }
 
@@ -1216,4 +1526,3 @@ impl Compiler {
             .unwrap_or_else(|| format!(" (model: {})", model_name))
     }
 }
-

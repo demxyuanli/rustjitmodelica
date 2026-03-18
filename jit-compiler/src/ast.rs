@@ -43,6 +43,7 @@ impl From<Function> for Model {
             inner_classes: vec![],
             is_operator_record: false,
             type_aliases: vec![],
+            imports: vec![],
             external_info: f.external_info,
         }
     }
@@ -70,6 +71,8 @@ pub struct Model {
     pub is_operator_record: bool,
     /// F1-4: type alias (e.g. type MyReal = Real;) parse-only; name -> base_type.
     pub type_aliases: Vec<(String, String)>,
+    /// MSL: import clauses inside class/package. (alias, qualified) where alias may be empty.
+    pub imports: Vec<(String, String)>,
     /// F3-4: when is_function, external decl if present.
     pub external_info: Option<ExternalDecl>,
 }
@@ -77,13 +80,28 @@ pub struct Model {
 #[derive(Debug, Clone)]
 pub enum AlgorithmStatement {
     Assignment(Expression, Expression), // lhs := rhs
-    If(Expression, Vec<AlgorithmStatement>, Vec<(Expression, Vec<AlgorithmStatement>)>, Option<Vec<AlgorithmStatement>>), // if cond then stmts elseif cond stmts else stmts
+    /// F3-3: (a, b, ...) := f(x) multi-assign in algorithm section (parse-only unless backend supports).
+    MultiAssign(Vec<Expression>, Expression),
+    /// MSL: procedure call statement (e.g. f(x);) in algorithm section.
+    CallStmt(Expression),
+    /// Parse-only no-op statement (e.g. standalone annotation in algorithm section).
+    NoOp,
+    If(
+        Expression,
+        Vec<AlgorithmStatement>,
+        Vec<(Expression, Vec<AlgorithmStatement>)>,
+        Option<Vec<AlgorithmStatement>>,
+    ), // if cond then stmts elseif cond stmts else stmts
     For(String, Box<Expression>, Vec<AlgorithmStatement>), // for i in range loop stmts
     While(Expression, Vec<AlgorithmStatement>), // while cond loop stmts
-    When(Expression, Vec<AlgorithmStatement>, Vec<(Expression, Vec<AlgorithmStatement>)>), // when cond then stmts elsewhen cond stmts
-    Reinit(String, Expression), // reinit(var, expr)
-    Assert(Expression, Expression),   // assert(condition, message)
-    Terminate(Expression),            // terminate(message)
+    When(
+        Expression,
+        Vec<AlgorithmStatement>,
+        Vec<(Expression, Vec<AlgorithmStatement>)>,
+    ), // when cond then stmts elsewhen cond stmts
+    Reinit(String, Expression),         // reinit(var, expr)
+    Assert(Expression, Expression),     // assert(condition, message)
+    Terminate(Expression),              // terminate(message)
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +145,8 @@ pub struct Declaration {
     /// Parsed annotation; ignored in backend (F1-5).
     #[allow(dead_code)]
     pub annotation: Option<String>,
+    /// MSL: conditional component (e.g. "Real x if use_X"); flatten prunes or keeps.
+    pub condition: Option<Expression>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,10 +157,18 @@ pub enum Equation {
     For(String, Box<Expression>, Box<Expression>, Vec<Equation>),
     Connect(Expression, Expression),
     When(Expression, Vec<Equation>, Vec<(Expression, Vec<Equation>)>),
-    If(Expression, Vec<Equation>, Vec<(Expression, Vec<Equation>)>, Option<Vec<Equation>>), // cond, then, elseif list, else
+    If(
+        Expression,
+        Vec<Equation>,
+        Vec<(Expression, Vec<Equation>)>,
+        Option<Vec<Equation>>,
+    ), // cond, then, elseif list, else
     Reinit(String, Expression),
-    Assert(Expression, Expression),   // assert(condition, message)
-    Terminate(Expression),            // terminate(message)
+    Assert(Expression, Expression), // assert(condition, message)
+    Terminate(Expression),          // terminate(message)
+    /// MSL: call statement in equation section (e.g. Modelica.Utilities.Streams.error(...);).
+    /// Parse-only; ignored in backend for now.
+    CallStmt(Expression),
     SolvableBlock {
         unknowns: Vec<String>,
         tearing_var: Option<String>,
@@ -171,10 +199,16 @@ pub enum Expression {
     /// SYNC-5: shiftSample(clock, n) - clock shifted by n ticks.
     ShiftSample(Box<Expression>, Box<Expression>),
     ArrayAccess(Box<Expression>, Box<Expression>), // expr[i]
-    Dot(Box<Expression>, String), // expr.name
+    Dot(Box<Expression>, String),                  // expr.name
     If(Box<Expression>, Box<Expression>, Box<Expression>), // if cond then true_expr else false_expr
     Range(Box<Expression>, Box<Expression>, Box<Expression>), // start:step:end
-    ArrayLiteral(Vec<Expression>), // {e1, e2, ...}
+    ArrayLiteral(Vec<Expression>),                 // {e1, e2, ...}
+    /// MSL: {expr for i in 1:n} array comprehension (parse-only unless lowered).
+    ArrayComprehension {
+        expr: Box<Expression>,
+        iter_var: String,
+        iter_range: Box<Expression>,
+    },
     /// FUNC-7: String literal for external function args (ABI: const char*).
     StringLiteral(String),
 }

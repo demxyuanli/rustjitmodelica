@@ -1,20 +1,20 @@
-use std::collections::{HashSet, HashMap};
 use crate::ast::{Equation, Expression, Operator};
-use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::algo::tarjan_scc;
+use petgraph::graph::{DiGraph, NodeIndex};
+use std::collections::{HashMap, HashSet};
 
 use crate::analysis::derivative::collect_states_from_eq;
-use crate::analysis::variable_collection::{extract_unknowns, equation_contains_var, contains_var};
 use crate::analysis::expression_utils::{make_binary, time_derivative};
+use crate::analysis::variable_collection::{contains_var, equation_contains_var, extract_unknowns};
 use crate::analysis::AnalysisOptions;
 
-mod blt_expr;
 mod blt_alias;
+mod blt_expr;
 
 pub(crate) use blt_alias::eliminate_aliases;
 use blt_expr::{
-    select_tearing_variable, solve_for_variable, make_residual,
-    substitute_der_in_expr, simplify_expr, solve_residual_linear,
+    make_residual, select_tearing_variable, simplify_expr, solve_for_variable,
+    solve_residual_linear, substitute_der_in_expr,
 };
 
 fn try_index_reduction(
@@ -28,9 +28,7 @@ fn try_index_reduction(
     for eq in equations.iter() {
         if let Equation::Simple(lhs, rhs) = eq {
             let entry = match lhs {
-                Expression::Variable(l) if l.starts_with("der_") => {
-                    Some((l.clone(), rhs.clone()))
-                }
+                Expression::Variable(l) if l.starts_with("der_") => Some((l.clone(), rhs.clone())),
                 Expression::Der(inner) => {
                     if let Expression::Variable(v) = inner.as_ref() {
                         Some((format!("der_{}", v), rhs.clone()))
@@ -54,13 +52,27 @@ fn try_index_reduction(
                     } else if let Expression::BinaryOp(c2, Operator::Mul, r2) = r.as_ref() {
                         if let Expression::Variable(n) = &**r2 {
                             if n.starts_with("der_") {
-                                (Some(n.clone()), Some(Box::new(Expression::BinaryOp(coeff.clone(), Operator::Mul, c2.clone()))))
+                                (
+                                    Some(n.clone()),
+                                    Some(Box::new(Expression::BinaryOp(
+                                        coeff.clone(),
+                                        Operator::Mul,
+                                        c2.clone(),
+                                    ))),
+                                )
                             } else {
                                 (None, None)
                             }
                         } else if let Expression::Variable(n) = &**c2 {
                             if n.starts_with("der_") {
-                                (Some(n.clone()), Some(Box::new(Expression::BinaryOp(coeff.clone(), Operator::Mul, r2.clone()))))
+                                (
+                                    Some(n.clone()),
+                                    Some(Box::new(Expression::BinaryOp(
+                                        coeff.clone(),
+                                        Operator::Mul,
+                                        r2.clone(),
+                                    ))),
+                                )
                             } else {
                                 (None, None)
                             }
@@ -71,9 +83,10 @@ fn try_index_reduction(
                         (None, None)
                     };
                     match (der_name, div_by) {
-                        (Some(name), Some(div_by)) => {
-                            Some((name, Expression::BinaryOp(Box::new(rhs.clone()), Operator::Div, div_by)))
-                        }
+                        (Some(name), Some(div_by)) => Some((
+                            name,
+                            Expression::BinaryOp(Box::new(rhs.clone()), Operator::Div, div_by),
+                        )),
                         _ => None,
                     }
                 }
@@ -102,7 +115,10 @@ fn try_index_reduction(
                     || unknown_list
                         .iter()
                         .any(|u| u.starts_with("der_") && contains_var(lhs, u));
-                (!lhs_has_der, make_binary(lhs.clone(), Operator::Sub, rhs.clone()))
+                (
+                    !lhs_has_der,
+                    make_binary(lhs.clone(), Operator::Sub, rhs.clone()),
+                )
             }
             _ => continue,
         };
@@ -137,8 +153,7 @@ fn try_index_reduction(
         for alg_var in &alg_vars {
             if let Some(sol) = solve_residual_linear(&diff2_sub, alg_var) {
                 let mut new_eqs = equations.to_vec();
-                new_eqs[eq_idx] =
-                    Equation::Simple(Expression::Variable((*alg_var).clone()), sol);
+                new_eqs[eq_idx] = Equation::Simple(Expression::Variable((*alg_var).clone()), sol);
                 return Some(new_eqs);
             }
         }
@@ -166,12 +181,24 @@ pub fn sort_algebraic_equations(
     }
     current_known.insert("time".to_string());
 
-    let (equations, alias_map): (Vec<Equation>, HashMap<String, Expression>) = eliminate_aliases(equations);
+    let (equations, alias_map): (Vec<Equation>, HashMap<String, Expression>) =
+        eliminate_aliases(equations);
 
     let n_aliases = alias_map.len();
     let n_eqs = equations.len();
-    println!("{}", crate::i18n::msg("aliases_eliminated", &[&n_aliases as &dyn std::fmt::Display]));
-    println!("{}", crate::i18n::msg("remaining_equations", &[&n_eqs as &dyn std::fmt::Display]));
+    if !options.quiet {
+        println!(
+            "{}",
+            crate::i18n::msg(
+                "aliases_eliminated",
+                &[&n_aliases as &dyn std::fmt::Display]
+            )
+        );
+        println!(
+            "{}",
+            crate::i18n::msg("remaining_equations", &[&n_eqs as &dyn std::fmt::Display])
+        );
+    }
 
     let mut equations = equations;
 
@@ -191,7 +218,10 @@ pub fn sort_algebraic_equations(
                         Box::new(rhs.clone()),
                     );
                     let dt = time_derivative(&residual, &state_vars);
-                    eprintln!("[debugPrint] time_derivative of constraint residual: {:?}", dt);
+                    eprintln!(
+                        "[debugPrint] time_derivative of constraint residual: {:?}",
+                        dt
+                    );
                     break;
                 }
             }
@@ -261,7 +291,11 @@ pub fn sort_algebraic_equations(
         }
 
         unknown_list = all_unknowns.into_iter().collect();
-        unknown_map = unknown_list.iter().enumerate().map(|(i, u)| (u.clone(), i)).collect();
+        unknown_map = unknown_list
+            .iter()
+            .enumerate()
+            .map(|(i, u)| (u.clone(), i))
+            .collect();
 
         assigned_var = vec![None; eq_infos.len()];
         assigned_eq = vec![None; unknown_list.len()];
@@ -360,7 +394,10 @@ pub fn sort_algebraic_equations(
             if assigned_var[j].is_some() {
                 continue;
             }
-            let shared = eq_infos[i].unknowns.iter().any(|u| eq_infos[j].unknowns.contains(u));
+            let shared = eq_infos[i]
+                .unknowns
+                .iter()
+                .any(|u| eq_infos[j].unknowns.contains(u));
             if shared {
                 dep_graph.add_edge(node_indices[i], node_indices[j], ());
                 dep_graph.add_edge(node_indices[j], node_indices[i], ());
@@ -408,8 +445,16 @@ pub fn sort_algebraic_equations(
                 }
             } else {
                 let unknowns_from_eq = &eq_infos[idx].unknowns;
-                let unk = unknowns_from_eq.first().cloned().unwrap_or_else(|| "__dummy".to_string());
-                let tearing_var = select_tearing_variable(&[unk.clone()], &[eq.clone()], &unknown_map, &options.tearing_method);
+                let unk = unknowns_from_eq
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "__dummy".to_string());
+                let tearing_var = select_tearing_variable(
+                    &[unk.clone()],
+                    &[eq.clone()],
+                    &unknown_map,
+                    &options.tearing_method,
+                );
                 sorted_equations.push(Equation::SolvableBlock {
                     unknowns: vec![unk],
                     tearing_var,

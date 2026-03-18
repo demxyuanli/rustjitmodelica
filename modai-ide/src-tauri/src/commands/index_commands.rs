@@ -1,6 +1,6 @@
 use tauri::Emitter;
 
-use crate::{file_watcher, index_db, index_manager};
+use crate::{component_library_index, file_watcher, index_db, index_manager};
 
 use super::common::jit_compiler_root;
 
@@ -165,4 +165,66 @@ pub fn index_repo_get_context(
 ) -> Result<Vec<index_db::ChunkInfo>, String> {
     let dir_str = jit_compiler_root()?.to_string_lossy().to_string();
     index_manager::CodeIndex::new(&dir_str).get_context(&query, max_chunks.unwrap_or(10))
+}
+
+#[tauri::command]
+pub fn index_list_included_files(
+    project_dir: String,
+    limit: Option<u32>,
+) -> Result<IndexIncludedFiles, String> {
+    let conn = index_db::open_connection(&project_dir)?;
+    let list = index_db::list_indexed_paths(&conn)?;
+    let total = list.len();
+    let cap = limit.unwrap_or(500).min(2000) as usize;
+    let paths: Vec<String> = list
+        .into_iter()
+        .take(cap)
+        .map(|(_, p, _)| p)
+        .collect();
+    Ok(IndexIncludedFiles {
+        total,
+        paths,
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct IndexIncludedFiles {
+    pub total: usize,
+    pub paths: Vec<String>,
+}
+
+#[tauri::command]
+pub fn index_component_library_get_context(
+    query: String,
+    max_chunks: Option<i64>,
+) -> Result<Vec<index_db::ChunkInfo>, String> {
+    let conn = component_library_index::open_connection()?;
+    let limit = max_chunks.unwrap_or(10).max(0).min(20) as usize;
+    let rows = component_library_index::search_for_context(&conn, &query, limit)?;
+    let chunks: Vec<index_db::ChunkInfo> = rows
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let content = [
+                row.summary.as_deref().unwrap_or(""),
+                row.usage_help.as_deref().unwrap_or(""),
+            ]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+            index_db::ChunkInfo {
+                id: i as i64,
+                file_id: 0,
+                line_start: 0,
+                line_end: 0,
+                content: content.clone(),
+                context_label: Some("component library".to_string()),
+                content_hash: String::new(),
+                file_path: row.qualified_name,
+            }
+        })
+        .collect();
+    Ok(chunks)
 }

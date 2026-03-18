@@ -663,6 +663,7 @@ fn declaration_from_component(c: &ComponentInstance) -> Declaration {
         modifications: vec![],
         is_rest: false,
         annotation: None,
+        condition: None,
     };
     apply_component_to_declaration(&mut decl, c);
     decl
@@ -977,6 +978,7 @@ pub fn apply_equation_edits(
             modifications: vec![],
             is_rest: false,
             annotation: None,
+            condition: None,
         };
         new_decls.push(decl);
     }

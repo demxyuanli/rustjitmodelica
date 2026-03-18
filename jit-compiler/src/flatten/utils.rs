@@ -1,5 +1,5 @@
+use crate::ast::{AlgorithmStatement, Equation, Expression, Model, Modification};
 use std::collections::{HashMap, HashSet};
-use crate::ast::{Model, Modification, Equation, AlgorithmStatement, Expression};
 
 /// F3-3: Get function inputs and output (name, expr) list from model. Used for multi-output expand.
 pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, Expression)>)> {
@@ -9,8 +9,18 @@ pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, 
     if model.external_info.is_some() {
         return None;
     }
-    let input_names: Vec<String> = model.declarations.iter().filter(|d| d.is_input).map(|d| d.name.clone()).collect();
-    let output_names: Vec<String> = model.declarations.iter().filter(|d| d.is_output).map(|d| d.name.clone()).collect();
+    let input_names: Vec<String> = model
+        .declarations
+        .iter()
+        .filter(|d| d.is_input)
+        .map(|d| d.name.clone())
+        .collect();
+    let output_names: Vec<String> = model
+        .declarations
+        .iter()
+        .filter(|d| d.is_output)
+        .map(|d| d.name.clone())
+        .collect();
     if output_names.is_empty() {
         return None;
     }
@@ -50,29 +60,84 @@ pub fn resolve_type_alias(type_aliases: &[(String, String)], name: &str) -> Stri
 
 /// MSL-4: SIunits types (Modelica.SIunits.Time, etc.) are resolved as Real; units parsed but not enforced.
 pub fn is_primitive(type_name: &str) -> bool {
-    matches!(type_name, "Real" | "Integer" | "Boolean")
+    matches!(type_name, "Real" | "Integer" | "Boolean" | "String")
         || type_name.starts_with("Modelica.SIunits.")
+        || type_name.starts_with("Modelica.Units.SI.")
+        || type_name == "Modelica.StateSelect"
+        || type_name.ends_with("ExternalObject")
 }
 
+/// Connector compatibility matrix: same physical domain can connect.
+/// Rules grouped by domain (Blocks, Electrical, Rotational, HeatTransfer, Fluid, MultiBody).
 pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if t1 == t2 {
         return true;
     }
-    // Allow RealInput and RealOutput to connect (both are Real signals)
-    // In Modelica, they are "connector RealInput = input Real;" and "connector RealOutput = output Real;"
-    // They are compatible for connection.
-    if (t1.ends_with("RealInput") && t2.ends_with("RealOutput")) || 
-       (t1.ends_with("RealOutput") && t2.ends_with("RealInput")) {
+    let a = |s: &str, suffix: &str| s.ends_with(suffix);
+    let both = |s1: &str, s2: &str, x: &str, y: &str| (a(s1, x) && a(s2, y)) || (a(s1, y) && a(s2, x));
+
+    // --- Blocks.Interfaces: signal connectors (Real/Boolean/Integer Input/Output) ---
+    if both(t1, t2, "RealInput", "RealOutput") {
         return true;
     }
-    
-    // Also check if they are fully qualified
+    if both(t1, t2, "BooleanInput", "BooleanOutput") {
+        return true;
+    }
+    if both(t1, t2, "IntegerInput", "IntegerOutput") {
+        return true;
+    }
     let t1_short = t1.split('.').last().unwrap_or(t1);
     let t2_short = t2.split('.').last().unwrap_or(t2);
-    
-    if (t1_short == "RealInput" && t2_short == "RealOutput") ||
-       (t1_short == "RealOutput" && t2_short == "RealInput") {
-           return true;
+    if (t1_short == "RealInput" && t2_short == "RealOutput")
+        || (t1_short == "RealOutput" && t2_short == "RealInput")
+    {
+        return true;
+    }
+
+    // --- Electrical.Analog: Pin, PositivePin, NegativePin (same electrical domain) ---
+    if a(t1, "Pin") && (a(t2, "Pin") || a(t2, "PositivePin") || a(t2, "NegativePin")) {
+        return true;
+    }
+    if a(t2, "Pin") && (a(t1, "PositivePin") || a(t1, "NegativePin")) {
+        return true;
+    }
+    if both(t1, t2, "PositivePin", "NegativePin") {
+        return true;
+    }
+
+    // --- Mechanics.Rotational: Flange_a, Flange_b, Support ---
+    if both(t1, t2, "Flange_a", "Flange_b") {
+        return true;
+    }
+    if (a(t1, "Support") && (a(t2, "Flange_a") || a(t2, "Flange_b")))
+        || (a(t2, "Support") && (a(t1, "Flange_a") || a(t1, "Flange_b")))
+    {
+        return true;
+    }
+
+    // --- Thermal.HeatTransfer: HeatPort_a, HeatPort_b ---
+    if both(t1, t2, "HeatPort_a", "HeatPort_b") {
+        return true;
+    }
+    // --- Thermal: HeatPort_b <-> HeatPorts_a (array heat port compatibility) ---
+    if both(t1, t2, "HeatPort_b", "HeatPorts_a") {
+        return true;
+    }
+
+    // --- Fluid: FluidPort_a, FluidPort_b (Modelica.Fluid.Interfaces) ---
+    if both(t1, t2, "FluidPort_a", "FluidPort_b") {
+        return true;
+    }
+    if a(t1, "FluidPort") && a(t2, "FluidPort") {
+        return true;
+    }
+
+    // --- Mechanics.MultiBody: Frame_a, Frame_b ---
+    if both(t1, t2, "Frame_a", "Frame_b") {
+        return true;
+    }
+    if a(t1, "Frame") && a(t2, "Frame") {
+        return true;
     }
 
     false
@@ -122,6 +187,13 @@ pub fn merge_models(child: &mut Model, base: &Model) {
     for eq in &base.equations {
         child.equations.push(eq.clone());
     }
+    // Inherit inner classes (e.g. replaceable model FlowModel) so that short names can be resolved
+    // relative to the derived class context.
+    for inner in &base.inner_classes {
+        if !child.inner_classes.iter().any(|c| c.name == inner.name) {
+            child.inner_classes.push(inner.clone());
+        }
+    }
     for (name, base_type) in &base.type_aliases {
         if !child.type_aliases.iter().any(|(n, _)| n == name) {
             child.type_aliases.push((name.clone(), base_type.clone()));
@@ -132,6 +204,7 @@ pub fn merge_models(child: &mut Model, base: &Model) {
 pub fn convert_eq_to_alg(eq: Equation) -> AlgorithmStatement {
     match eq {
         Equation::Simple(lhs, rhs) => AlgorithmStatement::Assignment(lhs, rhs),
+        Equation::CallStmt(expr) => AlgorithmStatement::CallStmt(expr),
         Equation::Reinit(var, val) => AlgorithmStatement::Reinit(var, val),
         Equation::For(var, start, end, body) => {
             let alg_body = body.into_iter().map(convert_eq_to_alg).collect();

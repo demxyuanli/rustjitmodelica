@@ -1,8 +1,11 @@
 use crate::{app_settings, compiler_config, db};
 
 #[tauri::command]
-pub fn open_devtools(window: tauri::WebviewWindow) {
-    window.open_devtools();
+pub fn open_devtools(_window: tauri::WebviewWindow) {
+    #[cfg(debug_assertions)]
+    {
+        _window.open_devtools();
+    }
 }
 
 #[tauri::command]
@@ -33,6 +36,12 @@ pub fn set_app_settings(settings: app_settings::AppSettings) -> Result<(), Strin
 #[tauri::command]
 pub fn get_app_data_root() -> Result<String, String> {
     crate::app_data::app_data_root().map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn rebuild_component_library_index() -> Result<(), String> {
+    let conn = crate::component_library_index::open_connection()?;
+    crate::component_library_index::clear_all(&conn)
 }
 
 #[tauri::command]

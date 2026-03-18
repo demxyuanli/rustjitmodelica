@@ -23,7 +23,11 @@ impl SourceLocation {
 
 impl Default for SourceLocation {
     fn default() -> Self {
-        Self { file: String::new(), line: 0, column: 0 }
+        Self {
+            file: String::new(),
+            line: 0,
+            column: 0,
+        }
     }
 }
 
@@ -40,16 +44,25 @@ pub struct ParseErrorInfo {
 impl fmt::Display for ParseErrorInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lines: Vec<&str> = self.source.lines().collect();
-        let line_index = self.line.saturating_sub(1).min(lines.len().saturating_sub(1));
+        let line_index = self
+            .line
+            .saturating_sub(1)
+            .min(lines.len().saturating_sub(1));
         let line_content = lines.get(line_index).unwrap_or(&"");
 
         let line_num_width = self.line.to_string().len().max(2);
         let gutter = " ".repeat(line_num_width);
 
-        writeln!(f, "error: {}", self.message)?;
+        writeln!(f, "error [PARSE_ERROR]: {}", self.message)?;
         writeln!(f, "  --> {}:{}:{}", self.path, self.line, self.column)?;
         writeln!(f, "{} |", gutter)?;
-        writeln!(f, "{:>width$} | {}", self.line, line_content, width = line_num_width)?;
+        writeln!(
+            f,
+            "{:>width$} | {}",
+            self.line,
+            line_content,
+            width = line_num_width
+        )?;
 
         let col = self.column.saturating_sub(1).min(line_content.len());
         let caret_width = (line_content.len().saturating_sub(col)).max(1);
@@ -69,13 +82,7 @@ impl ParseErrorInfo {
 
 /// Format a pest parse error with path and source into Rust-style output.
 #[allow(dead_code)]
-pub fn format_parse_error(
-    path: &str,
-    source: &str,
-    message: &str,
-    line: usize,
-    column: usize,
-) {
+pub fn format_parse_error(path: &str, source: &str, message: &str, line: usize, column: usize) {
     let info = ParseErrorInfo {
         path: path.to_string(),
         source: source.to_string(),
@@ -118,18 +125,27 @@ impl fmt::Display for WarningInfo {
         writeln!(f)?;
         if let Some(ref source) = self.source {
             if self.line > 0 && self.column > 0 {
-            let lines: Vec<&str> = source.lines().collect();
-            let line_index = self.line.saturating_sub(1).min(lines.len().saturating_sub(1));
-            let line_content = lines.get(line_index).unwrap_or(&"");
-            let line_num_width = self.line.to_string().len().max(2);
-            let gutter = " ".repeat(line_num_width);
-            let col = self.column.saturating_sub(1).min(line_content.len());
-            let caret_width = (line_content.len().saturating_sub(col)).max(1);
-            let spaces = " ".repeat(col);
-            let carets = "^".repeat(caret_width);
-            writeln!(f, "{} |", gutter)?;
-            writeln!(f, "{:>width$} | {}", self.line, line_content, width = line_num_width)?;
-            writeln!(f, "{} | {}{}", gutter, spaces, carets)?;
+                let lines: Vec<&str> = source.lines().collect();
+                let line_index = self
+                    .line
+                    .saturating_sub(1)
+                    .min(lines.len().saturating_sub(1));
+                let line_content = lines.get(line_index).unwrap_or(&"");
+                let line_num_width = self.line.to_string().len().max(2);
+                let gutter = " ".repeat(line_num_width);
+                let col = self.column.saturating_sub(1).min(line_content.len());
+                let caret_width = (line_content.len().saturating_sub(col)).max(1);
+                let spaces = " ".repeat(col);
+                let carets = "^".repeat(caret_width);
+                writeln!(f, "{} |", gutter)?;
+                writeln!(
+                    f,
+                    "{:>width$} | {}",
+                    self.line,
+                    line_content,
+                    width = line_num_width
+                )?;
+                writeln!(f, "{} | {}{}", gutter, spaces, carets)?;
             }
         }
         Ok(())
@@ -200,4 +216,3 @@ fn humanize_expected_message(raw: &str) -> String {
         .replace("algorithm_section", "`algorithm`");
     format!("expected {}", replaced)
 }
-

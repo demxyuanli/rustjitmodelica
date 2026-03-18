@@ -1,0 +1,97 @@
+# One model per line. Lines starting with '#' are comments.
+# Format:
+#   <ModelicaQualifiedName> [;mode=validate|simulate] [;notes=...]
+#
+# Default mode is validate.
+
+Modelica.Blocks.Sources.Step
+Modelica.Blocks.Sources.Sine
+Modelica.Blocks.Sources.Pulse
+Modelica.Blocks.Continuous.Integrator
+Modelica.Blocks.Continuous.FirstOrder
+Modelica.Blocks.Continuous.TransferFunction
+Modelica.Mechanics.Rotational.Components.Inertia
+Modelica.Thermal.HeatTransfer.Components.HeatCapacitor
+
+# Extend coverage incrementally (still validate-only).
+Modelica.Blocks.Math.Add
+Modelica.Blocks.Math.Gain
+Modelica.Blocks.Math.Product
+Modelica.Blocks.Nonlinear.Limiter
+Modelica.Blocks.Logical.Switch
+Modelica.Blocks.Continuous.PI
+Modelica.Blocks.Continuous.PID
+Modelica.Blocks.Continuous.SecondOrder
+Modelica.Blocks.Continuous.Derivative
+Modelica.Mechanics.Rotational.Sources.Torque
+Modelica.Mechanics.Rotational.Components.SpringDamper
+Modelica.Thermal.HeatTransfer.Components.ThermalConductor
+
+# Electrical basics
+Modelica.Electrical.Analog.Basic.Resistor
+Modelica.Electrical.Analog.Basic.Capacitor
+Modelica.Electrical.Analog.Basic.Inductor
+Modelica.Electrical.Analog.Sources.ConstantVoltage
+Modelica.Electrical.Analog.Sources.SineVoltage
+Modelica.Electrical.Analog.Ideal.IdealDiode
+
+# Sensors / sources
+Modelica.Mechanics.Rotational.Sensors.SpeedSensor
+Modelica.Blocks.Sources.Ramp
+Modelica.Blocks.Sources.Trapezoid
+
+# Examples (higher complexity)
+Modelica.Electrical.Analog.Examples.CauerLowPassAnalog
+Modelica.Electrical.Analog.Examples.Rectifier
+Modelica.Mechanics.Rotational.Examples.First
+Modelica.Blocks.Examples.PID_Controller
+
+# More examples / subsystems (likely to surface advanced syntax)
+Modelica.Blocks.Examples.Filter
+Modelica.Blocks.Examples.RealNetwork1
+Modelica.Electrical.Analog.Examples.ChuaCircuit
+Modelica.Electrical.Analog.Examples.CharacteristicThyristors
+Modelica.Thermal.HeatTransfer.Examples.TwoMasses
+Modelica.Mechanics.Rotational.Examples.CoupledClutches
+
+# Fluid / MultiBody / Machines (validate-only, simple -> complex)
+# --- Fluid.Examples ---
+Modelica.Fluid.Examples.Explanatory
+Modelica.Fluid.Examples.IncompressibleFluidNetwork
+Modelica.Fluid.Examples.HeatExchanger
+Modelica.Fluid.Examples.Tanks
+Modelica.Fluid.Examples.PumpingSystem
+Modelica.Fluid.Examples.BranchingDynamicPipes
+Modelica.Fluid.Examples.HeatingSystem
+Modelica.Fluid.Examples.ControlledTankSystem
+Modelica.Fluid.Examples.DrumBoiler
+Modelica.Fluid.Examples.TraceSubstances
+Modelica.Fluid.Examples.NonCircularPipes
+Modelica.Fluid.Examples.InverseParameterization
+Modelica.Fluid.Examples.AST_BatchPlant
+# --- MultiBody.Examples (Elementary -> Constraints -> Loops) ---
+Modelica.Mechanics.MultiBody.Examples.Elementary.Pendulum
+Modelica.Mechanics.MultiBody.Examples.Elementary.DoublePendulum
+Modelica.Mechanics.MultiBody.Examples.Elementary.SpringMassSystem
+Modelica.Mechanics.MultiBody.Examples.Elementary.ForceAndTorque
+Modelica.Mechanics.MultiBody.Examples.Elementary.FreeBody
+Modelica.Mechanics.MultiBody.Examples.Elementary.PointGravity
+Modelica.Mechanics.MultiBody.Examples.Elementary.SpringDamperSystem
+Modelica.Mechanics.MultiBody.Examples.Elementary.ThreeSprings
+Modelica.Mechanics.MultiBody.Examples.Constraints.RevoluteConstraint
+Modelica.Mechanics.MultiBody.Examples.Constraints.PrismaticConstraint
+Modelica.Mechanics.MultiBody.Examples.Loops.Fourbar1
+Modelica.Mechanics.MultiBody.Examples.Loops.Fourbar2
+Modelica.Mechanics.MultiBody.Examples.Loops.Engine1a
+Modelica.Mechanics.MultiBody.Examples.Loops.PlanarFourbar
+# --- Machines.Examples (DC -> Induction -> Synchronous) ---
+Modelica.Electrical.Machines.Examples.DCMachines.DCPM_Start
+Modelica.Electrical.Machines.Examples.DCMachines.DCPM_CurrentControlled
+Modelica.Electrical.Machines.Examples.DCMachines.DCPM_QuasiStatic
+Modelica.Electrical.Machines.Examples.DCMachines.DCSE_Start
+Modelica.Electrical.Machines.Examples.InductionMachines.IMC_DOL
+Modelica.Electrical.Machines.Examples.InductionMachines.IMC_Start
+Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_NoLoad
+Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_Inverter
+Modelica.Electrical.Machines.Examples.ControlledDCDrives.SpeedControlledDCPM
+Modelica.Electrical.Machines.Examples.ControlledDCDrives.CurrentControlledDCPM

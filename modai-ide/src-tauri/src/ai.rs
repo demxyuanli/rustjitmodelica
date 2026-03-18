@@ -5,21 +5,69 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 const SERVICE: &str = "modai-ide";
-const ACCOUNT: &str = "deepseek-api-key";
+const ACCOUNT_DEEPSEEK: &str = "deepseek-api-key";
+const ACCOUNT_GROK: &str = "grok-api-key";
 pub const DEEPSEEK_URL: &str = "https://api.deepseek.com/v1/chat/completions";
+pub const GROK_URL: &str = "https://api.x.ai/v1/chat/completions";
+pub const OLLAMA_URL: &str = "http://localhost:11434/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "deepseek-chat";
 
-fn entry() -> Result<Entry, keyring::Error> {
-    Entry::new(SERVICE, ACCOUNT)
+const OLLAMA_PREFIX: &str = "ollama/";
+const GROK_PREFIX: &str = "grok/";
+
+/// Returns true if the model id denotes an Ollama local model.
+pub fn is_ollama_model(model: &str) -> bool {
+    model.starts_with(OLLAMA_PREFIX)
+}
+
+/// For Ollama, the API expects the model name without the "ollama/" prefix.
+pub fn ollama_model_name(model: &str) -> Option<&str> {
+    if is_ollama_model(model) {
+        Some(model.trim_start_matches(OLLAMA_PREFIX))
+    } else {
+        None
+    }
+}
+
+/// Returns true if the model id denotes a Grok (xAI) model.
+pub fn is_grok_model(model: &str) -> bool {
+    model.starts_with(GROK_PREFIX)
+}
+
+/// For Grok, the API expects the model name without the "grok/" prefix.
+pub fn grok_model_name(model: &str) -> Option<&str> {
+    if is_grok_model(model) {
+        Some(model.trim_start_matches(GROK_PREFIX))
+    } else {
+        None
+    }
+}
+
+fn entry_deepseek() -> Result<Entry, keyring::Error> {
+    Entry::new(SERVICE, ACCOUNT_DEEPSEEK)
+}
+
+fn entry_grok() -> Result<Entry, keyring::Error> {
+    Entry::new(SERVICE, ACCOUNT_GROK)
 }
 
 pub fn get_api_key() -> Result<String, String> {
-    let e = entry().map_err(|err| format!("keyring entry: {}", err))?;
+    let e = entry_deepseek().map_err(|err| format!("keyring entry: {}", err))?;
     e.get_password().map_err(|e| format!("keyring get: {}", e))
 }
 
 pub fn set_api_key(api_key: &str) -> Result<(), String> {
-    let e = entry().map_err(|err| format!("keyring entry: {}", err))?;
+    let e = entry_deepseek().map_err(|err| format!("keyring entry: {}", err))?;
+    e.set_password(api_key).map_err(|e| format!("keyring set: {}", e))
+}
+
+pub fn get_grok_api_key() -> Result<String, String> {
+    let e = entry_grok().map_err(|err| format!("keyring entry: {}", err))?;
+    e.get_password().map_err(|e| format!("keyring get: {}", e))
+}
+
+pub fn set_grok_api_key(api_key: &str) -> Result<(), String> {
+    let e = entry_grok().map_err(|err| format!("keyring entry: {}", err))?;
     e.set_password(api_key).map_err(|e| format!("keyring set: {}", e))
 }
 

@@ -88,6 +88,15 @@ fn write_expression(buf: &mut String, e: &Expression) {
             }
             buf.push('}');
         }
+        Expression::ArrayComprehension { expr, iter_var, iter_range } => {
+            buf.push('{');
+            write_expression(buf, expr);
+            buf.push_str(" for ");
+            buf.push_str(iter_var);
+            buf.push_str(" in ");
+            write_expression(buf, iter_range);
+            buf.push('}');
+        }
         Expression::StringLiteral(s) => {
             buf.push('"');
             for c in s.chars() {
@@ -202,6 +211,11 @@ fn write_equation(buf: &mut String, eq: &Equation) {
             write_expression(buf, lhs);
             buf.push_str(" = ");
             write_expression(buf, rhs);
+            buf.push_str(";\n");
+        }
+        Equation::CallStmt(expr) => {
+            buf.push_str("  ");
+            write_expression(buf, expr);
             buf.push_str(";\n");
         }
         Equation::Connect(a, b) => {
@@ -422,6 +436,24 @@ fn write_algorithm_statement(buf: &mut String, a: &AlgorithmStatement) {
             write_expression(buf, rhs);
             buf.push_str(";\n");
         }
+        AlgorithmStatement::MultiAssign(lhss, rhs) => {
+            buf.push_str("  (");
+            for (i, lhs) in lhss.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                write_expression(buf, lhs);
+            }
+            buf.push_str(") := ");
+            write_expression(buf, rhs);
+            buf.push_str(";\n");
+        }
+        AlgorithmStatement::CallStmt(expr) => {
+            buf.push_str("  ");
+            write_expression(buf, expr);
+            buf.push_str(";\n");
+        }
+        AlgorithmStatement::NoOp => {}
         AlgorithmStatement::Reinit(var, expr) => {
             buf.push_str("  reinit(");
             buf.push_str(var);

@@ -26,6 +26,9 @@ export function AIChatEmptyState({ setAgentMode, setAiPrompt }: AIChatEmptyState
       <div className="mt-1.5 text-xs text-[var(--text-muted)] text-center max-w-[260px] leading-relaxed">
         {t("aiAgentEmptyHint")}
       </div>
+      <div className="mt-1 text-[10px] text-[var(--text-muted)] text-center max-w-[260px] opacity-90">
+        {t("aiApplyDiffHint")}
+      </div>
       {setAgentMode && (
         <div className="agent-empty-grid">
           {quickActions.map((action) => (

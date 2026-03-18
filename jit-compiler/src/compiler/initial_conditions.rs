@@ -1,8 +1,8 @@
-use std::collections::HashSet;
-use std::collections::HashMap;
-use crate::ast::{Equation, Expression, AlgorithmStatement};
 use crate::analysis::order_initial_equations_for_application;
+use crate::ast::{AlgorithmStatement, Equation, Expression};
 use crate::flatten::eval_const_expr;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub fn apply_initial_conditions(
     flat_model: &crate::flatten::FlattenedModel,
@@ -12,6 +12,7 @@ pub fn apply_initial_conditions(
     state_var_index: &HashMap<String, usize>,
     discrete_var_index: &HashMap<String, usize>,
     param_var_index: &HashMap<String, usize>,
+    quiet: bool,
 ) {
     fn assign_var(
         name: &str,
@@ -72,7 +73,11 @@ pub fn apply_initial_conditions(
                         let prev = state_var_index
                             .get(name)
                             .and_then(|&i| Some(states[i]))
-                            .or_else(|| discrete_var_index.get(name).and_then(|&i| Some(discrete_vals[i])))
+                            .or_else(|| {
+                                discrete_var_index
+                                    .get(name)
+                                    .and_then(|&i| Some(discrete_vals[i]))
+                            })
                             .or_else(|| param_var_index.get(name).and_then(|&i| Some(params[i])));
                         let changed = prev.map(|p| (p - v).abs() > 1e-15).unwrap_or(true);
                         if changed {
@@ -118,10 +123,12 @@ pub fn apply_initial_conditions(
                         param_var_index,
                     );
                 } else {
-                    eprintln!(
-                        "Warning: initial assignment for '{}' ignored (non-constant rhs: {:?})",
-                        name, rhs
-                    );
+                    if !quiet {
+                        eprintln!(
+                            "Warning: initial assignment for '{}' ignored (non-constant rhs: {:?})",
+                            name, rhs
+                        );
+                    }
                 }
             }
         }
@@ -301,6 +308,27 @@ pub fn substitute_initial_values(
                 })
                 .collect(),
         ),
+        ArrayComprehension { expr, iter_var, iter_range } => ArrayComprehension {
+            expr: Box::new(substitute_initial_values(
+                expr,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
+            iter_var: iter_var.clone(),
+            iter_range: Box::new(substitute_initial_values(
+                iter_range,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
+        },
         Dot(base, member) => Dot(
             Box::new(substitute_initial_values(
                 base,
@@ -332,16 +360,64 @@ pub fn substitute_initial_values(
             params,
         ))),
         SubSample(c, n) => SubSample(
-            Box::new(substitute_initial_values(c, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
-            Box::new(substitute_initial_values(n, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+            Box::new(substitute_initial_values(
+                c,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
+            Box::new(substitute_initial_values(
+                n,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
         ),
         SuperSample(c, n) => SuperSample(
-            Box::new(substitute_initial_values(c, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
-            Box::new(substitute_initial_values(n, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+            Box::new(substitute_initial_values(
+                c,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
+            Box::new(substitute_initial_values(
+                n,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
         ),
         ShiftSample(c, n) => ShiftSample(
-            Box::new(substitute_initial_values(c, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
-            Box::new(substitute_initial_values(n, state_var_index, discrete_var_index, param_var_index, states, discrete_vals, params)),
+            Box::new(substitute_initial_values(
+                c,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
+            Box::new(substitute_initial_values(
+                n,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
         ),
         Sample(inner) => Sample(Box::new(substitute_initial_values(
             inner,
@@ -393,11 +469,7 @@ pub fn substitute_params(
                 .map(|a| substitute_params(a, param_var_index, params))
                 .collect(),
         ),
-        Der(inner) => Der(Box::new(substitute_params(
-            inner,
-            param_var_index,
-            params,
-        ))),
+        Der(inner) => Der(Box::new(substitute_params(inner, param_var_index, params))),
         ArrayAccess(arr, idx) => ArrayAccess(
             Box::new(substitute_params(arr, param_var_index, params)),
             Box::new(substitute_params(idx, param_var_index, params)),
@@ -418,6 +490,11 @@ pub fn substitute_params(
                 .map(|e| substitute_params(e, param_var_index, params))
                 .collect(),
         ),
+        ArrayComprehension { expr, iter_var, iter_range } => ArrayComprehension {
+            expr: Box::new(substitute_params(expr, param_var_index, params)),
+            iter_var: iter_var.clone(),
+            iter_range: Box::new(substitute_params(iter_range, param_var_index, params)),
+        },
         Dot(base, member) => Dot(
             Box::new(substitute_params(base, param_var_index, params)),
             member.clone(),
@@ -426,9 +503,18 @@ pub fn substitute_params(
         Interval(inner) => Interval(Box::new(substitute_params(inner, param_var_index, params))),
         Hold(inner) => Hold(Box::new(substitute_params(inner, param_var_index, params))),
         Previous(inner) => Previous(Box::new(substitute_params(inner, param_var_index, params))),
-        SubSample(c, n) => SubSample(Box::new(substitute_params(c, param_var_index, params)), Box::new(substitute_params(n, param_var_index, params))),
-        SuperSample(c, n) => SuperSample(Box::new(substitute_params(c, param_var_index, params)), Box::new(substitute_params(n, param_var_index, params))),
-        ShiftSample(c, n) => ShiftSample(Box::new(substitute_params(c, param_var_index, params)), Box::new(substitute_params(n, param_var_index, params))),
+        SubSample(c, n) => SubSample(
+            Box::new(substitute_params(c, param_var_index, params)),
+            Box::new(substitute_params(n, param_var_index, params)),
+        ),
+        SuperSample(c, n) => SuperSample(
+            Box::new(substitute_params(c, param_var_index, params)),
+            Box::new(substitute_params(n, param_var_index, params)),
+        ),
+        ShiftSample(c, n) => ShiftSample(
+            Box::new(substitute_params(c, param_var_index, params)),
+            Box::new(substitute_params(n, param_var_index, params)),
+        ),
         StringLiteral(s) => StringLiteral(s.clone()),
     }
 }

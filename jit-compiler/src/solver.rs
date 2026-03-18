@@ -190,7 +190,9 @@ impl Solver for EulerSolver {
         states: &mut [f64],
     ) -> Result<(), i32> {
         if !system.eval_call_index.is_null() {
-            unsafe { *system.eval_call_index = 0; }
+            unsafe {
+                *system.eval_call_index = 0;
+            }
         }
         system.record_eval(time, states);
         system.evaluate(time, states, &mut self.derivs)?;
@@ -240,7 +242,9 @@ impl Solver for BackwardEulerSolver {
             return Ok(());
         }
         if !system.eval_call_index.is_null() {
-            unsafe { *system.eval_call_index = 0; }
+            unsafe {
+                *system.eval_call_index = 0;
+            }
         }
         let y_n: Vec<f64> = states.to_vec();
         self.tmp.copy_from_slice(&y_n);
@@ -300,7 +304,9 @@ impl Solver for RungeKutta4Solver {
     ) -> Result<(), i32> {
         let n = states.len();
         if !system.eval_call_index.is_null() {
-            unsafe { *system.eval_call_index = 0; }
+            unsafe {
+                *system.eval_call_index = 0;
+            }
         }
 
         system.record_eval(time, states);
@@ -326,7 +332,8 @@ impl Solver for RungeKutta4Solver {
 
         // y_{n+1} = y_n + h/6 * (k1 + 2k2 + 2k3 + k4)
         for i in 0..n {
-            states[i] += (dt / 6.0) * (self.k1[i] + 2.0 * self.k2[i] + 2.0 * self.k3[i] + self.k4[i]);
+            states[i] +=
+                (dt / 6.0) * (self.k1[i] + 2.0 * self.k2[i] + 2.0 * self.k3[i] + self.k4[i]);
         }
 
         Ok(())
@@ -382,7 +389,9 @@ impl Solver for AdaptiveRK45Solver {
         let t = time;
         loop {
             if !system.eval_call_index.is_null() {
-                unsafe { *system.eval_call_index = 0; }
+                unsafe {
+                    *system.eval_call_index = 0;
+                }
             }
             let y = states.to_vec();
 
@@ -404,33 +413,27 @@ impl Solver for AdaptiveRK45Solver {
 
             for i in 0..n {
                 self.tmp[i] = y[i]
-                    + dt
-                        * (44.0 / 45.0 * self.k1[i]
-                            - 56.0 / 15.0 * self.k2[i]
-                            + 32.0 / 9.0 * self.k3[i]);
+                    + dt * (44.0 / 45.0 * self.k1[i] - 56.0 / 15.0 * self.k2[i]
+                        + 32.0 / 9.0 * self.k3[i]);
             }
             system.record_eval(t + dt * (4.0 / 5.0), &self.tmp);
             system.evaluate_scratch(t + dt * (4.0 / 5.0), &mut self.tmp, &mut self.k4)?;
 
             for i in 0..n {
                 self.tmp[i] = y[i]
-                    + dt
-                        * (19372.0 / 6561.0 * self.k1[i]
-                            - 25360.0 / 2187.0 * self.k2[i]
-                            + 64448.0 / 6561.0 * self.k3[i]
-                            - 212.0 / 729.0 * self.k4[i]);
+                    + dt * (19372.0 / 6561.0 * self.k1[i] - 25360.0 / 2187.0 * self.k2[i]
+                        + 64448.0 / 6561.0 * self.k3[i]
+                        - 212.0 / 729.0 * self.k4[i]);
             }
             system.record_eval(t + dt * (8.0 / 9.0), &self.tmp);
             system.evaluate_scratch(t + dt * (8.0 / 9.0), &mut self.tmp, &mut self.k5)?;
 
             for i in 0..n {
                 self.tmp[i] = y[i]
-                    + dt
-                        * (9017.0 / 3168.0 * self.k1[i]
-                            - 355.0 / 33.0 * self.k2[i]
-                            + 46732.0 / 5247.0 * self.k3[i]
-                            + 49.0 / 176.0 * self.k4[i]
-                            - 5103.0 / 18656.0 * self.k5[i]);
+                    + dt * (9017.0 / 3168.0 * self.k1[i] - 355.0 / 33.0 * self.k2[i]
+                        + 46732.0 / 5247.0 * self.k3[i]
+                        + 49.0 / 176.0 * self.k4[i]
+                        - 5103.0 / 18656.0 * self.k5[i]);
             }
             system.record_eval(t + dt, &self.tmp);
             system.evaluate_scratch(t + dt, &mut self.tmp, &mut self.k6)?;
@@ -440,21 +443,19 @@ impl Solver for AdaptiveRK45Solver {
             let mut y4 = vec![0.0; n];
             for i in 0..n {
                 y5[i] = y[i]
-                    + dt
-                        * (35.0 / 384.0 * self.k1[i]
-                            + 500.0 / 1113.0 * self.k3[i]
-                            + 125.0 / 192.0 * self.k4[i]
-                            - 2187.0 / 6784.0 * self.k5[i]
-                            + 11.0 / 84.0 * self.k6[i]);
+                    + dt * (35.0 / 384.0 * self.k1[i]
+                        + 500.0 / 1113.0 * self.k3[i]
+                        + 125.0 / 192.0 * self.k4[i]
+                        - 2187.0 / 6784.0 * self.k5[i]
+                        + 11.0 / 84.0 * self.k6[i]);
 
                 y4[i] = y[i]
-                    + dt
-                        * (5179.0 / 57600.0 * self.k1[i]
-                            + 7571.0 / 16695.0 * self.k3[i]
-                            + 393.0 / 640.0 * self.k4[i]
-                            - 92097.0 / 339200.0 * self.k5[i]
-                            + 187.0 / 2100.0 * self.k6[i]
-                            + 1.0 / 40.0 * self.k2[i]);
+                    + dt * (5179.0 / 57600.0 * self.k1[i]
+                        + 7571.0 / 16695.0 * self.k3[i]
+                        + 393.0 / 640.0 * self.k4[i]
+                        - 92097.0 / 339200.0 * self.k5[i]
+                        + 187.0 / 2100.0 * self.k6[i]
+                        + 1.0 / 40.0 * self.k2[i]);
             }
 
             // Error estimate

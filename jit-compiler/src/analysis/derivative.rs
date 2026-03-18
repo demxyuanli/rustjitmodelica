@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::ast::{Equation, Expression, Operator};
+use std::collections::HashSet;
 
 fn expand_der_linear(inner: &Expression) -> Option<Expression> {
     use Expression::*;
@@ -48,13 +48,13 @@ pub fn normalize_der(expr: &Expression) -> Expression {
             *op,
             Box::new(normalize_der(rhs)),
         ),
-        Expression::Call(func, args) => {
-            Expression::Call(func.clone(), args.iter().map(|a| normalize_der(a)).collect())
-        }
-        Expression::ArrayAccess(arr, idx) => Expression::ArrayAccess(
-            Box::new(normalize_der(arr)),
-            Box::new(normalize_der(idx)),
+        Expression::Call(func, args) => Expression::Call(
+            func.clone(),
+            args.iter().map(|a| normalize_der(a)).collect(),
         ),
+        Expression::ArrayAccess(arr, idx) => {
+            Expression::ArrayAccess(Box::new(normalize_der(arr)), Box::new(normalize_der(idx)))
+        }
         Expression::If(c, t, f) => Expression::If(
             Box::new(normalize_der(c)),
             Box::new(normalize_der(t)),
@@ -64,9 +64,15 @@ pub fn normalize_der(expr: &Expression) -> Expression {
         Expression::Interval(inner) => Expression::Interval(Box::new(normalize_der(inner))),
         Expression::Hold(inner) => Expression::Hold(Box::new(normalize_der(inner))),
         Expression::Previous(inner) => Expression::Previous(Box::new(normalize_der(inner))),
-        Expression::SubSample(c, n) => Expression::SubSample(Box::new(normalize_der(c)), Box::new(normalize_der(n))),
-        Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(normalize_der(c)), Box::new(normalize_der(n))),
-        Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(normalize_der(c)), Box::new(normalize_der(n))),
+        Expression::SubSample(c, n) => {
+            Expression::SubSample(Box::new(normalize_der(c)), Box::new(normalize_der(n)))
+        }
+        Expression::SuperSample(c, n) => {
+            Expression::SuperSample(Box::new(normalize_der(c)), Box::new(normalize_der(n)))
+        }
+        Expression::ShiftSample(c, n) => {
+            Expression::ShiftSample(Box::new(normalize_der(c)), Box::new(normalize_der(n)))
+        }
         _ => expr.clone(),
     }
 }
@@ -95,7 +101,9 @@ fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
         Expression::Interval(inner) => collect_vars_in_expr(inner, out),
         Expression::Hold(inner) => collect_vars_in_expr(inner, out),
         Expression::Previous(inner) => collect_vars_in_expr(inner, out),
-        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+        Expression::SubSample(c, n)
+        | Expression::SuperSample(c, n)
+        | Expression::ShiftSample(c, n) => {
             collect_vars_in_expr(c, out);
             collect_vars_in_expr(n, out);
         }
@@ -131,7 +139,9 @@ fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
         Expression::Interval(inner) => collect_states_from_expr(inner, states),
         Expression::Hold(inner) => collect_states_from_expr(inner, states),
         Expression::Previous(inner) => collect_states_from_expr(inner, states),
-        Expression::SubSample(c, n) | Expression::SuperSample(c, n) | Expression::ShiftSample(c, n) => {
+        Expression::SubSample(c, n)
+        | Expression::SuperSample(c, n)
+        | Expression::ShiftSample(c, n) => {
             collect_states_from_expr(c, states);
             collect_states_from_expr(n, states);
         }
@@ -225,11 +235,9 @@ fn find_unsupported_der_in_expr(expr: &Expression) -> Option<String> {
         Expression::ArrayAccess(arr, idx) => {
             find_unsupported_der_in_expr(arr).or_else(|| find_unsupported_der_in_expr(idx))
         }
-        Expression::If(c, t, f) => {
-            find_unsupported_der_in_expr(c)
-                .or_else(|| find_unsupported_der_in_expr(t))
-                .or_else(|| find_unsupported_der_in_expr(f))
-        }
+        Expression::If(c, t, f) => find_unsupported_der_in_expr(c)
+            .or_else(|| find_unsupported_der_in_expr(t))
+            .or_else(|| find_unsupported_der_in_expr(f)),
         _ => None,
     }
 }
@@ -248,76 +256,70 @@ pub fn find_unsupported_der_in_eq(eq: &Equation) -> Option<String> {
             }
             find_unsupported_der_in_expr(rhs)
         }
-        Equation::For(_, s, e, body) => {
-            find_unsupported_der_in_expr(s)
-                .or_else(|| find_unsupported_der_in_expr(e))
-                .or_else(|| {
-                    for sub in body {
+        Equation::For(_, s, e, body) => find_unsupported_der_in_expr(s)
+            .or_else(|| find_unsupported_der_in_expr(e))
+            .or_else(|| {
+                for sub in body {
+                    if let Some(h) = find_unsupported_der_in_eq(sub) {
+                        return Some(h);
+                    }
+                }
+                None
+            }),
+        Equation::When(c, b, e) => find_unsupported_der_in_expr(c)
+            .or_else(|| {
+                for sub in b {
+                    if let Some(h) = find_unsupported_der_in_eq(sub) {
+                        return Some(h);
+                    }
+                }
+                None
+            })
+            .or_else(|| {
+                for (ec, eb) in e {
+                    if let Some(h) = find_unsupported_der_in_expr(ec) {
+                        return Some(h);
+                    }
+                    for sub in eb {
                         if let Some(h) = find_unsupported_der_in_eq(sub) {
                             return Some(h);
                         }
                     }
-                    None
-                })
-        }
-        Equation::When(c, b, e) => {
-            find_unsupported_der_in_expr(c)
-                .or_else(|| {
-                    for sub in b {
+                }
+                None
+            }),
+        Equation::If(c, then_eqs, elseif_list, else_eqs) => find_unsupported_der_in_expr(c)
+            .or_else(|| {
+                for sub in then_eqs {
+                    if let Some(h) = find_unsupported_der_in_eq(sub) {
+                        return Some(h);
+                    }
+                }
+                None
+            })
+            .or_else(|| {
+                for (ec, eb) in elseif_list {
+                    if let Some(h) = find_unsupported_der_in_expr(ec) {
+                        return Some(h);
+                    }
+                    for sub in eb {
                         if let Some(h) = find_unsupported_der_in_eq(sub) {
                             return Some(h);
                         }
                     }
-                    None
-                })
-                .or_else(|| {
-                    for (ec, eb) in e {
-                        if let Some(h) = find_unsupported_der_in_expr(ec) {
-                            return Some(h);
-                        }
-                        for sub in eb {
-                            if let Some(h) = find_unsupported_der_in_eq(sub) {
-                                return Some(h);
-                            }
-                        }
-                    }
-                    None
-                })
-        }
-        Equation::If(c, then_eqs, elseif_list, else_eqs) => {
-            find_unsupported_der_in_expr(c)
-                .or_else(|| {
-                    for sub in then_eqs {
+                }
+                None
+            })
+            .or_else(|| {
+                if let Some(eqs) = else_eqs {
+                    for sub in eqs {
                         if let Some(h) = find_unsupported_der_in_eq(sub) {
                             return Some(h);
                         }
                     }
-                    None
-                })
-                .or_else(|| {
-                    for (ec, eb) in elseif_list {
-                        if let Some(h) = find_unsupported_der_in_expr(ec) {
-                            return Some(h);
-                        }
-                        for sub in eb {
-                            if let Some(h) = find_unsupported_der_in_eq(sub) {
-                                return Some(h);
-                            }
-                        }
-                    }
-                    None
-                })
-                .or_else(|| {
-                    if let Some(eqs) = else_eqs {
-                        for sub in eqs {
-                            if let Some(h) = find_unsupported_der_in_eq(sub) {
-                                return Some(h);
-                            }
-                        }
-                    }
-                    None
-                })
-        }
+                }
+                None
+            }),
         Equation::Assert(cond, msg) => {
             find_unsupported_der_in_expr(cond).or_else(|| find_unsupported_der_in_expr(msg))
         }

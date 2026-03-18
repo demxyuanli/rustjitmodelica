@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::ast::Expression;
+use std::collections::HashMap;
 
-use super::expressions::expr_to_path;
+use super::expressions::{eval_const_expr, expr_to_path};
 
 impl super::Flattener {
     pub(crate) fn lookup_context_stack(
@@ -24,10 +24,22 @@ impl super::Flattener {
         match expr {
             Expression::Variable(name) => {
                 if let Some(val) = Self::lookup_context_stack(context_stack, name) {
-                    val
-                } else {
-                    expr.clone()
+                    return val;
                 }
+                // Resolve global constants so JIT sees Number instead of opaque variable names.
+                let path = if name.contains('.') {
+                    name.clone()
+                } else if name.starts_with("Modelica_") {
+                    name.replace("Modelica_", "Modelica.").replace("Constants_", "Constants.")
+                } else {
+                    String::new()
+                };
+                if !path.is_empty() {
+                    if let Some(val) = self.resolve_global_constant(&path) {
+                        return val;
+                    }
+                }
+                expr.clone()
             }
             Expression::Number(_) => expr.clone(),
             Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
@@ -53,13 +65,20 @@ impl super::Flattener {
                 } else if let (Expression::ArrayLiteral(elements), Expression::Number(n)) =
                     (&new_arr, &new_idx)
                 {
-                    let idx = *n as usize;
-                    if idx > 0 && idx <= elements.len() {
-                        elements[idx - 1].clone()
+                    let n_usize = *n as usize;
+                    let idx0 = if n_usize == 0 && !elements.is_empty() {
+                        0
+                    } else if n_usize >= 1 && n_usize <= elements.len() {
+                        n_usize - 1
+                    } else {
+                        elements.len()
+                    };
+                    if idx0 < elements.len() {
+                        elements[idx0].clone()
                     } else {
                         eprintln!(
                             "Index out of bounds in substitution: {} (len {})",
-                            idx,
+                            n_usize,
                             elements.len()
                         );
                         Expression::Number(0.0)
@@ -94,13 +113,48 @@ impl super::Flattener {
                     .map(|e| self.substitute_stack(e, context_stack))
                     .collect(),
             ),
-            Expression::Sample(inner) => Expression::Sample(Box::new(self.substitute_stack(inner, context_stack))),
-            Expression::Interval(inner) => Expression::Interval(Box::new(self.substitute_stack(inner, context_stack))),
-            Expression::Hold(inner) => Expression::Hold(Box::new(self.substitute_stack(inner, context_stack))),
-            Expression::Previous(inner) => Expression::Previous(Box::new(self.substitute_stack(inner, context_stack))),
-            Expression::SubSample(c, n) => Expression::SubSample(Box::new(self.substitute_stack(c, context_stack)), Box::new(self.substitute_stack(n, context_stack))),
-            Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(self.substitute_stack(c, context_stack)), Box::new(self.substitute_stack(n, context_stack))),
-            Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(self.substitute_stack(c, context_stack)), Box::new(self.substitute_stack(n, context_stack))),
+            Expression::ArrayComprehension { expr, iter_var, iter_range } => {
+                let range_sub = self.substitute_stack(iter_range, context_stack);
+                let expr_sub = self.substitute_stack(expr, context_stack);
+                if let Some(expanded) = self.expand_comprehension_to_literal(
+                    &expr_sub,
+                    iter_var,
+                    &range_sub,
+                    context_stack,
+                ) {
+                    expanded
+                } else {
+                    Expression::ArrayComprehension {
+                        expr: Box::new(expr_sub),
+                        iter_var: iter_var.clone(),
+                        iter_range: Box::new(range_sub),
+                    }
+                }
+            }
+            Expression::Sample(inner) => {
+                Expression::Sample(Box::new(self.substitute_stack(inner, context_stack)))
+            }
+            Expression::Interval(inner) => {
+                Expression::Interval(Box::new(self.substitute_stack(inner, context_stack)))
+            }
+            Expression::Hold(inner) => {
+                Expression::Hold(Box::new(self.substitute_stack(inner, context_stack)))
+            }
+            Expression::Previous(inner) => {
+                Expression::Previous(Box::new(self.substitute_stack(inner, context_stack)))
+            }
+            Expression::SubSample(c, n) => Expression::SubSample(
+                Box::new(self.substitute_stack(c, context_stack)),
+                Box::new(self.substitute_stack(n, context_stack)),
+            ),
+            Expression::SuperSample(c, n) => Expression::SuperSample(
+                Box::new(self.substitute_stack(c, context_stack)),
+                Box::new(self.substitute_stack(n, context_stack)),
+            ),
+            Expression::ShiftSample(c, n) => Expression::ShiftSample(
+                Box::new(self.substitute_stack(c, context_stack)),
+                Box::new(self.substitute_stack(n, context_stack)),
+            ),
             Expression::StringLiteral(s) => Expression::StringLiteral(s.clone()),
         }
     }
@@ -141,13 +195,20 @@ impl super::Flattener {
                 } else if let (Expression::ArrayLiteral(elements), Expression::Number(n)) =
                     (&new_arr, &new_idx)
                 {
-                    let idx = *n as usize;
-                    if idx > 0 && idx <= elements.len() {
-                        elements[idx - 1].clone()
+                    let n_usize = *n as usize;
+                    let idx0 = if n_usize == 0 && !elements.is_empty() {
+                        0
+                    } else if n_usize >= 1 && n_usize <= elements.len() {
+                        n_usize - 1
+                    } else {
+                        elements.len()
+                    };
+                    if idx0 < elements.len() {
+                        elements[idx0].clone()
                     } else {
                         eprintln!(
                             "Index out of bounds in substitution: {} (len {})",
-                            idx,
+                            n_usize,
                             elements.len()
                         );
                         Expression::Number(0.0)
@@ -179,18 +240,45 @@ impl super::Flattener {
                 Box::new(self.substitute(end, context)),
             ),
             Expression::ArrayLiteral(exprs) => Expression::ArrayLiteral(
-                exprs
-                    .iter()
-                    .map(|e| self.substitute(e, context))
-                    .collect(),
+                exprs.iter().map(|e| self.substitute(e, context)).collect(),
             ),
-            Expression::Sample(inner) => Expression::Sample(Box::new(self.substitute(inner, context))),
-            Expression::Interval(inner) => Expression::Interval(Box::new(self.substitute(inner, context))),
+            Expression::ArrayComprehension { expr, iter_var, iter_range } => {
+                let range_sub = self.substitute(iter_range, context);
+                let expr_sub = self.substitute(expr, context);
+                if let Some(expanded) =
+                    self.expand_comprehension_to_literal_flat(&expr_sub, iter_var, &range_sub, context)
+                {
+                    expanded
+                } else {
+                    Expression::ArrayComprehension {
+                        expr: Box::new(expr_sub),
+                        iter_var: iter_var.clone(),
+                        iter_range: Box::new(range_sub),
+                    }
+                }
+            }
+            Expression::Sample(inner) => {
+                Expression::Sample(Box::new(self.substitute(inner, context)))
+            }
+            Expression::Interval(inner) => {
+                Expression::Interval(Box::new(self.substitute(inner, context)))
+            }
             Expression::Hold(inner) => Expression::Hold(Box::new(self.substitute(inner, context))),
-            Expression::Previous(inner) => Expression::Previous(Box::new(self.substitute(inner, context))),
-            Expression::SubSample(c, n) => Expression::SubSample(Box::new(self.substitute(c, context)), Box::new(self.substitute(n, context))),
-            Expression::SuperSample(c, n) => Expression::SuperSample(Box::new(self.substitute(c, context)), Box::new(self.substitute(n, context))),
-            Expression::ShiftSample(c, n) => Expression::ShiftSample(Box::new(self.substitute(c, context)), Box::new(self.substitute(n, context))),
+            Expression::Previous(inner) => {
+                Expression::Previous(Box::new(self.substitute(inner, context)))
+            }
+            Expression::SubSample(c, n) => Expression::SubSample(
+                Box::new(self.substitute(c, context)),
+                Box::new(self.substitute(n, context)),
+            ),
+            Expression::SuperSample(c, n) => Expression::SuperSample(
+                Box::new(self.substitute(c, context)),
+                Box::new(self.substitute(n, context)),
+            ),
+            Expression::ShiftSample(c, n) => Expression::ShiftSample(
+                Box::new(self.substitute(c, context)),
+                Box::new(self.substitute(n, context)),
+            ),
             Expression::StringLiteral(s) => Expression::StringLiteral(s.clone()),
         }
     }
@@ -208,5 +296,87 @@ impl super::Flattener {
             }
         }
         None
+    }
+
+    fn expand_comprehension_to_literal_flat(
+        &mut self,
+        expr: &Expression,
+        iter_var: &str,
+        range_sub: &Expression,
+        context: &HashMap<String, Expression>,
+    ) -> Option<Expression> {
+        let (start_val, step_val, end_val) = match range_sub {
+            Expression::Range(start, step, end) => {
+                let s = eval_const_expr(start)?;
+                let st = eval_const_expr(step)?;
+                let e = eval_const_expr(end)?;
+                (s, st, e)
+            }
+            _ => return None,
+        };
+        let mut values = Vec::new();
+        let max_len = 100_000;
+        let mut v = start_val;
+        loop {
+            if (step_val > 0.0 && v <= end_val) || (step_val < 0.0 && v >= end_val) {
+                values.push(v);
+            }
+            if step_val == 0.0 || values.len() >= max_len {
+                break;
+            }
+            v += step_val;
+            if (step_val > 0.0 && v > end_val) || (step_val < 0.0 && v < end_val) {
+                break;
+            }
+        }
+        let mut out = Vec::with_capacity(values.len());
+        for val in values {
+            let mut ctx = context.clone();
+            ctx.insert(iter_var.to_string(), Expression::Number(val));
+            out.push(self.substitute(expr, &ctx));
+        }
+        Some(Expression::ArrayLiteral(out))
+    }
+
+    fn expand_comprehension_to_literal(
+        &mut self,
+        expr: &Expression,
+        iter_var: &str,
+        range_sub: &Expression,
+        context_stack: &[HashMap<String, Expression>],
+    ) -> Option<Expression> {
+        let (start_val, step_val, end_val) = match range_sub {
+            Expression::Range(start, step, end) => {
+                let s = eval_const_expr(start)?;
+                let st = eval_const_expr(step)?;
+                let e = eval_const_expr(end)?;
+                (s, st, e)
+            }
+            _ => return None,
+        };
+        let mut values = Vec::new();
+        let max_len = 100_000;
+        let mut v = start_val;
+        loop {
+            if (step_val > 0.0 && v <= end_val) || (step_val < 0.0 && v >= end_val) {
+                values.push(v);
+            }
+            if step_val == 0.0 || values.len() >= max_len {
+                break;
+            }
+            v += step_val;
+            if (step_val > 0.0 && v > end_val) || (step_val < 0.0 && v < end_val) {
+                break;
+            }
+        }
+        let mut out = Vec::with_capacity(values.len());
+        for val in values {
+            let mut new_stack = context_stack.to_vec();
+            let mut frame = HashMap::new();
+            frame.insert(iter_var.to_string(), Expression::Number(val));
+            new_stack.push(frame);
+            out.push(self.substitute_stack(expr, &new_stack));
+        }
+        Some(Expression::ArrayLiteral(out))
     }
 }

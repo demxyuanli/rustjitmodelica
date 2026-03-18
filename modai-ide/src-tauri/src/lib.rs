@@ -5,6 +5,7 @@ mod ai_tools;
 mod chunker;
 mod commands;
 mod component_library;
+mod component_library_index;
 mod compiler_config;
 mod db;
 mod diagram;
@@ -13,25 +14,29 @@ mod git;
 mod index_db;
 mod index_manager;
 mod iterate;
+mod profiler;
 mod source_manager;
 mod test_manager;
 mod traceability;
 
 use commands::ai_commands::{
-    ai_code_gen, ai_generate_compiler_patch, ai_generate_compiler_patch_with_context, get_api_key,
-    set_api_key,
+    ai_code_gen, ai_code_gen_stream, ai_generate_compiler_patch, ai_generate_compiler_patch_with_context,
+    get_api_key, set_api_key, get_grok_api_key, set_grok_api_key,
 };
 use commands::app_commands::{
     get_app_data_root, get_app_settings, get_compiler_config, get_iteration, greet,
-    list_iteration_history, open_devtools, save_iteration, set_app_settings, set_compiler_config,
+    list_iteration_history, open_devtools, rebuild_component_library_index, save_iteration,
+    set_app_settings, set_compiler_config,
 };
 use commands::git_commands::{
     git_commit, git_commit_files, git_diff_file, git_diff_file_staged, git_head_commit, git_init,
     git_is_repo, git_log, git_log_graph, git_show_file, git_stage, git_status, git_unstage,
 };
 use commands::index_commands::{
-    index_build, index_build_repo, index_file_symbols, index_find_references, index_get_context,
-    index_get_dependencies, index_refresh, index_refresh_repo, index_rebuild, index_rebuild_repo,
+    index_build, index_build_repo, index_component_library_get_context, index_file_symbols,
+    index_find_references, index_get_context,
+    index_get_dependencies, index_list_included_files, index_refresh, index_refresh_repo,
+    index_rebuild, index_rebuild_repo,
     index_repo_file_symbols, index_repo_get_context, index_repo_root, index_repo_search_symbols,
     index_repo_stats, index_search_symbols, index_start_watcher, index_stats, index_stop_watcher,
     index_update_file,
@@ -80,7 +85,10 @@ pub fn run() {
             run_simulation_cmd,
             get_api_key,
             set_api_key,
+            get_grok_api_key,
+            set_grok_api_key,
             ai_code_gen,
+            ai_code_gen_stream,
             self_iterate,
             apply_patch_to_project,
             apply_patch_to_workspace,
@@ -168,6 +176,7 @@ pub fn run() {
             set_compiler_config,
             get_app_data_root,
             get_app_settings,
+            rebuild_component_library_index,
             set_app_settings,
             index_build,
             index_update_file,
@@ -177,6 +186,7 @@ pub fn run() {
             index_get_context,
             index_get_dependencies,
             index_stats,
+            index_list_included_files,
             index_start_watcher,
             index_stop_watcher,
             index_refresh,
@@ -189,6 +199,7 @@ pub fn run() {
             index_repo_file_symbols,
             index_repo_search_symbols,
             index_repo_get_context,
+            index_component_library_get_context,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

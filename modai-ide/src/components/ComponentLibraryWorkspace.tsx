@@ -191,6 +191,8 @@ function TypeTreeLevel({
 
 interface ComponentLibraryWorkspaceProps {
   projectDir?: string | null;
+  /** When false, defer list/query until true to avoid startup cost when workspace is hidden */
+  isActive?: boolean;
   theme: "dark" | "light";
   onLibrariesChanged?: () => void;
   onOpenType?: (typeName: string, libraryId?: string) => void;
@@ -206,10 +208,19 @@ function componentKey(item: Pick<InstantiableClass, "qualifiedName" | "libraryId
 
 export function ComponentLibraryWorkspace({
   projectDir = null,
+  isActive = true,
   theme,
   onLibrariesChanged,
   onOpenType,
 }: ComponentLibraryWorkspaceProps) {
+  useEffect(() => {
+    const start = performance.now?.() ?? Date.now();
+    return () => {
+      const end = performance.now?.() ?? Date.now();
+      // eslint-disable-next-line no-console
+      console.log("[modai-prof] ComponentLibraryWorkspace session took", end - start, "ms");
+    };
+  }, []);
   const [libraries, setLibraries] = useState<ComponentLibrary[]>([]);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string>("all");
   const [scopeFilter, setScopeFilter] = useState<LibraryScopeFilter>("all");
@@ -256,12 +267,17 @@ export function ComponentLibraryWorkspace({
   }, [banner]);
 
   const loadLibraries = useCallback(async () => {
+    const start = performance.now?.() ?? Date.now();
     try {
       const items = await listComponentLibraries(projectDir);
       setLibraries(items);
     } catch (error) {
       setLibraries([]);
       setBanner(String(error));
+    } finally {
+      const end = performance.now?.() ?? Date.now();
+      // eslint-disable-next-line no-console
+      console.log("[modai-prof] listComponentLibraries took", end - start, "ms");
     }
   }, [projectDir]);
 
@@ -274,6 +290,7 @@ export function ComponentLibraryWorkspace({
   const loadTypePage = useCallback(
     async (offset: number, append: boolean) => {
       setTypesBusy(true);
+      const start = performance.now?.() ?? Date.now();
       try {
         const result = await queryComponentLibraryTypes({
           projectDir,
@@ -296,21 +313,32 @@ export function ComponentLibraryWorkspace({
         setBanner(String(error));
       } finally {
         setTypesBusy(false);
+        const end = performance.now?.() ?? Date.now();
+        // eslint-disable-next-line no-console
+        console.log(
+          "[modai-prof] queryComponentLibraryTypes took",
+          end - start,
+          "ms, offset=",
+          offset,
+          "append=",
+          append
+        );
       }
     },
     [debouncedTypeQuery, enabledOnly, projectDir, scopeFilter, selectedLibraryId]
   );
 
   useEffect(() => {
-    void loadLibraries();
-  }, [loadLibraries]);
+    if (isActive) void loadLibraries();
+  }, [isActive, loadLibraries]);
 
   useEffect(() => {
+    if (!isActive) return;
     setSelectedKey(null);
     setDetail(null);
     setSource(null);
     void loadTypePage(0, false);
-  }, [loadTypePage]);
+  }, [isActive, loadTypePage]);
 
   const refreshWorkspace = useCallback(async () => {
     await loadLibraries();

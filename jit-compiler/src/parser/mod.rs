@@ -3,9 +3,9 @@ mod equation;
 mod expression;
 mod helpers;
 
+use crate::ast::*;
 use pest::Parser;
 use pest_derive::Parser;
-use crate::ast::*;
 
 #[derive(Parser)]
 #[grammar = "src/modelica.pest"]
@@ -14,11 +14,129 @@ pub struct ModelicaParser;
 pub fn parse(input: &str) -> Result<ClassItem, pest::error::Error<Rule>> {
     let mut pairs = ModelicaParser::parse(Rule::model_file, input)?;
     let program = pairs.next().unwrap();
-    let model_pair = program
+    let item_pair = program
         .into_inner()
-        .find(|p| p.as_rule() == Rule::model_definition)
-        .expect("model_file must contain model_definition");
-    parse_model(model_pair)
+        .find(|p| {
+            matches!(
+                p.as_rule(),
+                Rule::model_definition
+                    | Rule::short_class_definition
+                    | Rule::type_definition
+                    | Rule::connector_alias_definition
+            )
+        })
+        .expect("model_file must contain a top-level class item");
+    match item_pair.as_rule() {
+        Rule::model_definition => parse_model(item_pair),
+        Rule::short_class_definition | Rule::type_definition => {
+            // MSL: many Types/*.mo files are single short type definitions without enclosing package.mo.
+            // Represent as a minimal Model whose type_aliases include (self_name -> base_type).
+            let mut alias = String::new();
+            let mut base = String::new();
+            for p in item_pair.into_inner() {
+                match p.as_rule() {
+                    Rule::identifier => {
+                        if alias.is_empty() {
+                            alias = p.as_str().trim().to_string();
+                        }
+                    }
+                    Rule::type_name => {
+                        if base.is_empty() {
+                            base = p.as_str().trim().to_string();
+                        }
+                    }
+                    Rule::enumeration_type => {
+                        if base.is_empty() {
+                            base = "Integer".to_string();
+                        }
+                    }
+                    Rule::component_ref => {
+                        if base.is_empty() {
+                            base = p.as_str().trim().to_string();
+                        }
+                    }
+                    Rule::function_call => {
+                        if base.is_empty() {
+                            let mut it = p.into_inner();
+                            if let Some(name_pair) = it.next() {
+                                base = name_pair.as_str().trim().to_string();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let type_aliases = if !alias.is_empty() && !base.is_empty() {
+                vec![(alias.clone(), base)]
+            } else {
+                Vec::new()
+            };
+            Ok(ClassItem::Model(Model {
+                name: alias,
+                is_connector: false,
+                is_function: false,
+                is_record: false,
+                is_block: false,
+                extends: Vec::new(),
+                declarations: Vec::new(),
+                equations: Vec::new(),
+                algorithms: Vec::new(),
+                initial_equations: Vec::new(),
+                initial_algorithms: Vec::new(),
+                annotation: None,
+                inner_classes: Vec::new(),
+                is_operator_record: false,
+                type_aliases,
+                imports: Vec::new(),
+                external_info: None,
+            }))
+        }
+        Rule::connector_alias_definition => {
+            // Minimal connector alias definition at top-level; treat as type alias.
+            let mut alias = String::new();
+            let mut base = String::new();
+            for p in item_pair.into_inner() {
+                match p.as_rule() {
+                    Rule::identifier => {
+                        if alias.is_empty() {
+                            alias = p.as_str().trim().to_string();
+                        }
+                    }
+                    Rule::type_name => {
+                        if base.is_empty() {
+                            base = p.as_str().trim().to_string();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let type_aliases = if !alias.is_empty() && !base.is_empty() {
+                vec![(alias.clone(), base)]
+            } else {
+                Vec::new()
+            };
+            Ok(ClassItem::Model(Model {
+                name: alias,
+                is_connector: false,
+                is_function: false,
+                is_record: false,
+                is_block: false,
+                extends: Vec::new(),
+                declarations: Vec::new(),
+                equations: Vec::new(),
+                algorithms: Vec::new(),
+                initial_equations: Vec::new(),
+                initial_algorithms: Vec::new(),
+                annotation: None,
+                inner_classes: Vec::new(),
+                is_operator_record: false,
+                type_aliases,
+                imports: Vec::new(),
+                external_info: None,
+            }))
+        }
+        _ => parse_model(item_pair),
+    }
 }
 
 pub fn parse_expression_from_str(input: &str) -> Result<Expression, pest::error::Error<Rule>> {
@@ -64,6 +182,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
     let mut extends = Vec::new();
     let mut inner_classes = Vec::new();
     let mut type_aliases = Vec::new();
+    let mut imports: Vec<(String, String)> = Vec::new();
     let mut class_annotation: Option<String> = None;
     let mut external_info: Option<crate::ast::ExternalDecl> = None;
 
@@ -72,6 +191,37 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
             Rule::declaration_section => {
                 for decl_pair in pair.into_inner() {
                     match decl_pair.as_rule() {
+                        Rule::import_clause => {
+                            // Parse-only for now, but keep alias mapping for name resolution.
+                            let raw = decl_pair.as_str().trim().trim_end_matches(';').trim();
+                            // Supported forms:
+                            //   import Modelica.Blocks.Interfaces;
+                            //   import SI = Modelica.SIunits;
+                            let rest = raw.strip_prefix("import").unwrap_or(raw).trim();
+                            if let Some((a, b)) = rest.split_once('=') {
+                                let alias = a.trim().to_string();
+                                let qual = b.trim().trim_end_matches(';').trim().to_string();
+                                if !alias.is_empty() && !qual.is_empty() {
+                                    imports.push((alias, qual));
+                                }
+                            } else {
+                                let qual = rest.trim().trim_end_matches(';').trim().to_string();
+                                if !qual.is_empty() {
+                                    let alias = qual
+                                        .split('.')
+                                        .last()
+                                        .unwrap_or("")
+                                        .trim()
+                                        .to_string();
+                                    if !alias.is_empty() {
+                                        imports.push((alias, qual));
+                                    }
+                                }
+                            }
+                        }
+                        Rule::visibility_clause => {
+                            // Parse-only: ignore visibility sections (public/protected).
+                        }
                         Rule::type_definition => {
                             let mut type_id = String::new();
                             let mut base = String::new();
@@ -82,23 +232,165 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                             type_id = p.as_str().trim().to_string();
                                         }
                                     }
-                                    Rule::type_name => base = p.as_str().trim().to_string(),
+                                    Rule::type_name => {
+                                        if base.is_empty() {
+                                            base = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    Rule::function_call => {
+                                        if base.is_empty() {
+                                            let mut it = p.into_inner();
+                                            if let Some(name_pair) = it.next() {
+                                                base = name_pair.as_str().trim().to_string();
+                                            }
+                                        }
+                                    }
+                                    Rule::component_ref => {
+                                        if base.is_empty() {
+                                            base = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    Rule::enumeration_type => base = "Integer".to_string(),
                                     _ => {}
                                 }
                             }
                             if !type_id.is_empty() && !base.is_empty() {
+                                // Common MSL pattern: type X = Modelica.Icons.TypeReal(...);
+                                if base.contains("TypeInteger") {
+                                    base = "Integer".to_string();
+                                } else if base.contains("TypeBoolean") {
+                                    base = "Boolean".to_string();
+                                } else if base.contains("TypeString") {
+                                    base = "String".to_string();
+                                } else if base.contains("TypeReal") {
+                                    base = "Real".to_string();
+                                }
                                 type_aliases.push((type_id, base));
                             }
                         }
-                        Rule::model_definition => {
-                            match parse_model(decl_pair) {
-                                Ok(crate::ast::ClassItem::Model(m)) => inner_classes.push(m),
-                                Ok(crate::ast::ClassItem::Function(f)) => {
-                                    inner_classes.push(crate::ast::Model::from(f))
+                        Rule::short_class_definition => {
+                            let mut prefixes = String::new();
+                            let mut alias = String::new();
+                            let mut base = String::new();
+                            let mut rhs_is_type_name = false;
+                            for p in decl_pair.into_inner() {
+                                match p.as_rule() {
+                                    Rule::class_prefixes => {
+                                        if prefixes.is_empty() {
+                                            prefixes = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    Rule::identifier => {
+                                        if alias.is_empty() {
+                                            alias = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    Rule::type_name => {
+                                        if base.is_empty() {
+                                            rhs_is_type_name = true;
+                                            base = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    Rule::function_call => {
+                                        if base.is_empty() {
+                                            let mut it = p.into_inner();
+                                            if let Some(name_pair) = it.next() {
+                                                base = name_pair.as_str().trim().to_string();
+                                            }
+                                        }
+                                    }
+                                    Rule::component_ref => {
+                                        if base.is_empty() {
+                                            base = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    _ => {}
                                 }
-                                Err(e) => return Err(e),
+                            }
+                            if !alias.is_empty() && !base.is_empty() {
+                                if rhs_is_type_name {
+                                    // Keep short type aliases as parse-only type_aliases.
+                                    type_aliases.push((alias, base));
+                                } else {
+                                    // Short type definitions often use Icons.TypeReal(...) constructors.
+                                    // Treat them as primitive aliases so flatten can resolve them.
+                                    if prefixes.contains("type") {
+                                        let prim = if base.contains("TypeInteger") {
+                                            "Integer"
+                                        } else if base.contains("TypeBoolean") {
+                                            "Boolean"
+                                        } else if base.contains("TypeString") {
+                                            "String"
+                                        } else {
+                                            "Real"
+                                        };
+                                        type_aliases.push((alias, prim.to_string()));
+                                        continue;
+                                    }
+                                    // Short class definitions for model/package/block/etc. need to be loadable
+                                    // as inner classes (MSL).
+                                    let is_function = prefixes.contains("function");
+                                    let is_record = prefixes.contains("record");
+                                    let is_block = prefixes.contains("block");
+                                    let is_connector = prefixes.contains("connector");
+                                    let is_operator_record = prefixes.contains("operator") && prefixes.contains("record");
+                                    inner_classes.push(Model {
+                                        name: alias,
+                                        is_connector,
+                                        is_function,
+                                        is_record,
+                                        is_block,
+                                        extends: vec![crate::ast::ExtendsClause {
+                                            model_name: base.trim_start_matches('.').to_string(),
+                                            modifications: Vec::new(),
+                                        }],
+                                        declarations: Vec::new(),
+                                        equations: Vec::new(),
+                                        algorithms: Vec::new(),
+                                        initial_equations: Vec::new(),
+                                        initial_algorithms: Vec::new(),
+                                        annotation: None,
+                                        inner_classes: Vec::new(),
+                                        is_operator_record,
+                                        type_aliases: Vec::new(),
+                                        imports: Vec::new(),
+                                        external_info: None,
+                                    });
+                                }
                             }
                         }
+                        Rule::connector_alias_definition => {
+                            let mut alias = String::new();
+                            let mut base = String::new();
+                            for p in decl_pair.into_inner() {
+                                match p.as_rule() {
+                                    Rule::identifier => {
+                                        if alias.is_empty() {
+                                            alias = p.as_str().trim().to_string();
+                                        } else if base.is_empty() {
+                                            // type_name can also appear as identifier in some cases
+                                            // but we prefer type_name rule below.
+                                        }
+                                    }
+                                    Rule::type_name => {
+                                        if base.is_empty() {
+                                            base = p.as_str().trim().to_string();
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if !alias.is_empty() && !base.is_empty() {
+                                type_aliases.push((alias, base));
+                            }
+                        }
+                        Rule::model_definition => match parse_model(decl_pair) {
+                            Ok(crate::ast::ClassItem::Model(m)) => inner_classes.push(m),
+                            Ok(crate::ast::ClassItem::Function(f)) => {
+                                inner_classes.push(crate::ast::Model::from(f))
+                            }
+                            Err(e) => return Err(e),
+                        },
                         Rule::extends_clause => {
                             let ext_inner = decl_pair.into_inner();
                             let mut full_name = String::new();
@@ -107,7 +399,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             for token in ext_inner {
                                 match token.as_rule() {
                                     Rule::dotted_identifier => {
-                                        full_name = token.as_str().to_string();
+                                        full_name = token.as_str().trim_start_matches('.').to_string();
                                     }
                                     Rule::identifier => {
                                         if !full_name.is_empty() {
@@ -116,21 +408,21 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                         full_name.push_str(token.as_str());
                                     }
                                     Rule::modification_part => {
-                                        let mod_list = token.into_inner().next().unwrap().into_inner();
+                                        let mod_list =
+                                            token.into_inner().next().unwrap().into_inner();
                                         for mod_pair in mod_list {
-                                            let modification_pair = if mod_pair.as_rule()
-                                                == Rule::modification
-                                            {
-                                                mod_pair
-                                            } else {
-                                                match mod_pair
-                                                    .into_inner()
-                                                    .find(|p| p.as_rule() == Rule::modification)
-                                                {
-                                                    Some(p) => p,
-                                                    None => continue,
-                                                }
-                                            };
+                                            let modification_pair =
+                                                if mod_pair.as_rule() == Rule::modification {
+                                                    mod_pair
+                                                } else {
+                                                    match mod_pair
+                                                        .into_inner()
+                                                        .find(|p| p.as_rule() == Rule::modification)
+                                                    {
+                                                        Some(p) => p,
+                                                        None => continue,
+                                                    }
+                                                };
                                             let mod_inner: Vec<_> =
                                                 modification_pair.into_inner().collect();
                                             let mod_redeclare = mod_inner
@@ -140,8 +432,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                                 .iter()
                                                 .find(|p| p.as_rule() == Rule::type_name)
                                                 .map(|p| p.as_str().trim().to_string());
-                                            let mod_each =
-                                                mod_inner.iter().any(|p| p.as_str().trim() == "each");
+                                            let mod_each = mod_inner
+                                                .iter()
+                                                .any(|p| p.as_str().trim() == "each");
                                             let name_pair = mod_inner
                                                 .iter()
                                                 .find(|p| p.as_rule() == Rule::component_ref);
@@ -193,19 +486,28 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             while matches!(
                                 next_token.as_rule(),
                                 Rule::parameter_kw
+                                    | Rule::final_kw
                                     | Rule::constant_kw
                                     | Rule::flow_kw
+                                    | Rule::stream_kw
                                     | Rule::discrete_kw
                                     | Rule::input_kw
                                     | Rule::output_kw
+                                    | Rule::inner_kw
+                                    | Rule::outer_kw
+                                    | Rule::replaceable_kw
                             ) {
                                 match next_token.as_rule() {
                                     Rule::parameter_kw => is_parameter = true,
+                                    Rule::final_kw => {}
                                     Rule::constant_kw => is_parameter = true,
                                     Rule::flow_kw => is_flow = true,
+                                    Rule::stream_kw => {}
                                     Rule::discrete_kw => is_discrete = true,
                                     Rule::input_kw => is_input = true,
                                     Rule::output_kw => is_output = true,
+                                    Rule::inner_kw | Rule::outer_kw => {}
+                                    Rule::replaceable_kw => is_replaceable = true,
                                     _ => {}
                                 }
                                 next_token = decl_inner.next().unwrap();
@@ -215,19 +517,26 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 next_token = decl_inner.next().unwrap();
                             }
                             let type_name = next_token.as_str().trim().to_string();
-                            let var_name = decl_inner.next().unwrap().as_str().trim().to_string();
+                            let type_name = type_name.trim_start_matches('.').to_string();
 
                             let mut array_size = None;
                             if let Some(token) = decl_inner.peek() {
                                 if token.as_rule() == Rule::array_subscript {
-                                    let mut sub_inner =
-                                        decl_inner.next().unwrap().into_inner();
+                                    let mut sub_inner = decl_inner.next().unwrap().into_inner();
                                     let dim_inner = sub_inner.next().unwrap();
                                     if dim_inner.as_rule() == Rule::expression {
-                                        array_size =
-                                            Some(expression::parse_expression(dim_inner));
+                                        array_size = Some(expression::parse_expression(dim_inner));
                                     }
-                                    // Rule::array_dim_unspecified ([:]) => leave array_size None
+                                }
+                            }
+                            let var_name = decl_inner.next().unwrap().as_str().trim().to_string();
+                            if let Some(token) = decl_inner.peek() {
+                                if token.as_rule() == Rule::array_subscript {
+                                    let mut sub_inner = decl_inner.next().unwrap().into_inner();
+                                    let dim_inner = sub_inner.next().unwrap();
+                                    if dim_inner.as_rule() == Rule::expression {
+                                        array_size = Some(expression::parse_expression(dim_inner));
+                                    }
                                 }
                             }
 
@@ -235,41 +544,41 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             let mut modifications = Vec::new();
                             let mut decl_annotation: Option<String> = None;
                             let mut is_rest = false;
+                            let mut decl_condition: Option<crate::ast::Expression> = None;
 
                             for token in decl_inner {
                                 match token.as_rule() {
                                     Rule::annotation => {
-                                        decl_annotation =
-                                            Some(parse_annotation_to_string(&token));
+                                        decl_annotation = Some(parse_annotation_to_string(&token));
+                                    }
+                                    Rule::conditional_clause => {
+                                        let expr_pair = token.into_inner().next().unwrap();
+                                        decl_condition =
+                                            Some(expression::parse_expression(expr_pair));
                                     }
                                     Rule::value_assignment => {
                                         let expr_pair = token.into_inner().next().unwrap();
-                                        start_value =
-                                            Some(expression::parse_expression(expr_pair));
+                                        start_value = Some(expression::parse_expression(expr_pair));
                                     }
                                     Rule::rest_param => {
                                         is_rest = true;
                                     }
                                     Rule::modification_part => {
-                                        let mod_list = token
-                                            .into_inner()
-                                            .next()
-                                            .unwrap()
-                                            .into_inner();
+                                        let mod_list =
+                                            token.into_inner().next().unwrap().into_inner();
                                         for mod_pair in mod_list {
-                                            let modification_pair = if mod_pair.as_rule()
-                                                == Rule::modification
-                                            {
-                                                mod_pair
-                                            } else {
-                                                match mod_pair
-                                                    .into_inner()
-                                                    .find(|p| p.as_rule() == Rule::modification)
-                                                {
-                                                    Some(p) => p,
-                                                    None => continue,
-                                                }
-                                            };
+                                            let modification_pair =
+                                                if mod_pair.as_rule() == Rule::modification {
+                                                    mod_pair
+                                                } else {
+                                                    match mod_pair
+                                                        .into_inner()
+                                                        .find(|p| p.as_rule() == Rule::modification)
+                                                    {
+                                                        Some(p) => p,
+                                                        None => continue,
+                                                    }
+                                                };
                                             let mod_inner: Vec<_> =
                                                 modification_pair.into_inner().collect();
                                             let mod_redeclare = mod_inner
@@ -279,8 +588,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                                 .iter()
                                                 .find(|p| p.as_rule() == Rule::type_name)
                                                 .map(|p| p.as_str().trim().to_string());
-                                            let mod_each =
-                                                mod_inner.iter().any(|p| p.as_str().trim() == "each");
+                                            let mod_each = mod_inner
+                                                .iter()
+                                                .any(|p| p.as_str().trim() == "each");
                                             let name_pair = mod_inner
                                                 .iter()
                                                 .find(|p| p.as_rule() == Rule::component_ref);
@@ -331,6 +641,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 modifications,
                                 is_rest,
                                 annotation: decl_annotation,
+                                condition: decl_condition,
                             });
                         }
                         _ => {}
@@ -350,10 +661,8 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                         }
                         Rule::connect_clause => {
                             let mut conn_inner = inner_stmt.into_inner();
-                            let a_expr =
-                                expression::parse_expression(conn_inner.next().unwrap());
-                            let b_expr =
-                                expression::parse_expression(conn_inner.next().unwrap());
+                            let a_expr = expression::parse_expression(conn_inner.next().unwrap());
+                            let b_expr = expression::parse_expression(conn_inner.next().unwrap());
                             equations.push(Equation::Connect(a_expr, b_expr));
                         }
                         Rule::multi_assign_equation => {
@@ -370,23 +679,37 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                         }
                         Rule::reinit_clause => {
                             let mut inner = inner_stmt.into_inner();
-                            let var_expr =
-                                expression::parse_component_ref(inner.next().unwrap());
-                            let val_expr =
-                                expression::parse_expression(inner.next().unwrap());
+                            let var_expr = expression::parse_component_ref(inner.next().unwrap());
+                            let val_expr = expression::parse_expression(inner.next().unwrap());
                             let var_name = helpers::expr_to_string(var_expr);
                             equations.push(Equation::Reinit(var_name, val_expr));
                         }
                         Rule::assert_stmt => {
-                            let mut inner = inner_stmt.into_inner();
-                            let cond = expression::parse_expression(inner.next().unwrap());
-                            let msg = expression::parse_expression(inner.next().unwrap());
+                            let mut args: Vec<Expression> = Vec::new();
+                            if let Some(arg_list) = inner_stmt.into_inner().next() {
+                                for item in arg_list.into_inner() {
+                                    match item.as_rule() {
+                                        Rule::named_arg => {
+                                            let mut ni = item.into_inner();
+                                            let name = ni.next().unwrap().as_str().to_string();
+                                            let val = expression::parse_expression(ni.next().unwrap());
+                                            args.push(Expression::Call(
+                                                "named".to_string(),
+                                                vec![Expression::StringLiteral(name), val],
+                                            ));
+                                        }
+                                        Rule::expression => args.push(expression::parse_expression(item)),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            let cond = args.get(0).cloned().unwrap_or(Expression::Number(0.0));
+                            let msg = args.get(1).cloned().unwrap_or(Expression::Number(0.0));
                             equations.push(Equation::Assert(cond, msg));
                         }
                         Rule::terminate_stmt => {
                             let mut inner = inner_stmt.into_inner();
-                            let msg =
-                                expression::parse_expression(inner.next().unwrap());
+                            let msg = expression::parse_expression(inner.next().unwrap());
                             equations.push(Equation::Terminate(msg));
                         }
                         _ => {}
@@ -406,10 +729,8 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                         }
                         Rule::connect_clause => {
                             let mut conn_inner = inner_stmt.into_inner();
-                            let a_expr =
-                                expression::parse_expression(conn_inner.next().unwrap());
-                            let b_expr =
-                                expression::parse_expression(conn_inner.next().unwrap());
+                            let a_expr = expression::parse_expression(conn_inner.next().unwrap());
+                            let b_expr = expression::parse_expression(conn_inner.next().unwrap());
                             initial_equations.push(Equation::Connect(a_expr, b_expr));
                         }
                         Rule::multi_assign_equation => {
@@ -420,32 +741,44 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                             initial_equations.push(equation::parse_for_loop(inner_stmt));
                         }
                         Rule::when_equation => {
-                            initial_equations
-                                .push(equation::parse_when_equation(inner_stmt));
+                            initial_equations.push(equation::parse_when_equation(inner_stmt));
                         }
                         Rule::if_equation => {
-                            initial_equations
-                                .push(equation::parse_if_equation(inner_stmt));
+                            initial_equations.push(equation::parse_if_equation(inner_stmt));
                         }
                         Rule::reinit_clause => {
                             let mut inner = inner_stmt.into_inner();
-                            let var_expr =
-                                expression::parse_component_ref(inner.next().unwrap());
-                            let val_expr =
-                                expression::parse_expression(inner.next().unwrap());
+                            let var_expr = expression::parse_component_ref(inner.next().unwrap());
+                            let val_expr = expression::parse_expression(inner.next().unwrap());
                             let var_name = helpers::expr_to_string(var_expr);
                             initial_equations.push(Equation::Reinit(var_name, val_expr));
                         }
                         Rule::assert_stmt => {
-                            let mut inner = inner_stmt.into_inner();
-                            let cond = expression::parse_expression(inner.next().unwrap());
-                            let msg = expression::parse_expression(inner.next().unwrap());
+                            let mut args: Vec<Expression> = Vec::new();
+                            if let Some(arg_list) = inner_stmt.into_inner().next() {
+                                for item in arg_list.into_inner() {
+                                    match item.as_rule() {
+                                        Rule::named_arg => {
+                                            let mut ni = item.into_inner();
+                                            let name = ni.next().unwrap().as_str().to_string();
+                                            let val = expression::parse_expression(ni.next().unwrap());
+                                            args.push(Expression::Call(
+                                                "named".to_string(),
+                                                vec![Expression::StringLiteral(name), val],
+                                            ));
+                                        }
+                                        Rule::expression => args.push(expression::parse_expression(item)),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            let cond = args.get(0).cloned().unwrap_or(Expression::Number(0.0));
+                            let msg = args.get(1).cloned().unwrap_or(Expression::Number(0.0));
                             initial_equations.push(Equation::Assert(cond, msg));
                         }
                         Rule::terminate_stmt => {
                             let mut inner = inner_stmt.into_inner();
-                            let msg =
-                                expression::parse_expression(inner.next().unwrap());
+                            let msg = expression::parse_expression(inner.next().unwrap());
                             initial_equations.push(Equation::Terminate(msg));
                         }
                         _ => {}
@@ -522,6 +855,7 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
             inner_classes,
             is_operator_record,
             type_aliases,
+            imports,
             external_info: None,
         }))
     }

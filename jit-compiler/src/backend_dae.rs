@@ -179,10 +179,7 @@ pub fn build_simulation_dae(
     let param_set: HashSet<&str> = param_vars.iter().map(String::as_str).collect();
     let input_set: HashSet<&str> = input_var_names.iter().map(String::as_str).collect();
 
-    let derivatives: Vec<String> = state_vars
-        .iter()
-        .map(|s| format!("der_{}", s))
-        .collect();
+    let derivatives: Vec<String> = state_vars.iter().map(|s| format!("der_{}", s)).collect();
 
     let mut algebraic = Vec::new();
     for v in output_vars {
@@ -212,7 +209,12 @@ pub fn build_simulation_dae(
     let mut blocks: Vec<BlockInfo> = Vec::new();
     for eq in sorted_algebraic_equations {
         match eq {
-            Equation::Simple(_, _) | Equation::For(_, _, _, _) | Equation::If(_, _, _, _) | Equation::Assert(_, _) | Equation::Terminate(_) | Equation::MultiAssign(_, _) => {
+            Equation::Simple(_, _)
+            | Equation::For(_, _, _, _)
+            | Equation::If(_, _, _, _)
+            | Equation::Assert(_, _)
+            | Equation::Terminate(_)
+            | Equation::MultiAssign(_, _) => {
                 single_equation_count += 1;
                 blocks.push(BlockInfo {
                     block_type: BlockType::Single,
@@ -221,7 +223,11 @@ pub fn build_simulation_dae(
                     residual_count: None,
                 });
             }
-            Equation::SolvableBlock { unknowns, residuals, .. } => {
+            Equation::SolvableBlock {
+                unknowns,
+                residuals,
+                ..
+            } => {
                 torn_block_count += 1;
                 torn_unknowns_total += unknowns.len();
                 blocks.push(BlockInfo {

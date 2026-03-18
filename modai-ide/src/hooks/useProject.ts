@@ -121,6 +121,18 @@ export function useProject() {
     }
   }, [projectDir]);
 
+  const refreshMoTree = useCallback(async () => {
+    if (!projectDir) return;
+    try {
+      const tree = (await listMoTree(projectDir)) as MoTreeEntry;
+      setMoTree(tree);
+      setMoFiles(flattenMoTree(tree));
+    } catch {
+      setMoTree(null);
+      setMoFiles([]);
+    }
+  }, [projectDir]);
+
   return {
     projectDir,
     setProjectDir,
@@ -134,5 +146,6 @@ export function useProject() {
     openProject,
     setProjectDirFromPath,
     refreshGitStatus,
+    refreshMoTree,
   };
 }

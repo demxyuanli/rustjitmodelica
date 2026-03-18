@@ -1,8 +1,8 @@
-use std::collections::HashSet;
 use crate::ast::Equation;
+use std::collections::HashSet;
 
-use super::variable_collection::{extract_unknowns, collect_vars_eq};
 use super::blt::eliminate_aliases;
+use super::variable_collection::{collect_vars_eq, extract_unknowns};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

@@ -58,6 +58,7 @@ export function useLayout() {
   );
   const [showProjectMenu, setShowProjectMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [openSettingsToGroup, setOpenSettingsToGroup] = useState<string | null>(null);
   const [defaultWorkspace, setDefaultWorkspaceState] = useState<DefaultWorkspace>(() =>
     readPref(
       PREFS_KEYS.defaultWorkspace,
@@ -260,6 +261,7 @@ export function useLayout() {
     graphExpanded, setGraphExpanded,
     showProjectMenu, setShowProjectMenu,
     showSettings, setShowSettings,
+    openSettingsToGroup, setOpenSettingsToGroup,
     workspaceMode, setWorkspaceMode,
     theme, setTheme,
     fontUi, setFontUi,

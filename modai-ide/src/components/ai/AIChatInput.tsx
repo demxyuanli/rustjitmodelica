@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { t } from "../../i18n";
 import { AppIcon } from "../Icon";
 import type { AgentMode } from "../../hooks/useAI";
 import { getAgentModeLabel } from "./AIChatHeader";
+import { filterEnabledModels } from "../../constants/aiModels";
 
 interface AIChatInputProps {
   aiPrompt: string;
@@ -24,6 +25,8 @@ interface AIChatInputProps {
   dailyTokenUsed: number;
   dailyTokenLimit: number;
   onSend: () => void;
+  /** If set, only these model IDs are shown in the dropdown. Undefined = all built-in. */
+  enabledModelIds?: string[] | null;
 }
 
 export function AIChatInput({
@@ -45,11 +48,16 @@ export function AIChatInput({
   dailyTokenUsed,
   dailyTokenLimit,
   onSend,
+  enabledModelIds,
 }: AIChatInputProps) {
+  const modelOptions = useMemo(() => filterEnabledModels(enabledModelIds), [enabledModelIds]);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [modeMenuRect, setModeMenuRect] = useState<{ bottom: number; left: number } | null>(null);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [modelMenuRect, setModelMenuRect] = useState<{ bottom: number; left: number } | null>(null);
 
   const adjustInputHeight = useCallback(() => {
     const el = inputRef.current;
@@ -101,8 +109,43 @@ export function AIChatInput({
     return () => window.removeEventListener("mousedown", onPointer, true);
   }, [modeMenuOpen]);
 
+  useEffect(() => {
+    if (!modelMenuOpen) {
+      setModelMenuRect(null);
+      return;
+    }
+    const el = modelTriggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setModelMenuRect({ bottom: window.innerHeight - rect.top + 6, left: rect.left });
+  }, [modelMenuOpen]);
+
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      const el = modelTriggerRef.current;
+      const target = e.target as Node;
+      if (el?.contains(target)) return;
+      const menu = document.getElementById("agent-model-menu");
+      if (menu?.contains(target)) return;
+      setModelMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onPointer, true);
+    return () => window.removeEventListener("mousedown", onPointer, true);
+  }, [modelMenuOpen]);
+
   const tokenPercent = dailyTokenLimit > 0 ? Math.min(100, (dailyTokenUsed / dailyTokenLimit) * 100) : 0;
   const tokenBarColor = tokenPercent > 80 ? "var(--danger-text)" : tokenPercent > 50 ? "var(--warning-text)" : "var(--accent)";
+
+  const currentModel = useMemo(() => {
+    const found = modelOptions.find((o) => o.id === model);
+    return found ?? modelOptions[0] ?? { id: "deepseek-chat", label: "deepseek-chat", provider: "deepseek" as const };
+  }, [modelOptions, model]);
+
+  useEffect(() => {
+    if (modelOptions.length === 0) return;
+    if (!modelOptions.some((o) => o.id === model)) setModel(modelOptions[0].id);
+  }, [modelOptions, model, setModel]);
 
   return (
     <div className="agent-input-shell">
@@ -171,13 +214,62 @@ export function AIChatInput({
                 document.body
               )}
           </div>
-          <select
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="agent-input-model-select"
-          >
-            <option value="deepseek-chat">deepseek</option>
-          </select>
+          <div className="relative">
+            <button
+              ref={modelTriggerRef}
+              type="button"
+              onClick={() => setModelMenuOpen((v) => !v)}
+              className="agent-input-mode-btn"
+              title={currentModel.label}
+            >
+              <span className="truncate max-w-[140px]">{currentModel.label}</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {modelMenuOpen &&
+              modelMenuRect &&
+              createPortal(
+                <div
+                  id="agent-model-menu"
+                  className="agent-mode-menu-portal agent-model-menu-portal"
+                  style={{
+                    position: "fixed",
+                    bottom: modelMenuRect.bottom,
+                    left: modelMenuRect.left,
+                    zIndex: 10000,
+                  }}
+                >
+                  {([
+                    ["deepseek", t("aiModelProviderDeepSeek")],
+                    ["grok", t("aiModelProviderGrok")],
+                    ["ollama", t("aiModelProviderOllama")],
+                  ] as const).map(([provider, label]) => {
+                    const items = modelOptions.filter((m) => m.provider === provider);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={provider}>
+                        <div className="agent-menu-section-label">{label}</div>
+                        {items.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            className={`agent-mode-menu-item ${m.id === model ? "agent-mode-menu-item-active" : ""}`}
+                            onClick={() => {
+                              setModel(m.id);
+                              setModelMenuOpen(false);
+                            }}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>,
+                document.body
+              )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {(projectDir || repoRoot) && (
