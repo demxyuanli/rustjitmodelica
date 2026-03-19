@@ -50,13 +50,11 @@ pub fn compile_algorithm_stmt(
                         .ins()
                         .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
                 }
-                if !ctx.stack_slots.contains_key(name) {
-                    if let Some(idx) = ctx.discrete_index(name) {
-                        let offset = (idx * 8) as i32;
-                        builder
-                            .ins()
-                            .store(MemFlags::new(), val, ctx.discrete_ptr, offset);
-                    }
+                if let Some(idx) = ctx.discrete_index(name) {
+                    let offset = (idx * 8) as i32;
+                    builder
+                        .ins()
+                        .store(MemFlags::new(), val, ctx.discrete_ptr, offset);
                 }
             } else if matches!(lhs, Expression::ArrayLiteral(_)) {
                 // Validation-only: ignore nonsensical array-literal LHS assignments that can

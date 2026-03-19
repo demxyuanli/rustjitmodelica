@@ -187,7 +187,8 @@ range_expression = { logical_or ~ (":" ~ logical_or)+ }
 if_expression = { "if" ~ expression ~ "then" ~ expression ~ "else" ~ expression }
 
 // Iterator expression used in reductions, e.g. sum(expr for i in 1:N)
-iterator_expression = { logical_or ~ "for" ~ identifier ~ "in" ~ (range | expression) }
+iterator_clause = { identifier ~ "in" ~ (range | expression) }
+iterator_expression = { logical_or ~ "for" ~ iterator_clause ~ ("," ~ iterator_clause)* }
 
 logical_or = { logical_and ~ (or_op ~ logical_and)* }
 logical_and = { relation ~ (and_op ~ relation)* }
@@ -209,7 +210,7 @@ string_concat = { string_literal ~ (WHITESPACE* ~ string_literal)+ }
 assert_call = { "assert" ~ "(" ~ arg_list ~ ")" }
 terminate_call = { "terminate" ~ "(" ~ expression ~ ")" }
 
-array_comprehension = { "{" ~ expression ~ "for" ~ identifier ~ "in" ~ (range | expression) ~ "}" }
+array_comprehension = { "{" ~ expression ~ "for" ~ iterator_clause ~ ("," ~ iterator_clause)* ~ "}" }
 array_literal = { "{" ~ expression ~ ("," ~ expression)* ~ "}" }
 
 component_ref = { "."? ~ identifier ~ (array_subscript | member_access)* }

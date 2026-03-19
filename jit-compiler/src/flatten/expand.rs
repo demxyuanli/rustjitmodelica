@@ -25,6 +25,33 @@ impl super::Flattener {
                     let rhs_sub = self.substitute_stack(rhs, context_stack);
                     let lhs_pre = prefix_expression(&lhs_sub, prefix);
                     let rhs_pre = prefix_expression(&rhs_sub, prefix);
+                    if let (Expression::ArrayLiteral(lhs_items), Expression::ArrayLiteral(rhs_items)) =
+                        (&lhs_pre, &rhs_pre)
+                    {
+                        if lhs_items.len() == rhs_items.len() {
+                            for (lhs_i, rhs_i) in lhs_items.iter().zip(rhs_items.iter()) {
+                                target
+                                    .equations
+                                    .push(Equation::Simple(lhs_i.clone(), rhs_i.clone()));
+                            }
+                            continue;
+                        }
+                    }
+                    if let (Expression::Der(lhs_arg), Expression::ArrayLiteral(rhs_items)) =
+                        (&lhs_pre, &rhs_pre)
+                    {
+                        if let Expression::ArrayLiteral(lhs_items) = lhs_arg.as_ref() {
+                            if lhs_items.len() == rhs_items.len() {
+                                for (lhs_i, rhs_i) in lhs_items.iter().zip(rhs_items.iter()) {
+                                    target.equations.push(Equation::Simple(
+                                        Expression::Der(Box::new(lhs_i.clone())),
+                                        rhs_i.clone(),
+                                    ));
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     if let Expression::Variable(name) = &lhs_pre {
                         if let Some(&size) = target.array_sizes.get(name) {
                             for i in 1..=size {
@@ -339,6 +366,57 @@ impl super::Flattener {
                 }
                 Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
                     let cond_sub = self.substitute_stack(cond, context_stack);
+                    if let Some(v) = eval_const_expr(&cond_sub) {
+                        if v != 0.0 {
+                            self.expand_equation_list(
+                                then_eqs,
+                                prefix,
+                                target,
+                                context_stack,
+                                instances,
+                                when_condition.clone(),
+                            );
+                            continue;
+                        }
+                        let mut branch_taken = false;
+                        let mut all_elseif_const = true;
+                        for (c, eb) in elseif_list {
+                            let c_sub = self.substitute_stack(c, context_stack);
+                            if let Some(cv) = eval_const_expr(&c_sub) {
+                                if cv != 0.0 {
+                                    self.expand_equation_list(
+                                        eb,
+                                        prefix,
+                                        target,
+                                        context_stack,
+                                        instances,
+                                        when_condition.clone(),
+                                    );
+                                    branch_taken = true;
+                                    break;
+                                }
+                            } else {
+                                all_elseif_const = false;
+                                break;
+                            }
+                        }
+                        if branch_taken {
+                            continue;
+                        }
+                        if all_elseif_const {
+                            if let Some(eqs) = else_eqs {
+                                self.expand_equation_list(
+                                    eqs,
+                                    prefix,
+                                    target,
+                                    context_stack,
+                                    instances,
+                                    when_condition.clone(),
+                                );
+                            }
+                            continue;
+                        }
+                    }
                     let mut temp_then = Vec::new();
                     let mut temp_alg = Vec::new();
                     let mut temp_conn = Vec::new();

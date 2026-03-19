@@ -114,6 +114,7 @@ impl<'a> System<'a> {
         states: &mut [f64],
         derivs: &mut [f64],
     ) -> Result<(), i32> {
+        let mut scratch_discrete = self.discrete.to_vec();
         let mut scratch_when = vec![0.0; self.when_states.len()];
         let mut scratch_crossings = vec![0.0; self.crossings.len()];
         let mut _fallback_outputs = None::<Vec<f64>>;
@@ -130,7 +131,7 @@ impl<'a> System<'a> {
             let status = (self.calc_derivs)(
                 time,
                 states.as_mut_ptr(),
-                self.discrete.as_mut_ptr(),
+                scratch_discrete.as_mut_ptr(),
                 derivs.as_mut_ptr(),
                 self.params.as_ptr(),
                 out_ptr,

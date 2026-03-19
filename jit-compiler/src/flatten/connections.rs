@@ -6,6 +6,41 @@ use crate::diag::SourceLocation;
 use crate::loader::ModelLoader;
 use std::collections::{HashMap, HashSet};
 
+fn has_connector_members(path: &str, flat: &FlattenedModel) -> bool {
+    let prefix = format!("{}_", path);
+    flat.declarations.iter().any(|decl| decl.name.starts_with(&prefix))
+}
+
+fn connector_debug_candidates(path: &str, flat: &FlattenedModel) -> Vec<String> {
+    let mut prefixes = vec![path.to_string()];
+    if let Some((base, idx)) = path.rsplit_once('_') {
+        if idx.parse::<usize>().is_ok() {
+            prefixes.push(base.to_string());
+        }
+    }
+    let mut out = Vec::new();
+    for prefix in prefixes {
+        let instance_prefix = format!("{}_", prefix);
+        for key in flat.instances.keys() {
+            if key == &prefix || key.starts_with(&instance_prefix) {
+                out.push(format!("instance:{}", key));
+            }
+        }
+        for decl in &flat.declarations {
+            if decl.name == prefix || decl.name.starts_with(&instance_prefix) {
+                out.push(format!("decl:{}", decl.name));
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    out.sort();
+    out.dedup();
+    out.truncate(8);
+    out
+}
+
 fn equations_for_connections(
     flat: &FlattenedModel,
     connections: &[(String, String)],
@@ -14,7 +49,7 @@ fn equations_for_connections(
     let mut flow_adj: HashMap<String, Vec<String>> = HashMap::new();
     let mut flow_vars = HashSet::new();
     for (a_path, b_path) in connections {
-        if let Some(_type_name) = flat.instances.get(a_path) {
+        if flat.instances.contains_key(a_path) || has_connector_members(a_path, flat) {
             let prefix_a = format!("{}_", a_path);
             let prefix_b = format!("{}_", b_path);
             for decl in &flat.declarations {
@@ -149,21 +184,33 @@ pub fn resolve_connections(
         } else {
             if !loader.quiet {
                 if type_a.is_none() {
+                    let cands = connector_debug_candidates(a_path, flat);
                     eprintln!(
-                        "Warning: Could not determine type for connector '{}' (path in model)",
-                        a_path
+                        "Warning: Could not determine type for connector '{}' (path in model){}",
+                        a_path,
+                        if cands.is_empty() {
+                            String::new()
+                        } else {
+                            format!("; nearby={}", cands.join(", "))
+                        }
                     );
                 }
                 if type_b.is_none() {
+                    let cands = connector_debug_candidates(b_path, flat);
                     eprintln!(
-                        "Warning: Could not determine type for connector '{}' (path in model)",
-                        b_path
+                        "Warning: Could not determine type for connector '{}' (path in model){}",
+                        b_path,
+                        if cands.is_empty() {
+                            String::new()
+                        } else {
+                            format!("; nearby={}", cands.join(", "))
+                        }
                     );
                 }
             }
         }
 
-        if let Some(_type_name) = flat.instances.get(a_path) {
+        if flat.instances.contains_key(a_path) || has_connector_members(a_path, flat) {
             let prefix_a = format!("{}_", a_path);
             let prefix_b = format!("{}_", b_path);
 
@@ -218,7 +265,11 @@ pub fn resolve_connections(
             }
             if !found {
                 if !loader.quiet {
+                    let cands = connector_debug_candidates(a_path, flat);
                     eprintln!("Warning: Connect involving unknown variable '{}'. Assuming potential equality.", a_path);
+                    if !cands.is_empty() {
+                        eprintln!("  Nearby connector candidates: {}", cands.join(", "));
+                    }
                 }
                 potential_eqs.push(Equation::Simple(
                     Expression::Variable(a_path.clone()),
@@ -319,6 +370,9 @@ fn find_connector_type(path: &str, flat: &FlattenedModel) -> Option<String> {
         if decl.name == path {
             return Some(decl.type_name.clone());
         }
+    }
+    if has_connector_members(path, flat) {
+        return Some("connector".to_string());
     }
     None
 }

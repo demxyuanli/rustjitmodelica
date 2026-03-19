@@ -1,4 +1,4 @@
-use super::types::ArrayInfo;
+use super::types::{ArrayInfo, ArrayType};
 use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
@@ -34,6 +34,7 @@ pub struct TranslationContext<'a> {
     pub output_vars: &'a [String],
     pub state_var_index: &'a HashMap<String, usize>,
     pub discrete_var_index: &'a HashMap<String, usize>,
+    pub param_var_index: &'a HashMap<String, usize>,
     pub output_var_index: &'a HashMap<String, usize>,
 
     /// When set, JIT writes residual and tearing value on Newton failure (status 2) for diagnostics.
@@ -104,6 +105,7 @@ impl<'a> TranslationContext<'a> {
         output_vars: &'a [String],
         state_var_index: &'a HashMap<String, usize>,
         discrete_var_index: &'a HashMap<String, usize>,
+        param_var_index: &'a HashMap<String, usize>,
         output_var_index: &'a HashMap<String, usize>,
         diag_residual_ptr: Option<Value>,
         diag_x_ptr: Option<Value>,
@@ -133,6 +135,7 @@ impl<'a> TranslationContext<'a> {
             output_vars,
             state_var_index,
             discrete_var_index,
+            param_var_index,
             output_var_index,
             diag_residual_ptr,
             diag_x_ptr,
@@ -151,5 +154,53 @@ impl<'a> TranslationContext<'a> {
     }
     pub fn output_index(&self, name: &str) -> Option<usize> {
         self.output_var_index.get(name).copied()
+    }
+    pub fn param_index(&self, name: &str) -> Option<usize> {
+        self.param_var_index.get(name).copied()
+    }
+    pub fn array_storage(&self, name: &str) -> Option<(ArrayType, usize)> {
+        self.array_info
+            .get(name)
+            .map(|info| (info.array_type, info.start_index))
+            .or_else(|| {
+                let first = format!("{}_1", name);
+                self.state_index(&first)
+                    .map(|start_index| (ArrayType::State, start_index))
+                    .or_else(|| self.discrete_index(&first).map(|start_index| (ArrayType::Discrete, start_index)))
+                    .or_else(|| self.param_index(&first).map(|start_index| (ArrayType::Parameter, start_index)))
+                    .or_else(|| self.output_index(&first).map(|start_index| (ArrayType::Output, start_index)))
+                    .or_else(|| self.state_index(name).map(|start_index| (ArrayType::State, start_index)))
+                    .or_else(|| self.discrete_index(name).map(|start_index| (ArrayType::Discrete, start_index)))
+                    .or_else(|| self.param_index(name).map(|start_index| (ArrayType::Parameter, start_index)))
+                    .or_else(|| self.output_index(name).map(|start_index| (ArrayType::Output, start_index)))
+            })
+    }
+    pub fn array_len(&self, name: &str) -> Option<usize> {
+        if let Some(info) = self.array_info.get(name) {
+            return Some(info.size);
+        }
+        if self.state_index(name).is_some()
+            || self.discrete_index(name).is_some()
+            || self.param_index(name).is_some()
+            || self.output_index(name).is_some()
+        {
+            return Some(1);
+        }
+        let mut len = 0usize;
+        loop {
+            let elem_name = format!("{}_{}", name, len + 1);
+            let exists = self.state_index(&elem_name).is_some()
+                || self.discrete_index(&elem_name).is_some()
+                || self.param_index(&elem_name).is_some()
+                || self.output_index(&elem_name).is_some();
+            if !exists {
+                break;
+            }
+            len += 1;
+            if len >= 100_000 {
+                break;
+            }
+        }
+        if len > 0 { Some(len) } else { None }
     }
 }

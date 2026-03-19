@@ -193,6 +193,11 @@ impl Jit {
                 .enumerate()
                 .map(|(i, s)| (s.clone(), i))
                 .collect();
+            let param_var_index: HashMap<String, usize> = param_vars
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (s.clone(), i))
+                .collect();
             let output_var_index: HashMap<String, usize> = output_vars
                 .iter()
                 .enumerate()
@@ -225,6 +230,7 @@ impl Jit {
                 output_vars,
                 &state_var_index,
                 &discrete_var_index,
+                &param_var_index,
                 &output_var_index,
                 diag_res,
                 diag_x,
@@ -304,6 +310,7 @@ impl Jit {
         let array_info = HashMap::new();
         let state_var_index = HashMap::new();
         let discrete_var_index = HashMap::new();
+        let param_var_index = HashMap::new();
         let output_var_index = HashMap::new();
         let state_vars: &[String] = &[];
         let discrete_vars: &[String] = &[];
@@ -351,6 +358,7 @@ impl Jit {
                 output_vars,
                 &state_var_index,
                 &discrete_var_index,
+                &param_var_index,
                 &output_var_index,
                 None,
                 None,

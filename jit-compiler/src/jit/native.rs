@@ -1,6 +1,8 @@
 use cranelift_jit::JITBuilder;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::sparse_solve::CsrMatrix;
+
 // F4-4: assert/terminate simulation behavior
 static TERMINATE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -68,6 +70,14 @@ extern "C" fn modelica_boolean(x: f64) -> f64 {
         1.0
     } else {
         0.0
+    }
+}
+
+extern "C" fn modelica_not(x: f64) -> f64 {
+    if x != 0.0 {
+        0.0
+    } else {
+        1.0
     }
 }
 
@@ -140,6 +150,74 @@ extern "C" fn rustmodlica_solve_linear_n(
     }
     unsafe {
         std::ptr::copy_nonoverlapping(b.as_ptr(), dx, n_usize);
+    }
+    0
+}
+
+#[allow(clippy::cast_possible_truncation)]
+extern "C" fn rustmodlica_solve_linear_csr(
+    n: i32,
+    nnz: i32,
+    row_ptr: *const i32,
+    col_idx: *const i32,
+    values: *const f64,
+    r: *const f64,
+    dx: *mut f64,
+) -> i32 {
+    if n <= 0
+        || nnz < 0
+        || row_ptr.is_null()
+        || col_idx.is_null()
+        || values.is_null()
+        || r.is_null()
+        || dx.is_null()
+    {
+        return -1;
+    }
+
+    let n_usize = n as usize;
+    let nnz_usize = nnz as usize;
+    let mut row_ptr_vec = vec![0usize; n_usize + 1];
+    let mut col_idx_vec = vec![0usize; nnz_usize];
+    let mut values_vec = vec![0.0; nnz_usize];
+    let mut rhs = vec![0.0; n_usize];
+
+    unsafe {
+        for (idx, row) in row_ptr_vec.iter_mut().enumerate() {
+            let raw = *row_ptr.add(idx);
+            if raw < 0 {
+                return -1;
+            }
+            *row = raw as usize;
+        }
+        for (idx, col) in col_idx_vec.iter_mut().enumerate() {
+            let raw = *col_idx.add(idx);
+            if raw < 0 {
+                return -1;
+            }
+            *col = raw as usize;
+        }
+        std::ptr::copy_nonoverlapping(values, values_vec.as_mut_ptr(), nnz_usize);
+        std::ptr::copy_nonoverlapping(r, rhs.as_mut_ptr(), n_usize);
+    }
+
+    for value in &mut rhs {
+        *value = -*value;
+    }
+
+    let matrix = CsrMatrix {
+        n: n_usize,
+        row_ptr: row_ptr_vec,
+        col_idx: col_idx_vec,
+        values: values_vec,
+    };
+    let mut solution = vec![0.0; n_usize];
+    if matrix.solve_in_place(&rhs, &mut solution).is_err() {
+        return 1;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(solution.as_ptr(), dx, n_usize);
     }
     0
 }
@@ -224,10 +302,15 @@ pub fn register_symbols(builder: &mut JITBuilder) {
         "rustmodlica_solve_linear_n",
         rustmodlica_solve_linear_n as *const u8,
     );
+    builder.symbol(
+        "rustmodlica_solve_linear_csr",
+        rustmodlica_solve_linear_csr as *const u8,
+    );
 
     builder.symbol("assert", modelica_assert as *const u8);
     builder.symbol("terminate", modelica_terminate as *const u8);
     builder.symbol("Boolean", modelica_boolean as *const u8);
+    builder.symbol("not", modelica_not as *const u8);
     builder.symbol("String", modelica_string as *const u8);
 }
 
@@ -286,9 +369,11 @@ pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     set.insert("Modelica.Math.div");
     set.insert("Modelica.Math.integer");
     set.insert("rustmodlica_solve_linear_n");
+    set.insert("rustmodlica_solve_linear_csr");
     set.insert("assert");
     set.insert("terminate");
     set.insert("Boolean");
+    set.insert("not");
     set.insert("String");
     set
 }

@@ -11,7 +11,63 @@ use pest_derive::Parser;
 #[grammar = "src/modelica.pest"]
 pub struct ModelicaParser;
 
+fn try_parse_connector_alias_file(input: &str) -> Option<(String, String)> {
+    for raw in input.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("within ") || line.starts_with("//") {
+            continue;
+        }
+        if !line.starts_with("connector ") {
+            return None;
+        }
+        let rest = line.strip_prefix("connector ")?.trim();
+        let (name_part, rhs_part) = rest.split_once('=')?;
+        let alias = name_part.trim().to_string();
+        if alias.is_empty() {
+            return None;
+        }
+        let mut rhs = rhs_part.trim();
+        if let Some(x) = rhs.strip_prefix("input ") {
+            rhs = x.trim();
+        } else if let Some(x) = rhs.strip_prefix("output ") {
+            rhs = x.trim();
+        }
+        let base = rhs
+            .split(|c: char| c.is_whitespace() || c == ';' || c == '(')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if base.is_empty() {
+            return None;
+        }
+        return Some((alias, base));
+    }
+    None
+}
+
 pub fn parse(input: &str) -> Result<ClassItem, pest::error::Error<Rule>> {
+    if let Some((alias, base)) = try_parse_connector_alias_file(input) {
+        return Ok(ClassItem::Model(Model {
+            name: alias.clone(),
+            is_connector: false,
+            is_function: false,
+            is_record: false,
+            is_block: false,
+            extends: Vec::new(),
+            declarations: Vec::new(),
+            equations: Vec::new(),
+            algorithms: Vec::new(),
+            initial_equations: Vec::new(),
+            initial_algorithms: Vec::new(),
+            annotation: None,
+            inner_classes: Vec::new(),
+            is_operator_record: false,
+            type_aliases: vec![(alias, base)],
+            imports: Vec::new(),
+            external_info: None,
+        }));
+    }
     let mut pairs = ModelicaParser::parse(Rule::model_file, input)?;
     let program = pairs.next().unwrap();
     let item_pair = program
@@ -337,17 +393,42 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                             base = p.as_str().trim().to_string();
                                         }
                                     }
+                                    Rule::short_class_definition_rhs => {
+                                        for rhs in p.into_inner() {
+                                            match rhs.as_rule() {
+                                                Rule::type_name => {
+                                                    if base.is_empty() {
+                                                        rhs_is_type_name = true;
+                                                        base = rhs.as_str().trim().to_string();
+                                                    }
+                                                }
+                                                Rule::function_call => {
+                                                    if base.is_empty() {
+                                                        let mut it = rhs.into_inner();
+                                                        if let Some(name_pair) = it.next() {
+                                                            base = name_pair.as_str().trim().to_string();
+                                                        }
+                                                    }
+                                                }
+                                                Rule::component_ref => {
+                                                    if base.is_empty() {
+                                                        base = rhs.as_str().trim().to_string();
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
                             if !alias.is_empty() && !base.is_empty() {
-                                if rhs_is_type_name {
-                                    // Keep short type aliases as parse-only type_aliases.
-                                    type_aliases.push((alias, base));
-                                } else {
-                                    // Short type definitions often use Icons.TypeReal(...) constructors.
-                                    // Treat them as primitive aliases so flatten can resolve them.
-                                    if prefixes.contains("type") {
+                                // `type X = ...` remains a type alias. Other short class definitions like
+                                // `model PointMass = Some.Package.PointMass(...)` must be loadable as inner classes.
+                                if prefixes.contains("type") {
+                                    if rhs_is_type_name {
+                                        type_aliases.push((alias, base));
+                                    } else {
                                         let prim = if base.contains("TypeInteger") {
                                             "Integer"
                                         } else if base.contains("TypeBoolean") {
@@ -358,38 +439,40 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                             "Real"
                                         };
                                         type_aliases.push((alias, prim.to_string()));
-                                        continue;
                                     }
-                                    // Short class definitions for model/package/block/etc. need to be loadable
-                                    // as inner classes (MSL).
-                                    let is_function = prefixes.contains("function");
-                                    let is_record = prefixes.contains("record");
-                                    let is_block = prefixes.contains("block");
-                                    let is_connector = prefixes.contains("connector");
-                                    let is_operator_record = prefixes.contains("operator") && prefixes.contains("record");
-                                    inner_classes.push(Model {
-                                        name: alias,
-                                        is_connector,
-                                        is_function,
-                                        is_record,
-                                        is_block,
-                                        extends: vec![crate::ast::ExtendsClause {
-                                            model_name: base.trim_start_matches('.').to_string(),
-                                            modifications: Vec::new(),
-                                        }],
-                                        declarations: Vec::new(),
-                                        equations: Vec::new(),
-                                        algorithms: Vec::new(),
-                                        initial_equations: Vec::new(),
-                                        initial_algorithms: Vec::new(),
-                                        annotation: None,
-                                        inner_classes: Vec::new(),
-                                        is_operator_record,
-                                        type_aliases: Vec::new(),
-                                        imports: Vec::new(),
-                                        external_info: None,
-                                    });
+                                    continue;
                                 }
+
+                                // Short class definitions for model/package/block/etc. need to be loadable
+                                // as inner classes (MSL).
+                                let is_function = prefixes.contains("function");
+                                let is_record = prefixes.contains("record");
+                                let is_block = prefixes.contains("block");
+                                let is_connector = prefixes.contains("connector");
+                                let is_operator_record =
+                                    prefixes.contains("operator") && prefixes.contains("record");
+                                inner_classes.push(Model {
+                                    name: alias,
+                                    is_connector,
+                                    is_function,
+                                    is_record,
+                                    is_block,
+                                    extends: vec![crate::ast::ExtendsClause {
+                                        model_name: base.trim_start_matches('.').to_string(),
+                                        modifications: Vec::new(),
+                                    }],
+                                    declarations: Vec::new(),
+                                    equations: Vec::new(),
+                                    algorithms: Vec::new(),
+                                    initial_equations: Vec::new(),
+                                    initial_algorithms: Vec::new(),
+                                    annotation: None,
+                                    inner_classes: Vec::new(),
+                                    is_operator_record,
+                                    type_aliases: Vec::new(),
+                                    imports: Vec::new(),
+                                    external_info: None,
+                                });
                             }
                         }
                         Rule::connector_alias_definition => {
@@ -557,8 +640,15 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 if token.as_rule() == Rule::array_subscript {
                                     let mut sub_inner = decl_inner.next().unwrap().into_inner();
                                     let dim_inner = sub_inner.next().unwrap();
-                                    if dim_inner.as_rule() == Rule::expression {
-                                        array_size = Some(expression::parse_expression(dim_inner));
+                                    let dim_expr = if dim_inner.as_rule() == Rule::subscript_item {
+                                        dim_inner.into_inner().next()
+                                    } else {
+                                        Some(dim_inner)
+                                    };
+                                    if let Some(dim_expr) = dim_expr {
+                                        if dim_expr.as_rule() == Rule::expression {
+                                            array_size = Some(expression::parse_expression(dim_expr));
+                                        }
                                     }
                                 }
                             }
@@ -583,8 +673,15 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 if token.as_rule() == Rule::array_subscript {
                                     let mut sub_inner = decl_inner.next().unwrap().into_inner();
                                     let dim_inner = sub_inner.next().unwrap();
-                                    if dim_inner.as_rule() == Rule::expression {
-                                        array_size = Some(expression::parse_expression(dim_inner));
+                                    let dim_expr = if dim_inner.as_rule() == Rule::subscript_item {
+                                        dim_inner.into_inner().next()
+                                    } else {
+                                        Some(dim_inner)
+                                    };
+                                    if let Some(dim_expr) = dim_expr {
+                                        if dim_expr.as_rule() == Rule::expression {
+                                            array_size = Some(expression::parse_expression(dim_expr));
+                                        }
                                     }
                                 }
                             }
