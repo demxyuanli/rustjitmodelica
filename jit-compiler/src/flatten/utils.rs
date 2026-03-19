@@ -60,10 +60,11 @@ pub fn resolve_type_alias(type_aliases: &[(String, String)], name: &str) -> Stri
 
 /// MSL-4: SIunits types (Modelica.SIunits.Time, etc.) are resolved as Real; units parsed but not enforced.
 pub fn is_primitive(type_name: &str) -> bool {
-    matches!(type_name, "Real" | "Integer" | "Boolean" | "String")
+    matches!(type_name, "Real" | "Integer" | "Boolean" | "String" | "Complex")
         || type_name.starts_with("Modelica.SIunits.")
         || type_name.starts_with("Modelica.Units.SI.")
         || type_name.starts_with("Modelica.Units.NonSI.")
+        || type_name.starts_with("Modelica.Complex")
         || type_name == "Modelica.StateSelect"
         || type_name.ends_with("ExternalObject")
 }
@@ -72,6 +73,18 @@ pub fn is_primitive(type_name: &str) -> bool {
 /// Rules grouped by domain (Blocks, Electrical, Rotational, HeatTransfer, Fluid, MultiBody).
 pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if t1 == t2 {
+        return true;
+    }
+    let is_real_like = |s: &str| {
+        s == "Real"
+            || s.starts_with("Modelica.SIunits.")
+            || s.starts_with("Modelica.Units.SI.")
+            || s.starts_with("Modelica.Units.NonSI.")
+    };
+    if (t1 == "connector" && is_real_like(t2)) || (t2 == "connector" && is_real_like(t1)) {
+        return true;
+    }
+    if is_real_like(t1) && is_real_like(t2) {
         return true;
     }
     let a = |s: &str, suffix: &str| s.ends_with(suffix);

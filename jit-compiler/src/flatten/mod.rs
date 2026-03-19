@@ -58,7 +58,10 @@ pub mod utils;
 
 use self::connections::resolve_connections;
 #[allow(unused_imports)]
-pub use self::expressions::{eval_const_expr, expr_to_path, index_expression, prefix_expression};
+pub use self::expressions::{
+    eval_const_expr, eval_const_expr_with_array_sizes, expr_to_path, index_expression,
+    prefix_expression,
+};
 pub use self::structures::FlattenedModel;
 use self::utils::{apply_modification, is_primitive, merge_models, resolve_type_alias};
 
@@ -75,7 +78,7 @@ pub struct Flattener {
 }
 
 impl Flattener {
-    fn resolve_import_prefix(model: &Model, name: &str, current_qualified: &str) -> String {
+    pub(crate) fn resolve_import_prefix(model: &Model, name: &str, current_qualified: &str) -> String {
         let name = name.trim_start_matches('.');
         if name == "Modelica.Fluid.Pipes.BaseClasses.PartialValve" {
             return "Modelica.Fluid.Valves.BaseClasses.PartialValve".to_string();
@@ -97,6 +100,9 @@ impl Flattener {
             if let Some(rest) = name.strip_prefix(&prefix) {
                 return format!("{}.{}", qual, rest);
             }
+        }
+        if !name.contains('.') && model.inner_classes.iter().any(|c| c.name == name) {
+            return name.to_string();
         }
         // Library context flags for fallback rules (by sublibrary)
         let in_blocks = current_qualified.starts_with("Modelica.Blocks");
@@ -124,6 +130,19 @@ impl Flattener {
         }
         if let Some(rest) = name.strip_prefix("SI.") {
             return format!("Modelica.Units.SI.{}", rest);
+        }
+        if name == "Cv" {
+            return "Modelica.Units.Conversions".to_string();
+        }
+        if let Some(rest) = name.strip_prefix("Cv.") {
+            return format!("Modelica.Units.Conversions.{}", rest);
+        }
+        // --- Global top-level package shorthands seen in MSL examples ---
+        if name == "Electrical" || name.starts_with("Electrical.") {
+            return format!("Modelica.{}", name);
+        }
+        if name == "Thermal" || name.starts_with("Thermal.") {
+            return format!("Modelica.{}", name);
         }
         // --- Constants / StateSelect (global) ---
         if name == "Constants" || name.starts_with("Constants.") {
@@ -166,6 +185,20 @@ impl Flattener {
         }
         // --- Electrical (Machines etc.): allow direct pin shorthand ---
         if in_electrical {
+            if current_qualified.starts_with("Modelica.Electrical.PowerConverters") {
+                if name == "Icons" {
+                    return "Modelica.Electrical.PowerConverters.Icons".to_string();
+                }
+                if name.starts_with("Icons.") {
+                    return format!("Modelica.Electrical.PowerConverters.{}", name);
+                }
+            }
+            if name == "ComplexBlocks" {
+                return "Modelica.ComplexBlocks".to_string();
+            }
+            if name.starts_with("ComplexBlocks.") {
+                return format!("Modelica.{}", name);
+            }
             if name == "Mechanics" {
                 return "Modelica.Mechanics".to_string();
             }
@@ -189,6 +222,18 @@ impl Flattener {
             }
             if name.starts_with("QuasiStatic.") {
                 return format!("Modelica.Electrical.{}", name);
+            }
+            if name == "PowerConverters" {
+                return "Modelica.Electrical.PowerConverters".to_string();
+            }
+            if name.starts_with("PowerConverters.") {
+                return format!("Modelica.Electrical.{}", name);
+            }
+            if name == "SinglePhase" {
+                return "Modelica.Electrical.QuasiStatic.SinglePhase".to_string();
+            }
+            if name.starts_with("SinglePhase.") {
+                return format!("Modelica.Electrical.QuasiStatic.{}", name);
             }
             if name == "PositivePin" || name == "NegativePin" || name == "Pin" {
                 return format!("Modelica.Electrical.Analog.Interfaces.{}", name);
@@ -264,6 +309,12 @@ impl Flattener {
             if name == "Flange_a" || name == "Flange_b" || name == "Support" {
                 return format!("Modelica.Mechanics.Translational.Interfaces.{}", name);
             }
+            if name == "Sources" {
+                return "Modelica.Mechanics.Translational.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Mechanics.Translational.{}", name);
+            }
             if name == "Interfaces" {
                 return "Modelica.Mechanics.Translational.Interfaces".to_string();
             }
@@ -299,6 +350,29 @@ impl Flattener {
         }
         // --- Mechanics.MultiBody: World, Joints, Utilities, Frames, Interfaces, Types ---
         if in_multibody {
+            if current_qualified.starts_with("Modelica.Mechanics.MultiBody.Examples.Loops.Utilities")
+                && !name.contains('.')
+                && !matches!(name, "Real" | "Integer" | "Boolean" | "String")
+            {
+                return format!(
+                    "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.{}",
+                    name
+                );
+            }
+            if current_qualified
+                .starts_with("Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3")
+            {
+                if name == "Utilities" {
+                    return "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities"
+                        .to_string();
+                }
+                if name.starts_with("Utilities.") {
+                    return format!(
+                        "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.{}",
+                        name
+                    );
+                }
+            }
             // MultiBody.Examples.Loops.Utilities is a real subpackage used by Engine examples.
             if in_multibody_loops {
                 if name == "Utilities" {
@@ -382,6 +456,14 @@ impl Flattener {
             if name == "Visualizers" || name.starts_with("Visualizers.") {
                 return format!("Modelica.Mechanics.MultiBody.{}", name);
             }
+            if current_qualified.starts_with("Modelica.Mechanics.MultiBody.Visualizers") {
+                if name == "Advanced" {
+                    return "Modelica.Mechanics.MultiBody.Visualizers.Advanced".to_string();
+                }
+                if name.starts_with("Advanced.") {
+                    return format!("Modelica.Mechanics.MultiBody.Visualizers.{}", name);
+                }
+            }
             // MSL: many MultiBody subpackages have an Internal package (e.g. Frames.Internal, Sensors.Internal).
             // Resolve based on local context to avoid mis-binding `Internal.*`.
             if name == "Internal" {
@@ -407,6 +489,12 @@ impl Flattener {
         if in_heattransfer {
             if name == "HeatPort_a" || name == "HeatPort_b" || name == "HeatPort" {
                 return format!("Modelica.Thermal.HeatTransfer.Interfaces.{}", name);
+            }
+            if name == "Components" || name.starts_with("Components.") {
+                return format!("Modelica.Thermal.HeatTransfer.{}", name);
+            }
+            if name == "Celsius" || name.starts_with("Celsius.") {
+                return format!("Modelica.Thermal.HeatTransfer.{}", name);
             }
             if name == "Interfaces" {
                 return "Modelica.Thermal.HeatTransfer.Interfaces".to_string();
@@ -534,6 +622,18 @@ impl Flattener {
         if name == "Blocks" {
             return "Modelica.Blocks".to_string();
         }
+        if name == "MultiBody" {
+            return "Modelica.Mechanics.MultiBody".to_string();
+        }
+        if name.starts_with("MultiBody.") {
+            return format!("Modelica.Mechanics.{}", name);
+        }
+        if name == "ComplexBlocks" {
+            return "Modelica.ComplexBlocks".to_string();
+        }
+        if name.starts_with("ComplexBlocks.") {
+            return format!("Modelica.{}", name);
+        }
         if name.starts_with("Blocks.") {
             return format!("Modelica.{}", name);
         }
@@ -651,7 +751,7 @@ impl Flattener {
         Ok(flat)
     }
 
-    fn qualify_in_scope(current_qualified: &str, name: &str) -> String {
+    pub(crate) fn qualify_in_scope(current_qualified: &str, name: &str) -> String {
         if name.contains('.') || name.contains('/') {
             return name.to_string();
         }
@@ -661,9 +761,16 @@ impl Flattener {
         name.to_string()
     }
 
+    fn qualify_in_current_class(current_qualified: &str, name: &str) -> String {
+        if current_qualified.is_empty() || name.contains('.') || name.contains('/') {
+            return name.to_string();
+        }
+        format!("{}.{}", current_qualified, name)
+    }
+
     /// Iterative flatten_inheritance to avoid stack overflow on deep extends chains.
     /// Frame: (parent_arc_or_none, current_model_arc, qualified_name, extends_clauses, next_index).
-    fn flatten_inheritance(
+    pub(crate) fn flatten_inheritance(
         &mut self,
         arc: &mut Arc<Model>,
         current_qualified: &str,
@@ -738,6 +845,7 @@ impl Flattener {
 
                     // Build context from parameters in this model
                     let mut context: HashMap<String, Expression> = HashMap::new();
+                    let mut local_array_sizes: HashMap<String, usize> = HashMap::new();
                     for decl in &model.declarations {
                         if decl.is_parameter {
                             if let Some(val) = &decl.start_value {
@@ -761,6 +869,10 @@ impl Flattener {
                             let sub_expr = self.substitute(size_expr, &context);
                             if let Some(val) = eval_const_expr(&sub_expr) {
                                 Some(val as usize)
+                            } else if let Some(val) =
+                                eval_const_expr_with_array_sizes(&sub_expr, &local_array_sizes)
+                            {
+                                Some(val as usize)
                             } else {
                                 eprintln!("Warning: Could not evaluate array size for '{}'", decl.name);
                                 None
@@ -780,6 +892,13 @@ impl Flattener {
 
                         if is_array {
                             flat.array_sizes.insert(base_name.clone(), count);
+                            local_array_sizes.insert(decl.name.clone(), count);
+                            if !decl.is_parameter || decl.start_value.is_none() {
+                                context.insert(
+                                    decl.name.clone(),
+                                    Expression::ArrayLiteral(vec![Expression::Number(0.0); count]),
+                                );
+                            }
                         }
 
                         for i in 1..=count {
@@ -814,6 +933,27 @@ impl Flattener {
                             }
                             if resolved_type.starts_with("Medium.") {
                                 resolved_type = "Real".to_string();
+                            }
+                            if matches!(
+                                resolved_type.as_str(),
+                                "RealInput"
+                                    | "RealOutput"
+                                    | "BooleanInput"
+                                    | "BooleanOutput"
+                                    | "IntegerInput"
+                                    | "IntegerOutput"
+                            ) || resolved_type.ends_with(".RealInput")
+                                || resolved_type.ends_with(".RealOutput")
+                            {
+                                resolved_type = "Real".to_string();
+                            } else if resolved_type.ends_with(".BooleanInput")
+                                || resolved_type.ends_with(".BooleanOutput")
+                            {
+                                resolved_type = "Boolean".to_string();
+                            } else if resolved_type.ends_with(".IntegerInput")
+                                || resolved_type.ends_with(".IntegerOutput")
+                            {
+                                resolved_type = "Integer".to_string();
                             }
                             if resolved_type.starts_with("Modelica.Fluid.Types.") {
                                 resolved_type = "Real".to_string();
@@ -853,14 +993,72 @@ impl Flattener {
                                 continue;
                             }
 
-                            // Load complex type
-                            let mut sub_model =
-                                match self.loader.load_model_silent(&resolved_type, true) {
-                                    Ok(m) => m,
-                                    Err(e) => {
-                                        // MSL: qualified type alias (e.g. Modelica.Units.SI.Time) is a `type`
-                                        // inside the package, not a loadable class.
-                                        if let LoadError::NotFound(_) = e {
+                            // Load complex type. For short names, try current class inner classes
+                            // first, then the parent package scope.
+                            let mut load_candidates = vec![resolved_type.clone()];
+                            if !resolved_type.contains('.') && !resolved_type.contains('/') {
+                                let same_class =
+                                    Self::qualify_in_current_class(current_qualified, &resolved_type);
+                                if same_class != resolved_type {
+                                    load_candidates.push(same_class);
+                                }
+                                let parent_scope =
+                                    Self::qualify_in_scope(current_qualified, &resolved_type);
+                                if parent_scope != resolved_type
+                                    && !load_candidates.iter().any(|c| c == &parent_scope)
+                                {
+                                    load_candidates.push(parent_scope);
+                                }
+                            }
+
+                            let mut loaded_type: Option<(String, Arc<Model>)> = None;
+                            if !resolved_type.contains('.') && !resolved_type.contains('/') {
+                                if let Some(inner) =
+                                    model.inner_classes.iter().find(|m| m.name == resolved_type)
+                                {
+                                    let mut inner_model = inner.clone();
+                                    for (a, q) in &model.imports {
+                                        if !inner_model
+                                            .imports
+                                            .iter()
+                                            .any(|(aa, qq)| aa == a && qq == q)
+                                        {
+                                            inner_model.imports.push((a.clone(), q.clone()));
+                                        }
+                                    }
+                                    loaded_type = Some((
+                                        Self::qualify_in_current_class(
+                                            current_qualified,
+                                            &resolved_type,
+                                        ),
+                                        Arc::new(inner_model),
+                                    ));
+                                }
+                            }
+                            let mut last_err: Option<LoadError> = None;
+                            if loaded_type.is_none() {
+                                for candidate in &load_candidates {
+                                    match self.loader.load_model_silent(candidate, true) {
+                                        Ok(m) => {
+                                            loaded_type = Some((candidate.clone(), m));
+                                            break;
+                                        }
+                                        Err(e) => last_err = Some(e),
+                                    }
+                                }
+                            }
+
+                            let mut sub_model = match loaded_type {
+                                Some((resolved_candidate, m)) => {
+                                    resolved_type = resolved_candidate;
+                                    m
+                                }
+                                None => {
+                                    let e = last_err
+                                        .unwrap_or_else(|| LoadError::NotFound(resolved_type.clone()));
+                                    // MSL: qualified type alias (e.g. Modelica.Units.SI.Time) is a `type`
+                                    // inside the package, not a loadable class.
+                                    if matches!(&e, LoadError::NotFound(_)) {
                                             if let Some((prefix_type, suffix_type)) =
                                                 resolved_type.rsplit_once('.')
                                             {
@@ -979,8 +1177,8 @@ impl Flattener {
                                             )),
                                             _ => Err(FlattenError::Load(e)),
                                         };
-                                    }
-                                };
+                                }
+                            };
 
                             // Standalone short type definitions (Types/*.mo)
                             if let Some((_, base)) = sub_model

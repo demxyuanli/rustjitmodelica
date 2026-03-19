@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::analysis::derivative::collect_states_from_eq;
 use crate::analysis::expression_utils::{make_binary, time_derivative};
-use crate::analysis::variable_collection::{contains_var, equation_contains_var, extract_unknowns};
+use crate::analysis::variable_collection::{
+    collect_vars_expr, contains_var, equation_contains_var, extract_unknowns,
+};
 use crate::analysis::AnalysisOptions;
 
 mod blt_alias;
@@ -104,15 +106,11 @@ fn try_index_reduction(
         let eq = &equations[eq_idx];
         let (is_constraint, residual) = match eq {
             Equation::Simple(lhs, rhs) => {
-                let lhs_has_der = matches!(lhs, Expression::Der(_))
-                    || (if let Expression::Variable(n) = lhs {
-                        n.starts_with("der_")
-                    } else {
-                        false
-                    })
-                    || unknown_list
-                        .iter()
-                        .any(|u| u.starts_with("der_") && contains_var(lhs, u));
+                let mut lhs_vars = HashSet::new();
+                collect_vars_expr(lhs, &mut lhs_vars);
+                let lhs_has_der = lhs_vars.iter().any(|v| v.starts_with("der_"))
+                    || matches!(lhs, Expression::Der(_))
+                    || matches!(lhs, Expression::Variable(n) if n.starts_with("der_"));
                 (
                     !lhs_has_der,
                     make_binary(lhs.clone(), Operator::Sub, rhs.clone()),
@@ -127,7 +125,7 @@ fn try_index_reduction(
         diff_expr = substitute_der_in_expr(&diff_expr, &der_map);
         let mut alg_vars: Vec<&String> = unknown_list
             .iter()
-            .filter(|u| !u.starts_with("der_"))
+            .filter(|u| !u.starts_with("der_") && !state_vars.iter().any(|s| s == *u))
             .collect();
         alg_vars.sort_by_key(|v| {
             equations
@@ -159,11 +157,36 @@ fn try_index_reduction(
     None
 }
 
+fn eval_const_expr(expr: &Expression) -> Option<f64> {
+    match expr {
+        Expression::Number(n) => Some(*n),
+        Expression::BinaryOp(lhs, Operator::Add, rhs) => {
+            Some(eval_const_expr(lhs)? + eval_const_expr(rhs)?)
+        }
+        Expression::BinaryOp(lhs, Operator::Sub, rhs) => {
+            Some(eval_const_expr(lhs)? - eval_const_expr(rhs)?)
+        }
+        Expression::BinaryOp(lhs, Operator::Mul, rhs) => {
+            Some(eval_const_expr(lhs)? * eval_const_expr(rhs)?)
+        }
+        Expression::BinaryOp(lhs, Operator::Div, rhs) => {
+            let denom = eval_const_expr(rhs)?;
+            if denom.abs() < 1e-15 {
+                None
+            } else {
+                Some(eval_const_expr(lhs)? / denom)
+            }
+        }
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SortAlgebraicResult {
     pub sorted_equations: Vec<Equation>,
     pub differential_index: u32,
     pub constraint_equation_count: usize,
+    pub constant_conflict_count: usize,
     pub alias_map: HashMap<String, Expression>,
 }
 
@@ -173,6 +196,54 @@ pub fn sort_algebraic_equations(
     params: &[String],
     options: &AnalysisOptions,
 ) -> SortAlgebraicResult {
+    fn reorder_simple_variable_equations(
+        equations: Vec<Equation>,
+        known_vars: &HashSet<String>,
+        params: &[String],
+    ) -> Vec<Equation> {
+        if !equations.iter().all(|eq| matches!(eq, Equation::Simple(Expression::Variable(_), _))) {
+            return equations;
+        }
+        let mut ready_known = known_vars.clone();
+        for p in params {
+            ready_known.insert(p.clone());
+        }
+        ready_known.insert("time".to_string());
+
+        let mut pending = equations;
+        let mut reordered = Vec::new();
+        loop {
+            let mut progressed = false;
+            let mut remaining = Vec::new();
+            for eq in pending {
+                match &eq {
+                    Equation::Simple(Expression::Variable(lhs), rhs) => {
+                        let mut rhs_vars = HashSet::new();
+                        collect_vars_expr(rhs, &mut rhs_vars);
+                        rhs_vars.remove(lhs);
+                        if rhs_vars.iter().all(|v| ready_known.contains(v)) {
+                            ready_known.insert(lhs.clone());
+                            reordered.push(eq);
+                            progressed = true;
+                        } else {
+                            remaining.push(eq);
+                        }
+                    }
+                    _ => remaining.push(eq),
+                }
+            }
+            if !progressed {
+                reordered.extend(remaining);
+                break;
+            }
+            pending = remaining;
+            if pending.is_empty() {
+                break;
+            }
+        }
+        reordered
+    }
+
     let blt_trace = std::env::var("RUSTMODLICA_BLT_TRACE")
         .ok()
         .map(|v| {
@@ -391,6 +462,39 @@ pub fn sort_algebraic_equations(
     }
 
     let constraint_equation_count = assigned_var.iter().filter(|o| o.is_none()).count();
+    let constant_conflict_count = eq_infos
+        .iter()
+        .filter(|info| info.unknowns.is_empty())
+        .filter(|info| {
+            let residual = make_residual(&equations[info.original_idx]);
+            eval_const_expr(&residual)
+                .map(|value| value.abs() >= 1e-12)
+                .unwrap_or(false)
+        })
+        .count();
+
+    if differential_index == 2
+        && state_vars.is_empty()
+        && !unknown_list.is_empty()
+        && unknown_list.len() == equations.len()
+        && equations.iter().all(|eq| matches!(eq, Equation::Simple(_, _)))
+        && eq_infos.iter().all(|info| !info.unknowns.is_empty())
+    {
+        let tearing_var =
+            select_tearing_variable(&unknown_list, &equations, &unknown_map, &options.tearing_method);
+        return SortAlgebraicResult {
+            sorted_equations: vec![Equation::SolvableBlock {
+                unknowns: unknown_list.clone(),
+                tearing_var,
+                equations: vec![],
+                residuals: equations.iter().map(|eq| make_residual(eq)).collect(),
+            }],
+            differential_index: 1,
+            constraint_equation_count: 0,
+            constant_conflict_count,
+            alias_map,
+        };
+    }
 
     if blt_trace {
         eprintln!("[blt] build_dependency_graph");
@@ -562,7 +666,6 @@ pub fn sort_algebraic_equations(
                     }
                 }
             }
-
             let tearing_var = select_tearing_variable(
                 &block_unknowns,
                 &block_eqs,
@@ -583,10 +686,13 @@ pub fn sort_algebraic_equations(
         }
     }
 
+    let sorted_equations = reorder_simple_variable_equations(sorted_equations, known_vars, params);
+
     SortAlgebraicResult {
         sorted_equations,
         differential_index,
         constraint_equation_count,
+        constant_conflict_count,
         alias_map,
     }
 }

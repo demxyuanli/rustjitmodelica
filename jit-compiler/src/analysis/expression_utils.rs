@@ -31,6 +31,67 @@ pub fn expression_is_zero(expr: &Expression) -> bool {
     }
 }
 
+fn simplify_time_expr(expr: &Expression) -> Expression {
+    match expr {
+        Expression::BinaryOp(lhs, Operator::Mul, rhs) => {
+            let sl = simplify_time_expr(lhs);
+            let sr = simplify_time_expr(rhs);
+            if expression_is_zero(&sl) || expression_is_zero(&sr) {
+                return Expression::Number(0.0);
+            }
+            if let Expression::Number(n) = &sl {
+                if (n - 1.0).abs() < 1e-15 {
+                    return sr;
+                }
+            }
+            if let Expression::Number(n) = &sr {
+                if (n - 1.0).abs() < 1e-15 {
+                    return sl;
+                }
+            }
+            Expression::BinaryOp(Box::new(sl), Operator::Mul, Box::new(sr))
+        }
+        Expression::BinaryOp(lhs, Operator::Add, rhs) => {
+            let sl = simplify_time_expr(lhs);
+            let sr = simplify_time_expr(rhs);
+            if expression_is_zero(&sl) {
+                return sr;
+            }
+            if expression_is_zero(&sr) {
+                return sl;
+            }
+            Expression::BinaryOp(Box::new(sl), Operator::Add, Box::new(sr))
+        }
+        Expression::BinaryOp(lhs, Operator::Sub, rhs) => {
+            let sl = simplify_time_expr(lhs);
+            let sr = simplify_time_expr(rhs);
+            if expression_is_zero(&sr) {
+                return sl;
+            }
+            Expression::BinaryOp(Box::new(sl), Operator::Sub, Box::new(sr))
+        }
+        Expression::BinaryOp(lhs, Operator::Div, rhs) => {
+            let sl = simplify_time_expr(lhs);
+            let sr = simplify_time_expr(rhs);
+            if expression_is_zero(&sl) {
+                return Expression::Number(0.0);
+            }
+            if let Expression::Number(n) = &sr {
+                if (n - 1.0).abs() < 1e-15 {
+                    return sl;
+                }
+            }
+            Expression::BinaryOp(Box::new(sl), Operator::Div, Box::new(sr))
+        }
+        Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
+            Box::new(simplify_time_expr(lhs)),
+            *op,
+            Box::new(simplify_time_expr(rhs)),
+        ),
+        _ => expr.clone(),
+    }
+}
+
 pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
     use crate::ast::Operator;
     match expr {
@@ -113,11 +174,9 @@ pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
 pub fn time_derivative(expr: &Expression, state_vars: &[String]) -> Expression {
     let mut sum: Option<Expression> = None;
     for x in state_vars {
-        let pd = partial_derivative(expr, x);
-        if let Expression::Number(n) = &pd {
-            if n.abs() < 1e-15 {
-                continue;
-            }
+        let pd = simplify_time_expr(&partial_derivative(expr, x));
+        if expression_is_zero(&pd) {
+            continue;
         }
         let der_x = Expression::Variable(format!("der_{}", x));
         let term = Expression::BinaryOp(Box::new(pd), Operator::Mul, Box::new(der_x));
@@ -126,5 +185,5 @@ pub fn time_derivative(expr: &Expression, state_vars: &[String]) -> Expression {
             Some(s) => Expression::BinaryOp(Box::new(s), Operator::Add, Box::new(term)),
         });
     }
-    sum.unwrap_or_else(|| Expression::Number(0.0))
+    simplify_time_expr(&sum.unwrap_or_else(|| Expression::Number(0.0)))
 }

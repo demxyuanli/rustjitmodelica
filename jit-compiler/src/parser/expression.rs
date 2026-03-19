@@ -50,9 +50,8 @@ fn parse_if_expression(pair: Pair<Rule>) -> Expression {
     Expression::If(Box::new(cond), Box::new(true_expr), Box::new(false_expr))
 }
 
-fn parse_iterator_expression(pair: Pair<Rule>) -> Expression {
+fn parse_iter_clause(pair: Pair<Rule>) -> (String, Expression) {
     let mut inner = pair.into_inner();
-    let expr = parse_expression(inner.next().unwrap());
     let iter_var = normalize_identifier(inner.next().unwrap().as_str());
     let range_or_expr = inner.next().unwrap();
     let iter_range = match range_or_expr.as_rule() {
@@ -74,11 +73,31 @@ fn parse_iterator_expression(pair: Pair<Rule>) -> Expression {
         Rule::expression => parse_expression(range_or_expr),
         _ => parse_expression(range_or_expr),
     };
-    Expression::ArrayComprehension {
-        expr: Box::new(expr),
-        iter_var,
-        iter_range: Box::new(iter_range),
+    (iter_var, iter_range)
+}
+
+fn build_nested_comprehension(expr: Expression, iterators: Vec<(String, Expression)>) -> Expression {
+    let mut result = expr;
+    for (iter_var, iter_range) in iterators.into_iter().rev() {
+        result = Expression::ArrayComprehension {
+            expr: Box::new(result),
+            iter_var,
+            iter_range: Box::new(iter_range),
+        };
     }
+    result
+}
+
+fn parse_iterator_expression(pair: Pair<Rule>) -> Expression {
+    let mut inner = pair.into_inner();
+    let expr = parse_expression(inner.next().unwrap());
+    let mut iterators = Vec::new();
+    for item in inner {
+        if item.as_rule() == Rule::iterator_clause {
+            iterators.push(parse_iter_clause(item));
+        }
+    }
+    build_nested_comprehension(expr, iterators)
 }
 
 fn parse_logical_or(pair: Pair<Rule>) -> Expression {
@@ -253,7 +272,10 @@ pub(super) fn parse_function_call_expr(pair: Pair<Rule>) -> Expression {
         Expression::Interval(Box::new(args.into_iter().next().unwrap()))
     } else if func_name.eq_ignore_ascii_case("hold") && args.len() == 1 {
         Expression::Hold(Box::new(args.into_iter().next().unwrap()))
-    } else if func_name.eq_ignore_ascii_case("previous") && args.len() == 1 {
+    } else if (func_name.eq_ignore_ascii_case("previous")
+        || func_name.eq_ignore_ascii_case("pre"))
+        && args.len() == 1
+    {
         Expression::Previous(Box::new(args.into_iter().next().unwrap()))
     } else if func_name.eq_ignore_ascii_case("subsample") && args.len() == 2 {
         let mut a = args.into_iter();
@@ -321,32 +343,13 @@ fn parse_factor(pair: Pair<Rule>) -> Expression {
         Rule::array_comprehension => {
             let mut inner_pairs = inner.into_inner();
             let expr = parse_expression(inner_pairs.next().unwrap());
-            let iter_var = inner_pairs.next().unwrap().as_str().to_string();
-            let range_or_expr = inner_pairs.next().unwrap();
-            let iter_range = match range_or_expr.as_rule() {
-                Rule::range => {
-                    let mut r_inner = range_or_expr.into_inner();
-                    let start = parse_expression(r_inner.next().unwrap());
-                    let second = parse_expression(r_inner.next().unwrap());
-                    if let Some(third_pair) = r_inner.next() {
-                        let end = parse_expression(third_pair);
-                        Expression::Range(Box::new(start), Box::new(second), Box::new(end))
-                    } else {
-                        Expression::Range(
-                            Box::new(start),
-                            Box::new(Expression::Number(1.0)),
-                            Box::new(second),
-                        )
-                    }
+            let mut iterators = Vec::new();
+            for item in inner_pairs {
+                if item.as_rule() == Rule::iterator_clause {
+                    iterators.push(parse_iter_clause(item));
                 }
-                Rule::expression => parse_expression(range_or_expr),
-                _ => parse_expression(range_or_expr),
-            };
-            Expression::ArrayComprehension {
-                expr: Box::new(expr),
-                iter_var,
-                iter_range: Box::new(iter_range),
             }
+            build_nested_comprehension(expr, iterators)
         }
         Rule::bracket_array_literal => {
             let inner_exprs = inner.into_inner();
@@ -406,12 +409,21 @@ pub(super) fn parse_component_ref(pair: Pair<Rule>) -> Expression {
         match part.as_rule() {
             Rule::array_subscript => {
                 let dim_inner = part.into_inner().next().unwrap();
+                let dim_value = if dim_inner.as_rule() == Rule::subscript_item {
+                    dim_inner.into_inner().next()
+                } else {
+                    Some(dim_inner)
+                };
                 // Multi-dimensional subscripts exist in MSL (e.g. x[:, 2]).
                 // Minimal handling: use the first subscript item as index placeholder.
-                let idx = if dim_inner.as_rule() == Rule::expression {
-                    parse_expression(dim_inner)
+                let idx = if let Some(dim_expr) = dim_value {
+                    if dim_expr.as_rule() == Rule::expression {
+                        parse_expression(dim_expr)
+                    } else {
+                        // array_dim_unspecified ([:]) in expression context; use placeholder
+                        Expression::Number(0.0)
+                    }
                 } else {
-                    // array_dim_unspecified ([:]) in expression context; use placeholder
                     Expression::Number(0.0)
                 };
                 expr = Expression::ArrayAccess(Box::new(expr), Box::new(idx));

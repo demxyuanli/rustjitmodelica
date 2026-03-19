@@ -60,6 +60,10 @@ pub(super) fn solve_for_variable(eq: &Equation, var: &str) -> Option<Expression>
                 return Some(lhs.clone());
             }
         }
+        let residual = make_binary(lhs.clone(), Operator::Sub, rhs.clone());
+        if let Some(sol) = solve_residual_linear(&residual, var) {
+            return Some(sol);
+        }
     }
     None
 }
