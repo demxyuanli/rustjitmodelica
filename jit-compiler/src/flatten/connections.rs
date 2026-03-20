@@ -181,6 +181,14 @@ pub fn resolve_connections(
             if heat_scalar_array(ta) && heat_scalar_array(tb) && ta != tb {
                 continue;
             }
+            let clock_conn = |t: &str| {
+                let u = t.to_ascii_lowercase();
+                u.contains("clock") && (u.contains("input") || u.contains("output"))
+            };
+            if clock_conn(ta) && clock_conn(tb) {
+                flat.clock_signal_connections
+                    .push((a_path.clone(), b_path.clone()));
+            }
         } else {
             if !loader.quiet {
                 if type_a.is_none() {

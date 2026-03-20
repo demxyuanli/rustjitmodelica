@@ -629,22 +629,40 @@ pub fn sort_algebraic_equations(
                 }
             } else {
                 let unknowns_from_eq = &eq_infos[idx].unknowns;
-                let unk = unknowns_from_eq
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "__dummy".to_string());
-                let tearing_var = select_tearing_variable(
-                    &[unk.clone()],
-                    &[eq.clone()],
-                    &unknown_map,
-                    &options.tearing_method,
-                );
-                sorted_equations.push(Equation::SolvableBlock {
-                    unknowns: vec![unk],
-                    tearing_var,
-                    equations: vec![],
-                    residuals: vec![make_residual(eq)],
-                });
+                if let Some(unk) = unknowns_from_eq.first().cloned() {
+                    let tearing_var = select_tearing_variable(
+                        &[unk.clone()],
+                        &[eq.clone()],
+                        &unknown_map,
+                        &options.tearing_method,
+                    );
+                    sorted_equations.push(Equation::SolvableBlock {
+                        unknowns: vec![unk],
+                        tearing_var,
+                        equations: vec![],
+                        residuals: vec![make_residual(eq)],
+                    });
+                } else {
+                    // Keep residual equation without introducing synthetic "__dummy" unknowns.
+                    // Pick a real variable from the residual as tearing variable so JIT can
+                    // execute the single-residual Newton path.
+                    let residual = make_residual(eq);
+                    let mut residual_vars: HashSet<String> = HashSet::new();
+                    collect_vars_expr(&residual, &mut residual_vars);
+                    let vars_vec: Vec<String> = residual_vars.into_iter().collect();
+                    let tearing_var = vars_vec
+                        .iter()
+                        .find(|v| !v.starts_with("__dummy"))
+                        .cloned()
+                        .or_else(|| vars_vec.first().cloned());
+                    let unknowns_block = tearing_var.clone().into_iter().collect::<Vec<_>>();
+                    sorted_equations.push(Equation::SolvableBlock {
+                        unknowns: unknowns_block,
+                        tearing_var,
+                        equations: vec![],
+                        residuals: vec![residual],
+                    });
+                }
             }
         } else {
             let block_eqs: Vec<Equation> = block_indices

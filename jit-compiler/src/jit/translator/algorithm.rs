@@ -134,6 +134,7 @@ pub fn compile_algorithm_stmt(
                 compile_algorithm_stmt(s, ctx, builder)?;
             }
             builder.ins().jump(end_block, &[]);
+            builder.seal_block(true_block);
             for (cond, stmts) in else_ifs {
                 let check_block = next_block;
                 let body_block = builder.create_block();
@@ -142,11 +143,13 @@ pub fn compile_algorithm_stmt(
                 let c_val = compile_expression(cond, ctx, builder)?;
                 let c_bool = builder.ins().fcmp(FloatCC::NotEqual, c_val, zero);
                 builder.ins().brif(c_bool, body_block, &[], next_block, &[]);
+                builder.seal_block(check_block);
                 builder.switch_to_block(body_block);
                 for s in stmts {
                     compile_algorithm_stmt(s, ctx, builder)?;
                 }
                 builder.ins().jump(end_block, &[]);
+                builder.seal_block(body_block);
             }
             builder.switch_to_block(next_block);
             if let Some(stmts) = else_stmts {
@@ -155,14 +158,14 @@ pub fn compile_algorithm_stmt(
                 }
             }
             builder.ins().jump(end_block, &[]);
+            builder.seal_block(next_block);
             builder.switch_to_block(end_block);
-            builder.seal_block(true_block);
-            builder.seal_block(end_block);
         }
         AlgorithmStatement::While(cond, body) => {
             let header_block = builder.create_block();
             let body_block = builder.create_block();
             let exit_block = builder.create_block();
+            let after_while = builder.create_block();
             builder.ins().jump(header_block, &[]);
             builder.switch_to_block(header_block);
             let c_val = compile_expression(cond, ctx, builder)?;
@@ -174,10 +177,12 @@ pub fn compile_algorithm_stmt(
                 compile_algorithm_stmt(s, ctx, builder)?;
             }
             builder.ins().jump(header_block, &[]);
-            builder.switch_to_block(exit_block);
-            builder.seal_block(header_block);
             builder.seal_block(body_block);
+            builder.switch_to_block(exit_block);
+            builder.ins().jump(after_while, &[]);
+            builder.seal_block(header_block);
             builder.seal_block(exit_block);
+            builder.switch_to_block(after_while);
         }
         AlgorithmStatement::For(var_name, range_expr, body) => {
             let (start_val, step_val, end_val) =
@@ -204,6 +209,7 @@ pub fn compile_algorithm_stmt(
             let header_block = builder.create_block();
             let body_block = builder.create_block();
             let exit_block = builder.create_block();
+            let after_for = builder.create_block();
             builder.ins().jump(header_block, &[]);
             builder.switch_to_block(header_block);
             let curr_i = builder.ins().stack_load(cl_types::F64, loop_var_slot, 0);
@@ -219,10 +225,12 @@ pub fn compile_algorithm_stmt(
             let next_i = builder.ins().fadd(curr_i_2, step_val);
             builder.ins().stack_store(next_i, loop_var_slot, 0);
             builder.ins().jump(header_block, &[]);
-            builder.switch_to_block(exit_block);
-            builder.seal_block(header_block);
             builder.seal_block(body_block);
+            builder.switch_to_block(exit_block);
+            builder.ins().jump(after_for, &[]);
+            builder.seal_block(header_block);
             builder.seal_block(exit_block);
+            builder.switch_to_block(after_for);
         }
         AlgorithmStatement::When(cond, body, else_whens) => {
             compile_zero_crossing_store(cond, ctx, builder)?;
@@ -255,6 +263,7 @@ pub fn compile_algorithm_stmt(
                 compile_algorithm_stmt(s, ctx, builder)?;
             }
             builder.ins().jump(end_block, &[]);
+            builder.seal_block(true_block);
             for (cond, stmts) in else_whens {
                 compile_zero_crossing_store(cond, ctx, builder)?;
                 let check_block = next_block;
@@ -281,17 +290,18 @@ pub fn compile_algorithm_stmt(
                 let pre_c_zero = builder.ins().fcmp(FloatCC::Equal, pre_c, zero);
                 let c_edge = builder.ins().band(c_bool, pre_c_zero);
                 builder.ins().brif(c_edge, body_block, &[], next_block, &[]);
+                builder.seal_block(check_block);
                 builder.switch_to_block(body_block);
                 for s in stmts {
                     compile_algorithm_stmt(s, ctx, builder)?;
                 }
                 builder.ins().jump(end_block, &[]);
+                builder.seal_block(body_block);
             }
             builder.switch_to_block(next_block);
             builder.ins().jump(end_block, &[]);
+            builder.seal_block(next_block);
             builder.switch_to_block(end_block);
-            builder.seal_block(true_block);
-            builder.seal_block(end_block);
         }
     }
     Ok(())

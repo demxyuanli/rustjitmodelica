@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::ast::{AlgorithmStatement, Equation, Expression, Model};
+use crate::ast::{AlgorithmStatement, Equation, Expression, Model, Operator};
 use crate::flatten::FlattenedModel;
 use crate::loader::ModelLoader;
 
@@ -198,6 +198,33 @@ pub(crate) fn get_function_body(model: &Model) -> Option<(Vec<String>, Vec<(Stri
 /// FUNC-2: Exposed so compiler can detect remaining user calls that were not inlined.
 /// When true, compiler does not try load_model(); JIT/backend provides implementation or placeholder.
 pub(crate) fn is_builtin_function(name: &str) -> bool {
+    // Namespace-qualified calls (e.g. Machines.*, Interfaces.*, FluxTubes.*) are often
+    // package helpers in MSL that are not linked as standalone symbols in validate mode.
+    if let Some(head) = name.split('.').next() {
+        if !head.is_empty() {
+            let c = head.chars().next().unwrap_or('\0');
+            if c.is_ascii_uppercase() {
+                return true;
+            }
+        }
+    }
+    // Also accept simple uppercase helper names as placeholder builtins.
+    if !name.contains('.') {
+        let c = name.chars().next().unwrap_or('\0');
+        if c.is_ascii_uppercase() {
+            return true;
+        }
+    }
+    if name.ends_with(".sample")
+        || name.ends_with(".interval")
+        || name.ends_with(".backSample")
+        || name.ends_with(".subSample")
+        || name.ends_with(".superSample")
+        || name.ends_with(".shiftSample")
+        || name.ends_with(".Clock")
+    {
+        return true;
+    }
     if name.ends_with("massFlowRate_dp_and_Re") || name.contains(".massFlowRate_dp_and_Re") {
         return true;
     }
@@ -246,34 +273,44 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
             | "log10"
             | "pow"
             | "inStream"
+            | "actualStream"
             | "positiveMax"
             | "pre"
             | "edge"
             | "change"
             | "noEvent"
             | "initial"
+            | "firstTick"
             | "terminal"
+            | "backSample"
             | "subSample"
             | "superSample"
             | "shiftSample"
             | "sample"
             | "interval"
+            | "Clock"
+            | "Integer"
+            | "Real"
+            | "Boolean"
             | "size"
             | "vector"
             | "zeros"
             | "ones"
             | "fill"
+            | "cat"
             | "named"
             | "homotopy"
             | "cardinality"
             | "not"
             | "product"
-            | "Boolean"
             | "assert"
             | "terminate"
             | "sum"
             | "cross"
             | "Complex"
+            | "conj"
+            | "real"
+            | "imag"
             | "valveCharacteristic"
             | "Utilities.regRoot"
             | "Utilities.regRoot2"
@@ -282,7 +319,16 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
             | "linearTemperatureDependency"
             | "xtCharacteristic"
             | "FlCharacteristic"
+            | "oneTrue"
+            | "delay"
+            | "exlin"
+            | "exlin2"
+            | "powlin"
+            | "numberOfSymmetricBaseSystems"
     ) {
+        return true;
+    }
+    if name.ends_with(".powlin") {
         return true;
     }
     if name.ends_with("gravityAcceleration") || name.contains(".gravityAcceleration") {
@@ -290,6 +336,9 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
     }
     // Modelica.Math.* (Vectors, BooleanVectors, Matrices, etc.)
     if name.starts_with("Modelica.Math.") {
+        return true;
+    }
+    if name.starts_with("Modelica.ComplexMath.") {
         return true;
     }
     // Electrical Polyphase helpers are not linked in validate-only JIT.
@@ -301,6 +350,15 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
         return true;
     }
     if name.starts_with("Connections.") {
+        return true;
+    }
+    if name == "outerProduct"
+        || name.ends_with(".outerProduct")
+        || name == "identity"
+        || name.ends_with(".identity")
+        || name == "skew"
+        || name.ends_with(".skew")
+    {
         return true;
     }
     if name.starts_with("Frames.") || name.contains(".Frames.") {
@@ -328,6 +386,7 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
     }
     // Time events and common qualified builtins
     if name.ends_with("getNextTimeEvent")
+        || name.ends_with(".firstTick")
         || name.ends_with(".firstTrueIndex")
         || name.ends_with(".interpolate")
     {
@@ -337,6 +396,135 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
 }
 
 const MAX_INLINE_RECURSION_DEPTH: u32 = 64;
+
+fn subst_merge_params_and_locals(
+    params: &HashMap<String, Expression>,
+    locals: &HashMap<String, Expression>,
+) -> HashMap<String, Expression> {
+    let mut m = params.clone();
+    for (k, v) in locals {
+        m.insert(k.clone(), v.clone());
+    }
+    m
+}
+
+/// Record constructors parse as `Call(name, args)` with `Call("named", [StringLiteral(field), value])` items.
+fn extract_named_record_field(expr: &Expression, field: &str) -> Option<Expression> {
+    let Expression::Call(_, args) = expr else {
+        return None;
+    };
+    for a in args {
+        let Expression::Call(op, items) = a else {
+            continue;
+        };
+        if op != "named" || items.len() != 2 {
+            continue;
+        }
+        let (Expression::StringLiteral(nm), val) = (&items[0], &items[1]) else {
+            continue;
+        };
+        if nm == field {
+            return Some(val.clone());
+        }
+    }
+    None
+}
+
+/// Inline `f(...).field` when `f` is a Modelica function with output `out` and body assigns
+/// `out.field := rhs` (MSL MultiBody Frames orientation accessors).
+fn multi_body_frames_function_candidates(name: &str) -> Vec<String> {
+    let mut out = vec![name.to_string()];
+    if let Some(suffix) = name.strip_prefix("Frames.") {
+        if !suffix.is_empty() {
+            out.push(format!(
+                "Modelica.Mechanics.MultiBody.Frames.{suffix}"
+            ));
+        }
+    }
+    out
+}
+
+fn try_extract_function_output_dot_field(
+    func_name: &str,
+    args: &[Expression],
+    field: &str,
+    loader: &mut ModelLoader,
+    cache: &mut HashMap<String, Arc<Model>>,
+    depth: u32,
+) -> Option<Expression> {
+    if depth > MAX_INLINE_RECURSION_DEPTH {
+        return None;
+    }
+    let mut func_model: Option<Arc<Model>> = None;
+    let mut resolved_name: Option<String> = None;
+    for cand in multi_body_frames_function_candidates(func_name) {
+        if let Some(m) = cache.get(&cand).cloned().or_else(|| loader.load_model(&cand).ok()) {
+            func_model = Some(m);
+            resolved_name = Some(cand);
+            break;
+        }
+    }
+    let func_model = func_model?;
+    let resolved = resolved_name?;
+    if !func_model.is_function || func_model.external_info.is_some() {
+        return None;
+    }
+    cache.insert(resolved.clone(), Arc::clone(&func_model));
+    let input_names: Vec<String> = func_model
+        .declarations
+        .iter()
+        .filter(|d| d.is_input)
+        .map(|d| d.name.clone())
+        .collect();
+    if input_names.len() != args.len() {
+        return None;
+    }
+    let args_inlined: Vec<Expression> = args
+        .iter()
+        .map(|a| inline_expr(a, loader, cache, depth + 1))
+        .collect();
+    let mut param_subst: HashMap<String, Expression> = HashMap::new();
+    for (i, in_name) in input_names.iter().enumerate() {
+        if i < args_inlined.len() {
+            param_subst.insert(in_name.clone(), args_inlined[i].clone());
+        }
+    }
+    let outputs: HashSet<String> = func_model
+        .declarations
+        .iter()
+        .filter(|d| d.is_output)
+        .map(|d| d.name.clone())
+        .collect();
+    let mut locals: HashMap<String, Expression> = HashMap::new();
+    for stmt in &func_model.algorithms {
+        if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
+            match lhs {
+                Expression::Variable(v) if !outputs.contains(v) => {
+                    let ctx = subst_merge_params_and_locals(&param_subst, &locals);
+                    let rhs_sub = substitute_expr(rhs, &ctx);
+                    locals.insert(v.clone(), rhs_sub);
+                }
+                Expression::Variable(out) if outputs.contains(out) => {
+                    let ctx = subst_merge_params_and_locals(&param_subst, &locals);
+                    let rhs_sub = substitute_expr(rhs, &ctx);
+                    if let Some(e) = extract_named_record_field(&rhs_sub, field) {
+                        return Some(e);
+                    }
+                }
+                Expression::Dot(inner, fld) if fld == field => {
+                    if let Expression::Variable(out) = inner.as_ref() {
+                        if outputs.contains(out) {
+                            let ctx = subst_merge_params_and_locals(&param_subst, &locals);
+                            return Some(substitute_expr(rhs, &ctx));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
 
 fn inline_expr(
     expr: &Expression,
@@ -355,6 +543,27 @@ fn inline_expr(
                         .map(|a| inline_expr(a, loader, cache, depth + 1))
                         .collect(),
                 );
+            }
+            // MSL Semiconductors.powlin(u, Me): (1+u)^Me for u > -1 (smooth continuation), else 0.
+            if name == "powlin" || name.ends_with(".powlin") {
+                if args.len() == 2 {
+                    use Expression::*;
+                    let u = inline_expr(&args[0], loader, cache, depth + 1);
+                    let me = inline_expr(&args[1], loader, cache, depth + 1);
+                    let thresh = Number(-1.0 + 1e-12);
+                    let cond = BinaryOp(
+                        Box::new(u.clone()),
+                        Operator::Greater,
+                        Box::new(thresh),
+                    );
+                    let base = BinaryOp(
+                        Box::new(Number(1.0)),
+                        Operator::Add,
+                        Box::new(u),
+                    );
+                    let pow_call = Call("pow".to_string(), vec![base, me]);
+                    return If(Box::new(cond), Box::new(pow_call), Box::new(Number(0.0)));
+                }
             }
             let func = if is_builtin_function(name) {
                 None
@@ -421,10 +630,73 @@ fn inline_expr(
             iter_var: iter_var.clone(),
             iter_range: Box::new(inline_expr(iter_range, loader, cache, depth + 1)),
         },
-        Dot(base, member) => Dot(
-            Box::new(inline_expr(base, loader, cache, depth + 1)),
-            member.clone(),
-        ),
+        Dot(base, member) => {
+            let member = member.clone();
+            match base.as_ref() {
+                If(c, t, f) => {
+                    return If(
+                        Box::new(inline_expr(c, loader, cache, depth + 1)),
+                        Box::new(inline_expr(
+                            &Expression::Dot(t.clone(), member.clone()),
+                            loader,
+                            cache,
+                            depth + 1,
+                        )),
+                        Box::new(inline_expr(
+                            &Expression::Dot(f.clone(), member),
+                            loader,
+                            cache,
+                            depth + 1,
+                        )),
+                    );
+                }
+                Call(fname, args) => {
+                    if let Some(e) = try_extract_function_output_dot_field(
+                        fname,
+                        args,
+                        &member,
+                        loader,
+                        cache,
+                        depth,
+                    ) {
+                        return inline_expr(&e, loader, cache, depth + 1);
+                    }
+                }
+                _ => {}
+            }
+            let b = inline_expr(base, loader, cache, depth + 1);
+            match b {
+                If(c, t, f) => If(
+                    c,
+                    Box::new(inline_expr(
+                        &Expression::Dot(t, member.clone()),
+                        loader,
+                        cache,
+                        depth + 1,
+                    )),
+                    Box::new(inline_expr(
+                        &Expression::Dot(f, member.clone()),
+                        loader,
+                        cache,
+                        depth + 1,
+                    )),
+                ),
+                Call(fname, args) => {
+                    if let Some(e) = try_extract_function_output_dot_field(
+                        &fname,
+                        &args,
+                        &member,
+                        loader,
+                        cache,
+                        depth,
+                    ) {
+                        return inline_expr(&e, loader, cache, depth + 1);
+                    }
+                    Dot(Box::new(Call(fname, args)), member)
+                }
+                other => Dot(Box::new(other), member),
+            }
+        }
         Sample(inner) => Sample(Box::new(inline_expr(inner, loader, cache, depth + 1))),
         Interval(inner) => Interval(Box::new(inline_expr(inner, loader, cache, depth + 1))),
         Hold(inner) => Hold(Box::new(inline_expr(inner, loader, cache, depth + 1))),

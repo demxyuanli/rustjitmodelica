@@ -26,4 +26,6 @@ pub struct FlattenedModel {
     pub clocked_var_names: HashSet<String>,
     /// SYNC-2: Per-clock partitions; used by solver/jacobian for clocked state handling.
     pub clock_partitions: Vec<ClockPartition>,
+    /// SYNC-6: Pairs of connector instance paths when both sides are clock connectors (infer same clock network).
+    pub clock_signal_connections: Vec<(String, String)>,
 }

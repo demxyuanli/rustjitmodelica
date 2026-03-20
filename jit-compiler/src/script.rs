@@ -28,6 +28,10 @@ pub enum ScriptCommand {
     SetTolerance(f64, Option<f64>),
     /// SCRIPT-4: plot var1 var2 ... (stub: record vars for result; run simulate to get data).
     Plot(Vec<String>),
+    /// OMC-style plotAll: all output variables (same stub as plot).
+    PlotAll,
+    /// OMC-style getErrorString: not tracked; prints empty line.
+    GetErrorString,
     /// SCRIPT-5: switch current model to a previously loaded one by name.
     SwitchModel(String),
     Simulate,
@@ -98,6 +102,20 @@ pub fn parse_script_line(line: &str) -> Option<ScriptCommand> {
         return Some(ScriptCommand::Load(
             line["load ".len()..].trim().to_string(),
         ));
+    }
+    if let Some(rest) = lower.strip_prefix("buildmodel ") {
+        let name = rest.trim();
+        if !name.is_empty() {
+            let start = line.len().saturating_sub(rest.len());
+            return Some(ScriptCommand::Load(line[start..].trim().to_string()));
+        }
+    }
+    if let Some(rest) = lower.strip_prefix("translatemodel ") {
+        let name = rest.trim();
+        if !name.is_empty() {
+            let start = line.len().saturating_sub(rest.len());
+            return Some(ScriptCommand::Load(line[start..].trim().to_string()));
+        }
     }
     if let Some(rest) = lower.strip_prefix("loadclass ") {
         let name = rest.trim();
@@ -183,6 +201,15 @@ pub fn parse_script_line(line: &str) -> Option<ScriptCommand> {
                 let rtol = tokens.get(1).and_then(|s| s.parse::<f64>().ok());
                 return Some(ScriptCommand::SetTolerance(atol, rtol));
             }
+        }
+    }
+    if lower == "plotall" {
+        return Some(ScriptCommand::PlotAll);
+    }
+    if let Some(rest) = lower.strip_prefix("geterrorstring") {
+        let tail = rest.trim();
+        if tail.is_empty() || tail == "()" {
+            return Some(ScriptCommand::GetErrorString);
         }
     }
     if let Some(rest) = lower.strip_prefix("plot ") {
@@ -459,6 +486,22 @@ impl ScriptRunner {
                 );
                 Ok(true)
             }
+            ScriptCommand::PlotAll => {
+                let arts = self.current_artifacts_ref()?;
+                let vars = arts.output_vars.clone();
+                if vars.is_empty() {
+                    return Ok(true);
+                }
+                eprintln!(
+                    "plotAll: variables {} (run simulate and use result file for data)",
+                    vars.join(", ")
+                );
+                Ok(true)
+            }
+            ScriptCommand::GetErrorString => {
+                println!("");
+                Ok(true)
+            }
             ScriptCommand::Simulate => {
                 let arts = self.current_artifacts_ref()?;
                 run_simulation(
@@ -508,7 +551,7 @@ impl ScriptRunner {
                     }
                 }
                 None => {
-                    return Err(format!("Script line {}: unknown command (expected load/loadClass, use/switchModel, setParameter, setStartValue, setStopTime, setResultFile, saveResult, save, setTolerance, plot, getParameter, getVariable, eval, simulate, quit)", line_no).into());
+                    return Err(format!("Script line {}: unknown command (supported: load/loadClass/buildModel/translateModel, use/switchModel, setParameter, setStartValue, setStopTime, setResultFile, saveResult, save, setTolerance, plot/plotAll, getParameter, getVariable, getErrorString, eval, simulate, quit)", line_no).into());
                 }
             }
         }

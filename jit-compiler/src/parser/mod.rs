@@ -213,6 +213,58 @@ fn normalize_identifier(s: &str) -> String {
     s.to_string()
 }
 
+fn parse_modifications_from_modification_part(
+    token: pest::iterators::Pair<'_, Rule>,
+) -> (Vec<Modification>, Option<Expression>) {
+    let mut modifications = Vec::new();
+    let mut start_value = None;
+    let mod_list = token.into_inner().next().unwrap().into_inner();
+    for mod_pair in mod_list {
+        let modification_pair = if mod_pair.as_rule() == Rule::modification {
+            mod_pair
+        } else {
+            match mod_pair
+                .into_inner()
+                .find(|p| p.as_rule() == Rule::modification)
+            {
+                Some(p) => p,
+                None => continue,
+            }
+        };
+        let mod_inner: Vec<_> = modification_pair.into_inner().collect();
+        let mod_redeclare = mod_inner.iter().any(|p| p.as_str().trim() == "redeclare");
+        let mod_redeclare_type = mod_inner
+            .iter()
+            .find(|p| p.as_rule() == Rule::type_name)
+            .map(|p| p.as_str().trim().to_string());
+        let mod_each = mod_inner.iter().any(|p| p.as_str().trim() == "each");
+        let name_pair = mod_inner.iter().find(|p| p.as_rule() == Rule::component_ref);
+        let name_pair = match name_pair {
+            Some(p) => p,
+            None => continue,
+        };
+        let name_expr = expression::parse_component_ref(name_pair.clone());
+        let mod_name = helpers::expr_to_string(name_expr);
+        let expr_pair = mod_inner.iter().find(|p| p.as_rule() == Rule::expression);
+        let expr_pair = match expr_pair {
+            Some(p) => p,
+            None => continue,
+        };
+        let val = Some(expression::parse_expression(expr_pair.clone()));
+        if mod_name == "start" {
+            start_value = val.clone();
+        }
+        modifications.push(Modification {
+            name: mod_name,
+            value: val,
+            each: mod_each,
+            redeclare: mod_redeclare,
+            redeclare_type: mod_redeclare_type,
+        });
+    }
+    (modifications, start_value)
+}
+
 fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
 
@@ -653,20 +705,52 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 }
                             }
                             let name_pair = decl_inner.next().unwrap();
-                            let mut var_names: Vec<String> = Vec::new();
+                            let mut component_items: Vec<(
+                                String,
+                                Vec<Modification>,
+                                Option<Expression>,
+                                Option<Expression>,
+                            )> = Vec::new();
                             if name_pair.as_rule() == Rule::var_name_list {
                                 for p in name_pair.into_inner() {
-                                    if p.as_rule() == Rule::identifier {
-                                        let n = normalize_identifier(p.as_str().trim());
-                                        if !n.is_empty() {
-                                            var_names.push(n);
+                                    if p.as_rule() != Rule::component_decl_item {
+                                        continue;
+                                    }
+                                    let mut item_it = p.into_inner();
+                                    let id_pair = item_it.next().unwrap();
+                                    let vname = normalize_identifier(id_pair.as_str().trim());
+                                    if vname.is_empty() {
+                                        continue;
+                                    }
+                                    let mut item_mods: Vec<Modification> = Vec::new();
+                                    let mut item_start_mod: Option<Expression> = None;
+                                    let mut item_assign: Option<Expression> = None;
+                                    for part in item_it {
+                                        match part.as_rule() {
+                                            Rule::modification_part => {
+                                                let (m, s) =
+                                                    parse_modifications_from_modification_part(part);
+                                                item_mods.extend(m);
+                                                if item_start_mod.is_none() {
+                                                    item_start_mod = s;
+                                                }
+                                            }
+                                            Rule::value_assignment => {
+                                                let expr_pair =
+                                                    part.into_inner().next().unwrap();
+                                                item_assign =
+                                                    Some(expression::parse_expression(expr_pair));
+                                            }
+                                            _ => {}
                                         }
                                     }
+                                    component_items
+                                        .push((vname, item_mods, item_start_mod, item_assign));
                                 }
                             } else {
                                 let n = normalize_identifier(name_pair.as_str().trim());
                                 if !n.is_empty() {
-                                    var_names.push(n);
+                                    component_items.push((n, Vec::new(), None, None));
                                 }
                             }
                             if let Some(token) = decl_inner.peek() {
@@ -686,16 +770,18 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                 }
                             }
 
-                            let mut start_value = None;
-                            let mut modifications = Vec::new();
+                            let mut global_modifications = Vec::new();
+                            let mut global_start: Option<Expression> = None;
                             let mut decl_annotation: Option<String> = None;
                             let mut is_rest = false;
                             let mut decl_condition: Option<crate::ast::Expression> = None;
+                            let mut trailing_value: Option<Expression> = None;
 
                             for token in decl_inner {
                                 match token.as_rule() {
                                     Rule::annotation => {
-                                        decl_annotation = Some(parse_annotation_to_string(&token));
+                                        decl_annotation =
+                                            Some(parse_annotation_to_string(&token));
                                     }
                                     Rule::conditional_clause => {
                                         let expr_pair = token.into_inner().next().unwrap();
@@ -704,76 +790,41 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                     }
                                     Rule::value_assignment => {
                                         let expr_pair = token.into_inner().next().unwrap();
-                                        start_value = Some(expression::parse_expression(expr_pair));
+                                        trailing_value =
+                                            Some(expression::parse_expression(expr_pair));
                                     }
                                     Rule::rest_param => {
                                         is_rest = true;
                                     }
                                     Rule::modification_part => {
-                                        let mod_list =
-                                            token.into_inner().next().unwrap().into_inner();
-                                        for mod_pair in mod_list {
-                                            let modification_pair =
-                                                if mod_pair.as_rule() == Rule::modification {
-                                                    mod_pair
-                                                } else {
-                                                    match mod_pair
-                                                        .into_inner()
-                                                        .find(|p| p.as_rule() == Rule::modification)
-                                                    {
-                                                        Some(p) => p,
-                                                        None => continue,
-                                                    }
-                                                };
-                                            let mod_inner: Vec<_> =
-                                                modification_pair.into_inner().collect();
-                                            let mod_redeclare = mod_inner
-                                                .iter()
-                                                .any(|p| p.as_str().trim() == "redeclare");
-                                            let mod_redeclare_type = mod_inner
-                                                .iter()
-                                                .find(|p| p.as_rule() == Rule::type_name)
-                                                .map(|p| p.as_str().trim().to_string());
-                                            let mod_each = mod_inner
-                                                .iter()
-                                                .any(|p| p.as_str().trim() == "each");
-                                            let name_pair = mod_inner
-                                                .iter()
-                                                .find(|p| p.as_rule() == Rule::component_ref);
-                                            let name_pair = match name_pair {
-                                                Some(p) => p,
-                                                None => continue,
-                                            };
-                                            let name_expr =
-                                                expression::parse_component_ref(name_pair.clone());
-                                            let mod_name = helpers::expr_to_string(name_expr);
-                                            let expr_pair = mod_inner
-                                                .iter()
-                                                .find(|p| p.as_rule() == Rule::expression);
-                                            let expr_pair = match expr_pair {
-                                                Some(p) => p,
-                                                None => continue,
-                                            };
-                                            let val = Some(expression::parse_expression(
-                                                expr_pair.clone(),
-                                            ));
-                                            if mod_name == "start" {
-                                                start_value = val.clone();
-                                            }
-                                            modifications.push(Modification {
-                                                name: mod_name,
-                                                value: val,
-                                                each: mod_each,
-                                                redeclare: mod_redeclare,
-                                                redeclare_type: mod_redeclare_type,
-                                            });
+                                        let (m, s) =
+                                            parse_modifications_from_modification_part(token);
+                                        global_modifications.extend(m);
+                                        if global_start.is_none() {
+                                            global_start = s;
                                         }
                                     }
+                                    Rule::constrainedby_clause | Rule::string_comment => {}
                                     _ => {}
                                 }
                             }
 
-                            for var_name in var_names {
+                            let single_component = component_items.len() == 1;
+                            for (var_name, item_mods, item_start_mod, item_assign) in component_items
+                            {
+                                let start_value = item_assign
+                                    .clone()
+                                    .or(item_start_mod.clone())
+                                    .or(global_start.clone())
+                                    .or_else(|| {
+                                        if single_component {
+                                            trailing_value.clone()
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                let mut modifications = global_modifications.clone();
+                                modifications.extend(item_mods);
                                 declarations.push(Declaration {
                                     type_name: type_name.clone(),
                                     name: var_name,
@@ -783,9 +834,9 @@ fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::err
                                     is_discrete,
                                     is_input,
                                     is_output,
-                                    start_value: start_value.clone(),
+                                    start_value,
                                     array_size: array_size.clone(),
-                                    modifications: modifications.clone(),
+                                    modifications,
                                     is_rest,
                                     annotation: decl_annotation.clone(),
                                     condition: decl_condition.clone(),

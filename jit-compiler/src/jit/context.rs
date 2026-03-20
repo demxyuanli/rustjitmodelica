@@ -41,8 +41,8 @@ pub struct TranslationContext<'a> {
     pub diag_residual_ptr: Option<Value>,
     pub diag_x_ptr: Option<Value>,
 
-    /// FUNC-7: Cache of declared import func_id by name so array-arg calls use consistent signature.
-    pub declared_imports: Option<&'a mut HashMap<String, FuncId>>,
+    /// FUNC-7 / EXT-3: Cache import func_id by name then ABI tag (f64 vs const char*, etc.).
+    pub declared_imports: Option<&'a mut HashMap<String, HashMap<String, FuncId>>>,
 
     /// FUNC-7: String literal -> DataId for JIT external calls (const char*).
     pub string_literal_cache: Option<&'a mut HashMap<String, DataId>>,
@@ -109,7 +109,7 @@ impl<'a> TranslationContext<'a> {
         output_var_index: &'a HashMap<String, usize>,
         diag_residual_ptr: Option<Value>,
         diag_x_ptr: Option<Value>,
-        declared_imports: Option<&'a mut HashMap<String, FuncId>>,
+        declared_imports: Option<&'a mut HashMap<String, HashMap<String, FuncId>>>,
         string_literal_cache: Option<&'a mut HashMap<String, DataId>>,
         string_literal_data_ctx: Option<&'a mut DataDescription>,
         string_data_counter: Option<&'a mut usize>,

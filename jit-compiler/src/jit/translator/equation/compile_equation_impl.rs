@@ -1,12 +1,14 @@
-use super::super::context::TranslationContext;
-use super::super::types::ArrayType;
-use super::expr::compile_expression;
-use crate::analysis::contains_var;
+use crate::analysis::collect_vars_expr;
 use crate::ast::{Equation, Expression};
-use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
-use cranelift_module::{Linkage, Module};
+use std::collections::HashSet;
+
+use crate::jit::context::TranslationContext;
+use crate::jit::translator::expr::compile_expression;
+use crate::jit::types::ArrayType;
+
+use super::solvable::compile_solvable_block_general_n;
 
 pub fn compile_equation(
     eq: &Equation,
@@ -144,6 +146,7 @@ pub fn compile_equation(
             let header_block = builder.create_block();
             let body_block = builder.create_block();
             let exit_block = builder.create_block();
+            let after_for = builder.create_block();
             builder.ins().jump(header_block, &[]);
             builder.switch_to_block(header_block);
             let curr_i = builder.ins().stack_load(cl_types::F64, loop_var_slot, 0);
@@ -159,10 +162,12 @@ pub fn compile_equation(
             let next_i = builder.ins().fadd(curr_i_2, step_val);
             builder.ins().stack_store(next_i, loop_var_slot, 0);
             builder.ins().jump(header_block, &[]);
-            builder.switch_to_block(exit_block);
-            builder.seal_block(header_block);
             builder.seal_block(body_block);
+            builder.switch_to_block(exit_block);
+            builder.ins().jump(after_for, &[]);
+            builder.seal_block(header_block);
             builder.seal_block(exit_block);
+            builder.switch_to_block(after_for);
         }
         Equation::SolvableBlock {
             unknowns,
@@ -217,7 +222,9 @@ pub fn compile_equation(
                 let body_block = builder.create_block();
                 let perturb_block = builder.create_block();
                 let exit_block = builder.create_block();
-                let error_block = builder.create_block();
+                let iter_error_block = builder.create_block();
+                let det_error_block = builder.create_block();
+                let after_newton_2 = builder.create_block();
                 builder.ins().jump(header_block, &[]);
                 builder.switch_to_block(header_block);
                 let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
@@ -225,10 +232,11 @@ pub fn compile_equation(
                 let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
                 builder
                     .ins()
-                    .brif(iter_cond, body_block, &[], error_block, &[]);
-                builder.switch_to_block(error_block);
+                    .brif(iter_cond, body_block, &[], iter_error_block, &[]);
+                builder.switch_to_block(iter_error_block);
                 let err_code = builder.ins().iconst(cl_types::I32, 2);
                 builder.ins().return_(&[err_code]);
+                builder.seal_block(iter_error_block);
                 builder.switch_to_block(body_block);
                 let x0 = builder.ins().stack_load(cl_types::F64, slot0, 0);
                 let x1 = builder.ins().stack_load(cl_types::F64, slot1, 0);
@@ -274,7 +282,7 @@ pub fn compile_equation(
                 let update_block = builder.create_block();
                 builder
                     .ins()
-                    .brif(bad_det, error_block, &[], update_block, &[]);
+                    .brif(bad_det, det_error_block, &[], update_block, &[]);
                 builder.switch_to_block(update_block);
                 let zero_f = builder.ins().f64const(0.0);
                 let neg_r0 = builder.ins().fsub(zero_f, r0);
@@ -299,7 +307,10 @@ pub fn compile_equation(
                 builder.seal_block(body_block);
                 builder.seal_block(check_c1_block);
                 builder.seal_block(perturb_block);
-                builder.seal_block(error_block);
+                builder.switch_to_block(det_error_block);
+                let det_err = builder.ins().iconst(cl_types::I32, 2);
+                builder.ins().return_(&[det_err]);
+                builder.seal_block(det_error_block);
                 builder.switch_to_block(exit_block);
                 for (var, slot) in [(v0, slot0), (v1, slot1)] {
                     let val = builder.ins().stack_load(cl_types::F64, slot, 0);
@@ -310,7 +321,9 @@ pub fn compile_equation(
                             .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
                     }
                 }
+                builder.ins().jump(after_newton_2, &[]);
                 builder.seal_block(exit_block);
+                builder.switch_to_block(after_newton_2);
             } else if residuals.len() == 3 && unknowns.len() >= 3 {
                 let v0 = &unknowns[0];
                 let v1 = &unknowns[1];
@@ -356,7 +369,9 @@ pub fn compile_equation(
                 let body_block = builder.create_block();
                 let perturb_block = builder.create_block();
                 let exit_block = builder.create_block();
-                let error_block = builder.create_block();
+                let iter_error_block = builder.create_block();
+                let det_error_block = builder.create_block();
+                let after_newton_3 = builder.create_block();
                 builder.ins().jump(header_block, &[]);
                 builder.switch_to_block(header_block);
                 let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
@@ -364,10 +379,11 @@ pub fn compile_equation(
                 let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
                 builder
                     .ins()
-                    .brif(iter_cond, body_block, &[], error_block, &[]);
-                builder.switch_to_block(error_block);
+                    .brif(iter_cond, body_block, &[], iter_error_block, &[]);
+                builder.switch_to_block(iter_error_block);
                 let err_code = builder.ins().iconst(cl_types::I32, 2);
                 builder.ins().return_(&[err_code]);
+                builder.seal_block(iter_error_block);
                 builder.switch_to_block(body_block);
                 let x0 = builder.ins().stack_load(cl_types::F64, slot0, 0);
                 let x1 = builder.ins().stack_load(cl_types::F64, slot1, 0);
@@ -450,7 +466,7 @@ pub fn compile_equation(
                 let update_block = builder.create_block();
                 builder
                     .ins()
-                    .brif(bad_det, error_block, &[], update_block, &[]);
+                    .brif(bad_det, det_error_block, &[], update_block, &[]);
                 builder.switch_to_block(update_block);
                 let j01_j10 = builder.ins().fmul(j01, j10);
                 let j00_j22 = builder.ins().fmul(j00, j22);
@@ -511,7 +527,10 @@ pub fn compile_equation(
                 builder.seal_block(check_c1_block);
                 builder.seal_block(check_c2_block);
                 builder.seal_block(perturb_block);
-                builder.seal_block(error_block);
+                builder.switch_to_block(det_error_block);
+                let det_err3 = builder.ins().iconst(cl_types::I32, 2);
+                builder.ins().return_(&[det_err3]);
+                builder.seal_block(det_error_block);
                 builder.switch_to_block(exit_block);
                 for (var, slot) in [(v0, slot0), (v1, slot1), (v2, slot2)] {
                     let val = builder.ins().stack_load(cl_types::F64, slot, 0);
@@ -522,13 +541,15 @@ pub fn compile_equation(
                             .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
                     }
                 }
+                builder.ins().jump(after_newton_3, &[]);
                 builder.seal_block(exit_block);
+                builder.switch_to_block(after_newton_3);
             } else if residuals.len() >= 4
                 && residuals.len() <= 32
                 && unknowns.len() >= residuals.len()
             {
                 compile_solvable_block_general_n(unknowns, residuals, ctx, builder)?;
-            } else if (residuals.len() == 1 && tearing_var.is_some())
+            } else if (residuals.len() == 1 && (tearing_var.is_some() || !unknowns.is_empty()))
                 || (residuals.len() >= 2 && residuals.len() <= 32 && unknowns.len() == 1)
             {
                 let t_var = tearing_var
@@ -567,6 +588,7 @@ pub fn compile_equation(
                     let body_block = builder.create_block();
                     let perturb_block = builder.create_block();
                     let exit_block = builder.create_block();
+                    let after_tearing_1 = builder.create_block();
                     builder.ins().jump(header_block, &[]);
                     builder.switch_to_block(header_block);
                     let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
@@ -659,11 +681,10 @@ pub fn compile_equation(
                     builder.ins().stack_store(next_iter, iter_slot, 0);
                     builder.ins().jump(header_block, &[]);
                     builder.seal_block(update_block);
-                    builder.switch_to_block(exit_block);
                     builder.seal_block(header_block);
                     builder.seal_block(body_block);
                     builder.seal_block(perturb_block);
-                    builder.seal_block(exit_block);
+                    builder.switch_to_block(exit_block);
                     for ieq in inner_eqs {
                         if let Equation::Simple(lhs, rhs) = ieq {
                             if let Expression::Variable(name) = lhs {
@@ -690,6 +711,40 @@ pub fn compile_equation(
                             .ins()
                             .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
                     }
+                    builder.ins().jump(after_tearing_1, &[]);
+                    builder.seal_block(exit_block);
+                    builder.switch_to_block(after_tearing_1);
+                }
+            } else if residuals.len() == 1 {
+                let mut u = unknowns.clone();
+                if u.is_empty() {
+                    if let Some(ref t) = tearing_var {
+                        u.push(t.clone());
+                    } else {
+                        let mut hs = HashSet::new();
+                        collect_vars_expr(&residuals[0], &mut hs);
+                        let vars: Vec<String> = hs.into_iter().collect();
+                        if let Some(p) = vars
+                            .iter()
+                            .find(|v| !v.starts_with("__dummy"))
+                            .cloned()
+                            .or_else(|| vars.first().cloned())
+                        {
+                            u.push(p);
+                        }
+                    }
+                }
+                if u.len() == 1 {
+                    compile_solvable_block_general_n(&u, residuals, ctx, builder)?;
+                } else if u.is_empty() {
+                    for ieq in inner_eqs {
+                        compile_equation(ieq, ctx, builder)?;
+                    }
+                } else {
+                    return Err(format!(
+                        "SolvableBlock with 1 residual needs one unknown (synthesized len {})",
+                        u.len()
+                    ));
                 }
             } else {
                 return Err(format!(
@@ -706,420 +761,5 @@ pub fn compile_equation(
         }
         _ => {}
     }
-    Ok(())
-}
-
-fn compile_solvable_block_general_n(
-    unknowns: &[String],
-    residuals: &[Expression],
-    ctx: &mut TranslationContext,
-    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
-) -> Result<(), String> {
-    let n = residuals.len();
-    let slots: Vec<_> = unknowns
-        .iter()
-        .take(n)
-        .map(|v| -> Result<_, String> {
-            Ok(*ctx
-                .stack_slots
-                .get(v)
-                .ok_or_else(|| format!("SolvableBlock unknown {} missing stack slot", v))?)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    for v in unknowns.iter().take(n) {
-        ctx.var_map.remove(v);
-    }
-    for (var, slot) in unknowns.iter().take(n).zip(slots.iter()) {
-        if let Some(idx) = ctx.output_index(var) {
-            let offset = (idx * 8) as i32;
-            let init_val =
-                builder
-                    .ins()
-                    .load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset);
-            builder.ins().stack_store(init_val, *slot, 0);
-        }
-    }
-    if let Some(pattern) = build_sparse_jacobian_pattern(&unknowns[..n], residuals) {
-        return compile_solvable_block_general_sparse_n(
-            unknowns,
-            residuals,
-            &slots,
-            &pattern,
-            ctx,
-            builder,
-        );
-    }
-    compile_solvable_block_general_dense_n(unknowns, residuals, &slots, ctx, builder)
-}
-
-#[derive(Debug, Clone)]
-struct SparseJacobianPattern {
-    row_ptr: Vec<i32>,
-    col_idx: Vec<i32>,
-    entries: Vec<(usize, usize)>,
-}
-
-fn build_sparse_jacobian_pattern(
-    unknowns: &[String],
-    residuals: &[Expression],
-) -> Option<SparseJacobianPattern> {
-    let n = residuals.len();
-    if n < 4 || unknowns.len() < n {
-        return None;
-    }
-
-    let mut row_ptr = Vec::with_capacity(n + 1);
-    let mut col_idx = Vec::new();
-    let mut entries = Vec::new();
-    row_ptr.push(0);
-
-    for residual in residuals {
-        let row_start = col_idx.len();
-        for (col, unknown) in unknowns.iter().take(n).enumerate() {
-            if contains_var(residual, unknown) {
-                col_idx.push(col as i32);
-                entries.push((row_ptr.len() - 1, col));
-            }
-        }
-        if col_idx.len() == row_start {
-            return None;
-        }
-        row_ptr.push(col_idx.len() as i32);
-    }
-
-    let nnz = col_idx.len();
-    if nnz == 0 || nnz >= n * n || nnz * 4 > n * n * 3 {
-        return None;
-    }
-
-    Some(SparseJacobianPattern {
-        row_ptr,
-        col_idx,
-        entries,
-    })
-}
-
-fn compile_solvable_block_general_dense_n(
-    unknowns: &[String],
-    residuals: &[Expression],
-    slots: &[StackSlot],
-    ctx: &mut TranslationContext,
-    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
-) -> Result<(), String> {
-    let n = residuals.len();
-    let ptr_type = ctx.module.target_config().pointer_type();
-    let buf_size = (n * n + n + n) * 8;
-    let buf_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
-        cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
-        buf_size as u32,
-        0,
-    ));
-    let iter_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
-        cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
-        8,
-        0,
-    ));
-    let zero = builder.ins().f64const(0.0);
-    builder.ins().stack_store(zero, iter_slot, 0);
-    let eps = 1e-6_f64;
-    let eps_val = builder.ins().f64const(eps);
-    let header_block = builder.create_block();
-    let body_block = builder.create_block();
-    let exit_block = builder.create_block();
-    let error_block = builder.create_block();
-    builder.ins().jump(header_block, &[]);
-    builder.switch_to_block(header_block);
-    let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-    let max_iter = builder.ins().f64const(150.0);
-    let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
-    builder
-        .ins()
-        .brif(iter_cond, body_block, &[], error_block, &[]);
-    builder.switch_to_block(error_block);
-    let err_code = builder.ins().iconst(cl_types::I32, 2);
-    builder.ins().return_(&[err_code]);
-    builder.switch_to_block(body_block);
-    let base_ptr = builder.ins().stack_addr(ptr_type, buf_slot, 0);
-    let _jac_offset = 0i32;
-    let r_offset = (n * n * 8) as i32;
-    let dx_offset = ((n * n + n) * 8) as i32;
-    let r_off_val = builder.ins().iconst(ptr_type, r_offset as i64);
-    let r_ptr = builder.ins().iadd(base_ptr, r_off_val);
-    let dx_off_val = builder.ins().iconst(ptr_type, dx_offset as i64);
-    let dx_ptr = builder.ins().iadd(base_ptr, dx_off_val);
-    let mut r_vals = Vec::with_capacity(n);
-    for i in 0..n {
-        let rv = compile_expression(&residuals[i], ctx, builder)?;
-        r_vals.push(rv);
-        let off = r_offset + (i * 8) as i32;
-        let off_val = builder.ins().iconst(ptr_type, off as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        builder.ins().store(MemFlags::new(), rv, addr, 0);
-    }
-    let tol = builder.ins().f64const(1e-8);
-    let mut max_abs = builder.ins().f64const(0.0);
-    for rv in &r_vals {
-        let ar = builder.ins().fabs(*rv);
-        max_abs = builder.ins().fmax(max_abs, ar);
-    }
-    let perturb_block = builder.create_block();
-    let conv_cond = builder.ins().fcmp(FloatCC::LessThan, max_abs, tol);
-    builder
-        .ins()
-        .brif(conv_cond, exit_block, &[], perturb_block, &[]);
-    builder.switch_to_block(perturb_block);
-    for j in 0..n {
-        let xj = builder.ins().stack_load(cl_types::F64, slots[j], 0);
-        let xjp = builder.ins().fadd(xj, eps_val);
-        builder.ins().stack_store(xjp, slots[j], 0);
-        for i in 0..n {
-            let rp = compile_expression(&residuals[i], ctx, builder)?;
-            let r_orig = r_vals[i];
-            let dr = builder.ins().fsub(rp, r_orig);
-            let jac_ij = builder.ins().fdiv(dr, eps_val);
-            let off = (i * n + j) * 8;
-            let off_val = builder.ins().iconst(ptr_type, off as i64);
-            let addr = builder.ins().iadd(base_ptr, off_val);
-            builder.ins().store(MemFlags::new(), jac_ij, addr, 0);
-        }
-        builder.ins().stack_store(xj, slots[j], 0);
-    }
-    let n_i32 = builder.ins().iconst(cl_types::I32, n as i64);
-    let jac_ptr = base_ptr;
-    let mut sig = ctx.module.make_signature();
-    sig.params.push(AbiParam::new(cl_types::I32));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.returns.push(AbiParam::new(cl_types::I32));
-    let func_id = ctx
-        .module
-        .declare_function("rustmodlica_solve_linear_n", Linkage::Import, &sig)
-        .map_err(|e| e.to_string())?;
-    let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-    let solve_result = builder
-        .ins()
-        .call(func_ref, &[n_i32, jac_ptr, r_ptr, dx_ptr]);
-    let status = builder.inst_results(solve_result)[0];
-    let zero_i32 = builder.ins().iconst(cl_types::I32, 0);
-    let status_ok = builder.ins().icmp(IntCC::Equal, status, zero_i32);
-    let update_block = builder.create_block();
-    builder
-        .ins()
-        .brif(status_ok, update_block, &[], error_block, &[]);
-    builder.switch_to_block(update_block);
-    for i in 0..n {
-        let off = dx_offset + (i * 8) as i32;
-        let off_val = builder.ins().iconst(ptr_type, off as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        let dxi = builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0);
-        let xi = builder.ins().stack_load(cl_types::F64, slots[i], 0);
-        let xi_new = builder.ins().fadd(xi, dxi);
-        builder.ins().stack_store(xi_new, slots[i], 0);
-    }
-    let one = builder.ins().f64const(1.0);
-    let next_iter = builder.ins().fadd(iter_val, one);
-    builder.ins().stack_store(next_iter, iter_slot, 0);
-    builder.ins().jump(header_block, &[]);
-    builder.seal_block(update_block);
-    builder.seal_block(header_block);
-    builder.seal_block(body_block);
-    builder.seal_block(perturb_block);
-    builder.seal_block(error_block);
-    builder.switch_to_block(exit_block);
-    for (var, slot) in unknowns.iter().take(n).zip(slots.iter()) {
-        let val = builder.ins().stack_load(cl_types::F64, *slot, 0);
-        if let Some(idx) = ctx.output_index(var) {
-            let offset = (idx * 8) as i32;
-            builder
-                .ins()
-                .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
-        }
-    }
-    builder.seal_block(exit_block);
-    Ok(())
-}
-
-fn compile_solvable_block_general_sparse_n(
-    unknowns: &[String],
-    residuals: &[Expression],
-    slots: &[StackSlot],
-    pattern: &SparseJacobianPattern,
-    ctx: &mut TranslationContext,
-    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
-) -> Result<(), String> {
-    let n = residuals.len();
-    let nnz = pattern.entries.len();
-    let ptr_type = ctx.module.target_config().pointer_type();
-    let row_ptr_bytes = pattern.row_ptr.len() * 4;
-    let col_idx_bytes = pattern.col_idx.len() * 4;
-    let values_offset = row_ptr_bytes + col_idx_bytes;
-    let r_offset = values_offset + nnz * 8;
-    let dx_offset = r_offset + n * 8;
-    let buf_size = dx_offset + n * 8;
-    let buf_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
-        cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
-        buf_size as u32,
-        0,
-    ));
-    let iter_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
-        cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
-        8,
-        0,
-    ));
-    let zero = builder.ins().f64const(0.0);
-    builder.ins().stack_store(zero, iter_slot, 0);
-    let base_ptr = builder.ins().stack_addr(ptr_type, buf_slot, 0);
-
-    for (idx, row) in pattern.row_ptr.iter().enumerate() {
-        let off_val = builder.ins().iconst(ptr_type, (idx * 4) as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        let row_val = builder.ins().iconst(cl_types::I32, i64::from(*row));
-        builder.ins().store(MemFlags::new(), row_val, addr, 0);
-    }
-    for (idx, col) in pattern.col_idx.iter().enumerate() {
-        let off_val = builder
-            .ins()
-            .iconst(ptr_type, (row_ptr_bytes + idx * 4) as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        let col_val = builder.ins().iconst(cl_types::I32, i64::from(*col));
-        builder.ins().store(MemFlags::new(), col_val, addr, 0);
-    }
-
-    let eps_val = builder.ins().f64const(1e-6);
-    let header_block = builder.create_block();
-    let body_block = builder.create_block();
-    let exit_block = builder.create_block();
-    let error_block = builder.create_block();
-    builder.ins().jump(header_block, &[]);
-    builder.switch_to_block(header_block);
-    let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-    let max_iter = builder.ins().f64const(150.0);
-    let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
-    builder
-        .ins()
-        .brif(iter_cond, body_block, &[], error_block, &[]);
-    builder.switch_to_block(error_block);
-    let err_code = builder.ins().iconst(cl_types::I32, 2);
-    builder.ins().return_(&[err_code]);
-    builder.switch_to_block(body_block);
-
-    let row_ptr_ptr = base_ptr;
-    let col_idx_offset_val = builder.ins().iconst(ptr_type, row_ptr_bytes as i64);
-    let col_idx_ptr = builder.ins().iadd(base_ptr, col_idx_offset_val);
-    let values_offset_val = builder.ins().iconst(ptr_type, values_offset as i64);
-    let values_ptr = builder.ins().iadd(base_ptr, values_offset_val);
-    let r_offset_val = builder.ins().iconst(ptr_type, r_offset as i64);
-    let r_ptr = builder.ins().iadd(base_ptr, r_offset_val);
-    let dx_offset_val = builder.ins().iconst(ptr_type, dx_offset as i64);
-    let dx_ptr = builder.ins().iadd(base_ptr, dx_offset_val);
-
-    let mut r_vals = Vec::with_capacity(n);
-    for (i, residual) in residuals.iter().enumerate() {
-        let rv = compile_expression(residual, ctx, builder)?;
-        r_vals.push(rv);
-        let off_val = builder
-            .ins()
-            .iconst(ptr_type, (r_offset + i * 8) as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        builder.ins().store(MemFlags::new(), rv, addr, 0);
-    }
-
-    let tol = builder.ins().f64const(1e-8);
-    let mut max_abs = builder.ins().f64const(0.0);
-    for rv in &r_vals {
-        let abs_res = builder.ins().fabs(*rv);
-        max_abs = builder.ins().fmax(max_abs, abs_res);
-    }
-    let perturb_block = builder.create_block();
-    let converged = builder.ins().fcmp(FloatCC::LessThan, max_abs, tol);
-    builder
-        .ins()
-        .brif(converged, exit_block, &[], perturb_block, &[]);
-    builder.switch_to_block(perturb_block);
-
-    for (entry_idx, (row, col)) in pattern.entries.iter().enumerate() {
-        let x_col = builder.ins().stack_load(cl_types::F64, slots[*col], 0);
-        let x_col_perturbed = builder.ins().fadd(x_col, eps_val);
-        builder.ins().stack_store(x_col_perturbed, slots[*col], 0);
-        let rp = compile_expression(&residuals[*row], ctx, builder)?;
-        let dr = builder.ins().fsub(rp, r_vals[*row]);
-        let jac = builder.ins().fdiv(dr, eps_val);
-        let off_val = builder
-            .ins()
-            .iconst(ptr_type, (values_offset + entry_idx * 8) as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        builder.ins().store(MemFlags::new(), jac, addr, 0);
-        builder.ins().stack_store(x_col, slots[*col], 0);
-    }
-
-    let mut sig = ctx.module.make_signature();
-    sig.params.push(AbiParam::new(cl_types::I32));
-    sig.params.push(AbiParam::new(cl_types::I32));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.params.push(AbiParam::new(ptr_type));
-    sig.returns.push(AbiParam::new(cl_types::I32));
-    let func_id = ctx
-        .module
-        .declare_function("rustmodlica_solve_linear_csr", Linkage::Import, &sig)
-        .map_err(|e| e.to_string())?;
-    let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-    let n_i32 = builder.ins().iconst(cl_types::I32, n as i64);
-    let nnz_i32 = builder.ins().iconst(cl_types::I32, nnz as i64);
-    let solve_result = builder.ins().call(
-        func_ref,
-        &[
-            n_i32,
-            nnz_i32,
-            row_ptr_ptr,
-            col_idx_ptr,
-            values_ptr,
-            r_ptr,
-            dx_ptr,
-        ],
-    );
-    let status = builder.inst_results(solve_result)[0];
-    let zero_i32 = builder.ins().iconst(cl_types::I32, 0);
-    let status_ok = builder.ins().icmp(IntCC::Equal, status, zero_i32);
-    let update_block = builder.create_block();
-    builder
-        .ins()
-        .brif(status_ok, update_block, &[], error_block, &[]);
-    builder.switch_to_block(update_block);
-
-    for (i, slot) in slots.iter().enumerate().take(n) {
-        let off_val = builder
-            .ins()
-            .iconst(ptr_type, (dx_offset + i * 8) as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        let dxi = builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0);
-        let xi = builder.ins().stack_load(cl_types::F64, *slot, 0);
-        let xi_new = builder.ins().fadd(xi, dxi);
-        builder.ins().stack_store(xi_new, *slot, 0);
-    }
-
-    let one = builder.ins().f64const(1.0);
-    let next_iter = builder.ins().fadd(iter_val, one);
-    builder.ins().stack_store(next_iter, iter_slot, 0);
-    builder.ins().jump(header_block, &[]);
-    builder.seal_block(update_block);
-    builder.seal_block(header_block);
-    builder.seal_block(body_block);
-    builder.seal_block(perturb_block);
-    builder.seal_block(error_block);
-    builder.switch_to_block(exit_block);
-    for (var, slot) in unknowns.iter().take(n).zip(slots) {
-        let val = builder.ins().stack_load(cl_types::F64, *slot, 0);
-        if let Some(idx) = ctx.output_index(var) {
-            let offset = (idx * 8) as i32;
-            builder
-                .ins()
-                .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
-        }
-    }
-    builder.seal_block(exit_block);
     Ok(())
 }

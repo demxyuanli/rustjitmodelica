@@ -110,6 +110,128 @@ pub(super) fn classify_variables(
 
     let mut state_vars = HashSet::new();
     let mut discrete_vars = HashSet::new();
+    fn collect_ref_root_vars(expr: &Expression, out: &mut HashSet<String>) {
+        match expr {
+            Expression::Variable(name) => {
+                out.insert(name.clone());
+            }
+            Expression::ArrayAccess(base, _) => collect_ref_root_vars(base, out),
+            Expression::Dot(base, _) => collect_ref_root_vars(base, out),
+            _ => {}
+        }
+    }
+    fn collect_previous_vars_expr(expr: &Expression, out: &mut HashSet<String>) {
+        match expr {
+            Expression::Previous(inner) => {
+                collect_ref_root_vars(inner, out);
+                collect_previous_vars_expr(inner, out);
+            }
+            Expression::BinaryOp(l, _, r) => {
+                collect_previous_vars_expr(l, out);
+                collect_previous_vars_expr(r, out);
+            }
+            Expression::Call(_, args) | Expression::ArrayLiteral(args) => {
+                for a in args {
+                    collect_previous_vars_expr(a, out);
+                }
+            }
+            Expression::ArrayAccess(base, idx) => {
+                collect_previous_vars_expr(base, out);
+                collect_previous_vars_expr(idx, out);
+            }
+            Expression::Dot(base, _) => collect_previous_vars_expr(base, out),
+            Expression::If(c, t, f) => {
+                collect_previous_vars_expr(c, out);
+                collect_previous_vars_expr(t, out);
+                collect_previous_vars_expr(f, out);
+            }
+            Expression::Range(a, b, c) => {
+                collect_previous_vars_expr(a, out);
+                collect_previous_vars_expr(b, out);
+                collect_previous_vars_expr(c, out);
+            }
+            Expression::Sample(inner)
+            | Expression::Interval(inner)
+            | Expression::Hold(inner)
+            | Expression::Der(inner) => collect_previous_vars_expr(inner, out),
+            Expression::SubSample(c, n)
+            | Expression::SuperSample(c, n)
+            | Expression::ShiftSample(c, n) => {
+                collect_previous_vars_expr(c, out);
+                collect_previous_vars_expr(n, out);
+            }
+            Expression::ArrayComprehension { expr, iter_range, .. } => {
+                collect_previous_vars_expr(expr, out);
+                collect_previous_vars_expr(iter_range, out);
+            }
+            Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => {}
+        }
+    }
+    fn collect_previous_vars_eq(eq: &Equation, out: &mut HashSet<String>) {
+        match eq {
+            Equation::Simple(lhs, rhs) => {
+                collect_previous_vars_expr(lhs, out);
+                collect_previous_vars_expr(rhs, out);
+            }
+            Equation::MultiAssign(lhss, rhs) => {
+                for lhs in lhss {
+                    collect_previous_vars_expr(lhs, out);
+                }
+                collect_previous_vars_expr(rhs, out);
+            }
+            Equation::For(_, _, _, body) => {
+                for e in body {
+                    collect_previous_vars_eq(e, out);
+                }
+            }
+            Equation::When(c, body, else_whens) => {
+                collect_previous_vars_expr(c, out);
+                for e in body {
+                    collect_previous_vars_eq(e, out);
+                }
+                for (cond, branch) in else_whens {
+                    collect_previous_vars_expr(cond, out);
+                    for e in branch {
+                        collect_previous_vars_eq(e, out);
+                    }
+                }
+            }
+            Equation::If(c, t, else_ifs, e) => {
+                collect_previous_vars_expr(c, out);
+                for eq in t {
+                    collect_previous_vars_eq(eq, out);
+                }
+                for (cond, branch) in else_ifs {
+                    collect_previous_vars_expr(cond, out);
+                    for eq in branch {
+                        collect_previous_vars_eq(eq, out);
+                    }
+                }
+                if let Some(branch) = e {
+                    for eq in branch {
+                        collect_previous_vars_eq(eq, out);
+                    }
+                }
+            }
+            Equation::Connect(a, b) => {
+                collect_previous_vars_expr(a, out);
+                collect_previous_vars_expr(b, out);
+            }
+            Equation::Reinit(_, e) | Equation::Assert(e, _) | Equation::Terminate(e) => {
+                collect_previous_vars_expr(e, out);
+            }
+            Equation::CallStmt(e) => collect_previous_vars_expr(e, out),
+            Equation::SolvableBlock { equations, residuals, .. } => {
+                for eq in equations {
+                    collect_previous_vars_eq(eq, out);
+                }
+                for r in residuals {
+                    collect_previous_vars_expr(r, out);
+                }
+            }
+        }
+    }
+
     let mut param_vars = Vec::new();
     let mut output_vars = Vec::new();
     let mut params = Vec::new();
@@ -129,9 +251,19 @@ pub(super) fn classify_variables(
                     .and_then(eval_const_expr)
                     .unwrap_or(0.0),
             );
-        } else if decl.is_discrete {
+        } else if decl.is_discrete || flat_model.clocked_var_names.contains(&decl.name) {
             discrete_vars.insert(decl.name.clone());
         }
+    }
+    let mut previous_vars = HashSet::new();
+    for eq in &flat_model.equations {
+        collect_previous_vars_eq(eq, &mut previous_vars);
+    }
+    for eq in &flat_model.initial_equations {
+        collect_previous_vars_eq(eq, &mut previous_vars);
+    }
+    for name in previous_vars {
+        discrete_vars.insert(name);
     }
 
     let decl_index: HashMap<String, usize> = flat_model
@@ -347,6 +479,21 @@ pub(super) fn analyze_equations(
         eprintln!("[stage] structure_analysis");
     }
     let structure_started_at = Instant::now();
+    let discrete_var_set: HashSet<String> = layout.discrete_vars.iter().cloned().collect();
+    let lhs_root_var = |e: &Expression| -> Option<String> {
+        match e {
+            Expression::Variable(n) => Some(n.clone()),
+            Expression::ArrayAccess(base, _) => match &**base {
+                Expression::Variable(n) => Some(n.clone()),
+                _ => None,
+            },
+            Expression::Dot(base, _) => match &**base {
+                Expression::Variable(n) => Some(n.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
     let continuous_eqs: Vec<Equation> = normalized_eqs
         .into_iter()
         .filter(|eq| {
@@ -358,6 +505,13 @@ pub(super) fn analyze_equations(
                     | Equation::Assert(_, _)
                     | Equation::Terminate(_)
             )
+                && !matches!(
+                    eq,
+                    Equation::Simple(lhs, _)
+                        if lhs_root_var(lhs)
+                            .map(|n| discrete_var_set.contains(&n))
+                            .unwrap_or(false)
+                )
         })
         .collect();
 
@@ -442,8 +596,38 @@ pub(super) fn build_runtime_algorithms(
     }
     let started_at = Instant::now();
     let mut algorithms = flat_model.algorithms.clone();
+    let discrete_lhs_set: HashSet<String> = flat_model
+        .declarations
+        .iter()
+        .filter(|d| d.is_discrete || flat_model.clocked_var_names.contains(&d.name))
+        .map(|d| d.name.clone())
+        .collect();
+    let lhs_root_var = |e: &Expression| -> Option<String> {
+        match e {
+            Expression::Variable(n) => Some(n.clone()),
+            Expression::ArrayAccess(base, _) => match &**base {
+                Expression::Variable(n) => Some(n.clone()),
+                _ => None,
+            },
+            Expression::Dot(base, _) => match &**base {
+                Expression::Variable(n) => Some(n.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
     for eq in &flat_model.equations {
         match eq {
+            Equation::Simple(lhs, rhs)
+                if lhs_root_var(lhs)
+                    .map(|n| discrete_lhs_set.contains(&n))
+                    .unwrap_or(false) =>
+            {
+                algorithms.push(AlgorithmStatement::Assignment(
+                    normalize_der(lhs),
+                    normalize_der(rhs),
+                ));
+            }
             Equation::When(cond, body, else_whens) => {
                 let normalized = Equation::When(
                     normalize_der(cond),

@@ -61,6 +61,7 @@ pub fn resolve_type_alias(type_aliases: &[(String, String)], name: &str) -> Stri
 /// MSL-4: SIunits types (Modelica.SIunits.Time, etc.) are resolved as Real; units parsed but not enforced.
 pub fn is_primitive(type_name: &str) -> bool {
     matches!(type_name, "Real" | "Integer" | "Boolean" | "String" | "Complex")
+        || type_name == "Clock"
         || type_name.starts_with("Modelica.SIunits.")
         || type_name.starts_with("Modelica.Units.SI.")
         || type_name.starts_with("Modelica.Units.NonSI.")
@@ -81,7 +82,21 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
             || s.starts_with("Modelica.Units.SI.")
             || s.starts_with("Modelica.Units.NonSI.")
     };
-    if (t1 == "connector" && is_real_like(t2)) || (t2 == "connector" && is_real_like(t1)) {
+    let is_scalar_signal_like = |s: &str| {
+        is_real_like(s)
+            || s == "Integer"
+            || s == "Boolean"
+            || s.ends_with("IntegerInput")
+            || s.ends_with("IntegerOutput")
+            || s.ends_with("BooleanInput")
+            || s.ends_with("BooleanOutput")
+    };
+    if (t1 == "connector" && is_scalar_signal_like(t2))
+        || (t2 == "connector" && is_scalar_signal_like(t1))
+    {
+        return true;
+    }
+    if (t1 == "connector" && t2 == "Clock") || (t2 == "connector" && t1 == "Clock") {
         return true;
     }
     if is_real_like(t1) && is_real_like(t2) {
@@ -89,6 +104,9 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     }
     let a = |s: &str, suffix: &str| s.ends_with(suffix);
     let both = |s1: &str, s2: &str, x: &str, y: &str| (a(s1, x) && a(s2, y)) || (a(s1, y) && a(s2, x));
+    if both(t1, t2, "ClockInput", "ClockOutput") {
+        return true;
+    }
 
     // --- Blocks.Interfaces: signal connectors (Real/Boolean/Integer Input/Output) ---
     if both(t1, t2, "RealInput", "RealOutput") {
@@ -100,10 +118,18 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if both(t1, t2, "IntegerInput", "IntegerOutput") {
         return true;
     }
+    if both(t1, t2, "ComplexInput", "ComplexOutput") {
+        return true;
+    }
     let t1_short = t1.split('.').last().unwrap_or(t1);
     let t2_short = t2.split('.').last().unwrap_or(t2);
     if (t1_short == "RealInput" && t2_short == "RealOutput")
         || (t1_short == "RealOutput" && t2_short == "RealInput")
+    {
+        return true;
+    }
+    if (t1_short == "ComplexInput" && t2_short == "ComplexOutput")
+        || (t1_short == "ComplexOutput" && t2_short == "ComplexInput")
     {
         return true;
     }
@@ -145,9 +171,19 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if both(t1, t2, "HeatPort_b", "HeatPorts_a") {
         return true;
     }
+    if both(t1, t2, "HeatPort_a", "HeatPorts_a") {
+        return true;
+    }
 
     // --- Fluid: FluidPort_a, FluidPort_b (Modelica.Fluid.Interfaces) ---
     if both(t1, t2, "FluidPort_a", "FluidPort_b") {
+        return true;
+    }
+    if both(t1, t2, "VesselFluidPorts_a", "FluidPort_b")
+        || both(t1, t2, "VesselFluidPorts_a", "FluidPort_a")
+        || both(t1, t2, "VesselFluidPorts_b", "FluidPort_b")
+        || both(t1, t2, "VesselFluidPorts_b", "FluidPort_a")
+    {
         return true;
     }
     if a(t1, "FluidPort") && a(t2, "FluidPort") {
@@ -162,6 +198,41 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
         return true;
     }
     if a(t1, "Frame") && a(t2, "Frame") {
+        return true;
+    }
+
+    // --- Magnetic (FundamentalWave, FluxTubes, QuasiStatic): positive <-> negative magnetic ports ---
+    if both(t1, t2, "PositiveMagneticPort", "NegativeMagneticPort") {
+        return true;
+    }
+    if (t1_short == "PositiveMagneticPort" && t2_short == "NegativeMagneticPort")
+        || (t1_short == "NegativeMagneticPort" && t2_short == "PositiveMagneticPort")
+    {
+        return true;
+    }
+    if both(t1, t2, "PositiveMagneticFluxPort", "NegativeMagneticFluxPort") {
+        return true;
+    }
+    if (t1_short == "PositiveMagneticFluxPort" && t2_short == "NegativeMagneticFluxPort")
+        || (t1_short == "NegativeMagneticFluxPort" && t2_short == "PositiveMagneticFluxPort")
+    {
+        return true;
+    }
+
+    // QS.FundamentalWave magnetic connectors often use the same short class names as static
+    // FundamentalWave; MSL connects QS machine windings to static polyphase converter components.
+    if t1_short == t2_short
+        && t1.contains("Modelica.Magnetic.")
+        && t2.contains("Modelica.Magnetic.")
+        && matches!(
+            t1_short,
+            "PositiveMagneticPort"
+                | "NegativeMagneticPort"
+                | "MagneticPort"
+                | "PositiveMagneticFluxPort"
+                | "NegativeMagneticFluxPort"
+        )
+    {
         return true;
     }
 
