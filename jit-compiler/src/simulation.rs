@@ -5,8 +5,11 @@ use crate::i18n;
 use crate::jit::{native, CalcDerivsFunc};
 use crate::solver::{AdaptiveRK45Solver, BackwardEulerSolver, RungeKutta4Solver, Solver, System};
 use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::io::{self, Write};
+
+const CSV_ROWS_PER_FLUSH: u32 = 64;
 
 /// Serializable simulation time series for IDE/Plotly (time + series per variable).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -24,6 +27,16 @@ fn allow_zero_residual_newton(status: i32, diag_residual: f64) -> bool {
 
 fn allow_algebraic_newton_fallback(status: i32, state_len: usize) -> bool {
     status == 2 && state_len == 0
+}
+
+fn write_csv_line(w: &mut dyn Write, line: &str) -> Result<(), String> {
+    w.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    w.write_all(b"\n").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn flush_writer(w: &mut dyn Write) -> Result<(), String> {
+    w.flush().map_err(|e| e.to_string())
 }
 
 pub fn run_simulation(
@@ -76,28 +89,28 @@ pub fn run_simulation(
             .map_err(|e| format!("Failed to create result file {}: {}", path, e))?;
         Box::new(std::io::BufWriter::new(f))
     } else {
-        Box::new(io::stdout())
+        Box::new(std::io::BufWriter::new(io::stdout()))
     };
 
     let w = &mut out;
-    let mut write_row = |line: &str| -> Result<(), String> {
-        w.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-        w.write_all(b"\n").map_err(|e| e.to_string())?;
-        w.flush().map_err(|e| e.to_string())?;
-        Ok(())
-    };
 
-    let mut header = i18n::msg0("time").to_string();
+    let est_cols = 1 + state_vars.len() + discrete_vars.len() + output_vars.len();
+    let mut header = String::with_capacity(est_cols * 16);
+    header.push_str(i18n::msg0("time"));
     for var in state_vars {
-        header.push_str(&format!(", {}", var));
+        write!(&mut header, ", {}", var).map_err(|e| e.to_string())?;
     }
     for var in discrete_vars {
-        header.push_str(&format!(", {}", var));
+        write!(&mut header, ", {}", var).map_err(|e| e.to_string())?;
     }
     for var in output_vars {
-        header.push_str(&format!(", {}", var));
+        write!(&mut header, ", {}", var).map_err(|e| e.to_string())?;
     }
-    write_row(&header)?;
+    write_csv_line(w, &header)?;
+    flush_writer(w)?;
+
+    let mut csv_row = String::with_capacity(est_cols * 24);
+    let mut rows_since_flush: u32 = 0;
 
     let print_interval = output_interval;
     let mut next_print = 0.0;
@@ -203,6 +216,7 @@ pub fn run_simulation(
                             );
                         }
                     }
+                    let _ = flush_writer(w);
                     return Err(format!(
                         "Simulation failed at t={:.4} with status {}",
                         time, status
@@ -214,11 +228,14 @@ pub fn run_simulation(
                 let max_diff = if alg_iter == 0 {
                     1.0
                 } else {
-                    prev_outputs
-                        .iter()
-                        .zip(outputs.iter())
-                        .map(|(a, b)| (a - b).abs())
-                        .fold(0.0_f64, f64::max)
+                    let mut m = 0.0_f64;
+                    for i in 0..outputs.len() {
+                        let d = (prev_outputs[i] - outputs[i]).abs();
+                        if d > m {
+                            m = d;
+                        }
+                    }
+                    m
                 };
                 if alg_iter > 0 && max_diff < 1e-10 {
                     break;
@@ -238,6 +255,7 @@ pub fn run_simulation(
                         &[&format!("{:.4}", time) as &dyn std::fmt::Display]
                     )
                 );
+                flush_writer(w)?;
                 return Ok(());
             }
 
@@ -346,17 +364,23 @@ pub fn run_simulation(
         }
 
         if time >= next_print - epsilon {
-            let mut row = format!("{:.4}", time);
+            csv_row.clear();
+            write!(&mut csv_row, "{:.4}", time).map_err(|e| e.to_string())?;
             for val in &states {
-                row.push_str(&format!(", {:.4}", val));
+                write!(&mut csv_row, ", {:.4}", val).map_err(|e| e.to_string())?;
             }
             for val in &discrete_vals {
-                row.push_str(&format!(", {:.4}", val));
+                write!(&mut csv_row, ", {:.4}", val).map_err(|e| e.to_string())?;
             }
             for val in &outputs {
-                row.push_str(&format!(", {:.4}", val));
+                write!(&mut csv_row, ", {:.4}", val).map_err(|e| e.to_string())?;
             }
-            write_row(&row)?;
+            write_csv_line(w, &csv_row)?;
+            rows_since_flush = rows_since_flush.saturating_add(1);
+            if rows_since_flush >= CSV_ROWS_PER_FLUSH {
+                flush_writer(w)?;
+                rows_since_flush = 0;
+            }
             if let Some(ref mut c) = result_collector {
                 c.push((time, states.clone(), discrete_vals.clone(), outputs.clone()));
             }
@@ -438,6 +462,7 @@ pub fn run_simulation(
                         );
                     }
                 }
+                let _ = flush_writer(w);
                 return Err(format!("Solver step failed with status {}", status));
             }
         }
@@ -498,6 +523,7 @@ pub fn run_simulation(
                         );
                     }
                 }
+                let _ = flush_writer(w);
                 return Err(format!(
                     "Simulation failed at t={:.4} (trial step) with status {}",
                     t_trial, status
@@ -604,6 +630,7 @@ pub fn run_simulation(
                             );
                         }
                     }
+                    let _ = flush_writer(w);
                     return Err(format!("Solver step failed with status {}", status));
                 }
             }
@@ -621,6 +648,7 @@ pub fn run_simulation(
             i18n::msg("adaptive_rk45_steps", &[&adaptive_step_count])
         );
     }
+    flush_writer(w)?;
     Ok(())
 }
 

@@ -243,6 +243,87 @@ pub fn expr_to_connector_path(expr: &Expression) -> Option<String> {
     }
 }
 
+/// Const-fold helper for array index in flat names (no `flatten` import to avoid crate cycles).
+fn eval_const_expr_flat_index(expr: &Expression) -> Option<f64> {
+    match expr {
+        Expression::Number(n) => Some(*n),
+        Expression::BinaryOp(lhs, op, rhs) => {
+            let l = eval_const_expr_flat_index(lhs)?;
+            let r = eval_const_expr_flat_index(rhs)?;
+            match op {
+                Operator::Add => Some(l + r),
+                Operator::Sub => Some(l - r),
+                Operator::Mul => Some(l * r),
+                Operator::Div => Some(l / r),
+                _ => None,
+            }
+        }
+        Expression::If(cond, t_expr, f_expr) => {
+            let c = eval_const_expr_flat_index(cond)?;
+            if c != 0.0 {
+                eval_const_expr_flat_index(t_expr)
+            } else {
+                eval_const_expr_flat_index(f_expr)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Suffix string for flattened scalar array elements: matches `index` handling inside
+/// [`expr_to_flat_scalar_prefix`] for `ArrayAccess`.
+/// Supports simple affine subscripts `i +/- k` used in MSL (e.g. `mediums[n - 1].p`).
+pub(crate) fn flat_index_suffix_for_scalar_name(idx: &Expression) -> Option<String> {
+    match idx {
+        Expression::Number(n) => Some(((*n).round() as i64).to_string()),
+        Expression::Variable(v) => Some(v.clone()),
+        Expression::BinaryOp(lhs, op, rhs) => match op {
+            Operator::Sub => match (&**lhs, &**rhs) {
+                (Expression::Variable(v), Expression::Number(k)) => Some(format!(
+                    "{}_sub_{}",
+                    v,
+                    (*k).round() as i64
+                )),
+                (Expression::Number(k), Expression::Variable(v)) => Some(format!(
+                    "{}_sub_from_{}",
+                    v,
+                    (*k).round() as i64
+                )),
+                _ => eval_const_expr_flat_index(idx).map(|x| (x.round() as i64).to_string()),
+            },
+            Operator::Add => match (&**lhs, &**rhs) {
+                (Expression::Variable(v), Expression::Number(k)) | (Expression::Number(k), Expression::Variable(v)) => {
+                    Some(format!("{}_add_{}", v, (*k).round() as i64))
+                }
+                _ => eval_const_expr_flat_index(idx).map(|x| (x.round() as i64).to_string()),
+            },
+            _ => eval_const_expr_flat_index(idx).map(|x| (x.round() as i64).to_string()),
+        },
+        expr => eval_const_expr_flat_index(expr).map(|x| (x.round() as i64).to_string()),
+    }
+}
+
+/// Prefix used in flattened scalars for array/record tails: `u[k]` -> `u_k` (1-based index as in Modelica).
+pub fn expr_to_flat_scalar_prefix(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Variable(s) => Some(s.clone()),
+        Expression::ArrayAccess(arr, idx) => {
+            let base = expr_to_flat_scalar_prefix(arr)?;
+            let ix = flat_index_suffix_for_scalar_name(idx)?;
+            Some(format!("{}_{}", base, ix))
+        }
+        Expression::Dot(inner, member) => {
+            let base = expr_to_flat_scalar_prefix(inner)?;
+            if member == "signal" {
+                Some(base)
+            } else {
+                Some(format!("{}_{}", base, member))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Builds an Expression for a connector path string, e.g. "r.p" -> Dot(box Variable("r"), "p").
 pub fn connector_path_to_expr(path: &str) -> Expression {
     let mut parts = path.split('.');

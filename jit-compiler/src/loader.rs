@@ -157,6 +157,49 @@ impl ModelLoader {
             }
             return Ok(arc);
         }
+        // MSL: partial magnetic source exists only under QuasiStatic.FluxTubes.Interfaces;
+        // some dependencies still request the non-existent static FluxTubes.Interfaces.Source.
+        if name == "Modelica.Magnetic.FluxTubes.Interfaces.Source" {
+            let new_name = "Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces.Source";
+            let arc = self.load_model_impl(new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name.starts_with("Modelica.Magnetic.FluxTubes.Interfaces.Source.") {
+            let rest = name.trim_start_matches("Modelica.Magnetic.FluxTubes.Interfaces.Source.");
+            let new_name =
+                format!("Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces.Source.{rest}");
+            let arc = self.load_model_impl(&new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        if name == "Modelica.Magnetic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter"
+            || name.starts_with(
+                "Modelica.Magnetic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter.",
+            )
+        {
+            let rest = name.trim_start_matches(
+                "Modelica.Magnetic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter",
+            );
+            let new_name = format!(
+                "Modelica.Magnetic.QuasiStatic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter{rest}"
+            );
+            let arc = self.load_model_impl(&new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
         if name == "Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent"
             || name.starts_with("Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent.")
         {
@@ -208,6 +251,75 @@ impl ModelLoader {
                 self.loaded_paths.insert(name.to_string(), p);
             }
             return Ok(arc);
+        }
+        // PowerConverters examples often reference ExampleTemplates under a variant subpackage:
+        //   ...<Variant>.ExampleTemplates...
+        // Collapse repeatedly until a real package is found (MSL layout varies by release).
+        if name.contains(".ExampleTemplates") {
+            let mut candidate = name.to_string();
+            for _ in 0..8 {
+                let parts: Vec<&str> = candidate.split('.').collect();
+                let idx = match parts.iter().position(|p| *p == "ExampleTemplates") {
+                    Some(i) => i,
+                    None => break,
+                };
+                if idx < 1 {
+                    break;
+                }
+                let mut p = parts.clone();
+                p.remove(idx - 1);
+                let next = p.join(".");
+                if next == candidate {
+                    break;
+                }
+                candidate = next;
+                if let Ok(arc) = self.load_model_impl(&candidate, true) {
+                    self.loaded_models
+                        .insert(name.to_string(), Arc::clone(&arc));
+                    if let Some(pt) = self.loaded_paths.get(&candidate).cloned() {
+                        self.loaded_paths.insert(name.to_string(), pt);
+                    }
+                    return Ok(arc);
+                }
+            }
+        }
+        // Bare Magnetic.* seen in Electrical.PowerConverters coupling to magnetic models
+        if name == "Magnetic"
+            || (name.starts_with("Magnetic.") && !name.starts_with("Modelica."))
+        {
+            let new_name = if name == "Magnetic" {
+                "Modelica.Magnetic".to_string()
+            } else {
+                format!("Modelica.{}", name)
+            };
+            if let Ok(arc) = self.load_model_impl(&new_name, true) {
+                self.loaded_models
+                    .insert(name.to_string(), Arc::clone(&arc));
+                if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
+                    self.loaded_paths.insert(name.to_string(), p);
+                }
+                return Ok(arc);
+            }
+        }
+        // Clocked examples often reference these packages with short prefixes.
+        // Retry with fully qualified Modelica.Clocked.* names as a conservative fallback.
+        let clocked_short_prefixes = [
+            "ClockSignals",
+            "BooleanSignals",
+            "RealSignals",
+            "IntegerSignals",
+        ];
+        for short in clocked_short_prefixes {
+            if name == short || name.starts_with(&format!("{}.", short)) {
+                let new_name = format!("Modelica.Clocked.{}", name);
+                let arc = self.load_model_impl(&new_name, true)?;
+                self.loaded_models
+                    .insert(name.to_string(), Arc::clone(&arc));
+                if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
+                    self.loaded_paths.insert(name.to_string(), p);
+                }
+                return Ok(arc);
+            }
         }
         if let Some(arc) = self.loaded_models.get(name) {
             return Ok(Arc::clone(arc));
@@ -333,6 +445,71 @@ impl ModelLoader {
                 );
                 self.register_inner_classes(name, arc.as_ref());
                 return Ok(arc);
+            }
+        }
+
+        // Some QS Polyphase examples reference a non-existent `Modelica.Blocks.SymmetricalComponents`.
+        if name == "Modelica.Blocks.SymmetricalComponents"
+            || name.starts_with("Modelica.Blocks.SymmetricalComponents.")
+        {
+            let alt = name.replacen(
+                "Modelica.Blocks.SymmetricalComponents",
+                "Modelica.Electrical.QuasiStatic.Polyphase.Blocks.SymmetricalComponents",
+                1,
+            );
+            if alt != name {
+                if let Ok(arc) = self.load_model_impl(&alt, true) {
+                    self.loaded_models
+                        .insert(name.to_string(), Arc::clone(&arc));
+                    if let Some(p) = self.loaded_paths.get(&alt).cloned() {
+                        self.loaded_paths.insert(name.to_string(), p);
+                    }
+                    return Ok(arc);
+                }
+            }
+        }
+
+        // Trimmed trees may omit `Electrical.Polyphase.Blocks`; QS Polyphase defines the same Blocks.
+        if name == "Modelica.Electrical.Polyphase.Blocks.SymmetricalComponents"
+            || name.starts_with("Modelica.Electrical.Polyphase.Blocks.SymmetricalComponents.")
+        {
+            let alt = name.replacen(
+                "Modelica.Electrical.Polyphase.Blocks",
+                "Modelica.Electrical.QuasiStatic.Polyphase.Blocks",
+                1,
+            );
+            if alt != name {
+                if let Ok(arc) = self.load_model_impl(&alt, true) {
+                    self.loaded_models
+                        .insert(name.to_string(), Arc::clone(&arc));
+                    if let Some(p) = self.loaded_paths.get(&alt).cloned() {
+                        self.loaded_paths.insert(name.to_string(), p);
+                    }
+                    return Ok(arc);
+                }
+            }
+        }
+
+        // Trimmed MSL trees sometimes omit static `Magnetic.FundamentalWave.Utilities` but ship the
+        // QuasiStatic FundamentalWave Utilities package; QS machine examples still reference the
+        // static-qualified Utilities names from shared base classes.
+        if name == "Modelica.Magnetic.FundamentalWave.Utilities"
+            || name.starts_with("Modelica.Magnetic.FundamentalWave.Utilities.")
+        {
+            let alt = name.replacen(
+                "Modelica.Magnetic.FundamentalWave.Utilities",
+                "Modelica.Magnetic.QuasiStatic.FundamentalWave.Utilities",
+                1,
+            );
+            if alt != name {
+                if let Ok(arc) = self.load_model_impl(&alt, true) {
+                    self.loaded_models
+                        .insert(name.to_string(), Arc::clone(&arc));
+                    if let Some(p) = self.loaded_paths.get(&alt).cloned() {
+                        self.loaded_paths.insert(name.to_string(), p);
+                    }
+                    return Ok(arc);
+                }
             }
         }
 

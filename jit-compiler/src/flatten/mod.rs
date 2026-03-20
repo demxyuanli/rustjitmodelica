@@ -1,4 +1,5 @@
 use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression, ExtendsClause, Model};
+use crate::compiler::inline::is_builtin_function;
 use crate::diag::SourceLocation;
 use crate::loader::{LoadError, ModelLoader};
 use std::collections::HashMap;
@@ -55,6 +56,7 @@ pub mod expressions;
 pub mod structures;
 mod substitute;
 pub mod utils;
+mod clock_infer;
 
 use self::connections::resolve_connections;
 #[allow(unused_imports)]
@@ -78,6 +80,26 @@ pub struct Flattener {
 }
 
 impl Flattener {
+    /// Map static `Modelica.Magnetic.FundamentalWave.Utilities` types to the QS package when the
+    /// flattened root lives under QuasiStatic.FundamentalWave (imports may still point at static MSL).
+    fn qs_fw_utilities_redirect(resolved: &str, msl_import_context: &str) -> String {
+        if !msl_import_context
+            .starts_with("Modelica.Magnetic.QuasiStatic.FundamentalWave")
+        {
+            return resolved.to_string();
+        }
+        const STATIC_UTIL: &str = "Modelica.Magnetic.FundamentalWave.Utilities";
+        if resolved == STATIC_UTIL {
+            return "Modelica.Magnetic.QuasiStatic.FundamentalWave.Utilities".to_string();
+        }
+        if let Some(rest) = resolved.strip_prefix(STATIC_UTIL) {
+            if rest.is_empty() || rest.starts_with('.') {
+                return format!("Modelica.Magnetic.QuasiStatic.FundamentalWave.Utilities{rest}");
+            }
+        }
+        resolved.to_string()
+    }
+
     pub(crate) fn resolve_import_prefix(model: &Model, name: &str, current_qualified: &str) -> String {
         let name = name.trim_start_matches('.');
         if name == "Modelica.Fluid.Pipes.BaseClasses.PartialValve" {
@@ -101,8 +123,95 @@ impl Flattener {
                 return format!("{}.{}", qual, rest);
             }
         }
+        // Top-level MSL package shorthands must win over inner-classes of the same short name
+        // (e.g. a local class named Magnetic must not shadow the global Magnetic library).
+        if name == "Electrical" || name.starts_with("Electrical.") {
+            return format!("Modelica.{}", name);
+        }
+        if name == "Magnetic" || name.starts_with("Magnetic.") {
+            return format!("Modelica.{}", name);
+        }
+        if name == "Thermal" || name.starts_with("Thermal.") {
+            return format!("Modelica.{}", name);
+        }
+        if name == "StateGraph" || name.starts_with("StateGraph.") {
+            if name == "StateGraph" {
+                return "Modelica.StateGraph".to_string();
+            }
+            return format!("Modelica.{}", name);
+        }
+        if name == "FluidHeatFlow" || name.starts_with("FluidHeatFlow.") {
+            return format!("Modelica.Thermal.{}", name);
+        }
+        if name == "FluxTubes" || name.starts_with("FluxTubes.") {
+            return format!("Modelica.Magnetic.{}", name);
+        }
+        if name == "FundamentalWave" || name.starts_with("FundamentalWave.") {
+            return format!("Modelica.Magnetic.{}", name);
+        }
+        // MSL: StateGraph.mo uses local prefixes `Interfaces.*` and `StateGraph.*` (library self-ref);
+        // qualify so the loader does not see bare `Interfaces` / `StateGraph`.
+        if current_qualified.starts_with("Modelica.StateGraph") {
+            if name == "StateGraph" || name.starts_with("StateGraph.") {
+                if name == "StateGraph" {
+                    return "Modelica.StateGraph".to_string();
+                }
+                return format!("Modelica.{}", name);
+            }
+            if name == "Interfaces" || name.starts_with("Interfaces.") {
+                if name == "Interfaces" {
+                    return "Modelica.StateGraph.Interfaces".to_string();
+                }
+                return format!("Modelica.StateGraph.{}", name);
+            }
+        }
+        // MSL: Pipes.mo `FlowModel` is replaceable; short name must not stop at inner-class lookup.
+        if (current_qualified.starts_with("Modelica.Fluid")
+            || current_qualified.starts_with("ModelicaTest.Fluid"))
+            && (name == "FlowModel" || name.starts_with("FlowModel."))
+        {
+            let rest = name.trim_start_matches("FlowModel");
+            let base = "Modelica.Fluid.Pipes.BaseClasses.FlowModels.DetailedPipeFlow";
+            if rest.is_empty() {
+                return base.to_string();
+            }
+            return format!("{base}{rest}");
+        }
+        // Polyphase `Basic.*` must win over same-named inner classes in Sensors/Examples (e.g. PlugToPins_*).
+        if current_qualified.starts_with("Modelica.Electrical.Polyphase")
+            && (name == "Basic" || name.starts_with("Basic."))
+        {
+            if name == "Basic" {
+                return "Modelica.Electrical.Polyphase.Basic".to_string();
+            }
+            return format!("Modelica.Electrical.Polyphase.{}", name);
+        }
+        // Polyphase: unqualified `Ideal.*` refers to Electrical.Analog.Ideal (e.g. IdealDiode in Rectifier).
+        if current_qualified.starts_with("Modelica.Electrical.Polyphase")
+            && (name == "Ideal" || name.starts_with("Ideal."))
+        {
+            if name == "Ideal" {
+                return "Modelica.Electrical.Analog.Ideal".to_string();
+            }
+            return format!("Modelica.Electrical.Analog.{}", name);
+        }
+        // QuasiStatic single-phase `Ideal.*` (e.g. IdealTransformer) vs. inner `Ideal`.
+        if current_qualified.starts_with("Modelica.Electrical.QuasiStatic.SinglePhase")
+            && (name == "Ideal" || name.starts_with("Ideal."))
+        {
+            if name == "Ideal" {
+                return "Modelica.Electrical.QuasiStatic.SinglePhase.Ideal".to_string();
+            }
+            return format!("Modelica.Electrical.QuasiStatic.SinglePhase.{}", name);
+        }
         if !name.contains('.') && model.inner_classes.iter().any(|c| c.name == name) {
             return name.to_string();
+        }
+        if name == "Mechanics" {
+            return "Modelica.Mechanics".to_string();
+        }
+        if name.starts_with("Mechanics.") {
+            return format!("Modelica.{}", name);
         }
         // Library context flags for fallback rules (by sublibrary)
         let in_blocks = current_qualified.starts_with("Modelica.Blocks");
@@ -114,14 +223,40 @@ impl Flattener {
         let in_machines = current_qualified.starts_with("Modelica.Electrical.Machines");
         let in_qs_polyphase_basic =
             current_qualified.starts_with("Modelica.Electrical.QuasiStatic.Polyphase.Basic");
+        let in_qs_single_phase =
+            current_qualified.starts_with("Modelica.Electrical.QuasiStatic.SinglePhase");
         let in_rotational = current_qualified.starts_with("Modelica.Mechanics.Rotational");
         let in_translational = current_qualified.starts_with("Modelica.Mechanics.Translational");
         let in_mechanics = current_qualified.starts_with("Modelica.Mechanics");
+        let in_clocked_clocksignals =
+            current_qualified.starts_with("Modelica.Clocked.ClockSignals");
+        let in_clocked_realsignals = current_qualified.starts_with("Modelica.Clocked.RealSignals");
+        let in_clocked_booleansignals =
+            current_qualified.starts_with("Modelica.Clocked.BooleanSignals");
+        let in_clocked_integersignals =
+            current_qualified.starts_with("Modelica.Clocked.IntegerSignals");
+        let in_clocked_examples = current_qualified.starts_with("Modelica.Clocked.Examples");
+        let in_powerconverters =
+            current_qualified.starts_with("Modelica.Electrical.PowerConverters");
+        let in_batteries = current_qualified.starts_with("Modelica.Electrical.Batteries");
+        let in_magnetic = current_qualified.starts_with("Modelica.Magnetic");
+        let in_magnetic_fundamental_wave =
+            current_qualified.starts_with("Modelica.Magnetic.FundamentalWave");
+        let in_magnetic_fw_components =
+            current_qualified.starts_with("Modelica.Magnetic.FundamentalWave.Components");
+        let in_magnetic_fluxtubes = current_qualified.starts_with("Modelica.Magnetic.FluxTubes");
+        let in_magnetic_qs_fluxtubes =
+            current_qualified.starts_with("Modelica.Magnetic.QuasiStatic.FluxTubes");
+        let in_magnetic_qs_fundamental_wave =
+            current_qualified.starts_with("Modelica.Magnetic.QuasiStatic.FundamentalWave");
+        let in_modelicatest_magnetic_fluxtubes =
+            current_qualified.starts_with("ModelicaTest.Magnetic.FluxTubes");
         let in_multibody = current_qualified.starts_with("Modelica.Mechanics.MultiBody");
         let in_multibody_loops = current_qualified.starts_with("Modelica.Mechanics.MultiBody.Examples.Loops");
         let in_heattransfer = current_qualified.starts_with("Modelica.Thermal.HeatTransfer");
         let in_thermal = current_qualified.starts_with("Modelica.Thermal");
-        let in_fluid = current_qualified.starts_with("Modelica.Fluid");
+        let in_fluid = current_qualified.starts_with("Modelica.Fluid")
+            || current_qualified.starts_with("ModelicaTest.Fluid");
         let in_utilities = current_qualified.starts_with("Modelica.Utilities");
 
         // --- Units (SI) ---
@@ -136,13 +271,6 @@ impl Flattener {
         }
         if let Some(rest) = name.strip_prefix("Cv.") {
             return format!("Modelica.Units.Conversions.{}", rest);
-        }
-        // --- Global top-level package shorthands seen in MSL examples ---
-        if name == "Electrical" || name.starts_with("Electrical.") {
-            return format!("Modelica.{}", name);
-        }
-        if name == "Thermal" || name.starts_with("Thermal.") {
-            return format!("Modelica.{}", name);
         }
         // --- Constants / StateSelect (global) ---
         if name == "Constants" || name.starts_with("Constants.") {
@@ -159,11 +287,274 @@ impl Flattener {
             if name == "PositivePin" || name == "NegativePin" || name == "Pin" {
                 return format!("Modelica.Electrical.Analog.Interfaces.{}", name);
             }
+            if name == "Sources" {
+                return "Modelica.Electrical.Analog.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Electrical.Analog.{}", name);
+            }
+            if name == "Basic" {
+                return "Modelica.Electrical.Analog.Basic".to_string();
+            }
+            if name.starts_with("Basic.") {
+                return format!("Modelica.Electrical.Analog.{}", name);
+            }
+            if name == "Semiconductors" {
+                return "Modelica.Electrical.Analog.Semiconductors".to_string();
+            }
+            if name.starts_with("Semiconductors.") {
+                return format!("Modelica.Electrical.Analog.{}", name);
+            }
+            if name == "Ideal" {
+                return "Modelica.Electrical.Analog.Ideal".to_string();
+            }
+            if name.starts_with("Ideal.") {
+                return format!("Modelica.Electrical.Analog.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Electrical.Analog.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Electrical.Analog.{}", name);
+            }
             if name == "Interfaces" {
                 return "Modelica.Electrical.Analog.Interfaces".to_string();
             }
             if name.starts_with("Interfaces.") {
                 return format!("Modelica.Electrical.Analog.{}", name);
+            }
+        }
+        if in_batteries {
+            if name == "ParameterRecords" {
+                return "Modelica.Electrical.Batteries.ParameterRecords".to_string();
+            }
+            if name.starts_with("ParameterRecords.") {
+                return format!("Modelica.Electrical.Batteries.{}", name);
+            }
+            if name == "Utilities" {
+                return "Modelica.Electrical.Batteries.Utilities".to_string();
+            }
+            if name.starts_with("Utilities.") {
+                return format!("Modelica.Electrical.Batteries.{}", name);
+            }
+        }
+        if in_magnetic_fundamental_wave {
+            if name == "FundamentalWave" {
+                return "Modelica.Magnetic.FundamentalWave".to_string();
+            }
+            if name.starts_with("FundamentalWave.") {
+                return format!("Modelica.Magnetic.{}", name);
+            }
+            if name == "Interfaces" {
+                return "Modelica.Magnetic.FundamentalWave.Interfaces".to_string();
+            }
+            if name.starts_with("Interfaces.") {
+                return format!("Modelica.Magnetic.FundamentalWave.{}", name);
+            }
+            if name == "Utilities" {
+                return "Modelica.Magnetic.FundamentalWave.Utilities".to_string();
+            }
+            if name.starts_with("Utilities.") {
+                return format!("Modelica.Magnetic.FundamentalWave.{}", name);
+            }
+            if current_qualified.contains(".BasicMachines.") {
+                if name == "Components" {
+                    return "Modelica.Magnetic.FundamentalWave.BasicMachines.Components".to_string();
+                }
+                if name.starts_with("Components.") {
+                    return format!("Modelica.Magnetic.FundamentalWave.BasicMachines.{}", name);
+                }
+            }
+            if name == "Components" {
+                return "Modelica.Magnetic.FundamentalWave.Components".to_string();
+            }
+            if name.starts_with("Components.") {
+                return format!("Modelica.Magnetic.FundamentalWave.{}", name);
+            }
+            if name == "Machines" {
+                return "Modelica.Magnetic.FundamentalWave.BasicMachines".to_string();
+            }
+            if name.starts_with("Machines.") {
+                let rest = name.trim_start_matches("Machines.");
+                return format!("Modelica.Magnetic.FundamentalWave.BasicMachines.{}", rest);
+            }
+        }
+        if in_magnetic_qs_fundamental_wave {
+            if name == "ExampleUtilities" {
+                return "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.ExampleUtilities"
+                    .to_string();
+            }
+            if name.starts_with("ExampleUtilities.") {
+                return format!(
+                    "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.{}",
+                    name
+                );
+            }
+            if name == "Interfaces" {
+                return "Modelica.Magnetic.QuasiStatic.FundamentalWave.Interfaces".to_string();
+            }
+            if name.starts_with("Interfaces.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FundamentalWave.{}", name);
+            }
+            if current_qualified.contains(".BasicMachines.") {
+                if name == "Components" {
+                    return "Modelica.Magnetic.QuasiStatic.FundamentalWave.BasicMachines.Components"
+                        .to_string();
+                }
+                if name.starts_with("Components.") {
+                    return format!(
+                        "Modelica.Magnetic.QuasiStatic.FundamentalWave.BasicMachines.{}",
+                        name
+                    );
+                }
+            }
+            if name == "Components" {
+                return "Modelica.Magnetic.QuasiStatic.FundamentalWave.Components".to_string();
+            }
+            if name.starts_with("Components.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FundamentalWave.{}", name);
+            }
+            if name == "BaseClasses" {
+                return "Modelica.Magnetic.QuasiStatic.FundamentalWave.BaseClasses".to_string();
+            }
+            if name.starts_with("BaseClasses.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FundamentalWave.{}", name);
+            }
+            if name == "Utilities" {
+                return "Modelica.Magnetic.QuasiStatic.FundamentalWave.Utilities".to_string();
+            }
+            if name.starts_with("Utilities.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FundamentalWave.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Magnetic.QuasiStatic.FundamentalWave.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FundamentalWave.{}", name);
+            }
+            if name == "Machines" {
+                return "Modelica.Magnetic.QuasiStatic.FundamentalWave.BasicMachines".to_string();
+            }
+            if name.starts_with("Machines.") {
+                let rest = name.trim_start_matches("Machines.");
+                return format!(
+                    "Modelica.Magnetic.QuasiStatic.FundamentalWave.BasicMachines.{}",
+                    rest
+                );
+            }
+        }
+        if in_magnetic_fluxtubes || in_modelicatest_magnetic_fluxtubes {
+            if name == "Material" {
+                return "Modelica.Magnetic.FluxTubes.Material".to_string();
+            }
+            if name.starts_with("Material.") {
+                return format!("Modelica.Magnetic.FluxTubes.{}", name);
+            }
+            if name == "BaseClasses" {
+                return "Modelica.Magnetic.FluxTubes.BaseClasses".to_string();
+            }
+            if name.starts_with("BaseClasses.") {
+                return format!("Modelica.Magnetic.FluxTubes.{}", name);
+            }
+            if name == "Interfaces" {
+                return "Modelica.Magnetic.FluxTubes.Interfaces".to_string();
+            }
+            if name.starts_with("Interfaces.") {
+                return format!("Modelica.Magnetic.FluxTubes.{}", name);
+            }
+            if name == "Basic" {
+                return "Modelica.Magnetic.FluxTubes.Basic".to_string();
+            }
+            if name.starts_with("Basic.") {
+                return format!("Modelica.Magnetic.FluxTubes.{}", name);
+            }
+            if name == "Sources" {
+                return "Modelica.Magnetic.FluxTubes.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Magnetic.FluxTubes.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Magnetic.FluxTubes.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Magnetic.FluxTubes.{}", name);
+            }
+            if name == "Shapes" {
+                return "Modelica.Magnetic.FluxTubes.Shapes".to_string();
+            }
+            if name.starts_with("Shapes.") {
+                return format!("Modelica.Magnetic.FluxTubes.{}", name);
+            }
+        }
+        if in_magnetic_qs_fluxtubes {
+            if name == "Interfaces" {
+                return "Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces".to_string();
+            }
+            if name.starts_with("Interfaces.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FluxTubes.{}", name);
+            }
+            if name == "Basic" {
+                return "Modelica.Magnetic.QuasiStatic.FluxTubes.Basic".to_string();
+            }
+            if name.starts_with("Basic.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FluxTubes.{}", name);
+            }
+            if name == "Sources" {
+                return "Modelica.Magnetic.QuasiStatic.FluxTubes.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FluxTubes.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Magnetic.QuasiStatic.FluxTubes.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FluxTubes.{}", name);
+            }
+            if name == "Shapes" {
+                return "Modelica.Magnetic.QuasiStatic.FluxTubes.Shapes".to_string();
+            }
+            if name.starts_with("Shapes.") {
+                return format!("Modelica.Magnetic.QuasiStatic.FluxTubes.{}", name);
+            }
+        }
+        if in_magnetic_fw_components && (name == "Interfaces" || name.starts_with("Interfaces.")) {
+            if name == "Interfaces" {
+                return "Modelica.Magnetic.FundamentalWave.Interfaces".to_string();
+            }
+            return format!("Modelica.Magnetic.FundamentalWave.{}", name);
+        }
+        if in_magnetic && current_qualified.contains(".Examples.") {
+            let parent = current_qualified
+                .rsplit_once('.')
+                .map(|(p, _)| p)
+                .unwrap_or(current_qualified);
+            if name == "Components" || name == "BaseClasses" || name == "Utilities" {
+                return format!("{}.{}", parent, name);
+            }
+            if let Some(rest) = name.strip_prefix("Components.") {
+                return format!("{}.Components.{}", parent, rest);
+            }
+            if let Some(rest) = name.strip_prefix("BaseClasses.") {
+                return format!("{}.BaseClasses.{}", parent, rest);
+            }
+            if let Some(rest) = name.strip_prefix("Utilities.") {
+                return format!("{}.Utilities.{}", parent, rest);
+            }
+        }
+        if current_qualified.starts_with("Modelica.Electrical.Analog.Examples.OpAmps") {
+            if name == "OpAmpCircuits" {
+                return "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits".to_string();
+            }
+            if name.starts_with("OpAmpCircuits.") {
+                return format!("Modelica.Electrical.Analog.Examples.OpAmps.{}", name);
+            }
+            if name == "OpAmps" {
+                return "Modelica.Electrical.Analog.Examples.OpAmps".to_string();
+            }
+            if name.starts_with("OpAmps.") {
+                return format!("Modelica.Electrical.Analog.Examples.{}", name);
             }
         }
         // --- Electrical.Polyphase: Interfaces ---
@@ -172,6 +563,86 @@ impl Flattener {
                 return "Modelica.Electrical.Polyphase.Interfaces".to_string();
             }
             return format!("Modelica.Electrical.Polyphase.{}", name);
+        }
+        if in_polyphase {
+            if name == "Basic" {
+                return "Modelica.Electrical.Polyphase.Basic".to_string();
+            }
+            if name.starts_with("Basic.") {
+                return format!("Modelica.Electrical.Polyphase.{}", name);
+            }
+            if name == "Sources" {
+                return "Modelica.Electrical.Polyphase.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Electrical.Polyphase.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Electrical.Polyphase.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Electrical.Polyphase.{}", name);
+            }
+        }
+        if current_qualified.starts_with("Modelica.Electrical.QuasiStatic.Polyphase")
+            && (name == "Interfaces" || name.starts_with("Interfaces."))
+        {
+            if name == "Interfaces" {
+                return "Modelica.Electrical.QuasiStatic.Polyphase.Interfaces".to_string();
+            }
+            return format!("Modelica.Electrical.QuasiStatic.Polyphase.{}", name);
+        }
+        if current_qualified.starts_with("Modelica.Electrical.QuasiStatic.Polyphase") {
+            if name == "Basic" {
+                return "Modelica.Electrical.QuasiStatic.Polyphase.Basic".to_string();
+            }
+            if name.starts_with("Basic.") {
+                return format!("Modelica.Electrical.QuasiStatic.Polyphase.{}", name);
+            }
+            if name == "Sources" {
+                return "Modelica.Electrical.QuasiStatic.Polyphase.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Electrical.QuasiStatic.Polyphase.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Electrical.QuasiStatic.Polyphase.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Electrical.QuasiStatic.Polyphase.{}", name);
+            }
+        }
+        if in_qs_single_phase {
+            if name == "Basic" {
+                return "Modelica.Electrical.QuasiStatic.SinglePhase.Basic".to_string();
+            }
+            if name.starts_with("Basic.") {
+                return format!("Modelica.Electrical.QuasiStatic.SinglePhase.{}", name);
+            }
+            if name == "Interfaces" {
+                return "Modelica.Electrical.QuasiStatic.SinglePhase.Interfaces".to_string();
+            }
+            if name.starts_with("Interfaces.") {
+                return format!("Modelica.Electrical.QuasiStatic.SinglePhase.{}", name);
+            }
+            if name == "Sources" {
+                return "Modelica.Electrical.QuasiStatic.SinglePhase.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Electrical.QuasiStatic.SinglePhase.{}", name);
+            }
+            if name == "Sensors" {
+                return "Modelica.Electrical.QuasiStatic.SinglePhase.Sensors".to_string();
+            }
+            if name.starts_with("Sensors.") {
+                return format!("Modelica.Electrical.QuasiStatic.SinglePhase.{}", name);
+            }
+            if name == "Utilities" {
+                return "Modelica.Electrical.QuasiStatic.SinglePhase.Utilities".to_string();
+            }
+            if name.starts_with("Utilities.") {
+                return format!("Modelica.Electrical.QuasiStatic.SinglePhase.{}", name);
+            }
         }
         // --- Electrical.QuasiStatic.Polyphase.Basic: local helpers like PlugToPins_* ---
         if in_qs_polyphase_basic {
@@ -185,6 +656,34 @@ impl Flattener {
         }
         // --- Electrical (Machines etc.): allow direct pin shorthand ---
         if in_electrical {
+            // PowerConverters.DCAC.* is referenced from DCDC/HBridge while flattening non-PC packages.
+            if name == "DCAC" {
+                return "Modelica.Electrical.PowerConverters.DCAC".to_string();
+            }
+            if name.starts_with("DCAC.") {
+                return format!("Modelica.Electrical.PowerConverters.{}", name);
+            }
+            if in_powerconverters && current_qualified.starts_with("Modelica.Electrical.PowerConverters")
+            {
+                if name == "Interfaces" {
+                    return "Modelica.Electrical.PowerConverters.Interfaces".to_string();
+                }
+                if name.starts_with("Interfaces.") {
+                    return format!("Modelica.Electrical.PowerConverters.{}", name);
+                }
+            }
+            if current_qualified.starts_with("Modelica.Electrical.PowerConverters.Examples") {
+                let parent = current_qualified
+                    .rsplit_once('.')
+                    .map(|(p, _)| p)
+                    .unwrap_or(current_qualified);
+                if name == "ExampleTemplates" {
+                    return format!("{}.ExampleTemplates", parent);
+                }
+                if let Some(rest) = name.strip_prefix("ExampleTemplates.") {
+                    return format!("{}.ExampleTemplates.{}", parent, rest);
+                }
+            }
             if current_qualified.starts_with("Modelica.Electrical.PowerConverters") {
                 if name == "Icons" {
                     return "Modelica.Electrical.PowerConverters.Icons".to_string();
@@ -247,6 +746,18 @@ impl Flattener {
             return format!("Modelica.Electrical.Analog.{}", name);
         }
         if in_machines {
+            if name == "ControlledDCDrives" {
+                return "Modelica.Electrical.Machines.Examples.ControlledDCDrives".to_string();
+            }
+            if name.starts_with("ControlledDCDrives.") {
+                return format!("Modelica.Electrical.Machines.Examples.{}", name);
+            }
+            if name == "BasicMachines" {
+                return "Modelica.Electrical.Machines.BasicMachines".to_string();
+            }
+            if name.starts_with("BasicMachines.") {
+                return format!("Modelica.Electrical.Machines.{}", name);
+            }
             if name == "Utilities" {
                 return "Modelica.Electrical.Machines.Utilities".to_string();
             }
@@ -285,6 +796,12 @@ impl Flattener {
             if name == "Flange_a" || name == "Flange_b" || name == "Support" {
                 return format!("Modelica.Mechanics.Rotational.Interfaces.{}", name);
             }
+            if name == "Sources" {
+                return "Modelica.Mechanics.Rotational.Sources".to_string();
+            }
+            if name.starts_with("Sources.") {
+                return format!("Modelica.Mechanics.Rotational.{}", name);
+            }
             if name == "Components" {
                 return "Modelica.Mechanics.Rotational.Components".to_string();
             }
@@ -308,6 +825,12 @@ impl Flattener {
         if in_translational {
             if name == "Flange_a" || name == "Flange_b" || name == "Support" {
                 return format!("Modelica.Mechanics.Translational.Interfaces.{}", name);
+            }
+            if name == "Components" {
+                return "Modelica.Mechanics.Translational.Components".to_string();
+            }
+            if name.starts_with("Components.") {
+                return format!("Modelica.Mechanics.Translational.{}", name);
             }
             if name == "Sources" {
                 return "Modelica.Mechanics.Translational.Sources".to_string();
@@ -346,6 +869,65 @@ impl Flattener {
             }
             if name.starts_with("HeatTransfer.") {
                 return format!("Modelica.Thermal.{}", name);
+            }
+        }
+        // --- Clocked.*: local Interfaces shorthand inside subpackages ---
+        if in_clocked_clocksignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
+            if name == "Interfaces" {
+                return "Modelica.Clocked.ClockSignals.Interfaces".to_string();
+            }
+            return format!("Modelica.Clocked.ClockSignals.{}", name);
+        }
+        if in_clocked_realsignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
+            if name == "Interfaces" {
+                return "Modelica.Clocked.RealSignals.Interfaces".to_string();
+            }
+            return format!("Modelica.Clocked.RealSignals.{}", name);
+        }
+        if in_clocked_booleansignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
+            if name == "Interfaces" {
+                return "Modelica.Clocked.BooleanSignals.Interfaces".to_string();
+            }
+            return format!("Modelica.Clocked.BooleanSignals.{}", name);
+        }
+        if in_clocked_integersignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
+            if name == "Interfaces" {
+                return "Modelica.Clocked.IntegerSignals.Interfaces".to_string();
+            }
+            return format!("Modelica.Clocked.IntegerSignals.{}", name);
+        }
+        if in_clocked_examples {
+            if current_qualified.starts_with("Modelica.Clocked.Examples.Systems") {
+                if name == "Utilities" {
+                    return "Modelica.Clocked.Examples.Systems.Utilities".to_string();
+                }
+                if name.starts_with("Utilities.") {
+                    return format!("Modelica.Clocked.Examples.Systems.{}", name);
+                }
+            }
+            if name == "ClockSignals" {
+                return "Modelica.Clocked.ClockSignals".to_string();
+            }
+            if name.starts_with("ClockSignals.") {
+                return format!("Modelica.Clocked.{}", name);
+            }
+            if name == "BooleanSignals" {
+                return "Modelica.Clocked.BooleanSignals".to_string();
+            }
+            if name.starts_with("BooleanSignals.") {
+                return format!("Modelica.Clocked.{}", name);
+            }
+            if name == "RealSignals" {
+                return "Modelica.Clocked.RealSignals".to_string();
+            }
+            if name.starts_with("RealSignals.") {
+                return format!("Modelica.Clocked.{}", name);
+            }
+            if name == "IntegerSignals" {
+                return "Modelica.Clocked.IntegerSignals".to_string();
+            }
+            if name.starts_with("IntegerSignals.") {
+                return format!("Modelica.Clocked.{}", name);
             }
         }
         // --- Mechanics.MultiBody: World, Joints, Utilities, Frames, Interfaces, Types ---
@@ -513,10 +1095,50 @@ impl Flattener {
         }
         // --- Fluid: Interfaces, Types, Media ---
         if in_fluid {
+            if current_qualified.contains(".Examples.") {
+                let parent = current_qualified
+                    .rsplit_once('.')
+                    .map(|(p, _)| p)
+                    .unwrap_or(current_qualified);
+                if name == "Components" || name == "BaseClasses" || name == "Utilities" {
+                    return format!("{}.{}", parent, name);
+                }
+                if let Some(rest) = name.strip_prefix("Components.") {
+                    return format!("{}.Components.{}", parent, rest);
+                }
+                if let Some(rest) = name.strip_prefix("BaseClasses.") {
+                    return format!("{}.BaseClasses.{}", parent, rest);
+                }
+                if let Some(rest) = name.strip_prefix("Utilities.") {
+                    return format!("{}.Utilities.{}", parent, rest);
+                }
+            }
+            if name == "Fittings" {
+                return "Modelica.Fluid.Fittings".to_string();
+            }
+            if name.starts_with("Fittings.") {
+                return format!("Modelica.Fluid.{}", name);
+            }
+            if name == "System" {
+                return "Modelica.Fluid.System".to_string();
+            }
+            if name.starts_with("System.") {
+                return format!("Modelica.Fluid.{}", name);
+            }
             if name == "Interfaces" {
                 return "Modelica.Fluid.Interfaces".to_string();
             }
             if name.starts_with("Interfaces.") {
+                let rest = &name["Interfaces.".len()..];
+                if rest.starts_with("Step")
+                    || rest.starts_with("Transition")
+                    || rest.starts_with("CompositeStep")
+                    || rest.starts_with("PartialStep")
+                    || rest.starts_with("PartialTransition")
+                    || rest.starts_with("PartialStateGraphIcon")
+                {
+                    return format!("Modelica.StateGraph.Interfaces.{rest}");
+                }
                 return format!("Modelica.Fluid.{}", name);
             }
             if name == "Types" || name.starts_with("Types.") {
@@ -621,6 +1243,12 @@ impl Flattener {
         // --- Blocks: Interfaces, Types, Sources, Math, Nonlinear, Continuous, Logical ---
         if name == "Blocks" {
             return "Modelica.Blocks".to_string();
+        }
+        if name == "Clocked" {
+            return "Modelica.Clocked".to_string();
+        }
+        if name.starts_with("Clocked.") {
+            return format!("Modelica.{}", name);
         }
         if name == "MultiBody" {
             return "Modelica.Mechanics.MultiBody".to_string();
@@ -740,6 +1368,7 @@ impl Flattener {
             array_sizes: HashMap::new(),
             clocked_var_names: std::collections::HashSet::new(),
             clock_partitions: Vec::new(),
+            clock_signal_connections: Vec::new(),
         };
         self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_name))?;
         self.expand_equations(model, "", &mut flat);
@@ -818,6 +1447,9 @@ impl Flattener {
                 model: Arc<Model>,
                 prefix: String,
                 current_model_name: Option<String>,
+                /// FQ name of the top-level model being flattened (simulation class), not nested instance types.
+                /// Used only for `resolve_import_prefix` library shorthands (e.g. Utilities under QS FundamentalWave).
+                msl_import_context: String,
             },
             ExpandEquations {
                 model: Arc<Model>,
@@ -825,10 +1457,12 @@ impl Flattener {
             },
         }
 
+        let msl_ctx = current_model_name.unwrap_or("").to_string();
         let mut stack: Vec<Task> = vec![Task::Process {
             model,
             prefix: prefix.to_string(),
             current_model_name: current_model_name.map(|s| s.to_string()),
+            msl_import_context: msl_ctx,
         }];
 
         while let Some(task) = stack.pop() {
@@ -840,6 +1474,7 @@ impl Flattener {
                     model,
                     prefix,
                     current_model_name,
+                    msl_import_context,
                 } => {
                     let current_qualified = current_model_name.as_deref().unwrap_or("");
 
@@ -925,13 +1560,60 @@ impl Flattener {
 
                             let mut resolved_type =
                                 resolve_type_alias(&model.type_aliases, &decl.type_name);
-                            resolved_type =
-                                Self::resolve_import_prefix(model.as_ref(), &resolved_type, current_qualified);
+                            // Use the simulation class FQ name for MSL shorthands (Sensors.*, Sources.*, ...),
+                            // not `current_model_name` on nested tasks (which is the child component type).
+                            // Exception: inside Modelica.Clocked.* library classes, `Interfaces.*` and other
+                            // local prefixes must resolve against the package of the model being flattened
+                            // (e.g. Sampler.ShiftSample -> ClockSignals.Interfaces), not the top-level example.
+                            let import_scope = if msl_import_context.is_empty() {
+                                current_qualified
+                            } else if current_qualified.starts_with("Modelica.Clocked.ClockSignals")
+                                || current_qualified.starts_with("Modelica.Clocked.RealSignals")
+                                || current_qualified.starts_with("Modelica.Clocked.BooleanSignals")
+                                || current_qualified.starts_with("Modelica.Clocked.IntegerSignals")
+                                || current_qualified.starts_with("Modelica.Electrical.Analog")
+                                || current_qualified.starts_with("Modelica.Electrical.Machines")
+                                || current_qualified.starts_with("Modelica.Electrical.Polyphase")
+                                || current_qualified.starts_with("Modelica.Thermal.HeatTransfer")
+                                || current_qualified.starts_with("Modelica.Magnetic.FundamentalWave")
+                                || current_qualified.starts_with("Modelica.Magnetic.FluxTubes")
+                                || current_qualified.starts_with("Modelica.Blocks")
+                                || current_qualified.starts_with("Modelica.Electrical.Batteries")
+                                || current_qualified.starts_with("Modelica.Mechanics")
+                                || current_qualified.starts_with("Modelica.Electrical.QuasiStatic")
+                                || current_qualified.starts_with("Modelica.Fluid")
+                                || current_qualified.starts_with("ModelicaTest.Fluid")
+                            {
+                                current_qualified
+                            } else {
+                                msl_import_context.as_str()
+                            };
+                            resolved_type = Self::resolve_import_prefix(
+                                model.as_ref(),
+                                &resolved_type,
+                                import_scope,
+                            );
+                            resolved_type = Self::qs_fw_utilities_redirect(
+                                &resolved_type,
+                                &msl_import_context,
+                            );
+                            if resolved_type.eq_ignore_ascii_case("real") {
+                                resolved_type = "Real".to_string();
+                            }
                             if resolved_type == "Modelica.Fluid.Pipes.BaseClasses.PartialValve" {
                                 resolved_type =
                                     "Modelica.Fluid.Valves.BaseClasses.PartialValve".to_string();
                             }
-                            if resolved_type.starts_with("Medium.") {
+                            let medium_alias_prefix = resolved_type
+                                .split_once('.')
+                                .map(|(prefix, _)| prefix)
+                                .filter(|p| {
+                                    *p == "Medium"
+                                        || p.strip_prefix("Medium_")
+                                            .and_then(|s| s.parse::<u32>().ok())
+                                            .is_some()
+                                });
+                            if resolved_type.starts_with("Medium.") || medium_alias_prefix.is_some() {
                                 resolved_type = "Real".to_string();
                             }
                             if matches!(
@@ -1233,6 +1915,7 @@ impl Flattener {
                                 model: sub_model,
                                 prefix: full_path,
                                 current_model_name: Some(resolved_type),
+                                msl_import_context: msl_import_context.clone(),
                             });
                         }
                     }
@@ -1300,7 +1983,18 @@ impl Flattener {
     }
 
     fn get_record_components(&mut self, type_name: &str) -> Option<Vec<String>> {
-        let m = self.loader.load_model(type_name).ok()?;
+        let short = type_name.rsplit('.').next().unwrap_or(type_name);
+        if short == "Complex"
+            || type_name.ends_with(".Complex")
+            || type_name.ends_with("ComplexOutput")
+            || type_name.ends_with("ComplexInput")
+        {
+            return Some(vec!["re".to_string(), "im".to_string()]);
+        }
+        if is_builtin_function(type_name) {
+            return None;
+        }
+        let m = self.loader.load_model_silent(type_name, true).ok()?;
         if m.is_record {
             Some(m.declarations.iter().map(|d| d.name.clone()).collect())
         } else {
@@ -1358,115 +2052,4 @@ impl Flattener {
         );
     }
 
-    fn infer_clocked_variables(&self, flat: &mut FlattenedModel) {
-        fn expr_contains_clock(e: &Expression) -> bool {
-            match e {
-                Expression::Sample(inner)
-                | Expression::Interval(inner)
-                | Expression::Hold(inner)
-                | Expression::Previous(inner) => expr_contains_clock(inner),
-                Expression::SubSample(c, n)
-                | Expression::SuperSample(c, n)
-                | Expression::ShiftSample(c, n) => expr_contains_clock(c) || expr_contains_clock(n),
-                Expression::BinaryOp(l, _, r) => expr_contains_clock(l) || expr_contains_clock(r),
-                Expression::Call(_, args) => args.iter().any(expr_contains_clock),
-                Expression::ArrayAccess(base, idx) => {
-                    expr_contains_clock(base) || expr_contains_clock(idx)
-                }
-                Expression::Dot(base, _) => expr_contains_clock(base),
-                Expression::If(c, t, f) => {
-                    expr_contains_clock(c) || expr_contains_clock(t) || expr_contains_clock(f)
-                }
-                Expression::Range(a, b, c) => {
-                    expr_contains_clock(a) || expr_contains_clock(b) || expr_contains_clock(c)
-                }
-                Expression::ArrayLiteral(items) => items.iter().any(expr_contains_clock),
-                _ => false,
-            }
-        }
-
-        fn collect_lhs_vars(expr: &Expression, out: &mut std::collections::HashSet<String>) {
-            match expr {
-                Expression::Variable(name) => {
-                    out.insert(name.clone());
-                }
-                Expression::Der(inner) => collect_lhs_vars(inner, out),
-                Expression::ArrayAccess(base, _) => collect_lhs_vars(base, out),
-                Expression::Dot(base, _) => collect_lhs_vars(base, out),
-                Expression::ArrayLiteral(items) => {
-                    for e in items {
-                        collect_lhs_vars(e, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        fn walk_algorithms(
-            stmts: &[AlgorithmStatement],
-            clocked: bool,
-            out: &mut std::collections::HashSet<String>,
-        ) {
-            for stmt in stmts {
-                match stmt {
-                    AlgorithmStatement::Assignment(lhs, _) => {
-                        if clocked {
-                            collect_lhs_vars(lhs, out);
-                        }
-                    }
-                    AlgorithmStatement::MultiAssign(lhss, _) => {
-                        if clocked {
-                            for lhs in lhss {
-                                collect_lhs_vars(lhs, out);
-                            }
-                        }
-                    }
-                    AlgorithmStatement::CallStmt(_) => {}
-                    AlgorithmStatement::NoOp => {}
-                    AlgorithmStatement::If(_, then_stmts, else_ifs, else_stmts) => {
-                        walk_algorithms(then_stmts, clocked, out);
-                        for (_, s) in else_ifs {
-                            walk_algorithms(s, clocked, out);
-                        }
-                        if let Some(s) = else_stmts {
-                            walk_algorithms(s, clocked, out);
-                        }
-                    }
-                    AlgorithmStatement::While(_, body) => {
-                        walk_algorithms(body, clocked, out);
-                    }
-                    AlgorithmStatement::For(_, _, body) => {
-                        walk_algorithms(body, clocked, out);
-                    }
-                    AlgorithmStatement::When(cond, body, else_whens) => {
-                        let is_clock = expr_contains_clock(cond);
-                        let new_clocked = clocked || is_clock;
-                        walk_algorithms(body, new_clocked, out);
-                        for (c, s) in else_whens {
-                            let else_clocked = clocked || expr_contains_clock(c);
-                            walk_algorithms(s, else_clocked, out);
-                        }
-                    }
-                    AlgorithmStatement::Reinit(var, _) => {
-                        if clocked {
-                            out.insert(var.clone());
-                        }
-                    }
-                    AlgorithmStatement::Assert(_, _) | AlgorithmStatement::Terminate(_) => {}
-                }
-            }
-        }
-
-        let mut clocked = std::collections::HashSet::new();
-        walk_algorithms(&flat.algorithms, false, &mut clocked);
-        walk_algorithms(&flat.initial_algorithms, false, &mut clocked);
-        flat.clocked_var_names = clocked.clone();
-        if !clocked.is_empty() {
-            flat.clock_partitions
-                .push(self::structures::ClockPartition {
-                    id: "default".to_string(),
-                    var_names: clocked,
-                });
-        }
-    }
 }

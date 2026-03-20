@@ -1,4 +1,4 @@
-use crate::ast::Expression;
+use crate::ast::{flat_index_suffix_for_scalar_name, Expression};
 use std::collections::HashMap;
 
 use super::expressions::{eval_const_expr, expr_to_path};
@@ -103,6 +103,12 @@ impl super::Flattener {
                                 .map(|n| Expression::Variable(format!("{}_{}", name, n)))
                                 .collect(),
                         )
+                    } else {
+                        Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
+                    }
+                } else if let Expression::Variable(name) = &new_arr {
+                    if let Some(suf) = flat_index_suffix_for_scalar_name(&new_idx) {
+                        Expression::Variable(format!("{}_{}", name, suf))
                     } else {
                         Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
                     }
@@ -300,6 +306,12 @@ impl super::Flattener {
                                     .map(|n| Expression::Variable(format!("{}_{}", name, n)))
                                     .collect(),
                             )
+                        } else {
+                            Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
+                        }
+                    } else if let Expression::Variable(name) = &new_arr {
+                        if let Some(suf) = flat_index_suffix_for_scalar_name(&new_idx) {
+                            Expression::Variable(format!("{}_{}", name, suf))
                         } else {
                             Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
                         }

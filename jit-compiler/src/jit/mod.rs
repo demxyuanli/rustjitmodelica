@@ -2,7 +2,7 @@ use crate::ast::*;
 use cranelift::codegen::ir::UserFuncName;
 use cranelift::prelude::{types as cl_types, *};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{DataDescription, Linkage, Module};
+use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 
@@ -206,7 +206,7 @@ impl Jit {
 
             let mut when_idx = 0;
             let mut crossings_idx = 0;
-            let mut declared_imports = HashMap::new();
+            let mut declared_imports: HashMap<String, HashMap<String, FuncId>> = HashMap::new();
             let mut string_literal_cache = HashMap::new();
             let mut string_data_counter = 0usize;
             let mut t_ctx = TranslationContext::new(

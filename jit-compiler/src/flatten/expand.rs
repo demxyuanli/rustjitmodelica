@@ -1,4 +1,5 @@
 use crate::ast::{AlgorithmStatement, Equation, Expression};
+use crate::compiler::inline::is_builtin_function;
 use std::collections::HashMap;
 
 use super::expressions::{eval_const_expr, expr_to_path, index_expression, prefix_expression};
@@ -111,24 +112,8 @@ impl super::Flattener {
                         .collect();
                     let rhs_pre = prefix_expression(&rhs_sub, prefix);
                     if let Expression::Call(name, args_pre) = &rhs_pre {
-                        // Do not try to load builtin functions as models.
-                        let is_builtin_like = |n: &str| {
-                            matches!(n, "inStream" | "pow" | "sqrt" | "abs" | "min" | "max")
-                                || n.starts_with("Modelica.Math.")
-                                || n.starts_with("Medium.")
-                                || n.starts_with("Internal.")
-                                || n.contains(".Internal.")
-                                || n.starts_with("Connections.")
-                                || n.starts_with("Frames.")
-                                || n.contains(".Frames.")
-                                || n == "Utilities.regRoot"
-                                || n.ends_with(".Utilities.regRoot")
-                                || n == "Utilities.regRoot2"
-                                || n.ends_with(".Utilities.regRoot2")
-                                || n == "Utilities.regSquare2"
-                                || n.ends_with(".Utilities.regSquare2")
-                        };
-                        if is_builtin_like(name) {
+                        // Do not try to load builtin/placeholder functions as models.
+                        if is_builtin_function(name) {
                             eprintln!(
                                 "Warning: MultiAssign uses builtin-like function '{}'; not expanded.",
                                 name

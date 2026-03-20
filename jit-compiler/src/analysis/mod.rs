@@ -18,6 +18,7 @@ pub use initial::{
     analyze_initial_equations, order_initial_equations_for_application, InitialSystemInfo,
 };
 #[allow(unused_imports)]
+pub(crate) use variable_collection::collect_vars_expr;
 pub use variable_collection::{contains_var, extract_unknowns};
 
 #[derive(Clone, Default)]

@@ -38,15 +38,16 @@ external_binding = { (function_call | component_ref) ~ ("=" ~ expression)? }
 external_section = { "external" ~ (string_literal ~ WHITESPACE?)? ~ external_binding? ~ annotation? ~ ";" }
 
 impure_kw = { "impure" }
+pure_kw = { "pure" }
 function_prefix = { "function" }
-class_prefixes = { (replaceable_kw ~ WHITESPACE?)? ~ "encapsulated"? ~ "partial"? ~ "expandable"? ~ (impure_kw ~ WHITESPACE?)? ~ ("operator"? ~ "record" | "model" | "connector" | "class" | "record" | "block" | "package" | "type" | function_prefix) }
+class_prefixes = { (replaceable_kw ~ WHITESPACE?)? ~ "encapsulated"? ~ "partial"? ~ "expandable"? ~ ((impure_kw | pure_kw) ~ WHITESPACE?)? ~ ("operator"? ~ "record" | "model" | "connector" | "class" | "record" | "block" | "package" | "type" | function_prefix) }
 
 quoted_identifier = @{ "'" ~ (!"'" ~ ANY)+ ~ "'" }
 identifier = @{ quoted_identifier | (!keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*) }
 dotted_identifier = { "."? ~ identifier ~ ("." ~ identifier)* }
 annotation_clause = { annotation ~ ";" }
 short_class_definition_rhs = { function_call | component_ref | ((input_kw | output_kw)? ~ type_name) }
-constrainedby_clause = { "constrainedby" ~ WHITESPACE? ~ type_name }
+constrainedby_clause = { "constrainedby" ~ WHITESPACE? ~ type_name ~ string_comment? }
 short_class_definition = { class_prefixes ~ identifier ~ "=" ~ short_class_definition_rhs ~ array_subscript? ~ modification_part? ~ constrainedby_clause? ~ string_comment? ~ annotation? ~ ";"? }
 connector_alias_definition = { "connector" ~ identifier ~ "=" ~ (input_kw | output_kw)? ~ type_name ~ string_comment? ~ annotation? ~ ";"? }
 declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | declaration | model_definition | type_definition | annotation_clause)* }
@@ -98,8 +99,9 @@ modification = {
     ~ constrainedby_clause?
 }
 
-var_name_list = { identifier ~ (WHITESPACE? ~ "," ~ WHITESPACE? ~ identifier)* }
-declaration = { (replaceable_kw)? ~ (final_kw)? ~ (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (stream_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ (inner_kw | outer_kw)? ~ (replaceable_kw)? ~ type_name ~ array_subscript? ~ var_name_list ~ constrainedby_clause? ~ modification_part? ~ array_subscript? ~ rest_param? ~ modification_part? ~ conditional_clause? ~ value_assignment? ~ conditional_clause? ~ string_comment? ~ annotation? ~ ";" }
+component_decl_item = { identifier ~ modification_part? ~ value_assignment? }
+var_name_list = { component_decl_item ~ (WHITESPACE? ~ "," ~ WHITESPACE? ~ component_decl_item)* }
+declaration = { (replaceable_kw)? ~ (final_kw)? ~ (parameter_kw)? ~ (constant_kw)? ~ (flow_kw)? ~ (stream_kw)? ~ (discrete_kw)? ~ (input_kw | output_kw)? ~ inner_kw? ~ outer_kw? ~ (replaceable_kw)? ~ type_name ~ array_subscript? ~ var_name_list ~ modification_part? ~ conditional_clause? ~ constrainedby_clause? ~ array_subscript? ~ rest_param? ~ modification_part? ~ conditional_clause? ~ value_assignment? ~ conditional_clause? ~ string_comment? ~ annotation? ~ ";" }
 rest_param = { "..." }
 replaceable_kw = { "replaceable" }
 
@@ -124,7 +126,7 @@ primitive_type = { ("Real" | "Integer" | "Boolean") ~ !(ASCII_ALPHANUMERIC | "_"
 // Allow arbitrary identifiers as type names for models/connectors
 type_name = { "package" | "function" | "model" | primitive_type | (!keyword ~ dotted_identifier) }
 
-keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "import" | "protected" | "public" | "final" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "encapsulated" | "expandable" | "enumeration" | "true" | "false" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "each" | "redeclare" | "annotation" | "assert" | "terminate" | "operator" | "type" | "external" | "replaceable" | "within" | "constrainedby") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "import" | "protected" | "public" | "final" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "encapsulated" | "expandable" | "enumeration" | "true" | "false" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "pure" | "impure" | "each" | "redeclare" | "annotation" | "assert" | "terminate" | "operator" | "type" | "external" | "replaceable" | "within" | "constrainedby") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 value_assignment = { "=" ~ expression }
 // attribute_modification removed

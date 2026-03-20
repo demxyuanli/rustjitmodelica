@@ -1,5 +1,70 @@
-use crate::ast::{Expression, Operator};
+use crate::ast::{flat_index_suffix_for_scalar_name, Expression, Operator};
 use std::collections::HashMap;
+
+/// Fold `prefix_expression` results for array access into a scalar `Variable` name when the
+/// flatten/JIT convention is `array_index` / `array_{idxVar}` (matches `expr_to_flat_scalar_prefix`).
+fn try_fold_array_access_after_prefix(arr_flat: &Expression, idx_flat: &Expression) -> Option<Expression> {
+    if let (Expression::ArrayLiteral(elements), Expression::Number(n)) = (arr_flat, idx_flat) {
+        let idx = *n as usize;
+        if idx > 0 && idx <= elements.len() {
+            return Some(elements[idx - 1].clone());
+        }
+        if elements.len() == 1 {
+            return Some(elements[0].clone());
+        }
+        eprintln!(
+            "Index out of bounds in flattening: {} (len {})",
+            idx,
+            elements.len()
+        );
+        return Some(Expression::Number(0.0));
+    }
+    if let Expression::Variable(name) = arr_flat {
+        if let Some(v) = eval_const_expr(idx_flat) {
+            let n_int = v.round() as i64;
+            return Some(Expression::Variable(format!("{}_{}", name, n_int)));
+        }
+        if let Some(suf) = flat_index_suffix_for_scalar_name(idx_flat) {
+            return Some(Expression::Variable(format!("{}_{}", name, suf)));
+        }
+        return None;
+    }
+    if let Expression::ArrayAccess(inner_arr, inner_idx) = arr_flat {
+        let inner_folded = try_fold_array_access_after_prefix(inner_arr.as_ref(), inner_idx.as_ref())?;
+        return try_fold_array_access_after_prefix(&inner_folded, idx_flat);
+    }
+    None
+}
+
+/// Collapse `Dot` chains and fold indexable tails so JIT sees scalar `Variable` names (MSL MultiBody).
+fn append_dot_member_to_flat(base: Expression, member: &str) -> Expression {
+    match base {
+        Expression::Variable(name) => {
+            if member == "signal" {
+                Expression::Variable(name)
+            } else {
+                Expression::Variable(format!("{}_{}", name, member))
+            }
+        }
+        Expression::Dot(inner, m) => {
+            let step = append_dot_member_to_flat(*inner, &m);
+            append_dot_member_to_flat(step, member)
+        }
+        Expression::ArrayAccess(arr, idx) => {
+            if let Some(v) = try_fold_array_access_after_prefix(arr.as_ref(), idx.as_ref()) {
+                append_dot_member_to_flat(v, member)
+            } else {
+                Expression::Dot(Box::new(Expression::ArrayAccess(arr, idx)), member.to_string())
+            }
+        }
+        Expression::If(cond, t, f) => Expression::If(
+            cond,
+            Box::new(append_dot_member_to_flat(*t, member)),
+            Box::new(append_dot_member_to_flat(*f, member)),
+        ),
+        other => Expression::Dot(Box::new(other), member.to_string()),
+    }
+}
 
 pub fn prefix_expression(expr: &Expression, prefix: &str) -> Expression {
     let prefix_str = if prefix.is_empty() {
@@ -32,39 +97,20 @@ pub fn prefix_expression(expr: &Expression, prefix: &str) -> Expression {
         Expression::ArrayAccess(arr, idx) => {
             let arr_flat = prefix_expression(arr, prefix);
             let idx_flat = prefix_expression(idx, prefix);
-
-            if let (Expression::Variable(name), Expression::Number(n)) = (&arr_flat, &idx_flat) {
-                let n_int = *n as i64;
-                Expression::Variable(format!("{}_{}", name, n_int))
-            } else if let (Expression::ArrayLiteral(elements), Expression::Number(n)) =
-                (&arr_flat, &idx_flat)
-            {
-                let idx = *n as usize;
-                if idx > 0 && idx <= elements.len() {
-                    elements[idx - 1].clone()
-                } else {
-                    eprintln!(
-                        "Index out of bounds in flattening: {} (len {})",
-                        idx,
-                        elements.len()
-                    );
-                    Expression::Number(0.0)
-                }
-            } else {
+            try_fold_array_access_after_prefix(&arr_flat, &idx_flat).unwrap_or_else(|| {
                 Expression::ArrayAccess(Box::new(arr_flat), Box::new(idx_flat))
-            }
+            })
         }
         Expression::Dot(base, member) => {
             let base_flat = prefix_expression(base, prefix);
-            if let Expression::Variable(name) = base_flat {
-                if member == "signal" {
-                    Expression::Variable(name)
-                } else {
-                    Expression::Variable(format!("{}_{}", name, member))
+            let folded_base = match &base_flat {
+                Expression::ArrayAccess(arr, idx) => {
+                    try_fold_array_access_after_prefix(arr.as_ref(), idx.as_ref())
+                        .unwrap_or(base_flat)
                 }
-            } else {
-                Expression::Dot(Box::new(base_flat), member.clone())
-            }
+                _ => base_flat,
+            };
+            append_dot_member_to_flat(folded_base, member)
         }
         Expression::If(cond, t_expr, f_expr) => Expression::If(
             Box::new(prefix_expression(cond, prefix)),
@@ -123,6 +169,9 @@ pub fn index_expression(expr: &Expression, idx: usize) -> Expression {
         Expression::ArrayLiteral(elements) => {
             if idx > 0 && idx <= elements.len() {
                 elements[idx - 1].clone()
+            } else if elements.len() == 1 {
+                // Scalar / length-1 binding broadcast to array dimension (common in MSL records).
+                elements[0].clone()
             } else {
                 eprintln!(
                     "Index out of bounds for ArrayLiteral: {} (len {})",
