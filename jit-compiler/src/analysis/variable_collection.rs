@@ -10,6 +10,7 @@ pub fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> 
             unknowns.push(v);
         }
     }
+    unknowns.sort();
     unknowns
 }
 

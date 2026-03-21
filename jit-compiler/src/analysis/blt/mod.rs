@@ -288,7 +288,8 @@ pub fn sort_algebraic_equations(
     for eq in equations.iter() {
         collect_states_from_eq(eq, &mut state_set);
     }
-    let state_vars: Vec<String> = state_set.into_iter().collect();
+    let mut state_vars: Vec<String> = state_set.into_iter().collect();
+    state_vars.sort();
     if blt_trace {
         eprintln!("[blt] build_eq_info");
     }
@@ -376,6 +377,7 @@ pub fn sort_algebraic_equations(
         }
 
         unknown_list = all_unknowns.into_iter().collect();
+        unknown_list.sort();
         unknown_map = unknown_list
             .iter()
             .enumerate()
@@ -649,7 +651,8 @@ pub fn sort_algebraic_equations(
                     let residual = make_residual(eq);
                     let mut residual_vars: HashSet<String> = HashSet::new();
                     collect_vars_expr(&residual, &mut residual_vars);
-                    let vars_vec: Vec<String> = residual_vars.into_iter().collect();
+                    let mut vars_vec: Vec<String> = residual_vars.into_iter().collect();
+                    vars_vec.sort();
                     let tearing_var = vars_vec
                         .iter()
                         .find(|v| !v.starts_with("__dummy"))

@@ -514,6 +514,7 @@ impl ScriptRunner {
                     &arts.state_vars,
                     &arts.discrete_vars,
                     &arts.output_vars,
+                    &arts.output_start_vals,
                     &arts.state_var_index,
                     arts.t_end,
                     arts.dt,

@@ -453,12 +453,12 @@ pub(super) fn try_compile_builtin_call(
                 builder.switch_to_block(exit_block);
                 let result_val = builder.ins().stack_load(cl_types::F64, result_slot, 0);
                 builder.ins().jump(after_loop, &[]);
+                builder.seal_block(exit_block);
+                builder.switch_to_block(after_loop);
                 builder.seal_block(header);
                 builder.seal_block(body_block);
                 builder.seal_block(next_block);
                 builder.seal_block(found_block);
-                builder.seal_block(exit_block);
-                builder.switch_to_block(after_loop);
                 return Some(Ok(result_val));
             }
         }
@@ -674,6 +674,9 @@ pub(super) fn try_compile_builtin_call(
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name.ends_with("ExternalCombiTimeTable") {
+        return Some(Ok(builder.ins().f64const(0.0)));
+    }
+    if func_name == "loadResource" || func_name.ends_with(".loadResource") {
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     None

@@ -397,6 +397,7 @@ pub struct Artifacts {
     pub param_vars: Vec<String>,
     pub discrete_vars: Vec<String>,
     pub output_vars: Vec<String>,
+    pub output_start_vals: Vec<f64>,
     pub state_var_index: HashMap<String, usize>,
     /// SYNC-2: Clock partitions for event/solver (e.g. clocked state handling).
     #[allow(dead_code)]

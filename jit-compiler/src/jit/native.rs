@@ -1,16 +1,42 @@
 use cranelift_jit::JITBuilder;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::sparse_solve::CsrMatrix;
 
 // F4-4: assert/terminate simulation behavior
 static TERMINATE_REQUESTED: AtomicBool = AtomicBool::new(false);
+static ASSERT_HIT_COUNT: AtomicU64 = AtomicU64::new(0);
+static ASSERT_PRINTED_COUNT: AtomicU64 = AtomicU64::new(0);
+static ASSERT_SUPPRESS: AtomicBool = AtomicBool::new(false);
+const ASSERT_PRINT_LIMIT: u64 = 32;
 
 #[allow(clippy::cast_possible_truncation)]
 extern "C" fn modelica_assert(cond: f64, msg: f64) {
     if cond == 0.0 {
-        eprintln!("Assertion failed: {}", msg);
+        if ASSERT_SUPPRESS.load(Ordering::Relaxed) {
+            return;
+        }
+        let hit_idx = ASSERT_HIT_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+        let printed = ASSERT_PRINTED_COUNT.load(Ordering::SeqCst);
+        if printed < ASSERT_PRINT_LIMIT {
+            ASSERT_PRINTED_COUNT.fetch_add(1, Ordering::SeqCst);
+            eprintln!("Assertion failed: {}", msg);
+            if hit_idx == ASSERT_PRINT_LIMIT {
+                eprintln!(
+                    "Assertion print limit reached ({}); suppressing further assert logs.",
+                    ASSERT_PRINT_LIMIT
+                );
+            }
+        }
     }
+}
+
+extern "C" fn rustmodlica_assert_suppress_begin() {
+    ASSERT_SUPPRESS.store(true, Ordering::Relaxed);
+}
+
+extern "C" fn rustmodlica_assert_suppress_end() {
+    ASSERT_SUPPRESS.store(false, Ordering::Relaxed);
 }
 
 extern "C" fn modelica_terminate(_msg: f64) {
@@ -23,6 +49,24 @@ pub fn terminate_requested() -> bool {
 
 pub fn reset_terminate_flag() {
     TERMINATE_REQUESTED.store(false, Ordering::SeqCst);
+}
+
+pub fn reset_assert_counter() {
+    ASSERT_HIT_COUNT.store(0, Ordering::SeqCst);
+    ASSERT_PRINTED_COUNT.store(0, Ordering::SeqCst);
+    ASSERT_SUPPRESS.store(false, Ordering::Relaxed);
+}
+
+pub fn assert_hit_count() -> u64 {
+    ASSERT_HIT_COUNT.load(Ordering::SeqCst)
+}
+
+pub fn suppress_assert_begin() {
+    ASSERT_SUPPRESS.store(true, Ordering::Relaxed);
+}
+
+pub fn suppress_assert_end() {
+    ASSERT_SUPPRESS.store(false, Ordering::Relaxed);
 }
 
 // Math Wrappers
@@ -102,56 +146,79 @@ extern "C" fn rustmodlica_solve_linear_n(
         return -1;
     }
     let n_usize = n as usize;
-    let mut a = vec![0.0; n_usize * n_usize];
-    let mut b = vec![0.0; n_usize];
+    let mut jac_base = vec![0.0; n_usize * n_usize];
+    let mut rhs_base = vec![0.0; n_usize];
     unsafe {
-        std::ptr::copy_nonoverlapping(jac, a.as_mut_ptr(), n_usize * n_usize);
-        std::ptr::copy_nonoverlapping(r, b.as_mut_ptr(), n_usize);
-        for bi in &mut b {
+        std::ptr::copy_nonoverlapping(jac, jac_base.as_mut_ptr(), n_usize * n_usize);
+        std::ptr::copy_nonoverlapping(r, rhs_base.as_mut_ptr(), n_usize);
+        for bi in &mut rhs_base {
             *bi = -*bi;
         }
     }
-    for k in 0..n_usize {
-        let mut max_row = k;
-        let mut max_val = a[k * n_usize + k].abs();
-        for i in (k + 1)..n_usize {
-            let v = a[i * n_usize + k].abs();
-            if v > max_val {
-                max_val = v;
-                max_row = i;
+
+    let mut lambda = 0.0_f64;
+    let max_lm_retries = 6_u32;
+    for _retry in 0..=max_lm_retries {
+        let mut a = jac_base.clone();
+        let mut b = rhs_base.clone();
+        if lambda > 0.0 {
+            for i in 0..n_usize {
+                let d = i * n_usize + i;
+                a[d] += lambda;
             }
         }
-        if max_val < 1e-14 {
-            return 1;
-        }
-        if max_row != k {
-            for j in 0..n_usize {
-                a.swap(k * n_usize + j, max_row * n_usize + j);
+
+        let mut ok = true;
+        for k in 0..n_usize {
+            let mut max_row = k;
+            let mut max_val = a[k * n_usize + k].abs();
+            for i in (k + 1)..n_usize {
+                let v = a[i * n_usize + k].abs();
+                if v > max_val {
+                    max_val = v;
+                    max_row = i;
+                }
             }
-            b.swap(k, max_row);
-        }
-        let inv = 1.0 / a[k * n_usize + k];
-        a[k * n_usize + k] = 1.0;
-        for j in (k + 1)..n_usize {
-            a[k * n_usize + j] *= inv;
-        }
-        b[k] *= inv;
-        for i in 0..n_usize {
-            if i == k {
-                continue;
+            if max_val < 1e-14 {
+                ok = false;
+                break;
             }
-            let f = a[i * n_usize + k];
-            a[i * n_usize + k] = 0.0;
+            if max_row != k {
+                for j in 0..n_usize {
+                    a.swap(k * n_usize + j, max_row * n_usize + j);
+                }
+                b.swap(k, max_row);
+            }
+            let inv = 1.0 / a[k * n_usize + k];
+            a[k * n_usize + k] = 1.0;
             for j in (k + 1)..n_usize {
-                a[i * n_usize + j] -= f * a[k * n_usize + j];
+                a[k * n_usize + j] *= inv;
             }
-            b[i] -= f * b[k];
+            b[k] *= inv;
+            for i in 0..n_usize {
+                if i == k {
+                    continue;
+                }
+                let f = a[i * n_usize + k];
+                a[i * n_usize + k] = 0.0;
+                for j in (k + 1)..n_usize {
+                    a[i * n_usize + j] -= f * a[k * n_usize + j];
+                }
+                b[i] -= f * b[k];
+            }
         }
+
+        if ok {
+            unsafe {
+                std::ptr::copy_nonoverlapping(b.as_ptr(), dx, n_usize);
+            }
+            return 0;
+        }
+
+        lambda = if lambda == 0.0 { 1e-8 } else { lambda * 10.0 };
     }
-    unsafe {
-        std::ptr::copy_nonoverlapping(b.as_ptr(), dx, n_usize);
-    }
-    0
+
+    1
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -205,21 +272,40 @@ extern "C" fn rustmodlica_solve_linear_csr(
         *value = -*value;
     }
 
-    let matrix = CsrMatrix {
-        n: n_usize,
-        row_ptr: row_ptr_vec,
-        col_idx: col_idx_vec,
-        values: values_vec,
-    };
-    let mut solution = vec![0.0; n_usize];
-    if matrix.solve_in_place(&rhs, &mut solution).is_err() {
-        return 1;
+    let mut lambda = 0.0_f64;
+    let max_lm_retries = 6_u32;
+    for _retry in 0..=max_lm_retries {
+        let mut vals = values_vec.clone();
+        if lambda > 0.0 {
+            for i in 0..n_usize {
+                let start = row_ptr_vec[i];
+                let end = row_ptr_vec[i + 1];
+                for k in start..end {
+                    if col_idx_vec[k] == i {
+                        vals[k] += lambda;
+                    }
+                }
+            }
+        }
+
+        let matrix = CsrMatrix {
+            n: n_usize,
+            row_ptr: row_ptr_vec.clone(),
+            col_idx: col_idx_vec.clone(),
+            values: vals,
+        };
+        let mut solution = vec![0.0; n_usize];
+        if matrix.solve_in_place(&rhs, &mut solution).is_ok() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(solution.as_ptr(), dx, n_usize);
+            }
+            return 0;
+        }
+
+        lambda = if lambda == 0.0 { 1e-8 } else { lambda * 10.0 };
     }
 
-    unsafe {
-        std::ptr::copy_nonoverlapping(solution.as_ptr(), dx, n_usize);
-    }
-    0
+    1
 }
 
 /// SYNC-3: sample(interval) - returns 1.0 at sample instants (0, interval, 2*interval, ...), else 0.0.
@@ -312,6 +398,14 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("Boolean", modelica_boolean as *const u8);
     builder.symbol("not", modelica_not as *const u8);
     builder.symbol("String", modelica_string as *const u8);
+    builder.symbol(
+        "rustmodlica_assert_suppress_begin",
+        rustmodlica_assert_suppress_begin as *const u8,
+    );
+    builder.symbol(
+        "rustmodlica_assert_suppress_end",
+        rustmodlica_assert_suppress_end as *const u8,
+    );
 }
 
 /// Names of symbols registered by register_symbols(); used to avoid JIT panic when external is missing.
@@ -370,6 +464,8 @@ pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     set.insert("Modelica.Math.integer");
     set.insert("rustmodlica_solve_linear_n");
     set.insert("rustmodlica_solve_linear_csr");
+    set.insert("rustmodlica_assert_suppress_begin");
+    set.insert("rustmodlica_assert_suppress_end");
     set.insert("assert");
     set.insert("terminate");
     set.insert("Boolean");

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::{AlgorithmStatement, Equation, Expression, Model, Operator};
@@ -325,6 +326,7 @@ pub(crate) fn is_builtin_function(name: &str) -> bool {
             | "exlin2"
             | "powlin"
             | "numberOfSymmetricBaseSystems"
+            | "loadResource"
     ) {
         return true;
     }
@@ -432,7 +434,7 @@ fn extract_named_record_field(expr: &Expression, field: &str) -> Option<Expressi
 
 /// Inline `f(...).field` when `f` is a Modelica function with output `out` and body assigns
 /// `out.field := rhs` (MSL MultiBody Frames orientation accessors).
-fn multi_body_frames_function_candidates(name: &str) -> Vec<String> {
+fn function_resolution_candidates(name: &str) -> Vec<String> {
     let mut out = vec![name.to_string()];
     if let Some(suffix) = name.strip_prefix("Frames.") {
         if !suffix.is_empty() {
@@ -441,7 +443,25 @@ fn multi_body_frames_function_candidates(name: &str) -> Vec<String> {
             ));
         }
     }
+    if let Some(suffix) = name.strip_prefix("FluxTubes.") {
+        if !suffix.is_empty() {
+            out.push(format!("Modelica.Magnetic.FluxTubes.{suffix}"));
+        }
+    }
     out
+}
+
+fn resolve_modelica_uri(uri: &str, library_paths: &[PathBuf]) -> String {
+    if let Some(rest) = uri.strip_prefix("modelica://") {
+        let fs_rel = rest.replace('/', std::path::MAIN_SEPARATOR_STR);
+        for lib in library_paths {
+            let candidate = lib.join(&fs_rel);
+            if candidate.exists() {
+                return candidate.to_string_lossy().into_owned();
+            }
+        }
+    }
+    uri.to_string()
 }
 
 fn try_extract_function_output_dot_field(
@@ -457,7 +477,7 @@ fn try_extract_function_output_dot_field(
     }
     let mut func_model: Option<Arc<Model>> = None;
     let mut resolved_name: Option<String> = None;
-    for cand in multi_body_frames_function_candidates(func_name) {
+    for cand in function_resolution_candidates(func_name) {
         if let Some(m) = cache.get(&cand).cloned().or_else(|| loader.load_model(&cand).ok()) {
             func_model = Some(m);
             resolved_name = Some(cand);
@@ -526,6 +546,89 @@ fn try_extract_function_output_dot_field(
     None
 }
 
+fn try_extract_record_constructor_dot_field(
+    ctor_name: &str,
+    args: &[Expression],
+    field: &str,
+    loader: &mut ModelLoader,
+    cache: &mut HashMap<String, Arc<Model>>,
+) -> Option<Expression> {
+    if !args.is_empty() {
+        return None;
+    }
+    for cand in function_resolution_candidates(ctor_name) {
+        let Some(model) = cache
+            .get(&cand)
+            .cloned()
+            .or_else(|| loader.load_model(&cand).ok())
+        else {
+            continue;
+        };
+        cache.insert(cand.clone(), Arc::clone(&model));
+        if !model.is_record && model.is_function {
+            continue;
+        }
+        if let Some(v) = search_record_field(&model, field, loader, cache, 0) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn search_record_field(
+    model: &Model,
+    field: &str,
+    loader: &mut ModelLoader,
+    cache: &mut HashMap<String, Arc<Model>>,
+    depth: u32,
+) -> Option<Expression> {
+    if depth > 8 {
+        return None;
+    }
+    for ext in &model.extends {
+        for m in &ext.modifications {
+            if m.name == field {
+                if let Some(v) = &m.value {
+                    return Some(v.clone());
+                }
+            }
+        }
+    }
+    for d in &model.declarations {
+        if d.name == field {
+            if let Some(v) = &d.start_value {
+                return Some(v.clone());
+            }
+            for m in &d.modifications {
+                if m.name == field {
+                    if let Some(v) = &m.value {
+                        return Some(v.clone());
+                    }
+                }
+            }
+        }
+    }
+    for ext in &model.extends {
+        for parent_cand in function_resolution_candidates(&ext.model_name) {
+            let parent = cache
+                .get(&parent_cand)
+                .cloned()
+                .or_else(|| loader.load_model(&parent_cand).ok());
+            if let Some(parent_model) = parent {
+                cache.insert(parent_cand, Arc::clone(&parent_model));
+                if !parent_model.is_function {
+                    if let Some(v) =
+                        search_record_field(&parent_model, field, loader, cache, depth + 1)
+                    {
+                        return Some(v);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn inline_expr(
     expr: &Expression,
     loader: &mut ModelLoader,
@@ -543,6 +646,22 @@ fn inline_expr(
                         .map(|a| inline_expr(a, loader, cache, depth + 1))
                         .collect(),
                 );
+            }
+            if (name == "loadResource"
+                || name == "Modelica.Utilities.Files.loadResource"
+                || name.ends_with(".loadResource"))
+                && args.len() == 1
+            {
+                if let StringLiteral(uri) = &args[0] {
+                    let resolved = resolve_modelica_uri(uri, &loader.library_paths);
+                    return StringLiteral(resolved);
+                }
+                let inlined_arg = inline_expr(&args[0], loader, cache, depth + 1);
+                if let StringLiteral(uri) = &inlined_arg {
+                    let resolved = resolve_modelica_uri(uri, &loader.library_paths);
+                    return StringLiteral(resolved);
+                }
+                return inlined_arg;
             }
             // MSL Semiconductors.powlin(u, Me): (1+u)^Me for u > -1 (smooth continuation), else 0.
             if name == "powlin" || name.ends_with(".powlin") {
@@ -661,6 +780,15 @@ fn inline_expr(
                     ) {
                         return inline_expr(&e, loader, cache, depth + 1);
                     }
+                    if let Some(e) = try_extract_record_constructor_dot_field(
+                        fname,
+                        args,
+                        &member,
+                        loader,
+                        cache,
+                    ) {
+                        return inline_expr(&e, loader, cache, depth + 1);
+                    }
                 }
                 _ => {}
             }
@@ -689,6 +817,15 @@ fn inline_expr(
                         loader,
                         cache,
                         depth,
+                    ) {
+                        return inline_expr(&e, loader, cache, depth + 1);
+                    }
+                    if let Some(e) = try_extract_record_constructor_dot_field(
+                        &fname,
+                        &args,
+                        &member,
+                        loader,
+                        cache,
                     ) {
                         return inline_expr(&e, loader, cache, depth + 1);
                     }
@@ -897,6 +1034,11 @@ fn inline_algorithm(
 
 pub fn inline_function_calls(flat: &mut FlattenedModel, loader: &mut ModelLoader) {
     let mut cache: HashMap<String, Arc<Model>> = HashMap::new();
+    for decl in &mut flat.declarations {
+        if let Some(ref sv) = decl.start_value {
+            decl.start_value = Some(inline_expr(sv, loader, &mut cache, 0));
+        }
+    }
     flat.equations = flat
         .equations
         .iter()

@@ -28,6 +28,7 @@ pub(super) struct VariableLayout {
     pub discrete_vars: Vec<String>,
     pub param_vars: Vec<String>,
     pub output_vars: Vec<String>,
+    pub output_start_vals: Vec<f64>,
     pub input_var_names: Vec<String>,
     pub state_var_index: HashMap<String, usize>,
     pub param_var_index: HashMap<String, usize>,
@@ -130,7 +131,19 @@ pub(super) fn classify_variables(
                 collect_previous_vars_expr(l, out);
                 collect_previous_vars_expr(r, out);
             }
-            Expression::Call(_, args) | Expression::ArrayLiteral(args) => {
+            Expression::Call(name, args) => {
+                if name == "pre" {
+                    for a in args {
+                        collect_ref_root_vars(a, out);
+                        collect_previous_vars_expr(a, out);
+                    }
+                } else {
+                    for a in args {
+                        collect_previous_vars_expr(a, out);
+                    }
+                }
+            }
+            Expression::ArrayLiteral(args) => {
                 for a in args {
                     collect_previous_vars_expr(a, out);
                 }
@@ -232,6 +245,67 @@ pub(super) fn classify_variables(
         }
     }
 
+    fn collect_previous_vars_alg(stmt: &AlgorithmStatement, out: &mut HashSet<String>) {
+        match stmt {
+            AlgorithmStatement::Assignment(lhs, rhs) => {
+                collect_previous_vars_expr(lhs, out);
+                collect_previous_vars_expr(rhs, out);
+            }
+            AlgorithmStatement::MultiAssign(lhss, rhs) => {
+                for l in lhss {
+                    collect_previous_vars_expr(l, out);
+                }
+                collect_previous_vars_expr(rhs, out);
+            }
+            AlgorithmStatement::CallStmt(e) => collect_previous_vars_expr(e, out),
+            AlgorithmStatement::NoOp => {}
+            AlgorithmStatement::If(c, t, elseifs, els) => {
+                collect_previous_vars_expr(c, out);
+                for s in t {
+                    collect_previous_vars_alg(s, out);
+                }
+                for (cond, body) in elseifs {
+                    collect_previous_vars_expr(cond, out);
+                    for s in body {
+                        collect_previous_vars_alg(s, out);
+                    }
+                }
+                if let Some(body) = els {
+                    for s in body {
+                        collect_previous_vars_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::For(_, range, body) => {
+                collect_previous_vars_expr(range, out);
+                for s in body {
+                    collect_previous_vars_alg(s, out);
+                }
+            }
+            AlgorithmStatement::While(cond, body) => {
+                collect_previous_vars_expr(cond, out);
+                for s in body {
+                    collect_previous_vars_alg(s, out);
+                }
+            }
+            AlgorithmStatement::When(cond, body, else_whens) => {
+                collect_previous_vars_expr(cond, out);
+                for s in body {
+                    collect_previous_vars_alg(s, out);
+                }
+                for (c, branch) in else_whens {
+                    collect_previous_vars_expr(c, out);
+                    for s in branch {
+                        collect_previous_vars_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::Reinit(_, e) | AlgorithmStatement::Assert(e, _) | AlgorithmStatement::Terminate(e) => {
+                collect_previous_vars_expr(e, out);
+            }
+        }
+    }
+
     let mut param_vars = Vec::new();
     let mut output_vars = Vec::new();
     let mut params = Vec::new();
@@ -261,6 +335,9 @@ pub(super) fn classify_variables(
     }
     for eq in &flat_model.initial_equations {
         collect_previous_vars_eq(eq, &mut previous_vars);
+    }
+    for stmt in &flat_model.algorithms {
+        collect_previous_vars_alg(stmt, &mut previous_vars);
     }
     for name in previous_vars {
         discrete_vars.insert(name);
@@ -329,6 +406,7 @@ pub(super) fn classify_variables(
     }
 
     let mut output_var_index = HashMap::new();
+    let mut output_start_vals = Vec::new();
     for decl in &flat_model.declarations {
         if decl.is_parameter || discrete_set.contains(&decl.name) || state_set.contains(&decl.name) {
             continue;
@@ -336,6 +414,7 @@ pub(super) fn classify_variables(
         let idx = output_vars.len();
         output_var_index.insert(decl.name.clone(), idx);
         output_vars.push(decl.name.clone());
+        output_start_vals.push(start_value_for(&decl.name));
     }
     for var in &state_vars_sorted {
         let der_var = format!("der_{}", var);
@@ -343,6 +422,7 @@ pub(super) fn classify_variables(
             let idx = output_vars.len();
             output_var_index.insert(der_var.clone(), idx);
             output_vars.push(der_var);
+            output_start_vals.push(0.0);
         }
     }
 
@@ -452,6 +532,7 @@ pub(super) fn classify_variables(
         discrete_vars: discrete_vars_sorted,
         param_vars,
         output_vars,
+        output_start_vals,
         input_var_names,
         state_var_index,
         param_var_index,
