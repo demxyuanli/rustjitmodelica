@@ -187,6 +187,61 @@ pub fn index_expression(expr: &Expression, idx: usize) -> Expression {
         ),
         Expression::Der(arg) => Expression::Der(Box::new(index_expression(arg, idx))),
         Expression::ArrayAccess(_arr, _) => expr.clone(),
+        Expression::ArrayComprehension { expr: body, iter_var, .. } => {
+            let substituted = substitute_var_in_expr(body, iter_var, &Expression::Number(idx as f64));
+            substituted
+        }
+        Expression::If(c, t, f) => Expression::If(
+            Box::new(index_expression(c, idx)),
+            Box::new(index_expression(t, idx)),
+            Box::new(index_expression(f, idx)),
+        ),
+        _ => expr.clone(),
+    }
+}
+
+fn substitute_var_in_expr(expr: &Expression, var: &str, replacement: &Expression) -> Expression {
+    match expr {
+        Expression::Variable(name) if name == var => replacement.clone(),
+        Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => {
+            expr.clone()
+        }
+        Expression::BinaryOp(l, op, r) => Expression::BinaryOp(
+            Box::new(substitute_var_in_expr(l, var, replacement)),
+            *op,
+            Box::new(substitute_var_in_expr(r, var, replacement)),
+        ),
+        Expression::If(c, t, f) => Expression::If(
+            Box::new(substitute_var_in_expr(c, var, replacement)),
+            Box::new(substitute_var_in_expr(t, var, replacement)),
+            Box::new(substitute_var_in_expr(f, var, replacement)),
+        ),
+        Expression::Call(name, args) => Expression::Call(
+            name.clone(),
+            args.iter()
+                .map(|a| substitute_var_in_expr(a, var, replacement))
+                .collect(),
+        ),
+        Expression::Der(inner) => {
+            Expression::Der(Box::new(substitute_var_in_expr(inner, var, replacement)))
+        }
+        Expression::ArrayLiteral(items) => Expression::ArrayLiteral(
+            items
+                .iter()
+                .map(|e| substitute_var_in_expr(e, var, replacement))
+                .collect(),
+        ),
+        Expression::ArrayAccess(arr, idx) => Expression::ArrayAccess(
+            Box::new(substitute_var_in_expr(arr, var, replacement)),
+            Box::new(substitute_var_in_expr(idx, var, replacement)),
+        ),
+        Expression::Dot(base, member) => Expression::Dot(
+            Box::new(substitute_var_in_expr(base, var, replacement)),
+            member.clone(),
+        ),
+        Expression::Previous(inner) => {
+            Expression::Previous(Box::new(substitute_var_in_expr(inner, var, replacement)))
+        }
         _ => expr.clone(),
     }
 }

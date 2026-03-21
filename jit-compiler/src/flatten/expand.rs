@@ -6,6 +6,18 @@ use super::expressions::{eval_const_expr, expr_to_path, index_expression, prefix
 use super::utils::{convert_eq_to_alg, get_function_outputs};
 use super::ExpandTarget;
 
+fn extract_der_array_base(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Variable(name) => Some(name.clone()),
+        Expression::ArrayAccess(base, _) => extract_der_array_base(base),
+        Expression::Dot(base, member) => {
+            let base_name = extract_der_array_base(base)?;
+            Some(format!("{}_{}", base_name, member))
+        }
+        _ => None,
+    }
+}
+
 impl super::Flattener {
     pub(crate) fn expand_equation_list(
         &mut self,
@@ -78,6 +90,20 @@ impl super::Flattener {
                                 }
                                 continue;
                             }
+                        }
+                    }
+                    if let (Expression::Der(der_inner), Expression::ArrayLiteral(rhs_items)) =
+                        (&lhs_pre, &rhs_pre)
+                    {
+                        if let Some(base_name) = extract_der_array_base(der_inner) {
+                            for (k, rhs_item) in rhs_items.iter().enumerate() {
+                                let scalar_var = format!("{}_{}", base_name, k + 1);
+                                target.equations.push(Equation::Simple(
+                                    Expression::Der(Box::new(Expression::Variable(scalar_var))),
+                                    rhs_item.clone(),
+                                ));
+                            }
+                            continue;
                         }
                     }
                     if let (Expression::Variable(n1), Expression::Variable(n2)) =

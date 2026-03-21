@@ -38,6 +38,14 @@ pub fn flatten_dot_to_name(expr: &Expression) -> Option<String> {
         Expression::Dot(base, member) => {
             flatten_dot_to_name(base).map(|b| format!("{}_{}", b, member))
         }
+        Expression::ArrayAccess(base, idx) => {
+            if let Expression::Number(n) = idx.as_ref() {
+                let base_name = flatten_dot_to_name(base)?;
+                Some(format!("{}_{}", base_name, *n as usize))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -112,6 +120,11 @@ fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
             collect_vars_in_expr(c, out);
             collect_vars_in_expr(t, out);
             collect_vars_in_expr(f, out);
+        }
+        Expression::ArrayAccess(_, _) => {
+            if let Some(flat) = flatten_dot_to_name(expr) {
+                out.insert(flat);
+            }
         }
         Expression::Der(inner) => collect_vars_in_expr(inner, out),
         Expression::Sample(inner) => collect_vars_in_expr(inner, out),
@@ -239,6 +252,8 @@ fn find_unsupported_der_in_expr(expr: &Expression) -> Option<String> {
             } else if expand_der_linear(inner).is_some() {
                 None
             } else if flatten_dot_to_name(inner).is_some() {
+                None
+            } else if matches!(inner.as_ref(), Expression::ArrayAccess(_, _)) {
                 None
             } else {
                 Some("der(expr) only supports der(x) for state variable x or linear combinations of states (e.g. der(a+b), der(c*x)). Unsupported expression in der().".to_string())
