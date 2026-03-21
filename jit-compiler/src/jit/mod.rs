@@ -5,6 +5,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::mem;
+use std::sync::OnceLock;
 
 pub mod analysis;
 pub mod context;
@@ -25,6 +26,19 @@ pub struct Jit {
     #[allow(dead_code)]
     data_ctx: DataDescription,
     module: JITModule,
+}
+
+fn jit_verifier_dump_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_JIT_VERIFIER_DUMP")
+            .ok()
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    })
 }
 
 impl Jit {
@@ -245,7 +259,6 @@ impl Jit {
             }
             when_count = *t_ctx.when_idx;
             crossings_count = *t_ctx.crossings_idx;
-            builder.seal_all_blocks();
 
             for eq in alg_equations {
                 compile_equation(eq, &mut t_ctx, &mut builder)?;
@@ -266,12 +279,22 @@ impl Jit {
 
             let success_code = builder.ins().iconst(cl_types::I32, 0);
             builder.ins().return_(&[success_code]);
+            builder.seal_all_blocks();
             builder.finalize();
         }
 
         self.module
             .define_function(func_id, &mut self.ctx)
-            .map_err(|e| format!("{:?}", e))?;
+            .map_err(|e| {
+                if jit_verifier_dump_enabled() {
+                    eprintln!("[jit-verifier] define_function failed: {:?}", e);
+                    eprintln!(
+                        "[jit-verifier] function-ir-begin\n{}\n[jit-verifier] function-ir-end",
+                        self.ctx.func.display()
+                    );
+                }
+                format!("{:?}", e)
+            })?;
         self.module.clear_context(&mut self.ctx);
         self.module
             .finalize_definitions()

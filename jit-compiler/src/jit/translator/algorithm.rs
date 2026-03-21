@@ -265,11 +265,11 @@ pub fn compile_algorithm_stmt(
             builder.ins().jump(end_block, &[]);
             builder.seal_block(true_block);
             for (cond, stmts) in else_whens {
-                compile_zero_crossing_store(cond, ctx, builder)?;
                 let check_block = next_block;
                 let body_block = builder.create_block();
                 next_block = builder.create_block();
                 builder.switch_to_block(check_block);
+                compile_zero_crossing_store(cond, ctx, builder)?;
                 let c_val = compile_expression(cond, ctx, builder)?;
                 let curr_idx = *ctx.when_idx;
                 *ctx.when_idx += 1;

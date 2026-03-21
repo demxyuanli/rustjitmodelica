@@ -8,6 +8,34 @@ use cranelift_module::{Linkage, Module};
 use crate::jit::context::TranslationContext;
 use crate::jit::translator::expr::compile_expression;
 
+pub(super) fn emit_assert_suppress_begin(
+    ctx: &mut TranslationContext,
+    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
+) -> Result<(), String> {
+    let sig = ctx.module.make_signature();
+    let func_id = ctx
+        .module
+        .declare_function("rustmodlica_assert_suppress_begin", Linkage::Import, &sig)
+        .map_err(|e| e.to_string())?;
+    let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+    builder.ins().call(func_ref, &[]);
+    Ok(())
+}
+
+pub(super) fn emit_assert_suppress_end(
+    ctx: &mut TranslationContext,
+    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
+) -> Result<(), String> {
+    let sig = ctx.module.make_signature();
+    let func_id = ctx
+        .module
+        .declare_function("rustmodlica_assert_suppress_end", Linkage::Import, &sig)
+        .map_err(|e| e.to_string())?;
+    let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+    builder.ins().call(func_ref, &[]);
+    Ok(())
+}
+
 pub(super) fn compile_solvable_block_general_n(
     unknowns: &[String],
     residuals: &[Expression],
@@ -128,15 +156,17 @@ fn compile_solvable_block_general_dense_n(
     let iter_error_block = builder.create_block();
     let solve_error_block = builder.create_block();
     let after_dense_n = builder.create_block();
+    emit_assert_suppress_begin(ctx, builder)?;
     builder.ins().jump(header_block, &[]);
     builder.switch_to_block(header_block);
     let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-    let max_iter = builder.ins().f64const(150.0);
+    let max_iter = builder.ins().f64const(100.0);
     let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
     builder
         .ins()
         .brif(iter_cond, body_block, &[], iter_error_block, &[]);
     builder.switch_to_block(iter_error_block);
+    emit_assert_suppress_end(ctx, builder)?;
     let err_code = builder.ins().iconst(cl_types::I32, 2);
     builder.ins().return_(&[err_code]);
     builder.seal_block(iter_error_block);
@@ -210,28 +240,116 @@ fn compile_solvable_block_general_dense_n(
         .ins()
         .brif(status_ok, update_block, &[], solve_error_block, &[]);
     builder.switch_to_block(update_block);
+    let ls_alpha_slot_n = builder.create_sized_stack_slot(
+        cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+        ),
+    );
+    let ls_count_slot_n = builder.create_sized_stack_slot(
+        cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+        ),
+    );
+    let ls_old_norm_slot = builder.create_sized_stack_slot(
+        cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+        ),
+    );
+    let x_save_slots: Vec<_> = (0..n)
+        .map(|_| {
+            builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
+                cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+            ))
+        })
+        .collect();
+    builder.ins().stack_store(max_abs, ls_old_norm_slot, 0);
+    for i in 0..n {
+        let xi = builder.ins().stack_load(cl_types::F64, slots[i], 0);
+        builder.ins().stack_store(xi, x_save_slots[i], 0);
+    }
+    let ls_init_a = builder.ins().f64const(1.0);
+    builder.ins().stack_store(ls_init_a, ls_alpha_slot_n, 0);
+    let ls_init_c = builder.ins().f64const(0.0);
+    builder.ins().stack_store(ls_init_c, ls_count_slot_n, 0);
+    let ls_hdr_n = builder.create_block();
+    let ls_body_n = builder.create_block();
+    let ls_accept_n = builder.create_block();
+    let ls_halve_n = builder.create_block();
+    let ls_fail_n = builder.create_block();
+    builder.ins().jump(ls_hdr_n, &[]);
+    builder.switch_to_block(ls_hdr_n);
+    let ls_a_n = builder.ins().stack_load(cl_types::F64, ls_alpha_slot_n, 0);
+    let ls_c_n = builder.ins().stack_load(cl_types::F64, ls_count_slot_n, 0);
+    let ls_max_n = builder.ins().f64const(8.0);
+    let ls_ok_n = builder.ins().fcmp(FloatCC::LessThan, ls_c_n, ls_max_n);
+    builder
+        .ins()
+        .brif(ls_ok_n, ls_body_n, &[], ls_fail_n, &[]);
+    builder.switch_to_block(ls_body_n);
     for i in 0..n {
         let off = dx_offset + (i * 8) as i32;
         let off_val = builder.ins().iconst(ptr_type, off as i64);
         let addr = builder.ins().iadd(base_ptr, off_val);
         let dxi = builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0);
-        let xi = builder.ins().stack_load(cl_types::F64, slots[i], 0);
-        let xi_new = builder.ins().fadd(xi, dxi);
+        let xi_orig = builder.ins().stack_load(cl_types::F64, x_save_slots[i], 0);
+        let scaled = builder.ins().fmul(ls_a_n, dxi);
+        let xi_new = builder.ins().fadd(xi_orig, scaled);
         builder.ins().stack_store(xi_new, slots[i], 0);
     }
+    let mut ls_max_abs_n = builder.ins().f64const(0.0);
+    for i in 0..n {
+        let rv = compile_expression(&residuals[i], ctx, builder)?;
+        let arv = builder.ins().fabs(rv);
+        ls_max_abs_n = builder.ins().fmax(ls_max_abs_n, arv);
+    }
+    let ls_old_n = builder.ins().stack_load(cl_types::F64, ls_old_norm_slot, 0);
+    let ls_better_n = builder.ins().fcmp(FloatCC::LessThan, ls_max_abs_n, ls_old_n);
+    builder
+        .ins()
+        .brif(ls_better_n, ls_accept_n, &[], ls_halve_n, &[]);
+    builder.switch_to_block(ls_halve_n);
+    let half_n = builder.ins().f64const(0.5);
+    let new_a_n = builder.ins().fmul(ls_a_n, half_n);
+    builder.ins().stack_store(new_a_n, ls_alpha_slot_n, 0);
+    let one_ls_n = builder.ins().f64const(1.0);
+    let new_c_n = builder.ins().fadd(ls_c_n, one_ls_n);
+    builder.ins().stack_store(new_c_n, ls_count_slot_n, 0);
+    builder.ins().jump(ls_hdr_n, &[]);
+    builder.seal_block(ls_halve_n);
+    builder.switch_to_block(ls_fail_n);
+    for i in 0..n {
+        let off = dx_offset + (i * 8) as i32;
+        let off_val = builder.ins().iconst(ptr_type, off as i64);
+        let addr = builder.ins().iadd(base_ptr, off_val);
+        let dxi = builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0);
+        let xi_orig = builder.ins().stack_load(cl_types::F64, x_save_slots[i], 0);
+        let xi_new = builder.ins().fadd(xi_orig, dxi);
+        builder.ins().stack_store(xi_new, slots[i], 0);
+    }
+    let one_fb = builder.ins().f64const(1.0);
+    let next_iter_fb = builder.ins().fadd(iter_val, one_fb);
+    builder.ins().stack_store(next_iter_fb, iter_slot, 0);
+    builder.ins().jump(header_block, &[]);
+    builder.seal_block(ls_fail_n);
+    builder.switch_to_block(ls_accept_n);
     let one = builder.ins().f64const(1.0);
     let next_iter = builder.ins().fadd(iter_val, one);
     builder.ins().stack_store(next_iter, iter_slot, 0);
     builder.ins().jump(header_block, &[]);
+    builder.seal_block(ls_body_n);
+    builder.seal_block(ls_hdr_n);
+    builder.seal_block(ls_accept_n);
     builder.seal_block(update_block);
     builder.seal_block(header_block);
     builder.seal_block(body_block);
     builder.seal_block(perturb_block);
     builder.switch_to_block(solve_error_block);
+    emit_assert_suppress_end(ctx, builder)?;
     let solve_err = builder.ins().iconst(cl_types::I32, 2);
     builder.ins().return_(&[solve_err]);
     builder.seal_block(solve_error_block);
     builder.switch_to_block(exit_block);
+    emit_assert_suppress_end(ctx, builder)?;
     for (var, slot) in unknowns.iter().take(n).zip(slots.iter()) {
         let val = builder.ins().stack_load(cl_types::F64, *slot, 0);
         if let Some(idx) = ctx.output_index(var) {
@@ -300,15 +418,17 @@ fn compile_solvable_block_general_sparse_n(
     let iter_error_block = builder.create_block();
     let solve_error_block = builder.create_block();
     let after_sparse_n = builder.create_block();
+    emit_assert_suppress_begin(ctx, builder)?;
     builder.ins().jump(header_block, &[]);
     builder.switch_to_block(header_block);
     let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
-    let max_iter = builder.ins().f64const(150.0);
+    let max_iter = builder.ins().f64const(100.0);
     let iter_cond = builder.ins().fcmp(FloatCC::LessThan, iter_val, max_iter);
     builder
         .ins()
         .brif(iter_cond, body_block, &[], iter_error_block, &[]);
     builder.switch_to_block(iter_error_block);
+    emit_assert_suppress_end(ctx, builder)?;
     let err_code = builder.ins().iconst(cl_types::I32, 2);
     builder.ins().return_(&[err_code]);
     builder.seal_block(iter_error_block);
@@ -400,30 +520,118 @@ fn compile_solvable_block_general_sparse_n(
         .brif(status_ok, update_block, &[], solve_error_block, &[]);
     builder.switch_to_block(update_block);
 
+    let ls_alpha_slot_s = builder.create_sized_stack_slot(
+        cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+        ),
+    );
+    let ls_count_slot_s = builder.create_sized_stack_slot(
+        cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+        ),
+    );
+    let ls_old_norm_s = builder.create_sized_stack_slot(
+        cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+        ),
+    );
+    let x_save_s: Vec<_> = (0..n)
+        .map(|_| {
+            builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
+                cranelift::codegen::ir::StackSlotKind::ExplicitSlot, 8, 0,
+            ))
+        })
+        .collect();
+    builder.ins().stack_store(max_abs, ls_old_norm_s, 0);
+    for (i, slot) in slots.iter().enumerate().take(n) {
+        let xi = builder.ins().stack_load(cl_types::F64, *slot, 0);
+        builder.ins().stack_store(xi, x_save_s[i], 0);
+    }
+    let ls_init_a_s = builder.ins().f64const(1.0);
+    builder.ins().stack_store(ls_init_a_s, ls_alpha_slot_s, 0);
+    let ls_init_c_s = builder.ins().f64const(0.0);
+    builder.ins().stack_store(ls_init_c_s, ls_count_slot_s, 0);
+    let ls_hdr_s = builder.create_block();
+    let ls_body_s = builder.create_block();
+    let ls_accept_s = builder.create_block();
+    let ls_halve_s = builder.create_block();
+    let ls_fail_s = builder.create_block();
+    builder.ins().jump(ls_hdr_s, &[]);
+    builder.switch_to_block(ls_hdr_s);
+    let ls_a_s = builder.ins().stack_load(cl_types::F64, ls_alpha_slot_s, 0);
+    let ls_c_s = builder.ins().stack_load(cl_types::F64, ls_count_slot_s, 0);
+    let ls_max_s = builder.ins().f64const(8.0);
+    let ls_ok_s = builder.ins().fcmp(FloatCC::LessThan, ls_c_s, ls_max_s);
+    builder
+        .ins()
+        .brif(ls_ok_s, ls_body_s, &[], ls_fail_s, &[]);
+    builder.switch_to_block(ls_body_s);
     for (i, slot) in slots.iter().enumerate().take(n) {
         let off_val = builder
             .ins()
             .iconst(ptr_type, (dx_offset + i * 8) as i64);
         let addr = builder.ins().iadd(base_ptr, off_val);
         let dxi = builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0);
-        let xi = builder.ins().stack_load(cl_types::F64, *slot, 0);
-        let xi_new = builder.ins().fadd(xi, dxi);
+        let xi_orig = builder.ins().stack_load(cl_types::F64, x_save_s[i], 0);
+        let scaled = builder.ins().fmul(ls_a_s, dxi);
+        let xi_new = builder.ins().fadd(xi_orig, scaled);
         builder.ins().stack_store(xi_new, *slot, 0);
     }
-
+    let mut ls_max_abs_s = builder.ins().f64const(0.0);
+    for i in 0..n {
+        let rv = compile_expression(&residuals[i], ctx, builder)?;
+        let arv = builder.ins().fabs(rv);
+        ls_max_abs_s = builder.ins().fmax(ls_max_abs_s, arv);
+    }
+    let ls_old_s = builder.ins().stack_load(cl_types::F64, ls_old_norm_s, 0);
+    let ls_better_s = builder.ins().fcmp(FloatCC::LessThan, ls_max_abs_s, ls_old_s);
+    builder
+        .ins()
+        .brif(ls_better_s, ls_accept_s, &[], ls_halve_s, &[]);
+    builder.switch_to_block(ls_halve_s);
+    let half_s = builder.ins().f64const(0.5);
+    let new_a_s = builder.ins().fmul(ls_a_s, half_s);
+    builder.ins().stack_store(new_a_s, ls_alpha_slot_s, 0);
+    let one_ls_s = builder.ins().f64const(1.0);
+    let new_c_s = builder.ins().fadd(ls_c_s, one_ls_s);
+    builder.ins().stack_store(new_c_s, ls_count_slot_s, 0);
+    builder.ins().jump(ls_hdr_s, &[]);
+    builder.seal_block(ls_halve_s);
+    builder.switch_to_block(ls_fail_s);
+    for (i, slot) in slots.iter().enumerate().take(n) {
+        let off_val = builder
+            .ins()
+            .iconst(ptr_type, (dx_offset + i * 8) as i64);
+        let addr = builder.ins().iadd(base_ptr, off_val);
+        let dxi = builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0);
+        let xi_orig = builder.ins().stack_load(cl_types::F64, x_save_s[i], 0);
+        let xi_new = builder.ins().fadd(xi_orig, dxi);
+        builder.ins().stack_store(xi_new, *slot, 0);
+    }
+    let one_fb_s = builder.ins().f64const(1.0);
+    let next_iter_fb_s = builder.ins().fadd(iter_val, one_fb_s);
+    builder.ins().stack_store(next_iter_fb_s, iter_slot, 0);
+    builder.ins().jump(header_block, &[]);
+    builder.seal_block(ls_fail_s);
+    builder.switch_to_block(ls_accept_s);
     let one = builder.ins().f64const(1.0);
     let next_iter = builder.ins().fadd(iter_val, one);
     builder.ins().stack_store(next_iter, iter_slot, 0);
     builder.ins().jump(header_block, &[]);
+    builder.seal_block(ls_body_s);
+    builder.seal_block(ls_hdr_s);
+    builder.seal_block(ls_accept_s);
     builder.seal_block(update_block);
     builder.seal_block(header_block);
     builder.seal_block(body_block);
     builder.seal_block(perturb_block);
     builder.switch_to_block(solve_error_block);
+    emit_assert_suppress_end(ctx, builder)?;
     let solve_err_csr = builder.ins().iconst(cl_types::I32, 2);
     builder.ins().return_(&[solve_err_csr]);
     builder.seal_block(solve_error_block);
     builder.switch_to_block(exit_block);
+    emit_assert_suppress_end(ctx, builder)?;
     for (var, slot) in unknowns.iter().take(n).zip(slots) {
         let val = builder.ins().stack_load(cl_types::F64, *slot, 0);
         if let Some(idx) = ctx.output_index(var) {

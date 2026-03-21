@@ -100,6 +100,7 @@ pub fn simulate_from_source(
         &artifacts.state_vars,
         &artifacts.discrete_vars,
         &artifacts.output_vars,
+        &artifacts.output_start_vals,
         &artifacts.state_var_index,
         artifacts.t_end,
         artifacts.dt,

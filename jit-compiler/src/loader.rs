@@ -33,6 +33,17 @@ pub struct ModelLoader {
 
 impl ModelLoader {
     fn clone_model_without_inner_classes(m: &Model) -> Model {
+        let leaf_aliases: Vec<Model> = m
+            .inner_classes
+            .iter()
+            .filter(|ic| {
+                ic.extends.len() == 1
+                    && ic.declarations.is_empty()
+                    && ic.equations.is_empty()
+                    && ic.inner_classes.is_empty()
+            })
+            .cloned()
+            .collect();
         Model {
             name: m.name.clone(),
             is_connector: m.is_connector,
@@ -46,7 +57,7 @@ impl ModelLoader {
             initial_equations: m.initial_equations.clone(),
             initial_algorithms: m.initial_algorithms.clone(),
             annotation: m.annotation.clone(),
-            inner_classes: Vec::new(),
+            inner_classes: leaf_aliases,
             is_operator_record: m.is_operator_record,
             type_aliases: m.type_aliases.clone(),
             imports: m.imports.clone(),
@@ -173,6 +184,45 @@ impl ModelLoader {
             let rest = name.trim_start_matches("Modelica.Magnetic.FluxTubes.Interfaces.Source.");
             let new_name =
                 format!("Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces.Source.{rest}");
+            let arc = self.load_model_impl(&new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        // MSL: RelativeSensor / AbsoluteSensor live under QuasiStatic.FluxTubes.Interfaces
+        if name == "Modelica.Magnetic.FluxTubes.Interfaces.RelativeSensor"
+            || name.starts_with("Modelica.Magnetic.FluxTubes.Interfaces.RelativeSensor.")
+            || name == "Modelica.Magnetic.FluxTubes.Interfaces.AbsoluteSensor"
+            || name.starts_with("Modelica.Magnetic.FluxTubes.Interfaces.AbsoluteSensor.")
+        {
+            let rest = name
+                .strip_prefix("Modelica.Magnetic.FluxTubes.Interfaces.")
+                .unwrap_or("");
+            let new_name =
+                format!("Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces.{rest}");
+            let arc = self.load_model_impl(&new_name, true)?;
+            self.loaded_models
+                .insert(name.to_string(), Arc::clone(&arc));
+            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
+                self.loaded_paths.insert(name.to_string(), p);
+            }
+            return Ok(arc);
+        }
+        // MSL: PartialFrictionWithStop is an inner class of MassWithStopAndFriction
+        if name == "Modelica.Mechanics.Translational.Components.PartialFrictionWithStop"
+            || name.starts_with(
+                "Modelica.Mechanics.Translational.Components.PartialFrictionWithStop.",
+            )
+        {
+            let rest = name
+                .strip_prefix("Modelica.Mechanics.Translational.Components.PartialFrictionWithStop")
+                .unwrap_or("");
+            let new_name = format!(
+                "Modelica.Mechanics.Translational.Components.MassWithStopAndFriction.PartialFrictionWithStop{rest}"
+            );
             let arc = self.load_model_impl(&new_name, true)?;
             self.loaded_models
                 .insert(name.to_string(), Arc::clone(&arc));

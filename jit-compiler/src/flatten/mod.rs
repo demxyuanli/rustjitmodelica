@@ -65,7 +65,9 @@ pub use self::expressions::{
     prefix_expression,
 };
 pub use self::structures::FlattenedModel;
-use self::utils::{apply_modification, is_primitive, merge_models, resolve_type_alias};
+use self::utils::{
+    apply_modification, is_primitive, merge_models, resolve_inner_class_alias, resolve_type_alias,
+};
 
 pub(crate) struct ExpandTarget<'a> {
     pub equations: &'a mut Vec<Equation>,
@@ -217,6 +219,7 @@ impl Flattener {
         let in_blocks = current_qualified.starts_with("Modelica.Blocks");
         let in_blocks_math = current_qualified.starts_with("Modelica.Blocks.Math");
         let in_blocks_sources = current_qualified.starts_with("Modelica.Blocks.Sources");
+        let in_blocks_tables = current_qualified.starts_with("Modelica.Blocks.Tables");
         let in_electrical_analog = current_qualified.starts_with("Modelica.Electrical.Analog");
         let in_electrical = current_qualified.starts_with("Modelica.Electrical");
         let in_polyphase = current_qualified.starts_with("Modelica.Electrical.Polyphase");
@@ -533,14 +536,15 @@ impl Flattener {
             if name == "Components" || name == "BaseClasses" || name == "Utilities" {
                 return format!("{}.{}", parent, name);
             }
-            if let Some(rest) = name.strip_prefix("Components.") {
-                return format!("{}.Components.{}", parent, rest);
-            }
-            if let Some(rest) = name.strip_prefix("BaseClasses.") {
-                return format!("{}.BaseClasses.{}", parent, rest);
-            }
-            if let Some(rest) = name.strip_prefix("Utilities.") {
-                return format!("{}.Utilities.{}", parent, rest);
+            for pkg in &["Components", "BaseClasses", "Utilities"] {
+                if let Some(rest) = name.strip_prefix(&format!("{}.", pkg)) {
+                    let base = if parent.ends_with(&format!(".{}", pkg)) {
+                        parent.to_string()
+                    } else {
+                        format!("{}.{}", parent, pkg)
+                    };
+                    return format!("{}.{}", base, rest);
+                }
             }
         }
         if current_qualified.starts_with("Modelica.Electrical.Analog.Examples.OpAmps") {
@@ -1103,14 +1107,15 @@ impl Flattener {
                 if name == "Components" || name == "BaseClasses" || name == "Utilities" {
                     return format!("{}.{}", parent, name);
                 }
-                if let Some(rest) = name.strip_prefix("Components.") {
-                    return format!("{}.Components.{}", parent, rest);
-                }
-                if let Some(rest) = name.strip_prefix("BaseClasses.") {
-                    return format!("{}.BaseClasses.{}", parent, rest);
-                }
-                if let Some(rest) = name.strip_prefix("Utilities.") {
-                    return format!("{}.Utilities.{}", parent, rest);
+                for pkg in &["Components", "BaseClasses", "Utilities"] {
+                    if let Some(rest) = name.strip_prefix(&format!("{}.", pkg)) {
+                        let base = if parent.ends_with(&format!(".{}", pkg)) {
+                            parent.to_string()
+                        } else {
+                            format!("{}.{}", parent, pkg)
+                        };
+                        return format!("{}.{}", base, rest);
+                    }
                 }
             }
             if name == "Fittings" {
@@ -1191,6 +1196,12 @@ impl Flattener {
             }
             if name == "Machines" || name.starts_with("Machines.") {
                 return format!("Modelica.Fluid.{}", name);
+            }
+            // ModelicaTest.Fluid.* sibling references (e.g. BaseClasses.LumpedPipe from TestPipesAndValves)
+            if current_qualified.starts_with("ModelicaTest.Fluid") {
+                if name == "BaseClasses" || name.starts_with("BaseClasses.") {
+                    return format!("ModelicaTest.Fluid.{}", name);
+                }
             }
             // Common shorthand inside Modelica.Fluid.Pipes.* and Modelica.Fluid.Vessels.* sources
             if name == "BaseClasses" {
@@ -1308,9 +1319,15 @@ impl Flattener {
                 return format!("Modelica.Blocks.{}", name);
             }
             if name == "Internal" {
+                if in_blocks_tables {
+                    return "Modelica.Blocks.Tables.Internal".to_string();
+                }
                 return "Modelica.Blocks.Types.Internal".to_string();
             }
             if name.starts_with("Internal.") {
+                if in_blocks_tables {
+                    return format!("Modelica.Blocks.Tables.{}", name);
+                }
                 return format!("Modelica.Blocks.Types.{}", name);
             }
             if name == "CombiTimeTable" && in_blocks_sources {
@@ -1417,13 +1434,39 @@ impl Flattener {
                 continue;
             }
             let clause = &ext[idx];
-            let base_name = Self::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
-            let base_name = Self::qualify_in_scope(&qual, &base_name);
+            let mut base_name = Self::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
+            base_name = Self::qualify_in_scope(&qual, &base_name);
             if base_name.ends_with("ExternalObject") {
                 stack.push((parent, current, qual, ext, idx + 1));
                 continue;
             }
-            let mut base_model = self.loader.load_model(&base_name)?;
+            let mut base_model = match self.loader.load_model_silent(&base_name, true) {
+                Ok(m) => m,
+                Err(_first_err) => {
+                    let orig = Self::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
+                    let bare = if orig.contains('.') {
+                        orig.split('.').next().unwrap_or(&orig).to_string()
+                    } else {
+                        orig.clone()
+                    };
+                    let suffix = if bare != orig { &orig[bare.len()..] } else { "" };
+                    let mut found = None;
+                    let mut scope = qual.clone();
+                    while let Some((p, _)) = scope.rsplit_once('.') {
+                        let candidate = format!("{}.{}{}", p, bare, suffix);
+                        if let Ok(m) = self.loader.load_model_silent(&candidate, true) {
+                            base_name = candidate;
+                            found = Some(m);
+                            break;
+                        }
+                        scope = p.to_string();
+                    }
+                    match found {
+                        Some(m) => m,
+                        None => self.loader.load_model(&base_name)?,
+                    }
+                }
+            };
             for modification in &clause.modifications {
                 apply_modification(Arc::make_mut(&mut base_model), modification);
             }
@@ -1560,6 +1603,9 @@ impl Flattener {
 
                             let mut resolved_type =
                                 resolve_type_alias(&model.type_aliases, &decl.type_name);
+                            let pre_inner_alias = resolved_type.clone();
+                            resolved_type =
+                                resolve_inner_class_alias(&model.inner_classes, &resolved_type);
                             // Use the simulation class FQ name for MSL shorthands (Sensors.*, Sources.*, ...),
                             // not `current_model_name` on nested tasks (which is the child component type).
                             // Exception: inside Modelica.Clocked.* library classes, `Interfaces.*` and other
@@ -1604,16 +1650,22 @@ impl Flattener {
                                 resolved_type =
                                     "Modelica.Fluid.Valves.BaseClasses.PartialValve".to_string();
                             }
-                            let medium_alias_prefix = resolved_type
-                                .split_once('.')
-                                .map(|(prefix, _)| prefix)
-                                .filter(|p| {
-                                    *p == "Medium"
-                                        || p.strip_prefix("Medium_")
-                                            .and_then(|s| s.parse::<u32>().ok())
-                                            .is_some()
-                                });
-                            if resolved_type.starts_with("Medium.") || medium_alias_prefix.is_some() {
+                            let is_medium_prefix = |s: &str| -> bool {
+                                s.split_once('.')
+                                    .map(|(p, _)| {
+                                        p == "Medium"
+                                            || p.strip_prefix("Medium_")
+                                                .and_then(|n| n.parse::<u32>().ok())
+                                                .is_some()
+                                            || p.strip_prefix("Medium")
+                                                .and_then(|n| n.parse::<u32>().ok())
+                                                .is_some()
+                                    })
+                                    .unwrap_or(false)
+                            };
+                            if is_medium_prefix(&resolved_type)
+                                || is_medium_prefix(&pre_inner_alias)
+                            {
                                 resolved_type = "Real".to_string();
                             }
                             if matches!(
@@ -1675,21 +1727,28 @@ impl Flattener {
                                 continue;
                             }
 
-                            // Load complex type. For short names, try current class inner classes
-                            // first, then the parent package scope.
                             let mut load_candidates = vec![resolved_type.clone()];
-                            if !resolved_type.contains('.') && !resolved_type.contains('/') {
-                                let same_class =
-                                    Self::qualify_in_current_class(current_qualified, &resolved_type);
-                                if same_class != resolved_type {
-                                    load_candidates.push(same_class);
+                            if !resolved_type.contains('/') {
+                                let (first_component, rest_suffix) =
+                                    if let Some(dot_pos) = resolved_type.find('.') {
+                                        (&resolved_type[..dot_pos], &resolved_type[dot_pos..])
+                                    } else {
+                                        (resolved_type.as_str(), "")
+                                    };
+                                if rest_suffix.is_empty() {
+                                    let same_class =
+                                        Self::qualify_in_current_class(current_qualified, &resolved_type);
+                                    if same_class != resolved_type {
+                                        load_candidates.push(same_class);
+                                    }
                                 }
-                                let parent_scope =
-                                    Self::qualify_in_scope(current_qualified, &resolved_type);
-                                if parent_scope != resolved_type
-                                    && !load_candidates.iter().any(|c| c == &parent_scope)
-                                {
-                                    load_candidates.push(parent_scope);
+                                let mut scope = current_qualified.to_string();
+                                while let Some((parent, _)) = scope.rsplit_once('.') {
+                                    let candidate = format!("{}.{}{}", parent, first_component, rest_suffix);
+                                    if !load_candidates.contains(&candidate) {
+                                        load_candidates.push(candidate);
+                                    }
+                                    scope = parent.to_string();
                                 }
                             }
 

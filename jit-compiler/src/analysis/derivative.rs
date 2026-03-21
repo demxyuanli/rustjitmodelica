@@ -32,6 +32,16 @@ fn expand_der_linear(inner: &Expression) -> Option<Expression> {
     }
 }
 
+pub fn flatten_dot_to_name(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Variable(name) => Some(name.clone()),
+        Expression::Dot(base, member) => {
+            flatten_dot_to_name(base).map(|b| format!("{}_{}", b, member))
+        }
+        _ => None,
+    }
+}
+
 pub fn normalize_der(expr: &Expression) -> Expression {
     match expr {
         Expression::Der(inner) => {
@@ -39,6 +49,8 @@ pub fn normalize_der(expr: &Expression) -> Expression {
                 normalize_der(&expanded)
             } else if let Expression::Variable(name) = &**inner {
                 Expression::Variable(format!("der_{}", name))
+            } else if let Some(flat) = flatten_dot_to_name(inner) {
+                Expression::Variable(format!("der_{}", flat))
             } else {
                 Expression::Der(Box::new(normalize_der(inner)))
             }
@@ -82,6 +94,11 @@ fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
         Expression::Variable(name) => {
             out.insert(name.clone());
         }
+        Expression::Dot(_, _) => {
+            if let Some(flat) = flatten_dot_to_name(expr) {
+                out.insert(flat);
+            }
+        }
         Expression::BinaryOp(lhs, _, rhs) => {
             collect_vars_in_expr(lhs, out);
             collect_vars_in_expr(rhs, out);
@@ -114,7 +131,11 @@ fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
 fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
     match expr {
         Expression::Der(inner) => {
-            collect_vars_in_expr(inner, states);
+            if let Some(flat) = flatten_dot_to_name(inner) {
+                states.insert(flat);
+            } else {
+                collect_vars_in_expr(inner, states);
+            }
         }
         Expression::Variable(name) if name.starts_with("der_") => {
             if let Some(base) = name.strip_prefix("der_") {
@@ -216,6 +237,8 @@ fn find_unsupported_der_in_expr(expr: &Expression) -> Option<String> {
             if matches!(inner.as_ref(), Expression::Variable(_)) {
                 None
             } else if expand_der_linear(inner).is_some() {
+                None
+            } else if flatten_dot_to_name(inner).is_some() {
                 None
             } else {
                 Some("der(expr) only supports der(x) for state variable x or linear combinations of states (e.g. der(a+b), der(c*x)). Unsupported expression in der().".to_string())

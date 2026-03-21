@@ -83,6 +83,9 @@ fn normalize_der(expr: &Expression) -> Expression {
             if let Expression::Variable(name) = &**arg {
                 return Expression::Variable(format!("der_{}", name));
             }
+            if let Some(flat) = crate::analysis::derivative::flatten_dot_to_name(arg) {
+                return Expression::Variable(format!("der_{}", flat));
+            }
             Expression::Der(Box::new(normalize_der(arg)))
         }
         Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(

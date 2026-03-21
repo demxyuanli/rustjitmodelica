@@ -1,5 +1,5 @@
 mod blt;
-mod derivative;
+pub mod derivative;
 mod expression_utils;
 mod initial;
 mod variable_collection;

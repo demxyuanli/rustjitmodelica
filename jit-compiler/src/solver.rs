@@ -117,15 +117,53 @@ impl<'a> System<'a> {
         let mut scratch_discrete = self.discrete.to_vec();
         let mut scratch_when = vec![0.0; self.when_states.len()];
         let mut scratch_crossings = vec![0.0; self.crossings.len()];
-        let mut _fallback_outputs = None::<Vec<f64>>;
-        let out_ptr = if let Some(scratch) = self.scratch_outputs.as_mut() {
-            scratch.as_mut_ptr()
-        } else {
-            let mut buf = vec![0.0; self.outputs.len()];
-            let p = buf.as_mut_ptr();
-            _fallback_outputs = Some(buf);
-            p
-        };
+        let mut fallback_outputs = vec![0.0; self.outputs.len()];
+        let mut last_status = 0_i32;
+
+        if let Some(scratch) = self.scratch_outputs.as_mut() {
+            let base_guess = scratch.to_vec();
+            // Newton init fallback chain at t=0/stiff algebraic loops:
+            // keep guess -> damped guess -> zero guess.
+            let scales = [1.0_f64, 0.5_f64, 0.0_f64];
+            for scale in scales {
+                if !self.eval_call_index.is_null() {
+                    unsafe {
+                        *self.eval_call_index += 1;
+                    }
+                }
+                for (dst, src) in scratch.iter_mut().zip(base_guess.iter()) {
+                    *dst = *src * scale;
+                }
+                scratch_discrete.copy_from_slice(self.discrete);
+                scratch_when.fill(0.0);
+                scratch_crossings.fill(0.0);
+                unsafe {
+                    let status = (self.calc_derivs)(
+                        time,
+                        states.as_mut_ptr(),
+                        scratch_discrete.as_mut_ptr(),
+                        derivs.as_mut_ptr(),
+                        self.params.as_ptr(),
+                        scratch.as_mut_ptr(),
+                        scratch_when.as_mut_ptr(),
+                        scratch_crossings.as_mut_ptr(),
+                        self.pre_states.as_ptr(),
+                        self.pre_discrete.as_ptr(),
+                        self.t_end,
+                        self.diag_residual,
+                        self.diag_x,
+                    );
+                    if status == 0 {
+                        return Ok(());
+                    }
+                    last_status = status;
+                    if status != 2 {
+                        return Err(status);
+                    }
+                }
+            }
+            return Err(last_status);
+        }
 
         unsafe {
             let status = (self.calc_derivs)(
@@ -134,7 +172,7 @@ impl<'a> System<'a> {
                 scratch_discrete.as_mut_ptr(),
                 derivs.as_mut_ptr(),
                 self.params.as_ptr(),
-                out_ptr,
+                fallback_outputs.as_mut_ptr(),
                 scratch_when.as_mut_ptr(),
                 scratch_crossings.as_mut_ptr(),
                 self.pre_states.as_ptr(),
@@ -190,6 +228,9 @@ impl Solver for EulerSolver {
         dt: f64,
         states: &mut [f64],
     ) -> Result<(), i32> {
+        if states.is_empty() {
+            return Ok(());
+        }
         if !system.eval_call_index.is_null() {
             unsafe {
                 *system.eval_call_index = 0;
@@ -304,6 +345,9 @@ impl Solver for RungeKutta4Solver {
         states: &mut [f64],
     ) -> Result<(), i32> {
         let n = states.len();
+        if n == 0 {
+            return Ok(());
+        }
         if !system.eval_call_index.is_null() {
             unsafe {
                 *system.eval_call_index = 0;

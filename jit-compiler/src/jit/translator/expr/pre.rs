@@ -14,6 +14,24 @@ use super::helpers::{
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 
+fn fold_dot_hysteresis_record(func_name: &str, member: &str) -> Option<f64> {
+    if !func_name.ends_with("HysteresisEverettParameter.M330_50A") {
+        return None;
+    }
+    match member {
+        "Hsat" => Some(650.0),
+        "M" => Some(0.967),
+        "r" => Some(0.50256),
+        "q" => Some(0.039964),
+        "p1" => Some(0.18807),
+        "p2" => Some(0.000781),
+        "Hc" => Some(42.2283),
+        "K" => Some(50.0),
+        "sigma" => Some(2.2e6),
+        _ => None,
+    }
+}
+
 
 pub(super) fn compile_pre_expression(
     expr: &Expression,
@@ -267,6 +285,31 @@ pub(super) fn compile_pre_expression(
         Expression::Dot(inner, member) => {
             if let Some(v) = fold_dot_symmetric_transformation_matrix(inner.as_ref(), member) {
                 return Ok(builder.ins().f64const(v));
+            }
+            if let Expression::Call(func_name, args) = inner.as_ref() {
+                if args.is_empty() {
+                    if let Some(v) = fold_dot_hysteresis_record(func_name, member) {
+                        return Ok(builder.ins().f64const(v));
+                    }
+                    let flat = format!("{}_{}", func_name.replace('.', "_"), member);
+                    if pre_scalar_name_bound(ctx, &flat) {
+                        return compile_pre_expression(&Expression::Variable(flat), ctx, builder);
+                    }
+                    if let Some(suffix) = func_name.strip_prefix("FluxTubes.") {
+                        let modelica_flat = format!(
+                            "Modelica_Magnetic_FluxTubes_{}_{}",
+                            suffix.replace('.', "_"),
+                            member
+                        );
+                        if pre_scalar_name_bound(ctx, &modelica_flat) {
+                            return compile_pre_expression(
+                                &Expression::Variable(modelica_flat),
+                                ctx,
+                                builder,
+                            );
+                        }
+                    }
+                }
             }
             if let Some(path) = expr_to_connector_path(expr) {
                 if pre_scalar_name_bound(ctx, &path) {

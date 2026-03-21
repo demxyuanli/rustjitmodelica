@@ -85,6 +85,7 @@ pub(super) fn compile(
         let param_vars = variable_layout.param_vars;
         let input_var_names = variable_layout.input_var_names;
         let output_vars = variable_layout.output_vars;
+        let output_start_vals = variable_layout.output_start_vals;
         let output_var_index = variable_layout.output_var_index;
         let state_var_index = variable_layout.state_var_index;
         let param_var_index = variable_layout.param_var_index;
@@ -534,6 +535,7 @@ pub(super) fn compile(
                     param_vars,
                     discrete_vars: discrete_vars_sorted,
                     output_vars,
+                    output_start_vals,
                     state_var_index,
                     clock_partitions: backend_clock_partitions,
                     when_count,

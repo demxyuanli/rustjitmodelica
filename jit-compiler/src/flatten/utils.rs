@@ -44,6 +44,28 @@ pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, 
     Some((input_names, ordered))
 }
 
+/// Resolve short package/model aliases declared as inner classes
+/// (e.g. `package Medium2 = Modelica.Media.IdealGases.SingleGases.N2;`).
+/// If the first segment of `name` matches an inner class whose sole extends clause
+/// points to a base type, replace the prefix with that base type.
+pub fn resolve_inner_class_alias(inner_classes: &[Model], name: &str) -> String {
+    let first_seg = name.split('.').next().unwrap_or(name);
+    for ic in inner_classes {
+        if ic.name == first_seg
+            && ic.extends.len() == 1
+            && ic.declarations.is_empty()
+            && ic.equations.is_empty()
+        {
+            let base = &ic.extends[0].model_name;
+            if name.len() > first_seg.len() {
+                return format!("{}{}", base, &name[first_seg.len()..]);
+            }
+            return base.clone();
+        }
+    }
+    name.to_string()
+}
+
 /// F1-4: Resolve type alias through type_aliases (e.g. type MyReal = Real;). Returns final type name; avoids cycles.
 pub fn resolve_type_alias(type_aliases: &[(String, String)], name: &str) -> String {
     let mut current = name.to_string();

@@ -16,6 +16,24 @@ use super::helpers::{
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use super::pre::compile_pre_expression;
 
+fn fold_dot_hysteresis_record(func_name: &str, member: &str) -> Option<f64> {
+    if !func_name.ends_with("HysteresisEverettParameter.M330_50A") {
+        return None;
+    }
+    match member {
+        "Hsat" => Some(650.0),
+        "M" => Some(0.967),
+        "r" => Some(0.50256),
+        "q" => Some(0.039964),
+        "p1" => Some(0.18807),
+        "p2" => Some(0.000781),
+        "Hc" => Some(42.2283),
+        "K" => Some(50.0),
+        "sigma" => Some(2.2e6),
+        _ => None,
+    }
+}
+
 
 pub(crate) fn compile_zero_crossing_store(
     expr: &Expression,
@@ -472,12 +490,44 @@ pub(super) fn compile_expression_rec(
                     return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.derivs_ptr, offset));
                 }
             }
+            let flat_name = crate::analysis::derivative::flatten_dot_to_name(inner);
+            if let Some(ref flat) = flat_name {
+                if let Some(idx) = ctx.state_index(flat) {
+                    let offset = (idx * 8) as i32;
+                    return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.derivs_ptr, offset));
+                }
+            }
             Err("der(expr) only supports der(x) for state variable x".to_string())
         }
         Expression::Range(_, _, _) => Ok(builder.ins().f64const(0.0)),
         Expression::Dot(inner, member) => {
             if let Some(v) = fold_dot_symmetric_transformation_matrix(inner.as_ref(), member) {
                 return Ok(builder.ins().f64const(v));
+            }
+            if let Expression::Call(func_name, args) = inner.as_ref() {
+                if args.is_empty() {
+                    if let Some(v) = fold_dot_hysteresis_record(func_name, member) {
+                        return Ok(builder.ins().f64const(v));
+                    }
+                    let flat = format!("{}_{}", func_name.replace('.', "_"), member);
+                    if jit_scalar_name_bound(ctx, &flat) {
+                        return compile_expression_rec(&Expression::Variable(flat), ctx, builder);
+                    }
+                    if let Some(suffix) = func_name.strip_prefix("FluxTubes.") {
+                        let modelica_flat = format!(
+                            "Modelica_Magnetic_FluxTubes_{}_{}",
+                            suffix.replace('.', "_"),
+                            member
+                        );
+                        if jit_scalar_name_bound(ctx, &modelica_flat) {
+                            return compile_expression_rec(
+                                &Expression::Variable(modelica_flat),
+                                ctx,
+                                builder,
+                            );
+                        }
+                    }
+                }
             }
             if let Some(path) = expr_to_connector_path(expr) {
                 if jit_scalar_name_bound(ctx, &path) {

@@ -50,7 +50,7 @@ short_class_definition_rhs = { function_call | component_ref | ((input_kw | outp
 constrainedby_clause = { "constrainedby" ~ WHITESPACE? ~ type_name ~ string_comment? }
 short_class_definition = { class_prefixes ~ identifier ~ "=" ~ short_class_definition_rhs ~ array_subscript? ~ modification_part? ~ constrainedby_clause? ~ string_comment? ~ annotation? ~ ";"? }
 connector_alias_definition = { "connector" ~ identifier ~ "=" ~ (input_kw | output_kw)? ~ type_name ~ string_comment? ~ annotation? ~ ";"? }
-declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | declaration | model_definition | type_definition | annotation_clause)* }
+declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | model_definition | type_definition | declaration | annotation_clause)* }
 redeclare_function_extends = {
     "redeclare"
     ~ WHITESPACE?
