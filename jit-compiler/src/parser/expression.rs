@@ -88,6 +88,42 @@ fn build_nested_comprehension(expr: Expression, iterators: Vec<(String, Expressi
     result
 }
 
+/// Fix PEG mis-parse: `{if c then t else e for i in r}` is parsed as
+/// `ArrayLiteral([If(c, t, ArrayComprehension{e, i, r})])` because the
+/// `else` expression greedily consumes `for`. Restructure into
+/// `ArrayComprehension{If(c, t, e), i, r}`.
+fn lift_if_comprehension(expr: &Expression) -> Option<Expression> {
+    if let Expression::If(cond, true_expr, false_expr) = expr {
+        if let Expression::ArrayComprehension { expr: inner_expr, iter_var, iter_range } = false_expr.as_ref() {
+            return Some(Expression::ArrayComprehension {
+                expr: Box::new(Expression::If(
+                    cond.clone(),
+                    true_expr.clone(),
+                    inner_expr.clone(),
+                )),
+                iter_var: iter_var.clone(),
+                iter_range: iter_range.clone(),
+            });
+        }
+        if let Expression::If(_, _, _) = false_expr.as_ref() {
+            if let Some(fixed_else) = lift_if_comprehension(false_expr) {
+                if let Expression::ArrayComprehension { expr: inner_expr, iter_var, iter_range } = fixed_else {
+                    return Some(Expression::ArrayComprehension {
+                        expr: Box::new(Expression::If(
+                            cond.clone(),
+                            true_expr.clone(),
+                            Box::new(inner_expr.as_ref().clone()),
+                        )),
+                        iter_var,
+                        iter_range,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 fn parse_iterator_expression(pair: Pair<Rule>) -> Expression {
     let mut inner = pair.into_inner();
     let expr = parse_expression(inner.next().unwrap());
@@ -338,6 +374,11 @@ fn parse_factor(pair: Pair<Rule>) -> Expression {
         Rule::array_literal => {
             let inner_exprs = inner.into_inner();
             let exprs: Vec<Expression> = inner_exprs.map(parse_expression).collect();
+            if exprs.len() == 1 {
+                if let Some(fixed) = lift_if_comprehension(&exprs[0]) {
+                    return fixed;
+                }
+            }
             Expression::ArrayLiteral(exprs)
         }
         Rule::array_comprehension => {
