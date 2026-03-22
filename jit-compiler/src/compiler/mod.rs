@@ -45,6 +45,12 @@ pub struct CompilerOptions {
     pub external_libs: Vec<String>,
     /// When true, suppress progress messages so only JSON (e.g. validate) is on stdout.
     pub quiet: bool,
+    /// Tier S: write canonical flat JSON after flatten (before inline) to this path.
+    pub emit_flat_snapshot: Option<String>,
+    /// Stop compilation after writing `emit_flat_snapshot` (no JIT/simulation).
+    pub flat_snapshot_only: bool,
+    /// Use legacy string `constrainedby` check instead of extends-closure (see `instantiate` module).
+    pub coarse_constrainedby_only: bool,
 }
 
 impl Default for CompilerOptions {
@@ -66,6 +72,9 @@ impl Default for CompilerOptions {
             emit_c_dir: None,
             external_libs: Vec::new(),
             quiet: false,
+            emit_flat_snapshot: None,
+            flat_snapshot_only: false,
+            coarse_constrainedby_only: false,
         }
     }
 }
@@ -389,6 +398,8 @@ pub(super) fn collect_external_calls(
 pub enum CompileOutput {
     Simulation(Artifacts),
     FunctionRun(f64),
+    /// Flat Tier S snapshot written; compilation stopped before analysis/JIT.
+    FlatSnapshotDone,
 }
 
 pub struct Artifacts {
@@ -492,12 +503,19 @@ impl Compiler {
             return Err("Equation graph is not supported for functions.".into());
         }
         let stage_trace = stage_trace_enabled();
+        let snap_path = self
+            .options
+            .emit_flat_snapshot
+            .as_deref()
+            .map(std::path::Path::new);
         let flat_model = flatten_and_inline(
             &mut root_model,
             model_name,
             &mut self.loader,
             self.options.quiet,
             stage_trace,
+            snap_path,
+            self.options.coarse_constrainedby_only,
         )?
         .flat_model;
         Ok(equation_graph::build_equation_graph(&flat_model))

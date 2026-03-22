@@ -1,7 +1,8 @@
 use super::Flattener;
 use crate::ast::{ExtendsClause, Model};
-use crate::flatten::utils::{apply_modification, merge_models};
-use crate::flatten::FlattenError;
+use crate::flatten::redeclare::apply_redeclare_extends_blocks;
+use crate::flatten::utils::merge_models;
+use crate::flatten::{apply_modification_to_model, FlattenError, ModifyContext};
 use std::sync::Arc;
 
 impl Flattener {
@@ -13,6 +14,7 @@ impl Flattener {
         current_qualified: &str,
     ) -> Result<(), FlattenError> {
         let model = Arc::make_mut(arc);
+        apply_redeclare_extends_blocks(model);
         let extends = std::mem::take(&mut model.extends);
         type Frame = (Option<Arc<Model>>, Arc<Model>, String, Vec<ExtendsClause>, usize);
         let mut stack: Vec<Frame> = vec![(None, Arc::clone(arc), current_qualified.to_string(), extends, 0)];
@@ -25,13 +27,35 @@ impl Flattener {
                 continue;
             }
             let clause = &ext[idx];
-            let mut base_name = Self::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
-            base_name = Self::qualify_in_scope(&qual, &base_name);
+            let raw_extends = clause.model_name.trim();
+            let (mut base_name, base_from_inner) = if !raw_extends.contains('.') {
+                if let Some(ic) = current.as_ref().find_inner_class(raw_extends) {
+                    let bn = if qual.is_empty() {
+                        raw_extends.to_string()
+                    } else {
+                        format!("{}.{}", qual, raw_extends)
+                    };
+                    (bn, Some(Arc::new(ic.clone())))
+                } else {
+                    let mut bn =
+                        Self::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
+                    bn = Self::qualify_in_scope(&qual, &bn);
+                    (bn, None)
+                }
+            } else {
+                let mut bn =
+                    Self::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
+                bn = Self::qualify_in_scope(&qual, &bn);
+                (bn, None)
+            };
             if base_name.ends_with("ExternalObject") {
                 stack.push((parent, current, qual, ext, idx + 1));
                 continue;
             }
-            let mut base_model = match self.loader.load_model_silent(&base_name, true) {
+            let mut base_model = if let Some(m) = base_from_inner {
+                m
+            } else {
+                match self.loader.load_model_silent(&base_name, true) {
                 Ok(m) => m,
                 Err(_first_err) => {
                     let orig = Self::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
@@ -57,10 +81,19 @@ impl Flattener {
                         None => self.loader.load_model(&base_name)?,
                     }
                 }
-            };
-            for modification in &clause.modifications {
-                apply_modification(Arc::make_mut(&mut base_model), modification);
             }
+            };
+            let mod_ctx =
+                ModifyContext::for_extends_scope(&qual, self.coarse_constrainedby_only);
+            for modification in &clause.modifications {
+                apply_modification_to_model(
+                    Arc::make_mut(&mut base_model),
+                    modification,
+                    &mod_ctx,
+                    Some(&mut self.loader),
+                )?;
+            }
+            apply_redeclare_extends_blocks(Arc::make_mut(&mut base_model));
             let base_extends = std::mem::take(&mut Arc::make_mut(&mut base_model).extends);
             stack.push((parent, Arc::clone(&current), qual, ext, idx + 1));
             stack.push((Some(current), base_model, base_name, base_extends, 0));

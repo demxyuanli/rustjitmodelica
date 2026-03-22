@@ -60,5 +60,6 @@ pub fn make_alias_model(alias: String, base: String) -> ClassItem {
         type_aliases,
         imports: Vec::new(),
         external_info: None,
+        redeclare_extends: Vec::new(),
     })
 }

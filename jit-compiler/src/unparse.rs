@@ -153,6 +153,18 @@ fn write_expression(buf: &mut String, e: &Expression) {
 }
 
 fn write_modification(buf: &mut String, m: &Modification) {
+    if m.is_public {
+        buf.push_str("public ");
+    }
+    if m.is_protected {
+        buf.push_str("protected ");
+    }
+    if m.is_inner {
+        buf.push_str("inner ");
+    }
+    if m.is_outer {
+        buf.push_str("outer ");
+    }
     if m.redeclare {
         buf.push_str("redeclare ");
     }
@@ -167,18 +179,29 @@ fn write_modification(buf: &mut String, m: &Modification) {
 }
 
 fn write_declaration(buf: &mut String, d: &Declaration) {
+    buf.push_str("  ");
+    if d.is_inner {
+        buf.push_str("inner ");
+    }
+    if d.is_outer {
+        buf.push_str("outer ");
+    }
+    if d.is_public {
+        buf.push_str("public ");
+    }
+    if d.is_protected {
+        buf.push_str("protected ");
+    }
     if d.is_parameter {
-        buf.push_str("  parameter ");
+        buf.push_str("parameter ");
     } else if d.is_flow {
-        buf.push_str("  flow ");
+        buf.push_str("flow ");
     } else if d.is_discrete {
-        buf.push_str("  discrete ");
+        buf.push_str("discrete ");
     } else if d.is_input {
-        buf.push_str("  input ");
+        buf.push_str("input ");
     } else if d.is_output {
-        buf.push_str("  output ");
-    } else {
-        buf.push_str("  ");
+        buf.push_str("output ");
     }
     buf.push_str(&d.type_name);
     buf.push(' ');

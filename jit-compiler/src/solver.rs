@@ -129,7 +129,8 @@ impl<'a> System<'a> {
         self.buf_crossings.resize(self.crossings.len(), 0.0);
         self.buf_crossings.fill(0.0);
         self.buf_outputs.resize(self.outputs.len(), 0.0);
-        self.buf_outputs.fill(0.0);
+        // Warm-start algebraic/output buffer: zero init makes calc_derivs see duty=0 and can zero all ODE derivatives.
+        self.buf_outputs.copy_from_slice(self.outputs);
         let mut last_status = 0_i32;
 
         if let Some(scratch) = self.scratch_outputs.as_mut() {

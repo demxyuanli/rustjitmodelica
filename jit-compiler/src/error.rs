@@ -1,8 +1,6 @@
 use crate::flatten::FlattenError;
 use crate::loader::LoadError;
 
-pub type AppResult<T> = Result<T, AppError>;
-
 #[derive(thiserror::Error, Debug)]
 pub enum AppError {
     #[error(transparent)]

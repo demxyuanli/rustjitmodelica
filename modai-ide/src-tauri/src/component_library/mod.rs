@@ -21,7 +21,6 @@ pub const SCOPE_PROJECT: &str = "project";
 pub const KIND_FOLDER: &str = "folder";
 pub const KIND_FILE: &str = "file";
 
-pub const SOURCE_TYPE_LOCAL: &str = "local";
 pub const SOURCE_TYPE_GIT: &str = "git";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

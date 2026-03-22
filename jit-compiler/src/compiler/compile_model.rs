@@ -55,14 +55,24 @@ pub(super) fn compile(
         if !compiler.options.quiet {
             println!("{}", i18n::msg0("flattening_model"));
         }
+        let snap_path = compiler
+            .options
+            .emit_flat_snapshot
+            .as_deref()
+            .map(std::path::Path::new);
         let frontend = flatten_and_inline(
             &mut root_model,
             model_name,
             &mut compiler.loader,
             compiler.options.quiet,
             stage_trace,
+            snap_path,
+            compiler.options.coarse_constrainedby_only,
         )?;
         let flat_model = frontend.flat_model;
+        if compiler.options.flat_snapshot_only {
+            return Ok(CompileOutput::FlatSnapshotDone);
+        }
         let total_equations = frontend.total_equations;
         let total_declarations = frontend.total_declarations;
         if !compiler.options.quiet {

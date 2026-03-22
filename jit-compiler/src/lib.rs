@@ -13,6 +13,7 @@ pub mod expr_eval;
 pub mod flatten;
 pub mod fmi;
 pub mod i18n;
+pub mod instantiate;
 pub mod jit;
 mod loader_compat;
 pub mod loader;

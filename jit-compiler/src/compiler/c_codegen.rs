@@ -74,34 +74,6 @@ pub fn emit_residual(
     )
 }
 
-/// Emit C ODE Jacobian: void jacobian(double t, const double* x, const double* p, double* J).
-/// J is row-major, n x n; J[i*n+j] = d(xdot_i)/d(x_j).
-pub fn emit_jacobian(
-    jac_dense: &[Vec<Expression>],
-    ctx: &CCodegenContext<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    files::emit_jacobian(jac_dense, ctx, out)
-}
-
-/// Emit model.h with residual (and optional jacobian) declaration.
-/// CG1-4: Emit array layout defines for state (x[]), output (y[]), and parameter (p[]) when provided.
-pub fn emit_header(
-    has_jacobian: bool,
-    state_array_layout: Option<&[(String, usize, usize)]>,
-    output_array_layout: Option<&[(String, usize, usize)]>,
-    param_array_layout: Option<&[(String, usize, usize)]>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    files::emit_header(
-        has_jacobian,
-        state_array_layout,
-        output_array_layout,
-        param_array_layout,
-        out,
-    )
-}
-
 /// Write model.c and model.h to the given directory. Returns paths written.
 /// If ode_jacobian is Some, also emits jacobian() in C and declares it in the header.
 /// CG1-4: Array layouts enable NAME_START/SIZE in header and symbolic indices in residual/jacobian.

@@ -2,7 +2,8 @@ use super::{eval_const_expr, eval_const_expr_with_array_sizes, index_expression,
 use crate::ast::{Declaration, Expression, Model};
 use crate::diag::SourceLocation;
 use crate::loader::LoadError;
-use crate::flatten::utils::{apply_modification, is_primitive, resolve_inner_class_alias, resolve_type_alias};
+use crate::flatten::utils::{is_primitive, resolve_inner_class_alias, resolve_type_alias};
+use crate::flatten::{apply_modification_to_model, ModifyContext};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -87,6 +88,13 @@ impl Flattener {
                         let count = array_len.unwrap_or(1);
                         let is_array = array_len.is_some();
 
+                        let mut each_start: Option<Expression> = None;
+                        for m in &decl.modifications {
+                            if m.each && m.name == "start" {
+                                each_start = m.value.clone();
+                            }
+                        }
+
                         let base_name = if prefix.is_empty() {
                             decl.name.clone()
                         } else {
@@ -139,12 +147,24 @@ impl Flattener {
                                     type_name: resolved_type.clone(),
                                     name: full_path.clone(),
                                     replaceable: decl.replaceable,
+                                    constrainedby_type: decl.constrainedby_type.clone(),
                                     is_parameter: decl.is_parameter,
                                     is_flow: decl.is_flow,
                                     is_discrete: decl.is_discrete,
                                     is_input: decl.is_input,
                                     is_output: decl.is_output,
-                                    start_value: if let Some(val) = &decl.start_value {
+                                    is_inner: decl.is_inner,
+                                    is_outer: decl.is_outer,
+                                    is_public: decl.is_public,
+                                    is_protected: decl.is_protected,
+                                    start_value: if let Some(ev) = &each_start {
+                                        let sub = self.substitute(ev, &context);
+                                        if is_array {
+                                            Some(index_expression(&sub, i))
+                                        } else {
+                                            Some(sub)
+                                        }
+                                    } else if let Some(val) = &decl.start_value {
                                         let sub = self.substitute(val, &context);
                                         if is_array { Some(index_expression(&sub, i)) } else { Some(sub) }
                                     } else {
@@ -156,6 +176,11 @@ impl Flattener {
                                     annotation: None,
                                     condition: None,
                                 });
+                                flat.register_inst_path(
+                                    full_path.clone(),
+                                    resolved_type.clone(),
+                                    if is_array { Some(i as usize) } else { None },
+                                );
                                 continue;
                             }
 
@@ -184,14 +209,19 @@ impl Flattener {
                                                     let base = resolve_type_alias(&owner.type_aliases, base);
                                                     if is_primitive(&base) {
                                                         flat.declarations.push(Declaration {
-                                                            type_name: base,
+                                                            type_name: base.clone(),
                                                             name: full_path.clone(),
                                                             replaceable: decl.replaceable,
+                                                            constrainedby_type: decl.constrainedby_type.clone(),
                                                             is_parameter: decl.is_parameter,
                                                             is_flow: decl.is_flow,
                                                             is_discrete: decl.is_discrete,
                                                             is_input: decl.is_input,
                                                             is_output: decl.is_output,
+                                                            is_inner: decl.is_inner,
+                                                            is_outer: decl.is_outer,
+                                                            is_public: decl.is_public,
+                                                            is_protected: decl.is_protected,
                                                             start_value: if let Some(val) = &decl.start_value {
                                                                 let sub = self.substitute(val, &context);
                                                                 if is_array {
@@ -208,6 +238,11 @@ impl Flattener {
                                                             annotation: None,
                                                             condition: None,
                                                         });
+                                                        flat.register_inst_path(
+                                                            full_path.clone(),
+                                                            base,
+                                                            if is_array { Some(i as usize) } else { None },
+                                                        );
                                                         continue;
                                                     }
                                                 }
@@ -231,14 +266,19 @@ impl Flattener {
                                                                 resolve_type_alias(&owner.type_aliases, base);
                                                             if is_primitive(&base) {
                                                                 flat.declarations.push(Declaration {
-                                                                    type_name: base,
+                                                                    type_name: base.clone(),
                                                                     name: full_path.clone(),
                                                                     replaceable: decl.replaceable,
+                                                                    constrainedby_type: decl.constrainedby_type.clone(),
                                                                     is_parameter: decl.is_parameter,
                                                                     is_flow: decl.is_flow,
                                                                     is_discrete: decl.is_discrete,
                                                                     is_input: decl.is_input,
                                                                     is_output: decl.is_output,
+                                                                    is_inner: decl.is_inner,
+                                                                    is_outer: decl.is_outer,
+                                                                    is_public: decl.is_public,
+                                                                    is_protected: decl.is_protected,
                                                                     start_value: if let Some(val) = &decl.start_value {
                                                                         let sub = self.substitute(val, &context);
                                                                         if is_array {
@@ -255,6 +295,11 @@ impl Flattener {
                                                                     annotation: None,
                                                                     condition: None,
                                                                 });
+                                                                flat.register_inst_path(
+                                                                    full_path.clone(),
+                                                                    base,
+                                                                    if is_array { Some(i as usize) } else { None },
+                                                                );
                                                                 continue;
                                                             }
                                                         }
@@ -273,11 +318,16 @@ impl Flattener {
                                             type_name: "Real".to_string(),
                                             name: full_path.clone(),
                                             replaceable: decl.replaceable,
+                                            constrainedby_type: decl.constrainedby_type.clone(),
                                             is_parameter: decl.is_parameter,
                                             is_flow: decl.is_flow,
                                             is_discrete: decl.is_discrete,
                                             is_input: decl.is_input,
                                             is_output: decl.is_output,
+                                            is_inner: decl.is_inner,
+                                            is_outer: decl.is_outer,
+                                            is_public: decl.is_public,
+                                            is_protected: decl.is_protected,
                                             start_value: if let Some(val) = &decl.start_value {
                                                 Some(self.substitute(val, &context))
                                             } else {
@@ -289,6 +339,11 @@ impl Flattener {
                                             annotation: None,
                                             condition: None,
                                         });
+                                        flat.register_inst_path(
+                                            full_path.clone(),
+                                            "Real".to_string(),
+                                            if is_array { Some(i as usize) } else { None },
+                                        );
                                         continue;
                                     }
                                     return match e {
@@ -310,14 +365,19 @@ impl Flattener {
                                 let base = resolve_type_alias(&sub_model.type_aliases, base);
                                 if is_primitive(&base) {
                                     flat.declarations.push(Declaration {
-                                        type_name: base,
+                                        type_name: base.clone(),
                                         name: full_path.clone(),
                                         replaceable: decl.replaceable,
+                                        constrainedby_type: decl.constrainedby_type.clone(),
                                         is_parameter: decl.is_parameter,
                                         is_flow: decl.is_flow,
                                         is_discrete: decl.is_discrete,
                                         is_input: decl.is_input,
                                         is_output: decl.is_output,
+                                        is_inner: decl.is_inner,
+                                        is_outer: decl.is_outer,
+                                        is_public: decl.is_public,
+                                        is_protected: decl.is_protected,
                                         start_value: if let Some(val) = &decl.start_value {
                                             let sub = self.substitute(val, &context);
                                             if is_array {
@@ -334,16 +394,36 @@ impl Flattener {
                                         annotation: None,
                                         condition: None,
                                     });
+                                    flat.register_inst_path(
+                                        full_path.clone(),
+                                        base.clone(),
+                                        if is_array { Some(i as usize) } else { None },
+                                    );
                                     continue;
                                 }
                             }
 
                             self.flatten_inheritance(&mut sub_model, &resolved_type)?;
+                            let mod_ctx = ModifyContext::for_declaration_expand(
+                                current_qualified,
+                                &msl_import_context,
+                                self.coarse_constrainedby_only,
+                            );
                             for modification in &decl.modifications {
-                                apply_modification(Arc::make_mut(&mut sub_model), modification);
+                                apply_modification_to_model(
+                                    Arc::make_mut(&mut sub_model),
+                                    modification,
+                                    &mod_ctx,
+                                    Some(&mut self.loader),
+                                )?;
                             }
 
                             flat.instances.insert(full_path.clone(), resolved_type.clone());
+                            flat.register_inst_path(
+                                full_path.clone(),
+                                resolved_type.clone(),
+                                if is_array { Some(i as usize) } else { None },
+                            );
 
                             stack.push(Task::ExpandEquations {
                                 model: Arc::clone(&sub_model),

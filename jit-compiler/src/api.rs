@@ -56,6 +56,13 @@ fn handle_validate_output(
                     state_vars: artifacts.state_vars,
                     output_vars: artifacts.output_vars,
                 },
+                CompileOutput::FlatSnapshotDone => ValidateResult {
+                    success: true,
+                    warnings,
+                    errors: Vec::new(),
+                    state_vars: Vec::new(),
+                    output_vars: Vec::new(),
+                },
             }
         }
         Err(e) => {
@@ -87,6 +94,9 @@ pub fn simulate_from_source(
     let artifacts = match out {
         CompileOutput::FunctionRun(_) => {
             return Err("simulation requested but entry is a function, not a model".into());
+        }
+        CompileOutput::FlatSnapshotDone => {
+            return Err("simulation not available for flat-snapshot-only compile".into());
         }
         CompileOutput::Simulation(artifacts) => artifacts,
     };

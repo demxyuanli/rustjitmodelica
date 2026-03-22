@@ -82,7 +82,7 @@ impl Flattener {
         format!("{}.{}", current_qualified, name)
     }
 
-    pub(super) fn resolve_import_scoped_type(
+    pub(crate) fn resolve_import_scoped_type(
         model: &Model,
         type_name: &str,
         current_qualified: &str,
