@@ -70,6 +70,7 @@ impl ModelLoader {
             type_aliases: m.type_aliases.clone(),
             imports: m.imports.clone(),
             external_info: m.external_info.clone(),
+            redeclare_extends: m.redeclare_extends.clone(),
         }
     }
     pub fn new() -> Self {

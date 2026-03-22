@@ -309,6 +309,9 @@ impl ScriptRunner {
                         );
                         Err("load: model is a function, not a simulation model".into())
                     }
+                    CompileOutput::FlatSnapshotDone => Err(
+                        "load: flat-snapshot-only compile produced no simulation artifacts".into(),
+                    ),
                 }
             }
             ScriptCommand::SwitchModel(name) => {

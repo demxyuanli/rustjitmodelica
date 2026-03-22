@@ -7,6 +7,21 @@ pub enum FlattenError {
     Load(LoadError),
     UnknownType(String, String, Option<SourceLocation>),
     IncompatibleConnector(String, String, String, String, Option<SourceLocation>),
+    /// Modification/redeclare did not match any component in the model (strict mode).
+    ModificationTargetNotFound {
+        target: String,
+        scope: String,
+    },
+    /// Redeclared type violates a coarse `constrainedby` check (replaceable component).
+    RedeclareViolatesConstrainedBy {
+        component: String,
+        new_type: String,
+        constraint: String,
+    },
+    /// Modifier lists both `inner` and `outer` for the same component (MLS 7.3).
+    ConflictingInnerOuter { target: String },
+    /// Modifier lists both `public` and `protected` for the same element (MLS 7.3).
+    ConflictingPublicProtected { target: String },
 }
 
 impl From<LoadError> for FlattenError {
@@ -37,6 +52,34 @@ impl fmt::Display for FlattenError {
                 }
                 Ok(())
             }
+            FlattenError::ModificationTargetNotFound { target, scope } => {
+                write!(
+                    f,
+                    "[FLATTEN_MODIFICATION_TARGET] No component '{}' in model scope '{}'",
+                    target, scope
+                )
+            }
+            FlattenError::RedeclareViolatesConstrainedBy {
+                component,
+                new_type,
+                constraint,
+            } => {
+                write!(
+                    f,
+                    "[FLATTEN_CONSTRAINEDBY] Redeclare type '{}' for '{}' does not satisfy constrainedby '{}'",
+                    new_type, component, constraint
+                )
+            }
+            FlattenError::ConflictingInnerOuter { target } => write!(
+                f,
+                "[FLATTEN_INNER_OUTER] '{}' cannot be both inner and outer in the same modifier",
+                target
+            ),
+            FlattenError::ConflictingPublicProtected { target } => write!(
+                f,
+                "[FLATTEN_VISIBILITY] '{}' cannot be both public and protected in the same modifier",
+                target
+            ),
         }
     }
 }

@@ -1,6 +1,18 @@
 use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression, StringInterner};
 use std::collections::{HashMap, HashSet};
 
+/// Stable id for a flattened instance or leaf variable (diagnostics / future DefId-style tooling).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InstId(pub u32);
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct InstPathRecord {
+    pub qualified_class: String,
+    pub component_path: String,
+    pub array_index: Option<usize>,
+}
+
 /// SYNC-2: One clock partition: variables that are updated on the same clock (e.g. same when sample(...) branch).
 #[derive(Debug, Clone, Default)]
 pub struct ClockPartition {
@@ -29,4 +41,25 @@ pub struct FlattenedModel {
     /// SYNC-6: Pairs of connector instance paths when both sides are clock connectors (infer same clock network).
     pub clock_signal_connections: Vec<(String, String)>,
     pub interner: StringInterner,
+    /// `InstId` is index into `inst_records`.
+    pub inst_records: Vec<InstPathRecord>,
+    pub path_to_inst: HashMap<String, InstId>,
+}
+
+impl FlattenedModel {
+    pub fn register_inst_path(
+        &mut self,
+        component_path: String,
+        qualified_class: String,
+        array_index: Option<usize>,
+    ) -> InstId {
+        let id = InstId(self.inst_records.len() as u32);
+        self.inst_records.push(InstPathRecord {
+            qualified_class,
+            component_path: component_path.clone(),
+            array_index,
+        });
+        self.path_to_inst.insert(component_path, id);
+        id
+    }
 }

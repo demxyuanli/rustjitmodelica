@@ -102,7 +102,9 @@ modification_part = { "(" ~ modification_list ~ ")" }
 modification_list = { modification ~ ("," ~ modification)* }
 final_kw = { "final" }
 modification = {
-    ("redeclare"
+    public_kw? ~ protected_kw?
+    ~ inner_kw? ~ outer_kw?
+    ~ ("redeclare"
         ~ WHITESPACE?
         ~ (final_kw ~ WHITESPACE?)?
         ~ ("each" ~ WHITESPACE?)?
@@ -140,6 +142,8 @@ stream_kw = { "stream" }
 discrete_kw = { "discrete" }
 input_kw = { "input" }
 output_kw = { "output" }
+public_kw = { "public" }
+protected_kw = { "protected" }
 inner_kw = { "inner" }
 outer_kw = { "outer" }
 // Primitive types must match whole token (avoid parsing `RealOutput` as `Real` + `Output`).

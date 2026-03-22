@@ -1,26 +1,10 @@
-mod analysis;
-mod ast;
-mod backend_dae;
-mod compiler;
-mod diag;
-mod equation_graph;
-mod error;
-mod expr_eval;
-mod flatten;
-mod fmi;
-mod i18n;
-mod jit;
-mod loader_compat;
-mod loader;
-mod parser;
-mod script;
-mod simulation;
-mod solver;
-mod sparse_solve;
-mod string_intern;
-
-use compiler::{CompileOutput, Compiler};
-use simulation::{run_simulation, run_simulation_collect};
+use rustmodlica::{
+    Artifacts, CompileOutput, Compiler, WarningInfo, run_simulation, run_simulation_collect,
+};
+use rustmodlica::error;
+use rustmodlica::fmi;
+use rustmodlica::i18n;
+use rustmodlica::script;
 use std::env;
 use std::io::Read;
 use std::process::ExitCode;
@@ -30,7 +14,7 @@ type RunError = error::AppError;
 
 fn emit_validate_json(
     success: bool,
-    warnings: &[diag::WarningInfo],
+    warnings: &[WarningInfo],
     errors: &[String],
     state_vars: &[String],
     output_vars: &[String],
@@ -57,7 +41,7 @@ fn emit_validate_json(
 }
 
 /// INT-1: REPL loop. Commands: <var_name> (print value), simulate, list, quit/exit.
-fn run_repl_loop(artifacts: compiler::Artifacts) -> Result<(), RunError> {
+fn run_repl_loop(artifacts: Artifacts) -> Result<(), RunError> {
     use std::io::{self, BufRead, Write};
     println!(
         "REPL: type variable name to inspect, 'simulate' to run, 'list' for vars, 'quit' to exit."
@@ -178,6 +162,9 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut model_name = None;
     let mut validate_only = false;
     let mut output_format: Option<String> = None;
+    let mut emit_flat_snapshot: Option<String> = None;
+    let mut flat_snapshot_only = false;
+    let mut coarse_constrainedby_only = false;
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
@@ -233,6 +220,15 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
             i += 1;
         } else if let Some(v) = a.strip_prefix("--result-file=") {
             result_file = Some(v.to_string());
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--emit-flat-snapshot=") {
+            emit_flat_snapshot = Some(v.to_string());
+            i += 1;
+        } else if a == "--flat-snapshot-only" {
+            flat_snapshot_only = true;
+            i += 1;
+        } else if a == "--coarse-constrainedby" {
+            coarse_constrainedby_only = true;
             i += 1;
         } else if let Some(v) = a.strip_prefix("--warnings=") {
             warnings_level = v.to_string();
@@ -309,6 +305,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         compiler.loader.add_path(".".into());
         compiler.loader.add_path("StandardLib".into());
         compiler.loader.add_path("TestLib".into());
+        compiler.loader.add_path("ModelicaTest".into());
         let mut runner = script::ScriptRunner::new(compiler);
         if path == "-" {
             runner.run_script(std::io::stdin())?;
@@ -323,7 +320,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --solver=rk4|rk45|implicit  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run script file (load, setParameter, simulate, quit); use - for stdin\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n  Use model_name '-' to read Modelica source from stdin.",
+                "Usage: {} [options] <model_name>\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --solver=rk4|rk45|implicit  (default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run script file (load, setParameter, simulate, quit); use - for stdin\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n  Use model_name '-' to read Modelica source from stdin.",
                 args[0]
             );
             return Err(msg.into());
@@ -343,6 +340,9 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     compiler.options.output_interval = output_interval;
     compiler.options.result_file = result_file;
     compiler.options.warnings_level = warnings_level;
+    compiler.options.emit_flat_snapshot = emit_flat_snapshot.clone();
+    compiler.options.flat_snapshot_only = flat_snapshot_only;
+    compiler.options.coarse_constrainedby_only = coarse_constrainedby_only;
     if emit_fmu_dir.is_some() && emit_c_dir.is_none() {
         emit_c_dir = emit_fmu_dir.clone();
     }
@@ -362,6 +362,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     compiler.loader.add_path(".".into());
     compiler.loader.add_path("StandardLib".into());
     compiler.loader.add_path("TestLib".into());
+    compiler.loader.add_path("ModelicaTest".into());
 
     let effective_model = if model_name == "-" {
         let mut code = String::new();
@@ -376,6 +377,10 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     } else {
         model_name.clone()
     };
+
+    if flat_snapshot_only && emit_flat_snapshot.is_none() {
+        return Err("--flat-snapshot-only requires --emit-flat-snapshot=<path>".into());
+    }
 
     if !json_mode {
         println!(
@@ -410,6 +415,9 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     &artifacts.output_vars,
                 );
             }
+            CompileOutput::FlatSnapshotDone => {
+                emit_validate_json(true, &warnings, &[], &[], &[]);
+            }
         }
         return Ok(());
     }
@@ -425,6 +433,12 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         }
     }
     match out {
+        CompileOutput::FlatSnapshotDone => {
+            if !json_mode {
+                println!("Tier S flat snapshot written.");
+            }
+            return Ok(());
+        }
         CompileOutput::FunctionRun(value) => {
             if !json_mode {
                 println!("{}", i18n::msg("result", &[&value]));

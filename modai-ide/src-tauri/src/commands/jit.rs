@@ -191,6 +191,21 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
             state_vars: artifacts.state_vars,
             output_vars: artifacts.output_vars,
         }),
+        Ok(rustmodlica::CompileOutput::FlatSnapshotDone) => Ok(JitValidateResult {
+            success: true,
+            warnings: warnings
+                .into_iter()
+                .map(|w| WarningItem {
+                    path: w.path,
+                    line: w.line,
+                    column: w.column,
+                    message: w.message,
+                })
+                .collect(),
+            errors: vec![],
+            state_vars: vec![],
+            output_vars: vec![],
+        }),
         Err(err) => Ok(JitValidateResult {
             success: false,
             warnings: warnings
@@ -222,6 +237,9 @@ pub fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationRes
     let artifacts = match out {
         rustmodlica::CompileOutput::FunctionRun(_) => {
             return Err("Simulation requested for a function entry".to_string());
+        }
+        rustmodlica::CompileOutput::FlatSnapshotDone => {
+            return Err("Flat snapshot only; simulation is not available".to_string());
         }
         rustmodlica::CompileOutput::Simulation(artifacts) => artifacts,
     };
@@ -319,6 +337,9 @@ pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, 
     let artifacts = match out {
         rustmodlica::CompileOutput::FunctionRun(_) => {
             return Err("Simulation requested for a function entry".to_string());
+        }
+        rustmodlica::CompileOutput::FlatSnapshotDone => {
+            return Err("Flat snapshot only; simulation is not available".to_string());
         }
         rustmodlica::CompileOutput::Simulation(artifacts) => artifacts,
     };
@@ -470,19 +491,4 @@ pub fn get_simulation_state(session_id: String) -> Result<Option<StepState>, Str
         active_events: vec![],
         step_index: idx,
     }))
-}
-
-pub(crate) fn parse_modelica_deps(content: &str) -> Option<(String, Vec<String>)> {
-    let item = parser::parse(content).ok()?;
-    let (class_name, extends) = match &item {
-        ClassItem::Model(m) => (
-            m.name.clone(),
-            m.extends.iter().map(|e| e.model_name.clone()).collect(),
-        ),
-        ClassItem::Function(f) => (
-            f.name.clone(),
-            f.extends.iter().map(|e| e.model_name.clone()).collect(),
-        ),
-    };
-    Some((class_name, extends))
 }

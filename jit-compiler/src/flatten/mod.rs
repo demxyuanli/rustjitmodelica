@@ -1,3 +1,7 @@
+//! Flatten pipeline: inheritance, declaration expand, connections.
+//! Out of scope here (future epics): full rustc-style query cache over defs, registry serde,
+//! OMC instantiateModel parity tooling, parallel flatten.
+
 use crate::ast::{AlgorithmStatement, Equation, Expression, Model, StringInterner};
 use crate::loader::ModelLoader;
 use std::collections::HashMap;
@@ -7,7 +11,9 @@ mod decl_expand;
 mod import_resolve;
 mod inheritance;
 mod record;
+mod redeclare;
 pub use self::error::FlattenError;
+pub use self::redeclare::{apply_modification_to_model, ModifyContext};
 
 pub mod connections;
 mod expand;
@@ -16,6 +22,7 @@ pub mod structures;
 mod substitute;
 pub mod utils;
 mod clock_infer;
+pub mod flat_snapshot;
 
 use self::connections::resolve_connections;
 #[allow(unused_imports)]
@@ -36,6 +43,8 @@ pub(crate) struct ExpandTarget<'a> {
 pub struct Flattener {
     pub loader: ModelLoader,
     pub name_cache: crate::string_intern::StringInterner,
+    /// When true, `constrainedby` uses legacy string matching when a loader is available.
+    pub coarse_constrainedby_only: bool,
 }
 
 impl Flattener {
@@ -44,6 +53,7 @@ impl Flattener {
         Flattener {
             loader: ModelLoader::new(),
             name_cache: crate::string_intern::StringInterner::new(),
+            coarse_constrainedby_only: false,
         }
     }
 
@@ -55,6 +65,7 @@ impl Flattener {
     ) -> Result<FlattenedModel, FlattenError> {
         let root_path = root_name.replace('/', ".");
         self.flatten_inheritance(root, root_path.as_str())?;
+        redeclare::validate_modification_prefixes_in_model(root.as_ref())?;
         let model = root.as_ref();
         let mut flat = FlattenedModel {
             declarations: Vec::new(),
@@ -70,6 +81,8 @@ impl Flattener {
             clock_partitions: Vec::new(),
             clock_signal_connections: Vec::new(),
             interner: StringInterner::new(),
+            inst_records: Vec::new(),
+            path_to_inst: HashMap::new(),
         };
         self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
         self.expand_equations(model, "", &mut flat);

@@ -36,6 +36,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
     let mut inner_classes = Vec::new();
     let mut type_aliases = Vec::new();
     let mut imports: Vec<(String, String)> = Vec::new();
+    let mut redeclare_extends: Vec<crate::ast::RedeclareExtendsBlock> = Vec::new();
     let mut class_annotation: Option<String> = None;
     let mut external_info: Option<crate::ast::ExternalDecl> = None;
 
@@ -49,6 +50,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
                     &mut inner_classes,
                     &mut type_aliases,
                     &mut imports,
+                    &mut redeclare_extends,
                     parse_model,
                 )?;
             }
@@ -133,6 +135,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             type_aliases,
             imports,
             external_info: None,
+            redeclare_extends,
         }))
     }
 }

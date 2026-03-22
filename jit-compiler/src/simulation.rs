@@ -16,7 +16,7 @@ mod sim_io;
 mod step;
 mod types;
 
-pub use self::types::SimulationResult;
+pub type SimulationResult = types::SimulationResult;
 pub use self::types::run_simulation_collect;
 use self::events::{run_event_iteration_at_time, EventIterationOutcome};
 use self::newton_recovery::{allow_zero_residual_newton, fail_if_assert_storm, print_newton_diag};
@@ -70,6 +70,9 @@ pub fn run_simulation(
     let mut rk4_solver = RungeKutta4Solver::new(states.len());
     let mut rk45_solver = AdaptiveRK45Solver::new(states.len(), atol, rtol);
     let mut backward_euler_solver = BackwardEulerSolver::new(states.len());
+    // Newton tearing uses scratch_outputs for stage-wise algebraic guesses; without tearing,
+    // evaluate_scratch's zero-output fallback can accept a wrong solution and zero derivatives.
+    let use_scratch_outputs_for_solver = !newton_tearing_var_names.is_empty();
 
     let mut out: Box<dyn Write> = if result_collector.is_some() {
         Box::new(io::sink())
@@ -256,7 +259,11 @@ pub fn run_simulation(
                 last_eval_time: last_eval_time_ptr,
                 last_eval_state: last_eval_state_ptr,
                 last_eval_state_len,
-                scratch_outputs: Some(&mut scratch_outputs_for_step),
+                scratch_outputs: if use_scratch_outputs_for_solver {
+                    Some(&mut scratch_outputs_for_step)
+                } else {
+                    None
+                },
                 homotopy_lambda_ptr,
                 buf_discrete: Vec::new(),
                 buf_when: Vec::new(),
@@ -433,7 +440,11 @@ pub fn run_simulation(
                     last_eval_time: last_eval_time_ptr,
                     last_eval_state: last_eval_state_ptr,
                     last_eval_state_len,
-                    scratch_outputs: Some(&mut scratch_outputs_for_step),
+                    scratch_outputs: if use_scratch_outputs_for_solver {
+                        Some(&mut scratch_outputs_for_step)
+                    } else {
+                        None
+                    },
                     homotopy_lambda_ptr,
                     buf_discrete: Vec::new(),
                     buf_when: Vec::new(),

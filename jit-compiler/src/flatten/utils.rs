@@ -1,4 +1,5 @@
 use crate::ast::{AlgorithmStatement, Equation, Expression, Model, Modification};
+use crate::flatten::redeclare::{apply_modification_to_model, ModifyContext};
 use std::collections::{HashMap, HashSet};
 
 /// F3-3: Get function inputs and output (name, expr) list from model. Used for multi-output expand.
@@ -323,35 +324,11 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     false
 }
 
+/// Applies one modification using default scope (backward compatible; ignores strict errors).
+#[allow(dead_code)]
 pub fn apply_modification(model: &mut Model, modification: &Modification) {
-    if let Some((head, tail)) = modification.name.split_once('.') {
-        for decl in &mut model.declarations {
-            if decl.name == head {
-                decl.modifications.push(Modification {
-                    name: tail.to_string(),
-                    value: modification.value.clone(),
-                    each: modification.each,
-                    redeclare: modification.redeclare,
-                    redeclare_type: modification.redeclare_type.clone(),
-                });
-                return;
-            }
-        }
-    } else {
-        for decl in &mut model.declarations {
-            if decl.name == modification.name {
-                if modification.redeclare {
-                    if let Some(ref t) = modification.redeclare_type {
-                        decl.type_name = t.clone();
-                    }
-                    decl.start_value = modification.value.clone();
-                } else {
-                    decl.start_value = modification.value.clone();
-                }
-                return;
-            }
-        }
-    }
+    let ctx = ModifyContext::default();
+    let _ = apply_modification_to_model(model, modification, &ctx, None);
 }
 
 pub fn merge_models(child: &mut Model, base: &Model) {

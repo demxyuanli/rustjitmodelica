@@ -1,4 +1,4 @@
-﻿
+
 fn scope_rank(scope: &str) -> i32 {
     match scope {
         SCOPE_PROJECT => 300,
@@ -690,25 +690,3 @@ pub fn set_component_library_enabled(
     save_scope_entries(project_dir, scope, &entries)?;
     Ok(to_record(scope, result))
 }
-
-fn update_library_source_metadata(
-    project_dir: Option<&Path>,
-    scope: &str,
-    library_id: &str,
-    source_type: Option<String>,
-    source_url: Option<String>,
-    source_ref: Option<String>,
-) -> Result<ComponentLibraryRecord, String> {
-    let mut entries = load_scope_entries(project_dir, scope)?;
-    let entry = entries
-        .iter_mut()
-        .find(|item| item.id == library_id)
-        .ok_or_else(|| format!("Component library not found: {}", library_id))?;
-    entry.source_type = source_type;
-    entry.source_url = source_url;
-    entry.source_ref = source_ref;
-    let result = entry.clone();
-    save_scope_entries(project_dir, scope, &entries)?;
-    Ok(to_record(scope, result))
-}
-

@@ -1,7 +1,9 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::ast::Model;
+use crate::flatten::flat_snapshot;
 use crate::flatten::Flattener;
 use crate::loader::ModelLoader;
 
@@ -14,12 +16,15 @@ pub(crate) fn flatten_and_inline(
     loader: &mut ModelLoader,
     quiet: bool,
     stage_trace: bool,
+    emit_flat_snapshot: Option<&Path>,
+    coarse_constrainedby_only: bool,
 ) -> CompilerResult<FrontendStage> {
     let started_at = Instant::now();
     if stage_trace {
         eprintln!("[stage] flatten");
     }
     let mut flattener = Flattener::new();
+    flattener.coarse_constrainedby_only = coarse_constrainedby_only;
     for path in &loader.library_paths {
         flattener.loader.add_path(path.clone());
     }
@@ -29,6 +34,13 @@ pub(crate) fn flatten_and_inline(
     flattener.loader.set_quiet(quiet);
     let mut flat_model = flattener.flatten(root_model, model_name)?;
     log_stage_timing(stage_trace, "flatten", started_at);
+
+    if let Some(path) = emit_flat_snapshot {
+        flat_snapshot::write_flat_snapshot(path, &flat_model).map_err(|e| {
+            let io_err = std::io::Error::new(std::io::ErrorKind::Other, e);
+            Box::new(io_err) as Box<dyn std::error::Error + Send + Sync>
+        })?;
+    }
 
     if stage_trace {
         eprintln!("[stage] inline");

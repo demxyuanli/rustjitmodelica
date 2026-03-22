@@ -274,13 +274,6 @@ pub fn get_library_mtime(conn: &Connection, library_id: &str) -> Result<Option<i
     }
 }
 
-pub fn has_any_components(conn: &Connection) -> Result<bool, String> {
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM component_types", [], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-    Ok(count > 0)
-}
-
 pub fn clear_all(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "DELETE FROM component_types;

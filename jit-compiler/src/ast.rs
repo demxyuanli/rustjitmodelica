@@ -50,6 +50,7 @@ impl From<Function> for Model {
             type_aliases: vec![],
             imports: vec![],
             external_info: f.external_info,
+            redeclare_extends: Vec::new(),
         }
     }
 }
@@ -83,16 +84,11 @@ pub struct Model {
     pub imports: Vec<(String, String)>,
     /// F3-4: when is_function, external decl if present.
     pub external_info: Option<ExternalDecl>,
+    /// `redeclare model extends` / `redeclare function extends` blocks in this class body.
+    pub redeclare_extends: Vec<RedeclareExtendsBlock>,
 }
 
 impl Model {
-    pub fn rebuild_inner_class_index(&mut self) {
-        self.inner_class_index.clear();
-        for (i, m) in self.inner_classes.iter().enumerate() {
-            self.inner_class_index.insert(m.name.clone(), i);
-        }
-    }
-
     pub fn find_inner_class(&self, name: &str) -> Option<&Model> {
         self.inner_class_index
             .get(name)
@@ -133,6 +129,24 @@ pub struct ExtendsClause {
     pub modifications: Vec<Modification>,
 }
 
+/// Parsed `redeclare model extends Name` / `redeclare function extends Name` block (declaration section).
+#[derive(Debug, Clone, Default)]
+pub struct RedeclareExtendsBlock {
+    pub extends_target: String,
+    pub clause_modifications: Vec<Modification>,
+    pub declarations: Vec<Declaration>,
+    pub equations: Vec<Equation>,
+    pub initial_equations: Vec<Equation>,
+    pub algorithms: Vec<AlgorithmStatement>,
+    pub initial_algorithms: Vec<AlgorithmStatement>,
+    pub inner_classes: Vec<Model>,
+    pub extends: Vec<ExtendsClause>,
+    pub type_aliases: Vec<(String, String)>,
+    pub imports: Vec<(String, String)>,
+    /// `redeclare model extends` blocks nested in this block's declaration section.
+    pub nested_redeclare_extends: Vec<RedeclareExtendsBlock>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Modification {
     pub name: String,
@@ -143,6 +157,12 @@ pub struct Modification {
     pub redeclare: bool,
     /// When redeclare is true, new type for the component (e.g. "Real"); applied in extends/expand.
     pub redeclare_type: Option<String>,
+    /// Element prefix on this modifier (e.g. `extends A(inner x = 1)`).
+    pub is_inner: bool,
+    pub is_outer: bool,
+    /// Visibility prefix on this modifier (e.g. `extends A(public x = 1)`).
+    pub is_public: bool,
+    pub is_protected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -152,11 +172,17 @@ pub struct Declaration {
     pub name: String,
     /// MSL-5: replaceable component (parse-only; allows redeclare in modifier).
     pub replaceable: bool,
+    /// Optional `constrainedby` type name (checked in flatten/redeclare).
+    pub constrainedby_type: Option<String>,
     pub is_parameter: bool,
     pub is_flow: bool,
     pub is_discrete: bool,
     pub is_input: bool,
     pub is_output: bool,
+    pub is_inner: bool,
+    pub is_outer: bool,
+    pub is_public: bool,
+    pub is_protected: bool,
     /// FUNC-5: default argument (e.g. input Real y = 1.0); already parsed as start_value.
     /// Optional/rest: is_rest true when parameter is variadic (e.g. input Real z...).
     pub start_value: Option<Expression>,
@@ -256,14 +282,6 @@ impl Expression {
     /// Construct a Variable by interning the name via the global interner.
     pub fn var(name: &str) -> Expression {
         Expression::Variable(crate::string_intern::intern(name))
-    }
-
-    /// Get the variable name as a String (resolves VarId). Returns None if not a Variable.
-    pub fn var_name(&self) -> Option<String> {
-        match self {
-            Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
-            _ => None,
-        }
     }
 }
 
