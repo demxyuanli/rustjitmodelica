@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use crate::analysis::extract_unknowns;
 use crate::ast::{Equation, Expression};
 use crate::flatten::FlattenedModel;
+use crate::string_intern::resolve_id;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,10 +35,10 @@ pub struct EquationGraph {
 fn equation_lhs_solved_var(eq: &Equation) -> Option<String> {
     match eq {
         Equation::Simple(lhs, _) => match lhs {
-            Expression::Variable(v) => Some(v.clone()),
+            Expression::Variable(id) => Some(resolve_id(*id)),
             Expression::Der(inner) => {
-                if let Expression::Variable(v) = inner.as_ref() {
-                    Some(format!("der_{}", v))
+                if let Expression::Variable(id) = inner.as_ref() {
+                    Some(format!("der_{}", resolve_id(*id)))
                 } else {
                     None
                 }
@@ -65,7 +66,7 @@ fn equation_short_label(eq: &Equation, index: usize) -> String {
 
 fn expr_short(e: &Expression) -> String {
     match e {
-        Expression::Variable(n) => n.clone(),
+        Expression::Variable(id) => resolve_id(*id),
         Expression::Der(inner) => format!("der({})", expr_short(inner)),
         Expression::Number(x) => format!("{}", x),
         Expression::BinaryOp(l, op, r) => {

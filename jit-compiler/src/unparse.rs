@@ -1,12 +1,13 @@
 // Minimal Modelica AST to .mo text for diagram round-trip (declarations + connect + other equations).
 
 use crate::ast::*;
+use crate::string_intern::resolve_id;
 use std::fmt::Write;
 
 fn write_expression(buf: &mut String, e: &Expression) {
     match e {
-        Expression::Variable(s) => {
-            buf.push_str(s);
+        Expression::Variable(id) => {
+            buf.push_str(&resolve_id(*id));
         }
         Expression::Number(n) => {
             if n.fract() == 0.0 && n.abs() < 1e15 {

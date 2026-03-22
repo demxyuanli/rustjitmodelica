@@ -54,7 +54,7 @@ fn parse_simple_expr(s: &str) -> Option<Expression> {
         if let Ok(n) = t.parse::<f64>() {
             return Some(Expression::Number(n));
         }
-        return Some(Expression::Variable(t.to_string()));
+        return Some(Expression::var(t));
     }
     if tokens.len() == 3 {
         let var = tokens[0];
@@ -71,7 +71,7 @@ fn parse_simple_expr(s: &str) -> Option<Expression> {
         let lhs = if let Ok(n) = var.parse::<f64>() {
             Expression::Number(n)
         } else {
-            Expression::Variable(var.to_string())
+            Expression::var(var)
         };
         return Some(Expression::BinaryOp(
             Box::new(lhs),

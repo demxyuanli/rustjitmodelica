@@ -47,7 +47,11 @@ pub fn build_ode_jacobian_sparse(
     for eq in sorted_eqs {
         if let Equation::Simple(lhs, rhs) = eq {
             let der_var = match lhs {
-                Expression::Variable(v) if v.starts_with("der_") => v.clone(),
+                Expression::Variable(id) => {
+                    let v = crate::string_intern::resolve_id(*id);
+                    if !v.starts_with("der_") { continue; }
+                    v
+                }
                 _ => continue,
             };
             let state_name = der_var.strip_prefix("der_")?;
@@ -84,7 +88,11 @@ pub fn build_ode_jacobian_expressions(
     for eq in sorted_eqs {
         if let Equation::Simple(lhs, rhs) = eq {
             let der_var = match lhs {
-                Expression::Variable(v) if v.starts_with("der_") => v.clone(),
+                Expression::Variable(id) => {
+                    let v = crate::string_intern::resolve_id(*id);
+                    if !v.starts_with("der_") { continue; }
+                    v
+                }
                 _ => continue,
             };
             let state_name = der_var.strip_prefix("der_")?;
@@ -112,8 +120,8 @@ pub fn build_ode_jacobian_expressions(
 
 fn collect_vars_expr_local(expr: &Expression, vars: &mut HashSet<String>) {
     match expr {
-        Expression::Variable(n) => {
-            vars.insert(n.clone());
+        Expression::Variable(id) => {
+            vars.insert(crate::string_intern::resolve_id(*id));
         }
         Expression::Der(e) => {
             collect_vars_expr_local(e, vars);

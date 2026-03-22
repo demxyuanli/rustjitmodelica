@@ -6,7 +6,7 @@ use super::Rule;
 
 pub(super) fn expr_to_string(expr: Expression) -> String {
     match expr {
-        Expression::Variable(n) => n,
+        Expression::Variable(id) => crate::string_intern::resolve_id(id),
         Expression::Dot(base, member) => format!("{}.{}", expr_to_string(*base), member),
         Expression::ArrayAccess(base, _idx) => format!("{}[?]", expr_to_string(*base)),
         _ => "unknown".to_string(),

@@ -43,21 +43,20 @@ impl super::Flattener {
         visiting: &mut std::collections::HashSet<String>,
     ) -> Expression {
         let substituted = match expr {
-            Expression::Variable(name) => {
-                if visiting.contains(name) {
-                    // Break simple substitution cycles like a=b, b=a.
+            Expression::Variable(id) => {
+                let name = crate::string_intern::resolve_id(*id);
+                if visiting.contains(&name) {
                     return expr.clone();
                 }
-                if let Some(val) = Self::lookup_context_stack(context_stack, name) {
-                    if matches!(&val, Expression::Variable(inner) if inner == name) {
+                if let Some(val) = Self::lookup_context_stack(context_stack, &name) {
+                    if matches!(&val, Expression::Variable(inner_id) if *inner_id == *id) {
                         return val;
                     }
                     visiting.insert(name.clone());
                     let out = self.substitute_stack_inner(&val, context_stack, visiting);
-                    visiting.remove(name);
+                    visiting.remove(&name);
                     return out;
                 }
-                // Resolve global constants so JIT sees Number instead of opaque variable names.
                 let path = if name.contains('.') {
                     name.clone()
                 } else if name.starts_with("Modelica_") {
@@ -90,25 +89,28 @@ impl super::Flattener {
             Expression::ArrayAccess(arr, idx) => {
                 let new_arr = self.substitute_stack_inner(arr, context_stack, visiting);
                 let new_idx = self.substitute_stack_inner(idx, context_stack, visiting);
-                if let (Expression::Variable(name), Expression::Number(n)) = (&new_arr, &new_idx) {
+                if let (Expression::Variable(id), Expression::Number(n)) = (&new_arr, &new_idx) {
+                    let name = crate::string_intern::resolve_id(*id);
                     let n_int = *n as i64;
-                    Expression::Variable(format!("{}_{}", name, n_int))
-                } else if let (Expression::Variable(name), Expression::Range(start, step, end)) =
+                    Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, n_int)))
+                } else if let (Expression::Variable(id), Expression::Range(start, step, end)) =
                     (&new_arr, &new_idx)
                 {
+                    let name = crate::string_intern::resolve_id(*id);
                     if let Some(indices) = expand_range_indices(start, step, end) {
                         Expression::ArrayLiteral(
                             indices
                                 .into_iter()
-                                .map(|n| Expression::Variable(format!("{}_{}", name, n)))
+                                .map(|n| Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, n))))
                                 .collect(),
                         )
                     } else {
                         Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
                     }
-                } else if let Expression::Variable(name) = &new_arr {
+                } else if let Expression::Variable(id) = &new_arr {
                     if let Some(suf) = flat_index_suffix_for_scalar_name(&new_idx) {
-                        Expression::Variable(format!("{}_{}", name, suf))
+                        let name = crate::string_intern::resolve_id(*id);
+                        Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, suf)))
                     } else {
                         Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
                     }
@@ -259,17 +261,18 @@ impl super::Flattener {
             visiting: &mut std::collections::HashSet<String>,
         ) -> Expression {
             let substituted = match expr {
-                Expression::Variable(name) => {
-                    if visiting.contains(name) {
+                Expression::Variable(id) => {
+                    let name = crate::string_intern::resolve_id(*id);
+                    if visiting.contains(&name) {
                         return expr.clone();
                     }
-                    if let Some(val) = context.get(name) {
-                        if matches!(val, Expression::Variable(inner_name) if inner_name == name) {
+                    if let Some(val) = context.get(&name) {
+                        if matches!(val, Expression::Variable(inner_id) if *inner_id == *id) {
                             val.clone()
                         } else {
                             visiting.insert(name.clone());
                             let out = inner(fl, val, context, visiting);
-                            visiting.remove(name);
+                            visiting.remove(&name);
                             out
                         }
                     } else {
@@ -293,25 +296,28 @@ impl super::Flattener {
                     let new_arr = inner(fl, arr, context, visiting);
                     let new_idx = inner(fl, idx, context, visiting);
 
-                    if let (Expression::Variable(name), Expression::Number(n)) = (&new_arr, &new_idx) {
+                    if let (Expression::Variable(id), Expression::Number(n)) = (&new_arr, &new_idx) {
+                        let name = crate::string_intern::resolve_id(*id);
                         let n_int = *n as i64;
-                        Expression::Variable(format!("{}_{}", name, n_int))
-                    } else if let (Expression::Variable(name), Expression::Range(start, step, end)) =
+                        Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, n_int)))
+                    } else if let (Expression::Variable(id), Expression::Range(start, step, end)) =
                         (&new_arr, &new_idx)
                     {
+                        let name = crate::string_intern::resolve_id(*id);
                         if let Some(indices) = expand_range_indices(start, step, end) {
                             Expression::ArrayLiteral(
                                 indices
                                     .into_iter()
-                                    .map(|n| Expression::Variable(format!("{}_{}", name, n)))
+                                    .map(|n| Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, n))))
                                     .collect(),
                             )
                         } else {
                             Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
                         }
-                    } else if let Expression::Variable(name) = &new_arr {
+                    } else if let Expression::Variable(id) = &new_arr {
                         if let Some(suf) = flat_index_suffix_for_scalar_name(&new_idx) {
-                            Expression::Variable(format!("{}_{}", name, suf))
+                            let name = crate::string_intern::resolve_id(*id);
+                            Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, suf)))
                         } else {
                             Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
                         }

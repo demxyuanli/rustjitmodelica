@@ -23,6 +23,13 @@ pub struct System<'a> {
     /// When set, evaluate_scratch uses this as outputs buffer (initial guess from caller; JIT overwrites with solution).
     /// Enables using previous step/stage algebraic values as Newton initial guess across a step.
     pub scratch_outputs: Option<&'a mut [f64]>,
+    /// Pointer to homotopy lambda parameter; passed through to calc_derivs.
+    pub homotopy_lambda_ptr: *const f64,
+    /// Pre-allocated scratch buffers reused across evaluate_scratch calls.
+    pub buf_discrete: Vec<f64>,
+    pub buf_when: Vec<f64>,
+    pub buf_crossings: Vec<f64>,
+    pub buf_outputs: Vec<f64>,
 }
 
 impl<'a> System<'a> {
@@ -62,12 +69,12 @@ impl<'a> System<'a> {
             return Err(-1);
         }
         let mut derivs_base = vec![0.0_f64; n];
+        let mut derivs_pert = vec![0.0_f64; n];
         let mut states_scratch = states.to_vec();
         self.evaluate(time, &mut states_scratch, &mut derivs_base)?;
         for j in 0..n {
             states_scratch.copy_from_slice(states);
             states_scratch[j] += eps;
-            let mut derivs_pert = vec![0.0_f64; n];
             self.evaluate(time, &mut states_scratch, &mut derivs_pert)?;
             for i in 0..n {
                 jacobian[i * n + j] = (derivs_pert[i] - derivs_base[i]) / eps;
@@ -98,6 +105,7 @@ impl<'a> System<'a> {
                 self.t_end,
                 self.diag_residual,
                 self.diag_x,
+                self.homotopy_lambda_ptr,
             );
             if status != 0 {
                 return Err(status);
@@ -114,10 +122,14 @@ impl<'a> System<'a> {
         states: &mut [f64],
         derivs: &mut [f64],
     ) -> Result<(), i32> {
-        let mut scratch_discrete = self.discrete.to_vec();
-        let mut scratch_when = vec![0.0; self.when_states.len()];
-        let mut scratch_crossings = vec![0.0; self.crossings.len()];
-        let mut fallback_outputs = vec![0.0; self.outputs.len()];
+        self.buf_discrete.resize(self.discrete.len(), 0.0);
+        self.buf_discrete.copy_from_slice(self.discrete);
+        self.buf_when.resize(self.when_states.len(), 0.0);
+        self.buf_when.fill(0.0);
+        self.buf_crossings.resize(self.crossings.len(), 0.0);
+        self.buf_crossings.fill(0.0);
+        self.buf_outputs.resize(self.outputs.len(), 0.0);
+        self.buf_outputs.fill(0.0);
         let mut last_status = 0_i32;
 
         if let Some(scratch) = self.scratch_outputs.as_mut() {
@@ -134,24 +146,25 @@ impl<'a> System<'a> {
                 for (dst, src) in scratch.iter_mut().zip(base_guess.iter()) {
                     *dst = *src * scale;
                 }
-                scratch_discrete.copy_from_slice(self.discrete);
-                scratch_when.fill(0.0);
-                scratch_crossings.fill(0.0);
+                self.buf_discrete.copy_from_slice(self.discrete);
+                self.buf_when.fill(0.0);
+                self.buf_crossings.fill(0.0);
                 unsafe {
                     let status = (self.calc_derivs)(
                         time,
                         states.as_mut_ptr(),
-                        scratch_discrete.as_mut_ptr(),
+                        self.buf_discrete.as_mut_ptr(),
                         derivs.as_mut_ptr(),
                         self.params.as_ptr(),
                         scratch.as_mut_ptr(),
-                        scratch_when.as_mut_ptr(),
-                        scratch_crossings.as_mut_ptr(),
+                        self.buf_when.as_mut_ptr(),
+                        self.buf_crossings.as_mut_ptr(),
                         self.pre_states.as_ptr(),
                         self.pre_discrete.as_ptr(),
                         self.t_end,
                         self.diag_residual,
                         self.diag_x,
+                        self.homotopy_lambda_ptr,
                     );
                     if status == 0 {
                         return Ok(());
@@ -169,17 +182,18 @@ impl<'a> System<'a> {
             let status = (self.calc_derivs)(
                 time,
                 states.as_mut_ptr(),
-                scratch_discrete.as_mut_ptr(),
+                self.buf_discrete.as_mut_ptr(),
                 derivs.as_mut_ptr(),
                 self.params.as_ptr(),
-                fallback_outputs.as_mut_ptr(),
-                scratch_when.as_mut_ptr(),
-                scratch_crossings.as_mut_ptr(),
+                self.buf_outputs.as_mut_ptr(),
+                self.buf_when.as_mut_ptr(),
+                self.buf_crossings.as_mut_ptr(),
                 self.pre_states.as_ptr(),
                 self.pre_discrete.as_ptr(),
                 self.t_end,
                 self.diag_residual,
                 self.diag_x,
+                self.homotopy_lambda_ptr,
             );
             if status != 0 {
                 return Err(status);
@@ -393,6 +407,8 @@ pub struct AdaptiveRK45Solver {
     k5: Vec<f64>,
     k6: Vec<f64>,
     tmp: Vec<f64>,
+    y4: Vec<f64>,
+    y5: Vec<f64>,
     abs_tol: f64,
     rel_tol: f64,
 }
@@ -407,6 +423,8 @@ impl AdaptiveRK45Solver {
             k5: vec![0.0; state_len],
             k6: vec![0.0; state_len],
             tmp: vec![0.0; state_len],
+            y4: vec![0.0; state_len],
+            y5: vec![0.0; state_len],
             abs_tol,
             rel_tol,
         }
@@ -483,18 +501,15 @@ impl Solver for AdaptiveRK45Solver {
             system.record_eval(t + dt, &self.tmp);
             system.evaluate_scratch(t + dt, &mut self.tmp, &mut self.k6)?;
 
-            // 5th order solution y5 and 4th order y4
-            let mut y5 = vec![0.0; n];
-            let mut y4 = vec![0.0; n];
             for i in 0..n {
-                y5[i] = y[i]
+                self.y5[i] = y[i]
                     + dt * (35.0 / 384.0 * self.k1[i]
                         + 500.0 / 1113.0 * self.k3[i]
                         + 125.0 / 192.0 * self.k4[i]
                         - 2187.0 / 6784.0 * self.k5[i]
                         + 11.0 / 84.0 * self.k6[i]);
 
-                y4[i] = y[i]
+                self.y4[i] = y[i]
                     + dt * (5179.0 / 57600.0 * self.k1[i]
                         + 7571.0 / 16695.0 * self.k3[i]
                         + 393.0 / 640.0 * self.k4[i]
@@ -503,19 +518,17 @@ impl Solver for AdaptiveRK45Solver {
                         + 1.0 / 40.0 * self.k2[i]);
             }
 
-            // Error estimate
             let mut err = 0.0;
             for i in 0..n {
-                let sk = self.abs_tol + self.rel_tol * y5[i].abs();
-                let e = ((y5[i] - y4[i]) / sk).abs();
+                let sk = self.abs_tol + self.rel_tol * self.y5[i].abs();
+                let e = ((self.y5[i] - self.y4[i]) / sk).abs();
                 if e > err {
                     err = e;
                 }
             }
 
             if err <= 1.0 {
-                // Accept step
-                states.copy_from_slice(&y5);
+                states.copy_from_slice(&self.y5);
                 break;
             } else {
                 // Reject and reduce dt

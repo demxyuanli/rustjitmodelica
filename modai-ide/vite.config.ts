@@ -14,7 +14,7 @@ export default defineConfig(async () => ({
         manualChunks(id) {
           if (id.includes("node_modules")) {
             if (id.includes("monaco-editor") || id.includes("@monaco-editor")) return "monaco";
-            if (id.includes("plotly") || id.includes("react-plotly")) return "plotly";
+            if (id.includes("echarts") || id.includes("zrender")) return "charts";
             if (id.includes("react/") || id.includes("react-dom") || id.includes("scheduler") || id.includes("@tauri-apps")) return "vendor";
           }
         },

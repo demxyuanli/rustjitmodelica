@@ -5,9 +5,10 @@ use crate::ast::{AlgorithmStatement, Equation, Expression};
 pub fn expr_substitute_all_array_indices(expr: &Expression, shift: usize) -> Expression {
     use Expression::*;
     match expr {
-        Variable(name) => {
-            if let Some((b, idx)) = parse_array_index(name) {
-                return Variable(format!("{}_{}", b, idx + shift));
+        Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some((b, idx)) = parse_array_index(&name) {
+                return Variable(crate::string_intern::intern(&format!("{}_{}", b, idx + shift)));
             }
             expr.clone()
         }
@@ -77,10 +78,11 @@ pub fn expr_substitute_all_array_indices(expr: &Expression, shift: usize) -> Exp
 pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) -> Expression {
     use Expression::*;
     match expr {
-        Variable(name) => {
-            if let Some((b, idx)) = parse_array_index(name) {
+        Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some((b, idx)) = parse_array_index(&name) {
                 if b == base {
-                    return Variable(format!("{}_{}", base, idx + shift));
+                    return Variable(crate::string_intern::intern(&format!("{}_{}", base, idx + shift)));
                 }
             }
             expr.clone()

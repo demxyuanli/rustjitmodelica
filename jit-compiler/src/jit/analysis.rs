@@ -3,8 +3,8 @@ use std::collections::HashSet;
 
 fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
     match expr {
-        Expression::Variable(name) => {
-            vars.insert(name.clone());
+        Expression::Variable(id) => {
+            vars.insert(crate::string_intern::resolve_id(*id));
         }
         Expression::Number(_) | Expression::StringLiteral(_) => {}
         Expression::BinaryOp(l, _, r) => {
@@ -56,14 +56,14 @@ fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
 pub fn collect_modified(stmt: &AlgorithmStatement, vars: &mut HashSet<String>) {
     match stmt {
         AlgorithmStatement::Assignment(lhs, _) => {
-            if let Expression::Variable(name) = lhs {
-                vars.insert(name.clone());
+            if let Expression::Variable(id) = lhs {
+                vars.insert(crate::string_intern::resolve_id(*id));
             }
         }
         AlgorithmStatement::MultiAssign(lhss, _) => {
             for lhs in lhss {
-                if let Expression::Variable(name) = lhs {
-                    vars.insert(name.clone());
+                if let Expression::Variable(id) = lhs {
+                    vars.insert(crate::string_intern::resolve_id(*id));
                 }
             }
         }
@@ -115,14 +115,14 @@ pub fn collect_modified_equations(equations: &[Equation], vars: &mut HashSet<Str
     for eq in equations {
         match eq {
             Equation::Simple(lhs, _) => {
-                if let Expression::Variable(name) = lhs {
-                    vars.insert(name.clone());
+                if let Expression::Variable(id) = lhs {
+                    vars.insert(crate::string_intern::resolve_id(*id));
                 }
             }
             Equation::MultiAssign(lhss, _) => {
                 for lhs in lhss {
-                    if let Expression::Variable(name) = lhs {
-                        vars.insert(name.clone());
+                    if let Expression::Variable(id) = lhs {
+                        vars.insert(crate::string_intern::resolve_id(*id));
                     }
                 }
             }

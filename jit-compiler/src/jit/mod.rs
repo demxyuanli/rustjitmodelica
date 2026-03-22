@@ -107,6 +107,8 @@ impl Jit {
             .push(AbiParam::new(self.module.target_config().pointer_type())); // diag_residual (mut f64)
         sig.params
             .push(AbiParam::new(self.module.target_config().pointer_type())); // diag_x (mut f64)
+        sig.params
+            .push(AbiParam::new(self.module.target_config().pointer_type())); // homotopy_lambda (const f64)
         sig.returns.push(AbiParam::new(cl_types::I32)); // Return status code
 
         let func_id = self
@@ -140,6 +142,7 @@ impl Jit {
             let t_end_val = builder.block_params(entry_block)[10];
             let diag_residual_ptr = builder.block_params(entry_block)[11];
             let diag_x_ptr = builder.block_params(entry_block)[12];
+            let homotopy_lambda_ptr = builder.block_params(entry_block)[13];
 
             let (diag_res, diag_x) = if newton_tearing_var_names.is_empty() {
                 (None, None)
@@ -248,6 +251,7 @@ impl Jit {
                 &output_var_index,
                 diag_res,
                 diag_x,
+                homotopy_lambda_ptr,
                 Some(&mut declared_imports),
                 Some(&mut string_literal_cache),
                 Some(&mut self.data_ctx),
@@ -385,6 +389,7 @@ impl Jit {
                 &output_var_index,
                 None,
                 None,
+                ptr_val,
                 None,
                 Some(&mut string_literal_cache),
                 Some(&mut self.data_ctx),

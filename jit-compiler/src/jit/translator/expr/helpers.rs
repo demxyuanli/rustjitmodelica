@@ -11,7 +11,7 @@ pub(super) fn import_call_abi_tag(args: &[Expression], ctx: &TranslationContext)
     args.iter()
         .map(|a| match a {
             Expression::StringLiteral(_) => 's',
-            Expression::Variable(n) if ctx.array_info.contains_key(n) => 'a',
+            Expression::Variable(id) if ctx.array_info.contains_key(&crate::string_intern::resolve_id(*id)) => 'a',
             _ => 'f',
         })
         .collect()
@@ -86,6 +86,42 @@ pub(super) fn jit_scalar_name_bound(ctx: &TranslationContext, name: &str) -> boo
     false
 }
 
+/// Flattened or dotted constant names visible as a single JIT variable id.
+pub(super) fn modelica_constants_flat_variable(name: &str) -> Option<f64> {
+    match name {
+        "Modelica.Constants.eps" | "Modelica_Constants_eps" => Some(f64::EPSILON),
+        "Modelica.Constants.T_zero" => Some(273.15),
+        "Modelica.Constants.pi" | "Modelica_Constants_pi" => Some(std::f64::consts::PI),
+        "Modelica.Constants.small" | "Modelica_Constants_small" => Some(1.0e-60),
+        "Modelica.Constants.g_n" | "Modelica_Constants_g_n" => Some(9.80665),
+        "Modelica.Constants.inf" | "Modelica_Constants_inf" => Some(f64::INFINITY),
+        "pi" => Some(std::f64::consts::PI),
+        "small" => Some(1.0e-60),
+        _ => None,
+    }
+}
+
+/// `inner.member` when `inner` resolves to Modelica.Constants (or imported `Constants`).
+pub(super) fn modelica_constants_dot_member(prefix: &str, member: &str) -> Option<f64> {
+    let is_constants_pkg = prefix == "Modelica.Constants"
+        || prefix == "Constants"
+        || prefix.ends_with(".Modelica.Constants");
+    if !is_constants_pkg {
+        return None;
+    }
+    match member {
+        "pi" => Some(std::f64::consts::PI),
+        "eps" => Some(f64::EPSILON),
+        "small" => Some(1.0e-60),
+        "Inf" | "inf" => Some(f64::INFINITY),
+        "T_zero" => Some(273.15),
+        "g_n" => Some(9.80665),
+        "R_inf" => Some(f64::INFINITY),
+        "maxInteger" => Some(i32::MAX as f64),
+        _ => None,
+    }
+}
+
 pub(super) fn pre_scalar_name_bound(ctx: &TranslationContext, name: &str) -> bool {
     if ctx.stack_slots.contains_key(name) {
         return true;
@@ -111,6 +147,19 @@ pub(super) fn jit_dot_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var("RUSTMODLICA_JIT_DOT_TRACE")
+            .ok()
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    })
+}
+
+pub(super) fn jit_dot_fallback_zero_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_JIT_DOT_FALLBACK_ZERO")
             .ok()
             .map(|v| {
                 let v = v.trim();

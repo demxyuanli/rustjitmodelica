@@ -624,7 +624,7 @@ pub struct ComponentTypeRelationGraph {
 fn expr_to_string(expr: &rustmodlica::ast::Expression) -> String {
     match expr {
         rustmodlica::ast::Expression::Number(n) => format!("{}", n),
-        rustmodlica::ast::Expression::Variable(s) => s.clone(),
+        rustmodlica::ast::Expression::Variable(id) => rustmodlica::string_intern::resolve_id(*id),
         rustmodlica::ast::Expression::StringLiteral(s) => format!("\"{}\"", s),
         rustmodlica::ast::Expression::BinaryOp(l, op, r) => {
             let op_str = match op {

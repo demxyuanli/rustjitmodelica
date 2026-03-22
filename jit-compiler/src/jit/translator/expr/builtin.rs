@@ -94,6 +94,83 @@ pub(super) fn try_compile_builtin_call(
     if func_name.starts_with("Connections.") {
         return Some(Ok(builder.ins().f64const(0.0)));
     }
+    if func_name == "generateNoise" || func_name.ends_with(".generateNoise") {
+        return Some(Ok(builder.ins().f64const(0.0)));
+    }
+    if func_name == "flowCharacteristic" || func_name.ends_with(".flowCharacteristic") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "efficiencyCharacteristic" || func_name.ends_with(".efficiencyCharacteristic") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "distribution" || func_name.ends_with(".distribution") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "realFFT" || func_name.ends_with(".realFFT") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "realFFTsamplePoints" || func_name.ends_with(".realFFTsamplePoints") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name.contains("pressureLoss") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name.ends_with("powerOfJ") || func_name.contains(".powerOfJ") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(1.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name.ends_with("getInterpolationCoefficients")
+        || func_name.contains(".getInterpolationCoefficients")
+    {
+        return Some(Ok(builder.ins().f64const(0.0)));
+    }
+    if func_name == "semiLinear" || func_name.ends_with(".semiLinear") {
+        if args.len() >= 3 {
+            let x = match compile_rec(&args[0], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let k_pos = match compile_rec(&args[1], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let k_neg = match compile_rec(&args[2], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let zero = builder.ins().f64const(0.0);
+            let branch = builder
+                .ins()
+                .fcmp(FloatCC::GreaterThanOrEqual, x, zero);
+            let x_k_pos = builder.ins().fmul(x, k_pos);
+            let x_k_neg = builder.ins().fmul(x, k_neg);
+            return Some(Ok(builder.ins().select(branch, x_k_pos, x_k_neg)));
+        }
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
     // MSL matrix helpers from planarRotation / Frames: no matrix runtime in scalar JIT; stable zero.
     if func_name == "outerProduct"
         || func_name.ends_with(".outerProduct")
@@ -318,14 +395,37 @@ pub(super) fn try_compile_builtin_call(
         if args.is_empty() {
             return Some(Ok(builder.ins().f64const(0.0)));
         }
-        return Some(compile_rec(&args[0], ctx, builder));
+        let actual = match compile_rec(&args[0], ctx, builder) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        if args.len() < 2 {
+            return Some(Ok(actual));
+        }
+        let simplified = match compile_rec(&args[1], ctx, builder) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        // homotopy(actual, simplified) = lambda*actual + (1-lambda)*simplified
+        let lambda = builder.ins().load(
+            cl_types::F64,
+            MemFlags::new(),
+            ctx.homotopy_lambda_ptr,
+            0,
+        );
+        let one = builder.ins().f64const(1.0);
+        let one_minus_lambda = builder.ins().fsub(one, lambda);
+        let term1 = builder.ins().fmul(lambda, actual);
+        let term2 = builder.ins().fmul(one_minus_lambda, simplified);
+        return Some(Ok(builder.ins().fadd(term1, term2)));
     }
     if func_name == "size" {
         if args.is_empty() {
             return Some(Err("size() requires at least 1 argument (array)".to_string()));
         }
-        if let Expression::Variable(arr_name) = &args[0] {
-            if let Some(info) = ctx.array_info.get(arr_name) {
+        if let Expression::Variable(id) = &args[0] {
+            let arr_name = crate::string_intern::resolve_id(*id);
+            if let Some(info) = ctx.array_info.get(&arr_name) {
                 let dim = if args.len() >= 2 {
                     if let Expression::Number(d) = &args[1] {
                         (*d as i64).max(1).min(info.size as i64) as usize
@@ -391,8 +491,9 @@ pub(super) fn try_compile_builtin_call(
         if args.len() != 1 {
             return Some(Err(format!("firstTrueIndex() expects 1 argument (Boolean vector), got {}", args.len())));
         }
-        if let Expression::Variable(vec_name) = &args[0] {
-            if let Some(info) = ctx.array_info.get(vec_name) {
+        if let Expression::Variable(id) = &args[0] {
+            let vec_name = crate::string_intern::resolve_id(*id);
+            if let Some(info) = ctx.array_info.get(&vec_name) {
                 if info.size == 0 {
                     return Some(Ok(builder.ins().f64const(0.0)));
                 }
@@ -471,8 +572,10 @@ pub(super) fn try_compile_builtin_call(
         let x = match compile_rec(&args[0], ctx, builder) { Ok(v) => v, Err(e) => return Some(Err(e)) };
         let xa = &args[1];
         let ya = &args[2];
-        if let (Expression::Variable(xan), Expression::Variable(yan)) = (xa, ya) {
-            if let (Some(xai), Some(yai)) = (ctx.array_info.get(xan), ctx.array_info.get(yan)) {
+        if let (Expression::Variable(xan_id), Expression::Variable(yan_id)) = (xa, ya) {
+            let xan = crate::string_intern::resolve_id(*xan_id);
+            let yan = crate::string_intern::resolve_id(*yan_id);
+            if let (Some(xai), Some(yai)) = (ctx.array_info.get(&xan), ctx.array_info.get(&yan)) {
                 if xai.size == 0 || yai.size == 0 {
                     return Some(Ok(builder.ins().f64const(0.0)));
                 }

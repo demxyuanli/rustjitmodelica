@@ -1,4 +1,5 @@
 use super::types::{ArrayInfo, ArrayType};
+use crate::string_intern::{StringInterner, VarId};
 use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
@@ -41,6 +42,9 @@ pub struct TranslationContext<'a> {
     pub diag_residual_ptr: Option<Value>,
     pub diag_x_ptr: Option<Value>,
 
+    /// Pointer to the homotopy lambda parameter (f64). JIT reads this for homotopy() interpolation.
+    pub homotopy_lambda_ptr: Value,
+
     /// FUNC-7 / EXT-3: Cache import func_id by name then ABI tag (f64 vs const char*, etc.).
     pub declared_imports: Option<&'a mut HashMap<String, HashMap<String, FuncId>>>,
 
@@ -49,6 +53,12 @@ pub struct TranslationContext<'a> {
     /// Reusable DataDescription and counter for creating string data.
     pub string_literal_data_ctx: Option<&'a mut DataDescription>,
     pub string_data_counter: Option<&'a mut usize>,
+
+    /// VarId-based fast lookup caches (populated lazily from string maps).
+    pub varid_state_index: HashMap<VarId, usize>,
+    pub varid_discrete_index: HashMap<VarId, usize>,
+    pub varid_param_index: HashMap<VarId, usize>,
+    pub varid_output_index: HashMap<VarId, usize>,
 }
 
 impl<'a> TranslationContext<'a> {
@@ -109,6 +119,7 @@ impl<'a> TranslationContext<'a> {
         output_var_index: &'a HashMap<String, usize>,
         diag_residual_ptr: Option<Value>,
         diag_x_ptr: Option<Value>,
+        homotopy_lambda_ptr: Value,
         declared_imports: Option<&'a mut HashMap<String, HashMap<String, FuncId>>>,
         string_literal_cache: Option<&'a mut HashMap<String, DataId>>,
         string_literal_data_ctx: Option<&'a mut DataDescription>,
@@ -139,11 +150,49 @@ impl<'a> TranslationContext<'a> {
             output_var_index,
             diag_residual_ptr,
             diag_x_ptr,
+            homotopy_lambda_ptr,
             declared_imports,
             string_literal_cache,
             string_literal_data_ctx,
             string_data_counter,
+            varid_state_index: HashMap::new(),
+            varid_discrete_index: HashMap::new(),
+            varid_param_index: HashMap::new(),
+            varid_output_index: HashMap::new(),
         }
+    }
+
+    /// Build VarId-based index caches from the string-keyed maps for faster lookups.
+    pub fn build_varid_caches(&mut self, interner: &mut StringInterner) {
+        for (name, &idx) in self.state_var_index.iter() {
+            let id = interner.intern(name);
+            self.varid_state_index.insert(id, idx);
+        }
+        for (name, &idx) in self.discrete_var_index.iter() {
+            let id = interner.intern(name);
+            self.varid_discrete_index.insert(id, idx);
+        }
+        for (name, &idx) in self.param_var_index.iter() {
+            let id = interner.intern(name);
+            self.varid_param_index.insert(id, idx);
+        }
+        for (name, &idx) in self.output_var_index.iter() {
+            let id = interner.intern(name);
+            self.varid_output_index.insert(id, idx);
+        }
+    }
+
+    pub fn state_index_by_varid(&self, id: VarId) -> Option<usize> {
+        self.varid_state_index.get(&id).copied()
+    }
+    pub fn discrete_index_by_varid(&self, id: VarId) -> Option<usize> {
+        self.varid_discrete_index.get(&id).copied()
+    }
+    pub fn output_index_by_varid(&self, id: VarId) -> Option<usize> {
+        self.varid_output_index.get(&id).copied()
+    }
+    pub fn param_index_by_varid(&self, id: VarId) -> Option<usize> {
+        self.varid_param_index.get(&id).copied()
     }
 
     pub fn state_index(&self, name: &str) -> Option<usize> {
@@ -153,7 +202,10 @@ impl<'a> TranslationContext<'a> {
         self.discrete_var_index.get(name).copied()
     }
     pub fn output_index(&self, name: &str) -> Option<usize> {
-        self.output_var_index.get(name).copied()
+        self.output_var_index.get(name).copied().or_else(|| {
+            let candidate = format!("{}_1", name);
+            self.output_var_index.get(&candidate).copied()
+        })
     }
     pub fn param_index(&self, name: &str) -> Option<usize> {
         self.param_var_index.get(name).copied()

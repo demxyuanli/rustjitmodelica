@@ -102,8 +102,8 @@ impl Flattener {
 
         fn collect_lhs_vars(expr: &Expression, out: &mut std::collections::HashSet<String>) {
             match expr {
-                Expression::Variable(name) => {
-                    out.insert(name.clone());
+                Expression::Variable(id) => {
+                    out.insert(crate::string_intern::resolve_id(*id));
                 }
                 Expression::Der(inner) => collect_lhs_vars(inner, out),
                 Expression::ArrayAccess(base, _) => collect_lhs_vars(base, out),

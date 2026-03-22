@@ -1,4 +1,5 @@
 use crate::ast::{Expression, Operator};
+use crate::string_intern::resolve_id;
 
 use super::variable_collection::contains_var;
 
@@ -95,8 +96,8 @@ fn simplify_time_expr(expr: &Expression) -> Expression {
 pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
     use crate::ast::Operator;
     match expr {
-        Expression::Variable(name) => {
-            if name == var {
+        Expression::Variable(id) => {
+            if resolve_id(*id) == var {
                 Expression::Number(1.0)
             } else {
                 Expression::Number(0.0)
@@ -153,9 +154,154 @@ pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
                 Expression::Number(0.0)
             }
         }
-        Expression::Call(_, _)
-        | Expression::If(_, _, _)
-        | Expression::ArrayAccess(_, _)
+        Expression::Call(func_name, args) => {
+            // Chain rule for known single-argument math functions:
+            // d/dx f(g(x)) = f'(g(x)) * g'(x)
+            if args.len() == 1 {
+                let inner = &args[0];
+                let d_inner = partial_derivative(inner, var);
+                if expression_is_zero(&d_inner) {
+                    return Expression::Number(0.0);
+                }
+                let f_prime = match func_name.as_str() {
+                    "sin" => Some(Expression::Call("cos".to_string(), vec![inner.clone()])),
+                    "cos" => Some(Expression::BinaryOp(
+                        Box::new(Expression::Number(0.0)),
+                        Operator::Sub,
+                        Box::new(Expression::Call("sin".to_string(), vec![inner.clone()])),
+                    )),
+                    "exp" => Some(Expression::Call("exp".to_string(), vec![inner.clone()])),
+                    "log" | "ln" => Some(Expression::BinaryOp(
+                        Box::new(Expression::Number(1.0)),
+                        Operator::Div,
+                        Box::new(inner.clone()),
+                    )),
+                    "sqrt" => Some(Expression::BinaryOp(
+                        Box::new(Expression::Number(0.5)),
+                        Operator::Div,
+                        Box::new(Expression::Call("sqrt".to_string(), vec![inner.clone()])),
+                    )),
+                    "tan" => {
+                        // d/dx tan(u) = (1 + tan(u)^2) * du/dx
+                        let tan_u = Expression::Call("tan".to_string(), vec![inner.clone()]);
+                        Some(Expression::BinaryOp(
+                            Box::new(Expression::Number(1.0)),
+                            Operator::Add,
+                            Box::new(Expression::BinaryOp(
+                                Box::new(tan_u.clone()),
+                                Operator::Mul,
+                                Box::new(tan_u),
+                            )),
+                        ))
+                    }
+                    "asin" => Some(Expression::BinaryOp(
+                        Box::new(Expression::Number(1.0)),
+                        Operator::Div,
+                        Box::new(Expression::Call("sqrt".to_string(), vec![
+                            Expression::BinaryOp(
+                                Box::new(Expression::Number(1.0)),
+                                Operator::Sub,
+                                Box::new(Expression::BinaryOp(
+                                    Box::new(inner.clone()),
+                                    Operator::Mul,
+                                    Box::new(inner.clone()),
+                                )),
+                            ),
+                        ])),
+                    )),
+                    "acos" => Some(Expression::BinaryOp(
+                        Box::new(Expression::Number(0.0)),
+                        Operator::Sub,
+                        Box::new(Expression::BinaryOp(
+                            Box::new(Expression::Number(1.0)),
+                            Operator::Div,
+                            Box::new(Expression::Call("sqrt".to_string(), vec![
+                                Expression::BinaryOp(
+                                    Box::new(Expression::Number(1.0)),
+                                    Operator::Sub,
+                                    Box::new(Expression::BinaryOp(
+                                        Box::new(inner.clone()),
+                                        Operator::Mul,
+                                        Box::new(inner.clone()),
+                                    )),
+                                ),
+                            ])),
+                        )),
+                    )),
+                    "atan" => Some(Expression::BinaryOp(
+                        Box::new(Expression::Number(1.0)),
+                        Operator::Div,
+                        Box::new(Expression::BinaryOp(
+                            Box::new(Expression::Number(1.0)),
+                            Operator::Add,
+                            Box::new(Expression::BinaryOp(
+                                Box::new(inner.clone()),
+                                Operator::Mul,
+                                Box::new(inner.clone()),
+                            )),
+                        )),
+                    )),
+                    "abs" => Some(Expression::Call("sign".to_string(), vec![inner.clone()])),
+                    _ => None,
+                };
+                if let Some(fp) = f_prime {
+                    return Expression::BinaryOp(
+                        Box::new(fp),
+                        Operator::Mul,
+                        Box::new(d_inner),
+                    );
+                }
+            }
+            if args.len() == 2 && func_name == "atan2" {
+                // d/dx atan2(y, x) = (x*dy/dx - y*dx/dx) / (x^2 + y^2)
+                let (y, x) = (&args[0], &args[1]);
+                let dy = partial_derivative(y, var);
+                let dx = partial_derivative(x, var);
+                if expression_is_zero(&dy) && expression_is_zero(&dx) {
+                    return Expression::Number(0.0);
+                }
+                let num = Expression::BinaryOp(
+                    Box::new(Expression::BinaryOp(
+                        Box::new(x.clone()),
+                        Operator::Mul,
+                        Box::new(dy),
+                    )),
+                    Operator::Sub,
+                    Box::new(Expression::BinaryOp(
+                        Box::new(y.clone()),
+                        Operator::Mul,
+                        Box::new(dx),
+                    )),
+                );
+                let den = Expression::BinaryOp(
+                    Box::new(Expression::BinaryOp(
+                        Box::new(x.clone()),
+                        Operator::Mul,
+                        Box::new(x.clone()),
+                    )),
+                    Operator::Add,
+                    Box::new(Expression::BinaryOp(
+                        Box::new(y.clone()),
+                        Operator::Mul,
+                        Box::new(y.clone()),
+                    )),
+                );
+                return Expression::BinaryOp(Box::new(num), Operator::Div, Box::new(den));
+            }
+            Expression::Number(0.0)
+        }
+        Expression::If(cond, then_expr, else_expr) => {
+            // d/dx if(c, t, e) = if(c, dt/dx, de/dx)
+            // Condition is assumed constant w.r.t. continuous variables
+            let dt = partial_derivative(then_expr, var);
+            let de = partial_derivative(else_expr, var);
+            if expression_is_zero(&dt) && expression_is_zero(&de) {
+                Expression::Number(0.0)
+            } else {
+                Expression::If(cond.clone(), Box::new(dt), Box::new(de))
+            }
+        }
+        Expression::ArrayAccess(_, _)
         | Expression::Dot(_, _)
         | Expression::Range(_, _, _)
         | Expression::ArrayLiteral(_)
@@ -178,7 +324,7 @@ pub fn time_derivative(expr: &Expression, state_vars: &[String]) -> Expression {
         if expression_is_zero(&pd) {
             continue;
         }
-        let der_x = Expression::Variable(format!("der_{}", x));
+        let der_x = Expression::var(&format!("der_{}", x));
         let term = Expression::BinaryOp(Box::new(pd), Operator::Mul, Box::new(der_x));
         sum = Some(match sum {
             None => term,

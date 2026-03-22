@@ -1,4 +1,4 @@
-use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression};
+use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression, StringInterner};
 use std::collections::{HashMap, HashSet};
 
 /// SYNC-2: One clock partition: variables that are updated on the same clock (e.g. same when sample(...) branch).
@@ -28,4 +28,5 @@ pub struct FlattenedModel {
     pub clock_partitions: Vec<ClockPartition>,
     /// SYNC-6: Pairs of connector instance paths when both sides are clock connectors (infer same clock network).
     pub clock_signal_connections: Vec<(String, String)>,
+    pub interner: StringInterner,
 }

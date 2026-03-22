@@ -7,12 +7,21 @@ use super::Rule;
 pub(super) fn parse_algorithm_stmt(pair: Pair<Rule>) -> AlgorithmStatement {
     match pair.as_rule() {
         Rule::annotation_clause => AlgorithmStatement::NoOp,
+        Rule::visibility_clause => AlgorithmStatement::NoOp,
         Rule::break_stmt => AlgorithmStatement::NoOp,
         Rule::return_stmt => AlgorithmStatement::NoOp,
         Rule::assignment_stmt => {
             let mut inner = pair.into_inner();
             let lhs_pair = inner.next().unwrap();
-            let lhs_expr = expression::parse_component_ref(lhs_pair);
+            let lhs_expr = match lhs_pair.as_rule() {
+                Rule::alg_lhs_ref => {
+                    let mut lr = lhs_pair.into_inner();
+                    let cref = lr.next().unwrap();
+                    expression::parse_component_ref(cref)
+                }
+                Rule::component_ref => expression::parse_component_ref(lhs_pair),
+                _ => expression::parse_component_ref(lhs_pair),
+            };
             let rhs_expr = expression::parse_expression(inner.next().unwrap());
             AlgorithmStatement::Assignment(lhs_expr, rhs_expr)
         }

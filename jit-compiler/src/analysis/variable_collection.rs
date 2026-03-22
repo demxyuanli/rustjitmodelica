@@ -1,4 +1,5 @@
 use crate::ast::{Equation, Expression};
+use crate::string_intern::resolve_id;
 use std::collections::HashSet;
 
 pub fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> {
@@ -73,12 +74,12 @@ pub(crate) fn collect_vars_eq(eq: &Equation, vars: &mut HashSet<String>) {
 
 pub(crate) fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
     match expr {
-        Expression::Variable(n) => {
-            vars.insert(n.clone());
+        Expression::Variable(id) => {
+            vars.insert(resolve_id(*id));
         }
         Expression::Der(e) => {
-            if let Expression::Variable(n) = &**e {
-                vars.insert(format!("der_{}", n));
+            if let Expression::Variable(id) = &**e {
+                vars.insert(format!("der_{}", resolve_id(*id)));
             } else {
                 collect_vars_expr(e, vars);
             }
@@ -133,8 +134,8 @@ pub fn contains_var(expr: &Expression, var_name: &str) -> bool {
     let mut stack: Vec<&Expression> = vec![expr];
     while let Some(e) = stack.pop() {
         match e {
-            Expression::Variable(name) => {
-                if name == var_name {
+            Expression::Variable(id) => {
+                if resolve_id(*id) == var_name {
                     return true;
                 }
             }

@@ -4,26 +4,29 @@ mod backend_dae;
 mod compiler;
 mod diag;
 mod equation_graph;
+mod error;
 mod expr_eval;
 mod flatten;
 mod fmi;
 mod i18n;
 mod jit;
+mod loader_compat;
 mod loader;
 mod parser;
 mod script;
 mod simulation;
 mod solver;
 mod sparse_solve;
+mod string_intern;
 
 use compiler::{CompileOutput, Compiler};
 use simulation::{run_simulation, run_simulation_collect};
 use std::env;
 use std::io::Read;
-use std::process;
+use std::process::ExitCode;
 use std::thread;
 
-type RunError = Box<dyn std::error::Error + Send + Sync>;
+type RunError = error::AppError;
 
 fn emit_validate_json(
     success: bool,
@@ -550,16 +553,29 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     Ok(())
 }
 
-fn main() {
+fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     const STACK_SIZE: usize = 8 * 1024 * 1024;
     let child = thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(move || run(args))
-        .expect("failed to spawn thread");
-    let status = child.join().expect("thread panicked");
-    if let Err(e) = status {
-        eprintln!("{}", e);
-        process::exit(1);
+        .map_err(|e| error::AppError::ThreadSpawn(e.to_string()));
+    let child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::from(1);
+        }
+    };
+    match child.join() {
+        Err(_) => {
+            eprintln!("{}", error::AppError::ThreadPanic);
+            ExitCode::from(1)
+        }
+        Ok(Err(e)) => {
+            eprintln!("{}", e);
+            ExitCode::from(1)
+        }
+        Ok(Ok(())) => ExitCode::from(0),
     }
 }

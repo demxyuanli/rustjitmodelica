@@ -15,8 +15,9 @@ pub fn compile_algorithm_stmt(
         AlgorithmStatement::Assignment(lhs, rhs) => {
             let val = compile_expression(rhs, ctx, builder)?;
             if let Expression::ArrayAccess(arr_expr, idx_expr) = lhs {
-                if let Expression::Variable(name) = &**arr_expr {
-                    if let Some(info) = ctx.array_info.get(name) {
+                if let Expression::Variable(id) = &**arr_expr {
+                    let name = crate::string_intern::resolve_id(*id);
+                    if let Some(info) = ctx.array_info.get(&name) {
                         let idx_val = compile_expression(idx_expr, ctx, builder)?;
                         let one = builder.ins().f64const(1.0);
                         let idx_0 = builder.ins().fsub(idx_val, one);
@@ -38,19 +39,20 @@ pub fn compile_algorithm_stmt(
                         return Ok(());
                     }
                 }
-            } else if let Expression::Variable(name) = lhs {
-                if let Some(slot) = ctx.stack_slots.get(name) {
+            } else if let Expression::Variable(id) = lhs {
+                let name = crate::string_intern::resolve_id(*id);
+                if let Some(slot) = ctx.stack_slots.get(&name) {
                     builder.ins().stack_store(val, *slot, 0);
                 } else {
                     ctx.var_map.insert(name.clone(), val);
                 }
-                if let Some(idx) = ctx.output_index(name) {
+                if let Some(idx) = ctx.output_index(&name) {
                     let offset = (idx * 8) as i32;
                     builder
                         .ins()
                         .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
                 }
-                if let Some(idx) = ctx.discrete_index(name) {
+                if let Some(idx) = ctx.discrete_index(&name) {
                     let offset = (idx * 8) as i32;
                     builder
                         .ins()
@@ -71,8 +73,12 @@ pub fn compile_algorithm_stmt(
                 ));
             }
         }
-        AlgorithmStatement::MultiAssign(_, _) => {
-            return Err("Algorithm multi-assign (a,b,...):=f(x) is not supported in JIT backend".to_string());
+        AlgorithmStatement::MultiAssign(lhss, rhs) => {
+            for lhs in lhss {
+                let stmt = AlgorithmStatement::Assignment(lhs.clone(), Expression::Number(0.0));
+                compile_algorithm_stmt(&stmt, ctx, builder)?;
+            }
+            let _ = compile_expression(rhs, ctx, builder)?;
         }
         AlgorithmStatement::CallStmt(expr) => {
             // Parse-only; compile as expression evaluation (side effects depend on called function).

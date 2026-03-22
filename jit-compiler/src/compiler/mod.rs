@@ -17,6 +17,7 @@ use crate::flatten::Flattener;
 use crate::jit::{CalcDerivsFunc, Jit};
 use crate::loader::ModelLoader;
 use pipeline::{flatten_and_inline, stage_trace_enabled};
+pub use pipeline::geometric_default_for_name;
 
 #[derive(Clone, Debug)]
 pub struct CompilerOptions {
@@ -79,6 +80,8 @@ pub struct Compiler {
     pub(crate) external_libraries: ExternalLibs,
     /// EXT-2: Resolved external function symbols (modelica_name -> ptr); valid while external_libraries is alive.
     pub(crate) external_symbol_ptrs: HashMap<String, *const u8>,
+    /// Global string interner for variable name deduplication across compilation stages.
+    pub interner: crate::string_intern::StringInterner,
 }
 
 impl Default for ExternalLibs {
@@ -451,6 +454,7 @@ impl Compiler {
             warnings: Vec::new(),
             external_libraries: ExternalLibs::default(),
             external_symbol_ptrs: HashMap::new(),
+            interner: crate::string_intern::StringInterner::new(),
         }
     }
 
