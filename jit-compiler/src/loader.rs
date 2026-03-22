@@ -1,5 +1,6 @@
 use crate::ast::Model;
 use crate::diag::ParseErrorInfo;
+use crate::loader_compat::{early_compat, late_compat, EarlyCompat, LateCompat};
 use crate::parser;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -57,6 +58,13 @@ impl ModelLoader {
             initial_equations: m.initial_equations.clone(),
             initial_algorithms: m.initial_algorithms.clone(),
             annotation: m.annotation.clone(),
+            inner_class_index: {
+                let mut idx = std::collections::HashMap::new();
+                for (i, ic) in leaf_aliases.iter().enumerate() {
+                    idx.insert(ic.name.clone(), i);
+                }
+                idx
+            },
             inner_classes: leaf_aliases,
             is_operator_record: m.is_operator_record,
             type_aliases: m.type_aliases.clone(),
@@ -100,6 +108,46 @@ impl ModelLoader {
         self.load_model_impl(name, silent)
     }
 
+    fn cache_compat_alias(&mut self, requested: &str, loaded_as: &str, arc: &Arc<Model>) {
+        self.loaded_models
+            .insert(requested.to_string(), Arc::clone(arc));
+        if let Some(p) = self.loaded_paths.get(loaded_as).cloned() {
+            self.loaded_paths.insert(requested.to_string(), p);
+        }
+    }
+
+    fn try_example_templates_alias(
+        &mut self,
+        name: &str,
+    ) -> Option<Result<Arc<Model>, LoadError>> {
+        if !name.contains(".ExampleTemplates") {
+            return None;
+        }
+        let mut candidate = name.to_string();
+        for _ in 0..8 {
+            let parts: Vec<&str> = candidate.split('.').collect();
+            let idx = match parts.iter().position(|p| *p == "ExampleTemplates") {
+                Some(i) => i,
+                None => break,
+            };
+            if idx < 1 {
+                break;
+            }
+            let mut p = parts.clone();
+            p.remove(idx - 1);
+            let next = p.join(".");
+            if next == candidate {
+                break;
+            }
+            candidate = next;
+            if let Ok(arc) = self.load_model_impl(&candidate, true) {
+                self.cache_compat_alias(name, &candidate, &arc);
+                return Some(Ok(arc));
+            }
+        }
+        None
+    }
+
     fn load_model_impl(&mut self, name: &str, silent: bool) -> Result<Arc<Model>, LoadError> {
         fn trace_enabled() -> bool {
             static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -116,259 +164,33 @@ impl ModelLoader {
         if trace_enabled() && !silent {
             eprintln!("[load-trace] {}", name);
         }
-        // Compatibility aliases for Modelica Standard Library version differences.
-        // Some packages were moved between versions; map old qualified names to the existing ones.
-        if name == "Modelica.Electrical.Analog.Interfaces.Source" {
-            let new_name = "Modelica.Electrical.Analog.Interfaces.VoltageSource";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
+        if let Some(r) = self.try_example_templates_alias(name) {
+            return r;
         }
-        if name == "Modelica.Electrical.Analog.Interfaces.TwoPlug" {
-            let new_name = "Modelica.Electrical.Analog.Interfaces.TwoPin";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Electrical.Analog.Interfaces.PositivePlug" {
-            let new_name = "Modelica.Electrical.Analog.Interfaces.PositivePin";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Electrical.Analog.Interfaces.NegativePlug" {
-            let new_name = "Modelica.Electrical.Analog.Interfaces.NegativePin";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Electrical.Analog.Interfaces.Plug" {
-            let new_name = "Modelica.Electrical.Analog.Interfaces.Pin";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        // MSL: partial magnetic source exists only under QuasiStatic.FluxTubes.Interfaces;
-        // some dependencies still request the non-existent static FluxTubes.Interfaces.Source.
-        if name == "Modelica.Magnetic.FluxTubes.Interfaces.Source" {
-            let new_name = "Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces.Source";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name.starts_with("Modelica.Magnetic.FluxTubes.Interfaces.Source.") {
-            let rest = name.trim_start_matches("Modelica.Magnetic.FluxTubes.Interfaces.Source.");
-            let new_name =
-                format!("Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces.Source.{rest}");
-            let arc = self.load_model_impl(&new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        // MSL: RelativeSensor / AbsoluteSensor live under QuasiStatic.FluxTubes.Interfaces
-        if name == "Modelica.Magnetic.FluxTubes.Interfaces.RelativeSensor"
-            || name.starts_with("Modelica.Magnetic.FluxTubes.Interfaces.RelativeSensor.")
-            || name == "Modelica.Magnetic.FluxTubes.Interfaces.AbsoluteSensor"
-            || name.starts_with("Modelica.Magnetic.FluxTubes.Interfaces.AbsoluteSensor.")
-        {
-            let rest = name
-                .strip_prefix("Modelica.Magnetic.FluxTubes.Interfaces.")
-                .unwrap_or("");
-            let new_name =
-                format!("Modelica.Magnetic.QuasiStatic.FluxTubes.Interfaces.{rest}");
-            let arc = self.load_model_impl(&new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        // MSL: PartialFrictionWithStop is an inner class of MassWithStopAndFriction
-        if name == "Modelica.Mechanics.Translational.Components.PartialFrictionWithStop"
-            || name.starts_with(
-                "Modelica.Mechanics.Translational.Components.PartialFrictionWithStop.",
-            )
-        {
-            let rest = name
-                .strip_prefix("Modelica.Mechanics.Translational.Components.PartialFrictionWithStop")
-                .unwrap_or("");
-            let new_name = format!(
-                "Modelica.Mechanics.Translational.Components.MassWithStopAndFriction.PartialFrictionWithStop{rest}"
-            );
-            let arc = self.load_model_impl(&new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Magnetic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter"
-            || name.starts_with(
-                "Modelica.Magnetic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter.",
-            )
-        {
-            let rest = name.trim_start_matches(
-                "Modelica.Magnetic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter",
-            );
-            let new_name = format!(
-                "Modelica.Magnetic.QuasiStatic.FundamentalWave.Components.QuasiStaticAnalogElectroMagneticConverter{rest}"
-            );
-            let arc = self.load_model_impl(&new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent"
-            || name.starts_with("Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent.")
-        {
-            let rest = name
-                .strip_prefix("Modelica.Fluid.Pipes.BaseClasses.QuadraticTurbulent")
-                .unwrap_or("");
-            let new_name = format!(
-                "Modelica.Fluid.Pipes.BaseClasses.WallFriction.QuadraticTurbulent{}",
-                rest
-            );
-            let arc = self.load_model_impl(&new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Fluid.Pipes.BaseClasses.WallFriction.QuadraticTurbulent.BaseModel"
-            || name == "Modelica.Fluid.Pipes.BaseClasses.WallFriction.QuadraticTurbulent.BaseModelNonconstantCrossSectionArea"
-        {
-            let new_name = "Modelica.Fluid.Pipes.BaseClasses.WallFriction.PartialWallFriction";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Electrical.Machines.Utilities.PartialControlledDCPM" {
-            let new_name =
-                "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.PartialControlledDCPM";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        if name == "Modelica.Electrical.Machines.Utilities.LimitedPI" {
-            let new_name =
-                "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.LimitedPI";
-            let arc = self.load_model_impl(new_name, true)?;
-            self.loaded_models
-                .insert(name.to_string(), Arc::clone(&arc));
-            if let Some(p) = self.loaded_paths.get(new_name).cloned() {
-                self.loaded_paths.insert(name.to_string(), p);
-            }
-            return Ok(arc);
-        }
-        // PowerConverters examples often reference ExampleTemplates under a variant subpackage:
-        //   ...<Variant>.ExampleTemplates...
-        // Collapse repeatedly until a real package is found (MSL layout varies by release).
-        if name.contains(".ExampleTemplates") {
-            let mut candidate = name.to_string();
-            for _ in 0..8 {
-                let parts: Vec<&str> = candidate.split('.').collect();
-                let idx = match parts.iter().position(|p| *p == "ExampleTemplates") {
-                    Some(i) => i,
-                    None => break,
-                };
-                if idx < 1 {
-                    break;
-                }
-                let mut p = parts.clone();
-                p.remove(idx - 1);
-                let next = p.join(".");
-                if next == candidate {
-                    break;
-                }
-                candidate = next;
-                if let Ok(arc) = self.load_model_impl(&candidate, true) {
-                    self.loaded_models
-                        .insert(name.to_string(), Arc::clone(&arc));
-                    if let Some(pt) = self.loaded_paths.get(&candidate).cloned() {
-                        self.loaded_paths.insert(name.to_string(), pt);
+        match early_compat(name) {
+            EarlyCompat::None => {}
+            EarlyCompat::Hard(targets) => {
+                let mut last_err: Option<LoadError> = None;
+                for t in targets {
+                    match self.load_model_impl(&t, true) {
+                        Ok(arc) => {
+                            self.cache_compat_alias(name, &t, &arc);
+                            return Ok(arc);
+                        }
+                        Err(e) => last_err = Some(e),
                     }
-                    return Ok(arc);
+                }
+                if let Some(e) = last_err {
+                    return Err(e);
                 }
             }
-        }
-        // Bare Magnetic.* seen in Electrical.PowerConverters coupling to magnetic models
-        if name == "Magnetic"
-            || (name.starts_with("Magnetic.") && !name.starts_with("Modelica."))
-        {
-            let new_name = if name == "Magnetic" {
-                "Modelica.Magnetic".to_string()
-            } else {
-                format!("Modelica.{}", name)
-            };
-            if let Ok(arc) = self.load_model_impl(&new_name, true) {
-                self.loaded_models
-                    .insert(name.to_string(), Arc::clone(&arc));
-                if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
-                    self.loaded_paths.insert(name.to_string(), p);
+            EarlyCompat::Soft(targets) => {
+                for t in targets {
+                    if let Ok(arc) = self.load_model_impl(&t, true) {
+                        self.cache_compat_alias(name, &t, &arc);
+                        return Ok(arc);
+                    }
                 }
-                return Ok(arc);
-            }
-        }
-        // Clocked examples often reference these packages with short prefixes.
-        // Retry with fully qualified Modelica.Clocked.* names as a conservative fallback.
-        let clocked_short_prefixes = [
-            "ClockSignals",
-            "BooleanSignals",
-            "RealSignals",
-            "IntegerSignals",
-        ];
-        for short in clocked_short_prefixes {
-            if name == short || name.starts_with(&format!("{}.", short)) {
-                let new_name = format!("Modelica.Clocked.{}", name);
-                let arc = self.load_model_impl(&new_name, true)?;
-                self.loaded_models
-                    .insert(name.to_string(), Arc::clone(&arc));
-                if let Some(p) = self.loaded_paths.get(&new_name).cloned() {
-                    self.loaded_paths.insert(name.to_string(), p);
-                }
-                return Ok(arc);
             }
         }
         if let Some(arc) = self.loaded_models.get(name) {
@@ -463,11 +285,7 @@ impl ModelLoader {
             if let Some(arc) = self.loaded_models.get(name) {
                 return Ok(Arc::clone(arc));
             }
-            let inner = base
-                .inner_classes
-                .iter()
-                .find(|m| m.name == suffix)
-                .cloned();
+            let inner = base.find_inner_class(suffix).cloned();
             if let Some(m) = inner {
                 if !self.quiet && !silent {
                     eprintln!("Resolved inner class: {} via {}", name, prefix);
@@ -498,67 +316,14 @@ impl ModelLoader {
             }
         }
 
-        // Some QS Polyphase examples reference a non-existent `Modelica.Blocks.SymmetricalComponents`.
-        if name == "Modelica.Blocks.SymmetricalComponents"
-            || name.starts_with("Modelica.Blocks.SymmetricalComponents.")
-        {
-            let alt = name.replacen(
-                "Modelica.Blocks.SymmetricalComponents",
-                "Modelica.Electrical.QuasiStatic.Polyphase.Blocks.SymmetricalComponents",
-                1,
-            );
-            if alt != name {
-                if let Ok(arc) = self.load_model_impl(&alt, true) {
-                    self.loaded_models
-                        .insert(name.to_string(), Arc::clone(&arc));
-                    if let Some(p) = self.loaded_paths.get(&alt).cloned() {
-                        self.loaded_paths.insert(name.to_string(), p);
+        match late_compat(name) {
+            LateCompat::None => {}
+            LateCompat::Soft(targets) => {
+                for t in targets {
+                    if let Ok(arc) = self.load_model_impl(&t, true) {
+                        self.cache_compat_alias(name, &t, &arc);
+                        return Ok(arc);
                     }
-                    return Ok(arc);
-                }
-            }
-        }
-
-        // Trimmed trees may omit `Electrical.Polyphase.Blocks`; QS Polyphase defines the same Blocks.
-        if name == "Modelica.Electrical.Polyphase.Blocks.SymmetricalComponents"
-            || name.starts_with("Modelica.Electrical.Polyphase.Blocks.SymmetricalComponents.")
-        {
-            let alt = name.replacen(
-                "Modelica.Electrical.Polyphase.Blocks",
-                "Modelica.Electrical.QuasiStatic.Polyphase.Blocks",
-                1,
-            );
-            if alt != name {
-                if let Ok(arc) = self.load_model_impl(&alt, true) {
-                    self.loaded_models
-                        .insert(name.to_string(), Arc::clone(&arc));
-                    if let Some(p) = self.loaded_paths.get(&alt).cloned() {
-                        self.loaded_paths.insert(name.to_string(), p);
-                    }
-                    return Ok(arc);
-                }
-            }
-        }
-
-        // Trimmed MSL trees sometimes omit static `Magnetic.FundamentalWave.Utilities` but ship the
-        // QuasiStatic FundamentalWave Utilities package; QS machine examples still reference the
-        // static-qualified Utilities names from shared base classes.
-        if name == "Modelica.Magnetic.FundamentalWave.Utilities"
-            || name.starts_with("Modelica.Magnetic.FundamentalWave.Utilities.")
-        {
-            let alt = name.replacen(
-                "Modelica.Magnetic.FundamentalWave.Utilities",
-                "Modelica.Magnetic.QuasiStatic.FundamentalWave.Utilities",
-                1,
-            );
-            if alt != name {
-                if let Ok(arc) = self.load_model_impl(&alt, true) {
-                    self.loaded_models
-                        .insert(name.to_string(), Arc::clone(&arc));
-                    if let Some(p) = self.loaded_paths.get(&alt).cloned() {
-                        self.loaded_paths.insert(name.to_string(), p);
-                    }
-                    return Ok(arc);
                 }
             }
         }

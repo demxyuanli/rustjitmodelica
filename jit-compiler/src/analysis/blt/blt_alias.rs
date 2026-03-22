@@ -1,4 +1,5 @@
 use crate::ast::{Equation, Expression, Operator};
+use crate::string_intern::{resolve_id, var_starts_with};
 use std::collections::HashMap;
 
 use crate::analysis::expression_utils::{make_mul, make_num};
@@ -19,11 +20,12 @@ pub(crate) fn eliminate_aliases(
             let mut is_alias = false;
 
             if let Equation::Simple(lhs, rhs) = eq {
-                if let Expression::Variable(v) = lhs {
-                    if *lhs != *rhs && !contains_var(rhs, v) {
+                if let Expression::Variable(id) = lhs {
+                    let v = resolve_id(*id);
+                    if *lhs != *rhs && !contains_var(rhs, &v) {
                         if !v.starts_with("der_") {
-                            if !alias_map.contains_key(v) {
-                                alias_map.insert(v.clone(), rhs.clone());
+                            if !alias_map.contains_key(&v) {
+                                alias_map.insert(v, rhs.clone());
                                 changed = true;
                                 is_alias = true;
                             }
@@ -32,16 +34,17 @@ pub(crate) fn eliminate_aliases(
                 }
 
                 if !is_alias {
-                    if let Expression::Variable(v) = rhs {
-                        if *lhs != *rhs && !contains_var(lhs, v) {
+                    if let Expression::Variable(id) = rhs {
+                        let v = resolve_id(*id);
+                        if *lhs != *rhs && !contains_var(lhs, &v) {
                             if !v.starts_with("der_") {
-                                let lhs_is_der = if let Expression::Variable(l) = lhs {
-                                    l.starts_with("der_")
+                                let lhs_is_der = if let Expression::Variable(lid) = lhs {
+                                    var_starts_with(*lid, "der_")
                                 } else {
                                     false
                                 };
-                                if !lhs_is_der && !alias_map.contains_key(v) {
-                                    alias_map.insert(v.clone(), lhs.clone());
+                                if !lhs_is_der && !alias_map.contains_key(&v) {
+                                    alias_map.insert(v, lhs.clone());
                                     changed = true;
                                     is_alias = true;
                                 }
@@ -54,11 +57,12 @@ pub(crate) fn eliminate_aliases(
                     if let Expression::BinaryOp(l, Operator::Sub, r) = lhs {
                         if let Expression::Number(n) = &**l {
                             if n.abs() < 1e-10 {
-                                if let Expression::Variable(v) = &**r {
-                                    if !alias_map.contains_key(v) && !contains_var(rhs, v) {
+                                if let Expression::Variable(id) = &**r {
+                                    let v = resolve_id(*id);
+                                    if !alias_map.contains_key(&v) && !contains_var(rhs, &v) {
                                         if !v.starts_with("der_") {
                                             let neg_rhs = make_mul(make_num(-1.0), rhs.clone());
-                                            alias_map.insert(v.clone(), neg_rhs);
+                                            alias_map.insert(v, neg_rhs);
                                             changed = true;
                                             is_alias = true;
                                         }
@@ -139,8 +143,9 @@ fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expressio
     while let Some(f) = frames.pop() {
         match f {
             Frame::Enter(e) => match e {
-                Expression::Variable(name) => {
-                    values.push(map.get(name).cloned().unwrap_or_else(|| e.clone()));
+                Expression::Variable(id) => {
+                    let name = resolve_id(*id);
+                    values.push(map.get(&name).cloned().unwrap_or_else(|| e.clone()));
                 }
                 Expression::BinaryOp(lhs, op, rhs) => {
                     frames.push(Frame::BuildBinary(*op));

@@ -19,13 +19,14 @@ fn try_fold_array_access_after_prefix(arr_flat: &Expression, idx_flat: &Expressi
         );
         return Some(Expression::Number(0.0));
     }
-    if let Expression::Variable(name) = arr_flat {
+    if let Expression::Variable(id) = arr_flat {
+        let name = crate::string_intern::resolve_id(*id);
         if let Some(v) = eval_const_expr(idx_flat) {
             let n_int = v.round() as i64;
-            return Some(Expression::Variable(format!("{}_{}", name, n_int)));
+            return Some(Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, n_int))));
         }
         if let Some(suf) = flat_index_suffix_for_scalar_name(idx_flat) {
-            return Some(Expression::Variable(format!("{}_{}", name, suf)));
+            return Some(Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, suf))));
         }
         return None;
     }
@@ -39,11 +40,12 @@ fn try_fold_array_access_after_prefix(arr_flat: &Expression, idx_flat: &Expressi
 /// Collapse `Dot` chains and fold indexable tails so JIT sees scalar `Variable` names (MSL MultiBody).
 fn append_dot_member_to_flat(base: Expression, member: &str) -> Expression {
     match base {
-        Expression::Variable(name) => {
+        Expression::Variable(id) => {
             if member == "signal" {
-                Expression::Variable(name)
+                Expression::Variable(id)
             } else {
-                Expression::Variable(format!("{}_{}", name, member))
+                let name = crate::string_intern::resolve_id(id);
+                Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, member)))
             }
         }
         Expression::Dot(inner, m) => {
@@ -74,12 +76,13 @@ pub fn prefix_expression(expr: &Expression, prefix: &str) -> Expression {
     };
 
     match expr {
-        Expression::Variable(name) => {
+        Expression::Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
             if name == "time" {
                 return expr.clone();
             }
             let flat_name = name.replace('.', "_");
-            Expression::Variable(format!("{}{}", prefix_str, flat_name))
+            Expression::Variable(crate::string_intern::intern(&format!("{}{}", prefix_str, flat_name)))
         }
         Expression::Number(n) => Expression::Number(*n),
         Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
@@ -202,7 +205,7 @@ pub fn index_expression(expr: &Expression, idx: usize) -> Expression {
 
 fn substitute_var_in_expr(expr: &Expression, var: &str, replacement: &Expression) -> Expression {
     match expr {
-        Expression::Variable(name) if name == var => replacement.clone(),
+        Expression::Variable(id) if crate::string_intern::resolve_id(*id) == var => replacement.clone(),
         Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => {
             expr.clone()
         }
@@ -247,25 +250,194 @@ fn substitute_var_in_expr(expr: &Expression, var: &str, replacement: &Expression
 }
 
 pub fn eval_const_expr(expr: &Expression) -> Option<f64> {
+    eval_const_expr_with_params(expr, &HashMap::new())
+}
+
+pub fn eval_const_expr_with_params(
+    expr: &Expression,
+    params: &HashMap<String, f64>,
+) -> Option<f64> {
     match expr {
         Expression::Number(n) => Some(*n),
+        Expression::Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some(v) = params.get(&name).copied() {
+                return Some(v);
+            }
+            let underscore_name = name.replace('.', "_");
+            if underscore_name != name {
+                if let Some(v) = params.get(&underscore_name).copied() {
+                    return Some(v);
+                }
+            }
+            match name.as_str() {
+                "Modelica.Constants.pi" | "Modelica_Constants_pi" => Some(std::f64::consts::PI),
+                "Modelica.Constants.eps" | "Modelica_Constants_eps" => Some(f64::EPSILON),
+                "Modelica.Constants.small" | "Modelica_Constants_small" => Some(1.0e-60),
+                "Modelica.Constants.inf" | "Modelica_Constants_inf" => Some(f64::INFINITY),
+                "Modelica.Constants.g_n" | "Modelica_Constants_g_n" => Some(9.80665),
+                "Modelica.Constants.T_zero" => Some(273.15),
+                "Modelica.Constants.sigma" => Some(5.670374419e-8),
+                "Modelica.Constants.R" => Some(8.314462618),
+                "Modelica.Constants.N_A" => Some(6.02214076e23),
+                _ => None,
+            }
+        }
+        Expression::Dot(base, member) => {
+            if let Some(base_path) = expr_to_path(base) {
+                let dot_name = format!("{}.{}", base_path, member);
+                if let Some(v) = params.get(&dot_name).copied() {
+                    return Some(v);
+                }
+                let underscore_name = dot_name.replace('.', "_");
+                if let Some(v) = params.get(&underscore_name).copied() {
+                    return Some(v);
+                }
+            }
+            None
+        }
         Expression::BinaryOp(lhs, op, rhs) => {
-            let l = eval_const_expr(lhs)?;
-            let r = eval_const_expr(rhs)?;
+            let l = eval_const_expr_with_params(lhs, params)?;
+            let r = eval_const_expr_with_params(rhs, params)?;
             match op {
                 Operator::Add => Some(l + r),
                 Operator::Sub => Some(l - r),
                 Operator::Mul => Some(l * r),
-                Operator::Div => Some(l / r),
+                Operator::Div if r != 0.0 => Some(l / r),
+                Operator::Less => Some(if l < r { 1.0 } else { 0.0 }),
+                Operator::Greater => Some(if l > r { 1.0 } else { 0.0 }),
+                Operator::LessEq => Some(if l <= r { 1.0 } else { 0.0 }),
+                Operator::GreaterEq => Some(if l >= r { 1.0 } else { 0.0 }),
+                Operator::Equal => Some(if (l - r).abs() < 1e-15 { 1.0 } else { 0.0 }),
+                Operator::NotEqual => Some(if (l - r).abs() >= 1e-15 { 1.0 } else { 0.0 }),
+                Operator::And => Some(if l != 0.0 && r != 0.0 { 1.0 } else { 0.0 }),
+                Operator::Or => Some(if l != 0.0 || r != 0.0 { 1.0 } else { 0.0 }),
                 _ => None,
             }
         }
         Expression::If(cond, t_expr, f_expr) => {
-            let c = eval_const_expr(cond)?;
+            let c = eval_const_expr_with_params(cond, params)?;
             if c != 0.0 {
-                eval_const_expr(t_expr)
+                eval_const_expr_with_params(t_expr, params)
             } else {
-                eval_const_expr(f_expr)
+                eval_const_expr_with_params(f_expr, params)
+            }
+        }
+        Expression::Call(func, args) => {
+            let func_lower = func.to_lowercase();
+            let func_tail = func_lower.rsplit('.').next().unwrap_or(&func_lower);
+            match func_tail {
+                "sin" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.sin())
+                }
+                "cos" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.cos())
+                }
+                "tan" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.tan())
+                }
+                "asin" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.asin())
+                }
+                "acos" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.acos())
+                }
+                "atan" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.atan())
+                }
+                "atan2" if args.len() == 2 => {
+                    let y = eval_const_expr_with_params(&args[0], params)?;
+                    let x = eval_const_expr_with_params(&args[1], params)?;
+                    Some(y.atan2(x))
+                }
+                "sqrt" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.sqrt())
+                }
+                "abs" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.abs())
+                }
+                "exp" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.exp())
+                }
+                "log" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.ln())
+                }
+                "log10" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.log10())
+                }
+                "pow" if args.len() == 2 => {
+                    let base = eval_const_expr_with_params(&args[0], params)?;
+                    let exp = eval_const_expr_with_params(&args[1], params)?;
+                    Some(base.powf(exp))
+                }
+                "max" if args.len() == 2 => {
+                    let a = eval_const_expr_with_params(&args[0], params)?;
+                    let b = eval_const_expr_with_params(&args[1], params)?;
+                    Some(a.max(b))
+                }
+                "min" if args.len() == 2 => {
+                    let a = eval_const_expr_with_params(&args[0], params)?;
+                    let b = eval_const_expr_with_params(&args[1], params)?;
+                    Some(a.min(b))
+                }
+                "sign" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.signum())
+                }
+                "floor" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.floor())
+                }
+                "ceil" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.ceil())
+                }
+                "integer" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.floor())
+                }
+                "mod" if args.len() == 2 => {
+                    let a = eval_const_expr_with_params(&args[0], params)?;
+                    let b = eval_const_expr_with_params(&args[1], params)?;
+                    if b != 0.0 { Some(a % b) } else { None }
+                }
+                "rem" if args.len() == 2 => {
+                    let a = eval_const_expr_with_params(&args[0], params)?;
+                    let b = eval_const_expr_with_params(&args[1], params)?;
+                    if b != 0.0 { Some(a % b) } else { None }
+                }
+                "div" if args.len() == 2 => {
+                    let a = eval_const_expr_with_params(&args[0], params)?;
+                    let b = eval_const_expr_with_params(&args[1], params)?;
+                    if b != 0.0 { Some((a / b).trunc()) } else { None }
+                }
+                "sinh" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.sinh())
+                }
+                "cosh" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.cosh())
+                }
+                "tanh" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params).map(|v| v.tanh())
+                }
+                "noevent" | "smooth" if !args.is_empty() => {
+                    eval_const_expr_with_params(&args[0], params)
+                }
+                "homotopy" if args.len() >= 1 => {
+                    eval_const_expr_with_params(&args[0], params)
+                }
+                "fill" if args.len() >= 1 => {
+                    eval_const_expr_with_params(&args[0], params)
+                }
+                "scalar" if args.len() == 1 => {
+                    eval_const_expr_with_params(&args[0], params)
+                }
+                _ => None,
+            }
+        }
+        Expression::ArrayLiteral(items) => {
+            if items.len() == 1 {
+                eval_const_expr_with_params(&items[0], params)
+            } else if !items.is_empty() {
+                eval_const_expr_with_params(&items[0], params)
+            } else {
+                None
             }
         }
         _ => None,
@@ -278,7 +450,10 @@ pub fn eval_const_expr_with_array_sizes(
 ) -> Option<f64> {
     match expr {
         Expression::Number(n) => Some(*n),
-        Expression::Variable(name) => array_sizes.get(name).map(|v| *v as f64),
+        Expression::Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            array_sizes.get(&name).map(|v| *v as f64)
+        }
         Expression::BinaryOp(lhs, op, rhs) => {
             let l = eval_const_expr_with_array_sizes(lhs, array_sizes)?;
             let r = eval_const_expr_with_array_sizes(rhs, array_sizes)?;
@@ -301,7 +476,10 @@ pub fn eval_const_expr_with_array_sizes(
         Expression::Call(func, args) if func == "size" => {
             let first = args.first()?;
             match first {
-                Expression::Variable(name) => array_sizes.get(name).map(|v| *v as f64),
+                Expression::Variable(id) => {
+                    let name = crate::string_intern::resolve_id(*id);
+                    array_sizes.get(&name).map(|v| *v as f64)
+                }
                 Expression::ArrayLiteral(items) => Some(items.len() as f64),
                 Expression::Number(_) => Some(1.0),
                 _ => None,
@@ -313,7 +491,7 @@ pub fn eval_const_expr_with_array_sizes(
 
 pub fn expr_to_path(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Variable(name) => Some(name.clone()),
+        Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
         Expression::Dot(base, member) => {
             if let Some(base_path) = expr_to_path(base) {
                 Some(format!("{}.{}", base_path, member))

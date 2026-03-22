@@ -51,8 +51,8 @@ fn collect_states_from_eq(eq: &Equation, states: &mut HashSet<String>) {
 fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
     match expr {
         Expression::Der(arg) => {
-            if let Expression::Variable(name) = &**arg {
-                states.insert(name.clone());
+            if let Expression::Variable(id) = &**arg {
+                states.insert(crate::string_intern::resolve_id(*id));
             }
         }
         Expression::BinaryOp(lhs, _, rhs) => {
@@ -80,11 +80,12 @@ fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
 fn normalize_der(expr: &Expression) -> Expression {
     match expr {
         Expression::Der(arg) => {
-            if let Expression::Variable(name) = &**arg {
-                return Expression::Variable(format!("der_{}", name));
+            if let Expression::Variable(id) = &**arg {
+                let name = crate::string_intern::resolve_id(*id);
+                return Expression::var(&format!("der_{}", name));
             }
             if let Some(flat) = crate::analysis::derivative::flatten_dot_to_name(arg) {
-                return Expression::Variable(format!("der_{}", flat));
+                return Expression::var(&format!("der_{}", flat));
             }
             Expression::Der(Box::new(normalize_der(arg)))
         }

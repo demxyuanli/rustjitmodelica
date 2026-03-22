@@ -1,10 +1,11 @@
 use crate::ast::{Equation, Expression, Operator};
+use crate::string_intern::{resolve_id, var_starts_with};
 use std::collections::HashSet;
 
-fn expand_der_linear(inner: &Expression) -> Option<Expression> {
+pub(crate) fn expand_der_linear(inner: &Expression) -> Option<Expression> {
     use Expression::*;
     match inner {
-        Variable(name) => Some(Variable(format!("der_{}", name))),
+        Variable(id) => Some(Expression::var(&format!("der_{}", resolve_id(*id)))),
         BinaryOp(l, Operator::Add, r) => {
             let dl = expand_der_linear(l)?;
             let dr = expand_der_linear(r)?;
@@ -16,15 +17,15 @@ fn expand_der_linear(inner: &Expression) -> Option<Expression> {
             Some(BinaryOp(Box::new(dl), Operator::Sub, Box::new(dr)))
         }
         BinaryOp(l, Operator::Mul, r) => match (&**l, &**r) {
-            (Number(c), Variable(name)) => Some(BinaryOp(
+            (Number(c), Variable(id)) => Some(BinaryOp(
                 Box::new(Number(*c)),
                 Operator::Mul,
-                Box::new(Variable(format!("der_{}", name))),
+                Box::new(Expression::var(&format!("der_{}", resolve_id(*id)))),
             )),
-            (Variable(name), Number(c)) => Some(BinaryOp(
+            (Variable(id), Number(c)) => Some(BinaryOp(
                 Box::new(Number(*c)),
                 Operator::Mul,
-                Box::new(Variable(format!("der_{}", name))),
+                Box::new(Expression::var(&format!("der_{}", resolve_id(*id)))),
             )),
             _ => None,
         },
@@ -34,7 +35,7 @@ fn expand_der_linear(inner: &Expression) -> Option<Expression> {
 
 pub fn flatten_dot_to_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Variable(name) => Some(name.clone()),
+        Expression::Variable(id) => Some(resolve_id(*id)),
         Expression::Dot(base, member) => {
             flatten_dot_to_name(base).map(|b| format!("{}_{}", b, member))
         }
@@ -55,10 +56,10 @@ pub fn normalize_der(expr: &Expression) -> Expression {
         Expression::Der(inner) => {
             if let Some(expanded) = expand_der_linear(inner) {
                 normalize_der(&expanded)
-            } else if let Expression::Variable(name) = &**inner {
-                Expression::Variable(format!("der_{}", name))
+            } else if let Expression::Variable(id) = &**inner {
+                Expression::var(&format!("der_{}", resolve_id(*id)))
             } else if let Some(flat) = flatten_dot_to_name(inner) {
-                Expression::Variable(format!("der_{}", flat))
+                Expression::var(&format!("der_{}", flat))
             } else {
                 Expression::Der(Box::new(normalize_der(inner)))
             }
@@ -99,8 +100,8 @@ pub fn normalize_der(expr: &Expression) -> Expression {
 
 fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
     match expr {
-        Expression::Variable(name) => {
-            out.insert(name.clone());
+        Expression::Variable(id) => {
+            out.insert(resolve_id(*id));
         }
         Expression::Dot(_, _) => {
             if let Some(flat) = flatten_dot_to_name(expr) {
@@ -150,7 +151,8 @@ fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
                 collect_vars_in_expr(inner, states);
             }
         }
-        Expression::Variable(name) if name.starts_with("der_") => {
+        Expression::Variable(id) if var_starts_with(*id, "der_") => {
+            let name = resolve_id(*id);
             if let Some(base) = name.strip_prefix("der_") {
                 states.insert(base.to_string());
             }

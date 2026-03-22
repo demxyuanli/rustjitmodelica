@@ -1,6 +1,6 @@
 use crate::analysis::order_initial_equations_for_application;
 use crate::ast::{AlgorithmStatement, Equation, Expression};
-use crate::flatten::eval_const_expr;
+use crate::flatten::eval_const_expr_with_params;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -12,6 +12,7 @@ pub fn apply_initial_conditions(
     state_var_index: &HashMap<String, usize>,
     discrete_var_index: &HashMap<String, usize>,
     param_var_index: &HashMap<String, usize>,
+    param_value_map: &HashMap<String, f64>,
     quiet: bool,
 ) {
     fn assign_var(
@@ -59,7 +60,8 @@ pub fn apply_initial_conditions(
         for &idx in &initial_order {
             let eq = &flat_model.initial_equations[idx];
             if let Equation::Simple(lhs, rhs) = eq {
-                if let Expression::Variable(name) = lhs {
+                if let Expression::Variable(id) = lhs {
+                    let name = crate::string_intern::resolve_id(*id);
                     let rhs_sub = substitute_initial_values(
                         rhs,
                         state_var_index,
@@ -69,20 +71,20 @@ pub fn apply_initial_conditions(
                         discrete_vals,
                         params,
                     );
-                    if let Some(v) = eval_const_expr(&rhs_sub) {
+                    if let Some(v) = eval_const_expr_with_params(&rhs_sub, param_value_map) {
                         let prev = state_var_index
-                            .get(name)
+                            .get(&name)
                             .and_then(|&i| Some(states[i]))
                             .or_else(|| {
                                 discrete_var_index
-                                    .get(name)
+                                    .get(&name)
                                     .and_then(|&i| Some(discrete_vals[i]))
                             })
-                            .or_else(|| param_var_index.get(name).and_then(|&i| Some(params[i])));
+                            .or_else(|| param_var_index.get(&name).and_then(|&i| Some(params[i])));
                         let changed = prev.map(|p| (p - v).abs() > 1e-15).unwrap_or(true);
                         if changed {
                             assign_var(
-                                name,
+                                &name,
                                 v,
                                 states,
                                 discrete_vals,
@@ -101,7 +103,8 @@ pub fn apply_initial_conditions(
 
     for stmt in &flat_model.initial_algorithms {
         if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
-            if let Expression::Variable(name) = lhs {
+            if let Expression::Variable(id) = lhs {
+                let name = crate::string_intern::resolve_id(*id);
                 let rhs_sub = substitute_initial_values(
                     rhs,
                     state_var_index,
@@ -111,9 +114,9 @@ pub fn apply_initial_conditions(
                     discrete_vals,
                     params,
                 );
-                if let Some(v) = eval_const_expr(&rhs_sub) {
+                if let Some(v) = eval_const_expr_with_params(&rhs_sub, param_value_map) {
                     assign_var(
-                        name,
+                        &name,
                         v,
                         states,
                         discrete_vals,
@@ -146,18 +149,19 @@ pub fn substitute_initial_values(
 ) -> Expression {
     use Expression::*;
     match expr {
-        Variable(name) => {
-            if let Some(&idx) = state_var_index.get(name) {
+        Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some(&idx) = state_var_index.get(&name) {
                 if idx < states.len() {
                     return Number(states[idx]);
                 }
             }
-            if let Some(&idx) = discrete_var_index.get(name) {
+            if let Some(&idx) = discrete_var_index.get(&name) {
                 if idx < discrete_vals.len() {
                     return Number(discrete_vals[idx]);
                 }
             }
-            if let Some(&idx) = param_var_index.get(name) {
+            if let Some(&idx) = param_var_index.get(&name) {
                 if idx < params.len() {
                     return Number(params[idx]);
                 }
@@ -165,7 +169,7 @@ pub fn substitute_initial_values(
             if name == "time" {
                 return Number(0.0);
             }
-            Variable(name.clone())
+            Variable(*id)
         }
         Number(n) => Number(*n),
         BinaryOp(lhs, op, rhs) => BinaryOp(
@@ -449,13 +453,14 @@ pub fn substitute_params(
 ) -> Expression {
     use Expression::*;
     match expr {
-        Variable(name) => {
-            if let Some(&idx) = param_var_index.get(name) {
+        Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some(&idx) = param_var_index.get(&name) {
                 if idx < params.len() {
                     return Number(params[idx]);
                 }
             }
-            Variable(name.clone())
+            Variable(*id)
         }
         Number(n) => Number(*n),
         BinaryOp(lhs, op, rhs) => BinaryOp(

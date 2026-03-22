@@ -9,66 +9,22 @@ use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::io::{self, Write};
 
+mod events;
+mod jacobian;
+mod newton_recovery;
+mod sim_io;
+mod step;
+mod types;
+
+pub use self::types::SimulationResult;
+pub use self::types::run_simulation_collect;
+use self::events::{run_event_iteration_at_time, EventIterationOutcome};
+use self::newton_recovery::{allow_zero_residual_newton, fail_if_assert_storm, print_newton_diag};
+use self::sim_io::{flush_writer, write_csv_line};
+use self::step::maybe_print_numeric_jacobian;
+use self::types::ResultCollector;
+
 const CSV_ROWS_PER_FLUSH: u32 = 64;
-const ASSERT_STORM_LIMIT: u64 = 256;
-
-/// Serializable simulation time series for IDE/Plotly (time + series per variable).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SimulationResult {
-    pub time: Vec<f64>,
-    pub series: HashMap<String, Vec<f64>>,
-}
-
-/// Row collector for run_simulation when collecting in-memory (time, states, discrete, outputs).
-pub type ResultCollector = Vec<(f64, Vec<f64>, Vec<f64>, Vec<f64>)>;
-
-fn allow_zero_residual_newton(status: i32, diag_residual: f64) -> bool {
-    status == 2 && diag_residual.abs() <= 1e-12
-}
-
-fn allow_algebraic_newton_fallback(status: i32, state_len: usize) -> bool {
-    status == 2 && state_len == 0
-}
-
-fn write_csv_line(w: &mut dyn Write, line: &str) -> Result<(), String> {
-    w.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-    w.write_all(b"\n").map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-fn flush_writer(w: &mut dyn Write) -> Result<(), String> {
-    w.flush().map_err(|e| e.to_string())
-}
-
-fn fail_if_assert_storm(stage: &str, time: f64) -> Result<(), String> {
-    let hits = native::assert_hit_count();
-    if hits > ASSERT_STORM_LIMIT {
-        return Err(format!(
-            "Aborting due to assertion storm at stage={} time={:.6} assert_hits={}",
-            stage, time, hits
-        ));
-    }
-    Ok(())
-}
-
-fn print_newton_diag(
-    phase: &str,
-    eval_calls: u32,
-    last_eval_time: f64,
-    diag_residual: f64,
-    diag_x: f64,
-) {
-    let assert_hits = native::assert_hit_count();
-    eprintln!(
-        "[newton-diag] phase={} eval_calls={} last_eval_time={:.6} diag_residual={:.6e} diag_x={:.6e} assert_hits={}",
-        phase,
-        eval_calls,
-        last_eval_time,
-        diag_residual,
-        diag_x,
-        assert_hits
-    );
-}
 
 pub fn run_simulation(
     calc_derivs: CalcDerivsFunc,
@@ -105,6 +61,8 @@ pub fn run_simulation(
     let mut crossings = vec![0.0; crossings_count];
     let mut pre_states = vec![0.0; states.len()];
     let mut pre_discrete_vals = vec![0.0; discrete_vals.len()];
+    let mut homotopy_lambda: f64 = 1.0;
+    let homotopy_lambda_ptr: *const f64 = &homotopy_lambda;
 
     // RT1-3: Use adaptive RK45 only when solver is rk45 and no when/zero-crossing.
     let use_adaptive = solver == "rk45" && when_count == 0 && crossings_count == 0;
@@ -150,6 +108,11 @@ pub fn run_simulation(
     let mut diag_state = vec![0.0_f64; states.len()];
     let mut scratch_outputs_for_step = vec![0.0_f64; output_vars.len()];
     let mut prev_outputs = vec![0.0; output_vars.len()];
+    let mut save_states = vec![0.0_f64; states.len()];
+    let mut save_discrete = vec![0.0_f64; discrete_vals.len()];
+    let mut save_crossings = vec![0.0_f64; crossings_count];
+    let mut trial_discrete = vec![0.0_f64; discrete_vals.len()];
+    let mut trial_when_states = vec![0.0_f64; when_count * 2];
 
     native::reset_terminate_flag();
     native::reset_assert_counter();
@@ -161,7 +124,6 @@ pub fn run_simulation(
         pre_states.copy_from_slice(&states);
         pre_discrete_vals.copy_from_slice(&discrete_vals);
 
-        let mut event_iter_count = 0;
         let (mut diag_residual, mut diag_x) = (0.0_f64, 0.0_f64);
         let (diag_res_ptr, diag_x_ptr) = if newton_tearing_var_names.is_empty() {
             (std::ptr::null_mut(), std::ptr::null_mut())
@@ -188,267 +150,56 @@ pub fn run_simulation(
                 )
             };
 
-        const ALG_FIXED_POINT_MAX: u32 = 15;
-        let do_alg_iter =
-            states.is_empty() && !output_vars.is_empty() && newton_tearing_var_names.len() > 0;
-        let mut alg_iter = 0u32;
-        prev_outputs.fill(0.0);
-
-        loop {
-            unsafe {
-                native::suppress_assert_begin();
-                let status = (calc_derivs)(
-                    time,
-                    states.as_mut_ptr(),
-                    discrete_vals.as_mut_ptr(),
-                    derivs.as_mut_ptr(),
-                    params.as_ptr(),
-                    outputs.as_mut_ptr(),
-                    when_states.as_mut_ptr(),
-                    crossings.as_mut_ptr(),
-                    pre_states.as_ptr(),
-                    pre_discrete_vals.as_ptr(),
-                    t_end,
-                    diag_res_ptr,
-                    diag_x_ptr,
-                );
-                native::suppress_assert_end();
-                if status != 0 {
-                    if allow_zero_residual_newton(status, diag_residual) {
-                        break;
-                    }
-                    if time == 0.0 && status == 2 && event_iter_count == 0 {
-                        let mut recovered = false;
-                        for retry_round in 0..5u32 {
-                            states.copy_from_slice(&pre_states);
-                            discrete_vals.copy_from_slice(&pre_discrete_vals);
-                            derivs.fill(0.0);
-                            when_states.fill(0.0);
-                            crossings.fill(0.0);
-                            if retry_round % 2 == 0 {
-                                outputs.fill(0.0);
-                            } else {
-                                for (i, v) in output_start_vals.iter().enumerate() {
-                                    if i < outputs.len() { outputs[i] = *v; }
-                                }
-                                for i in output_start_vals.len()..outputs.len() { outputs[i] = 0.0; }
-                            }
-                            let rs = (calc_derivs)(
-                                time,
-                                states.as_mut_ptr(),
-                                discrete_vals.as_mut_ptr(),
-                                derivs.as_mut_ptr(),
-                                params.as_ptr(),
-                                outputs.as_mut_ptr(),
-                                when_states.as_mut_ptr(),
-                                crossings.as_mut_ptr(),
-                                pre_states.as_ptr(),
-                                pre_discrete_vals.as_ptr(),
-                                t_end,
-                                diag_res_ptr,
-                                diag_x_ptr,
-                            );
-                            if rs == 0 || allow_zero_residual_newton(rs, diag_residual) {
-                                eprintln!("[newton-fallback] retry {} succeeded at t=0", retry_round);
-                                recovered = true;
-                                break;
-                            }
-                            if rs == 2 && diag_residual.abs() <= 1e-6 {
-                                eprintln!("[newton-fallback] retry {} accepted at t=0 (relaxed tol, residual={:.6e})", retry_round, diag_residual);
-                                recovered = true;
-                                break;
-                            }
-                        }
-                        if recovered { break; }
-                    }
-                    if allow_algebraic_newton_fallback(status, states.len()) {
-                        eprintln!(
-                            "[newton-diag] phase=event-iteration-fallback eval_calls={} last_eval_time={:.6} diag_residual={:.6e} diag_x={:.6e} (algebraic Newton fallback accepted)",
-                            diag_call_index, diag_time, diag_residual, diag_x,
-                        );
-                        break;
-                    }
-                    let t_fmt = format!("{:.4}", time);
-                    eprintln!(
-                        "{}",
-                        i18n::msg(
-                            "simulation_failed_at",
-                            &[&t_fmt as &dyn std::fmt::Display, &status]
-                        )
-                    );
-                    if status == 2 {
-                        eprintln!("{}", i18n::msg0("newton_failure"));
-                        print_newton_diag(
-                            "event-iteration",
-                            diag_call_index,
-                            diag_time,
-                            diag_residual,
-                            diag_x,
-                        );
-                        if !newton_tearing_var_names.is_empty() {
-                            let names = newton_tearing_var_names.join(", ");
-                            let res_fmt = format!("{:.6e}", diag_residual);
-                            let val_fmt = format!("{:.6e}", diag_x);
-                            eprintln!(
-                                "{}",
-                                i18n::msg(
-                                    "tearing_vars_residual",
-                                    &[
-                                        &names as &dyn std::fmt::Display,
-                                        &res_fmt as &dyn std::fmt::Display,
-                                        &val_fmt as &dyn std::fmt::Display
-                                    ]
-                                )
-                            );
-                        }
-                    }
-                    let _ = flush_writer(w);
-                    return Err(format!(
-                        "Simulation failed at t={:.4} with status {}",
-                        time, status
-                    ));
-                }
-            }
-            fail_if_assert_storm("event-iteration", time)?;
-
-            if do_alg_iter && alg_iter < ALG_FIXED_POINT_MAX {
-                let max_diff = if alg_iter == 0 {
-                    1.0
-                } else {
-                    let mut m = 0.0_f64;
-                    for i in 0..outputs.len() {
-                        let d = (prev_outputs[i] - outputs[i]).abs();
-                        if d > m {
-                            m = d;
-                        }
-                    }
-                    m
-                };
-                if alg_iter > 0 && max_diff < 1e-10 {
-                    break;
-                }
-                prev_outputs.copy_from_slice(&outputs);
-                alg_iter += 1;
-                if alg_iter < ALG_FIXED_POINT_MAX {
-                    continue;
-                }
-            }
-
-            if native::terminate_requested() {
-                println!(
-                    "{}",
-                    i18n::msg(
-                        "simulation_terminated",
-                        &[&format!("{:.4}", time) as &dyn std::fmt::Display]
-                    )
-                );
-                flush_writer(w)?;
-                return Ok(());
-            }
-
-            let mut converged = true;
-            if when_count > 0 {
-                for i in 0..when_count {
-                    let idx_pre = i * 2;
-                    let idx_new = i * 2 + 1;
-                    let pre_val = when_states[idx_pre];
-                    let new_val = when_states[idx_new];
-
-                    // Check if value changed
-                    if pre_val != new_val {
-                        // Event detected! Update pre value for next iteration
-                        when_states[idx_pre] = new_val;
-                        converged = false;
-                    }
-                }
-            }
-
-            if converged {
-                break;
-            }
-
-            event_iter_count += 1;
-            if event_iter_count > 100 {
-                eprintln!("{}", i18n::msg("event_loop_no_converge", &[&time]));
-                break;
-            }
+        match run_event_iteration_at_time(
+            time,
+            t_end,
+            calc_derivs,
+            when_count,
+            &mut states,
+            &mut discrete_vals,
+            &mut derivs,
+            &params,
+            &mut outputs,
+            &mut when_states,
+            &mut crossings,
+            &pre_states,
+            &pre_discrete_vals,
+            &mut homotopy_lambda,
+            homotopy_lambda_ptr,
+            newton_tearing_var_names,
+            output_start_vals,
+            output_vars,
+            &mut diag_residual,
+            &mut diag_x,
+            diag_res_ptr,
+            diag_x_ptr,
+            &mut diag_call_index,
+            &mut diag_time,
+            &mut prev_outputs,
+            &mut **w,
+        )? {
+            EventIterationOutcome::TerminatedOk => return Ok(()),
+            EventIterationOutcome::Completed => {}
         }
 
-        // Optionally compute and print numeric (and symbolic) ODE Jacobian at the start of simulation.
-        if numeric_ode_jacobian && (time - 0.0).abs() < epsilon {
-            let n = states.len();
-            if n > 0 {
-                let mut system = System {
-                    calc_derivs,
-                    params: &params,
-                    discrete: &mut discrete_vals,
-                    outputs: &mut outputs,
-                    when_states: &mut when_states,
-                    crossings: &mut crossings,
-                    pre_states: &pre_states,
-                    pre_discrete: &pre_discrete_vals,
-                    t_end,
-                    diag_residual: diag_res_ptr,
-                    diag_x: diag_x_ptr,
-                    eval_call_index: std::ptr::null_mut(),
-                    last_eval_time: std::ptr::null_mut(),
-                    last_eval_state: std::ptr::null_mut(),
-                    last_eval_state_len: 0,
-                    scratch_outputs: None,
-                };
-                let mut jac = vec![0.0_f64; n * n];
-                if let Err(code) =
-                    system.compute_ode_jacobian_numeric(time, &states, &mut jac, 1e-6)
-                {
-                    eprintln!(
-                        "Warning: numeric ODE Jacobian computation failed at t={:.4} with status {}",
-                        time, code
-                    );
-                } else {
-                    println!(
-                        "Numeric ODE Jacobian at t={:.4} (size {} x {}):",
-                        time, n, n
-                    );
-                    for i in 0..n {
-                        print!("  row {}:", i);
-                        for j in 0..n {
-                            let v = jac[i * n + j];
-                            print!(" {:+.4}", v);
-                        }
-                        println!();
-                    }
-
-                    if let Some(jac_exprs) = symbolic_ode_jacobian {
-                        // Evaluate symbolic Jacobian at current state and compare.
-                        if jac_exprs.len() == n && jac_exprs.iter().all(|row| row.len() == n) {
-                            let mut max_diff = 0.0_f64;
-                            for i in 0..n {
-                                for j in 0..n {
-                                    let expr = &jac_exprs[i][j];
-                                    let v_sym =
-                                        eval_jac_expr_at_state(expr, state_var_index, &states);
-                                    let v_num = jac[i * n + j];
-                                    let diff = (v_sym - v_num).abs();
-                                    if diff > max_diff {
-                                        max_diff = diff;
-                                    }
-                                }
-                            }
-                            println!(
-                                "Max difference between symbolic and numeric ODE Jacobian at t={:.4}: {:.6}",
-                                time, max_diff
-                            );
-                        } else {
-                            eprintln!(
-                                "Warning: symbolic ODE Jacobian matrix size ({:?}x?) does not match state dimension {}",
-                                jac_exprs.len(),
-                                n
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        maybe_print_numeric_jacobian(
+            numeric_ode_jacobian,
+            time,
+            epsilon,
+            &states,
+            calc_derivs,
+            &params,
+            &mut discrete_vals,
+            &mut outputs,
+            &mut when_states,
+            &mut crossings,
+            &pre_states,
+            &pre_discrete_vals,
+            t_end,
+            symbolic_ode_jacobian,
+            state_var_index,
+            homotopy_lambda_ptr,
+        );
 
         if time >= next_print - epsilon {
             csv_row.clear();
@@ -480,10 +231,9 @@ pub fn run_simulation(
             continue;
         }
 
-        // Save current state
-        let state_at_t = states.clone();
-        let discrete_at_t = discrete_vals.clone();
-        let crossings_at_t = crossings.clone();
+        save_states.copy_from_slice(&states);
+        save_discrete.copy_from_slice(&discrete_vals);
+        save_crossings.copy_from_slice(&crossings);
         scratch_outputs_for_step.copy_from_slice(&outputs);
 
         // Trial Step -- suppress assertions during intermediate solver evaluations;
@@ -507,6 +257,11 @@ pub fn run_simulation(
                 last_eval_state: last_eval_state_ptr,
                 last_eval_state_len,
                 scratch_outputs: Some(&mut scratch_outputs_for_step),
+                homotopy_lambda_ptr,
+                buf_discrete: Vec::new(),
+                buf_when: Vec::new(),
+                buf_crossings: Vec::new(),
+                buf_outputs: Vec::new(),
             };
             let step_res = if use_adaptive {
                 let r = rk45_solver.step(&mut system, time, dt, &mut states);
@@ -563,9 +318,8 @@ pub fn run_simulation(
         }
         let t_trial = time + dt;
 
-        // Evaluate at trial point
-        let mut trial_discrete = discrete_vals.clone();
-        let mut trial_when_states = when_states.clone();
+        trial_discrete.copy_from_slice(&discrete_vals);
+        trial_when_states.copy_from_slice(&when_states);
         unsafe {
             let status = (calc_derivs)(
                 t_trial,
@@ -581,6 +335,7 @@ pub fn run_simulation(
                 t_end,
                 diag_res_ptr,
                 diag_x_ptr,
+                homotopy_lambda_ptr,
             );
             if status != 0 {
                 if allow_zero_residual_newton(status, diag_residual) {
@@ -634,7 +389,7 @@ pub fn run_simulation(
         let mut event_found = false;
 
         for i in 0..crossings_count {
-            let c_prev = crossings_at_t[i];
+            let c_prev = save_crossings[i];
             let c_curr = crossings[i];
 
             if c_prev * c_curr < 0.0 {
@@ -657,9 +412,8 @@ pub fn run_simulation(
                 // Force a small step to cross?
             }
 
-            // Restore and advance
-            states = state_at_t;
-            discrete_vals = discrete_at_t; // Discrete vars constant during step
+            states.copy_from_slice(&save_states);
+            discrete_vals.copy_from_slice(&save_discrete);
             scratch_outputs_for_step.copy_from_slice(&outputs);
 
             {
@@ -680,6 +434,11 @@ pub fn run_simulation(
                     last_eval_state: last_eval_state_ptr,
                     last_eval_state_len,
                     scratch_outputs: Some(&mut scratch_outputs_for_step),
+                    homotopy_lambda_ptr,
+                    buf_discrete: Vec::new(),
+                    buf_when: Vec::new(),
+                    buf_crossings: Vec::new(),
+                    buf_outputs: Vec::new(),
                 };
                 let step_res = if use_adaptive {
                     let r = rk45_solver.step(&mut system, time, dt_event, &mut states);
@@ -758,142 +517,3 @@ pub fn run_simulation(
     Ok(())
 }
 
-/// Run simulation and return time series in memory (for IDE/Plotly). Does not write to file/stdout.
-pub fn run_simulation_collect(
-    calc_derivs: CalcDerivsFunc,
-    when_count: usize,
-    crossings_count: usize,
-    states: Vec<f64>,
-    discrete_vals: Vec<f64>,
-    params: Vec<f64>,
-    state_vars: &[String],
-    discrete_vars: &[String],
-    output_vars: &[String],
-    output_start_vals: &[f64],
-    state_var_index: &HashMap<String, usize>,
-    t_end: f64,
-    dt: f64,
-    numeric_ode_jacobian: bool,
-    symbolic_ode_jacobian: Option<&Vec<Vec<Expression>>>,
-    newton_tearing_var_names: &[String],
-    atol: f64,
-    rtol: f64,
-    solver: &str,
-    output_interval: f64,
-) -> Result<SimulationResult, String> {
-    let mut collector = ResultCollector::new();
-    run_simulation(
-        calc_derivs,
-        when_count,
-        crossings_count,
-        states,
-        discrete_vals,
-        params,
-        state_vars,
-        discrete_vars,
-        output_vars,
-        output_start_vals,
-        state_var_index,
-        t_end,
-        dt,
-        numeric_ode_jacobian,
-        symbolic_ode_jacobian,
-        newton_tearing_var_names,
-        atol,
-        rtol,
-        solver,
-        output_interval,
-        None,
-        Some(&mut collector),
-    )?;
-    let mut time = Vec::with_capacity(collector.len());
-    let mut series: HashMap<String, Vec<f64>> = HashMap::new();
-    series.insert("time".to_string(), Vec::with_capacity(collector.len()));
-    for name in state_vars {
-        series.insert(name.clone(), Vec::with_capacity(collector.len()));
-    }
-    for name in discrete_vars {
-        series.insert(name.clone(), Vec::with_capacity(collector.len()));
-    }
-    for name in output_vars {
-        series.insert(name.clone(), Vec::with_capacity(collector.len()));
-    }
-    for (t, st, disc, out) in collector {
-        time.push(t);
-        series.get_mut("time").unwrap().push(t);
-        for (i, name) in state_vars.iter().enumerate() {
-            let v = st.get(i).copied().unwrap_or(0.0);
-            series.get_mut(name).unwrap().push(v);
-        }
-        for (i, name) in discrete_vars.iter().enumerate() {
-            let v = disc.get(i).copied().unwrap_or(0.0);
-            series.get_mut(name).unwrap().push(v);
-        }
-        for (i, name) in output_vars.iter().enumerate() {
-            let v = out.get(i).copied().unwrap_or(0.0);
-            series.get_mut(name).unwrap().push(v);
-        }
-    }
-    Ok(SimulationResult { time, series })
-}
-
-fn eval_jac_expr_at_state(
-    expr: &Expression,
-    state_var_index: &HashMap<String, usize>,
-    states: &[f64],
-) -> f64 {
-    match expr {
-        Expression::Number(n) => *n,
-        Expression::Variable(name) => {
-            if let Some(&idx) = state_var_index.get(name) {
-                if idx < states.len() {
-                    return states[idx];
-                }
-            }
-            0.0
-        }
-        Expression::BinaryOp(lhs, op, rhs) => {
-            let l = eval_jac_expr_at_state(lhs, state_var_index, states);
-            let r = eval_jac_expr_at_state(rhs, state_var_index, states);
-            use crate::ast::Operator;
-            match op {
-                Operator::Add => l + r,
-                Operator::Sub => l - r,
-                Operator::Mul => l * r,
-                Operator::Div => l / r,
-                _ => 0.0,
-            }
-        }
-        Expression::If(c, t, f) => {
-            let cv = eval_jac_expr_at_state(c, state_var_index, states);
-            if cv != 0.0 {
-                eval_jac_expr_at_state(t, state_var_index, states)
-            } else {
-                eval_jac_expr_at_state(f, state_var_index, states)
-            }
-        }
-        Expression::ArrayLiteral(items) => {
-            if let Some(first) = items.first() {
-                eval_jac_expr_at_state(first, state_var_index, states)
-            } else {
-                0.0
-            }
-        }
-        Expression::ArrayComprehension { .. } => 0.0,
-        Expression::Der(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
-        Expression::ArrayAccess(base, _idx) => {
-            eval_jac_expr_at_state(base, state_var_index, states)
-        }
-        Expression::Dot(base, _member) => eval_jac_expr_at_state(base, state_var_index, states),
-        Expression::Range(_, _, _) => 0.0,
-        Expression::Call(_, _) => 0.0,
-        Expression::Sample(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
-        Expression::Interval(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
-        Expression::Hold(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
-        Expression::Previous(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
-        Expression::SubSample(c, _)
-        | Expression::SuperSample(c, _)
-        | Expression::ShiftSample(c, _) => eval_jac_expr_at_state(c, state_var_index, states),
-        Expression::StringLiteral(_) => 0.0,
-    }
-}

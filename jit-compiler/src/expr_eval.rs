@@ -99,10 +99,12 @@ fn eval_builtin(name: &str, args: &[f64]) -> Result<f64, String> {
 pub fn eval_expr(expr: &Expression, vars: &HashMap<String, f64>) -> Result<f64, String> {
     use Expression::*;
     match expr {
-        Variable(name) => vars
-            .get(name)
-            .copied()
-            .ok_or_else(|| format!("unknown variable: {}", name)),
+        Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            vars.get(&name)
+                .copied()
+                .ok_or_else(|| format!("unknown variable: {}", name))
+        }
         Number(x) => Ok(*x),
         BinaryOp(l, op, r) => {
             let lv = eval_expr(l, vars)?;

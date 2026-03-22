@@ -1,4 +1,5 @@
 use crate::ast::{Equation, Expression, Operator};
+use crate::string_intern::resolve_id;
 use std::collections::HashMap;
 
 use crate::analysis::expression_utils::{expression_is_zero, make_binary, make_num};
@@ -50,13 +51,13 @@ pub(super) fn select_tearing_variable(
 
 pub(super) fn solve_for_variable(eq: &Equation, var: &str) -> Option<Expression> {
     if let Equation::Simple(lhs, rhs) = eq {
-        if let Expression::Variable(v) = lhs {
-            if v == var && !contains_var(rhs, var) {
+        if let Expression::Variable(id) = lhs {
+            if resolve_id(*id) == var && !contains_var(rhs, var) {
                 return Some(rhs.clone());
             }
         }
-        if let Expression::Variable(v) = rhs {
-            if v == var && !contains_var(lhs, var) {
+        if let Expression::Variable(id) = rhs {
+            if resolve_id(*id) == var && !contains_var(lhs, var) {
                 return Some(lhs.clone());
             }
         }
@@ -81,9 +82,10 @@ pub(super) fn substitute_der_in_expr(
     der_map: &HashMap<String, Expression>,
 ) -> Expression {
     match expr {
-        Expression::Variable(name) => {
+        Expression::Variable(id) => {
+            let name = resolve_id(*id);
             if name.starts_with("der_") {
-                der_map.get(name).cloned().unwrap_or_else(|| expr.clone())
+                der_map.get(&name).cloned().unwrap_or_else(|| expr.clone())
             } else {
                 expr.clone()
             }
@@ -190,7 +192,7 @@ pub(super) fn split_linear(expr: &Expression, var: &str) -> Option<(Expression, 
         return Some((make_num(0.0), expr.clone()));
     }
     match expr {
-        Variable(n) if n == var => Some((make_num(1.0), make_num(0.0))),
+        Variable(id) if resolve_id(*id) == var => Some((make_num(1.0), make_num(0.0))),
         BinaryOp(mul_l, Operator::Mul, mul_r) => {
             if let Number(n) = mul_l.as_ref() {
                 if n.abs() < 1e-15 {
@@ -208,27 +210,27 @@ pub(super) fn split_linear(expr: &Expression, var: &str) -> Option<(Expression, 
                     return split_linear(mul_l.as_ref(), var);
                 }
             }
-            if let Variable(n) = mul_r.as_ref() {
-                if n == var && !contains_var(mul_l, var) {
+            if let Variable(id) = mul_r.as_ref() {
+                if resolve_id(*id) == var && !contains_var(mul_l, var) {
                     return Some(((**mul_l).clone(), make_num(0.0)));
                 }
             }
-            if let Variable(n) = mul_l.as_ref() {
-                if n == var && !contains_var(mul_r, var) {
+            if let Variable(id) = mul_l.as_ref() {
+                if resolve_id(*id) == var && !contains_var(mul_r, var) {
                     return Some(((**mul_r).clone(), make_num(0.0)));
                 }
             }
             if let BinaryOp(a, Operator::Mul, b) = mul_r.as_ref() {
-                if let Variable(n) = b.as_ref() {
-                    if n == var && !contains_var(mul_l, var) && !contains_var(a, var) {
+                if let Variable(id) = b.as_ref() {
+                    if resolve_id(*id) == var && !contains_var(mul_l, var) && !contains_var(a, var) {
                         return Some((
                             make_binary((**mul_l).clone(), Operator::Mul, (**a).clone()),
                             make_num(0.0),
                         ));
                     }
                 }
-                if let Variable(n) = a.as_ref() {
-                    if n == var && !contains_var(mul_l, var) && !contains_var(b, var) {
+                if let Variable(id) = a.as_ref() {
+                    if resolve_id(*id) == var && !contains_var(mul_l, var) && !contains_var(b, var) {
                         return Some((
                             make_binary((**mul_l).clone(), Operator::Mul, (**b).clone()),
                             make_num(0.0),
@@ -237,16 +239,16 @@ pub(super) fn split_linear(expr: &Expression, var: &str) -> Option<(Expression, 
                 }
             }
             if let BinaryOp(a, Operator::Mul, b) = mul_l.as_ref() {
-                if let Variable(n) = b.as_ref() {
-                    if n == var && !contains_var(mul_r, var) && !contains_var(a, var) {
+                if let Variable(id) = b.as_ref() {
+                    if resolve_id(*id) == var && !contains_var(mul_r, var) && !contains_var(a, var) {
                         return Some((
                             make_binary((**a).clone(), Operator::Mul, (**mul_r).clone()),
                             make_num(0.0),
                         ));
                     }
                 }
-                if let Variable(n) = a.as_ref() {
-                    if n == var && !contains_var(mul_r, var) && !contains_var(b, var) {
+                if let Variable(id) = a.as_ref() {
+                    if resolve_id(*id) == var && !contains_var(mul_r, var) && !contains_var(b, var) {
                         return Some((
                             make_binary((**b).clone(), Operator::Mul, (**mul_r).clone()),
                             make_num(0.0),
@@ -350,11 +352,11 @@ pub(super) fn solve_residual_linear(expr: &Expression, var: &str) -> Option<Expr
     if let Expression::BinaryOp(lhs, op, rhs) = expr {
         let (rest, coeff) = match (op, lhs.as_ref(), rhs.as_ref()) {
             (Operator::Sub, rest, Expression::BinaryOp(mul_l, Operator::Mul, mul_r)) => {
-                let coeff = if let Expression::Variable(vn) = mul_r.as_ref() {
-                    if vn == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
+                let coeff = if let Expression::Variable(id) = mul_r.as_ref() {
+                    if resolve_id(*id) == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
                         mul_l.clone()
-                    } else if let Expression::Variable(vn) = mul_l.as_ref() {
-                        if vn == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
+                    } else if let Expression::Variable(id2) = mul_l.as_ref() {
+                        if resolve_id(*id2) == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
                             mul_r.clone()
                         } else {
                             return None;
@@ -368,11 +370,11 @@ pub(super) fn solve_residual_linear(expr: &Expression, var: &str) -> Option<Expr
                 (rest.clone(), coeff)
             }
             (Operator::Sub, Expression::BinaryOp(mul_l, Operator::Mul, mul_r), rest) => {
-                let coeff = if let Expression::Variable(vn) = mul_r.as_ref() {
-                    if vn == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
+                let coeff = if let Expression::Variable(id) = mul_r.as_ref() {
+                    if resolve_id(*id) == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
                         mul_l.clone()
-                    } else if let Expression::Variable(vn) = mul_l.as_ref() {
-                        if vn == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
+                    } else if let Expression::Variable(id2) = mul_l.as_ref() {
+                        if resolve_id(*id2) == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
                             mul_r.clone()
                         } else {
                             return None;

@@ -77,13 +77,14 @@ impl Codegen {
 
             // Equations
             for eq in &model.equations {
-                if let Expression::Variable(ref var_name) = eq.lhs {
-                    if let Some(&slot) = var_map.get(var_name) {
+                if let Expression::Variable(ref var_id) = eq.lhs {
+                    let var_name = crate::string_intern::resolve_id(*var_id);
+                    if let Some(&slot) = var_map.get(&var_name) {
                         let val = compile_expression(&eq.rhs, &mut builder, &var_map, &mut self.module)?;
                         builder.ins().stack_store(val, slot, 0);
 
                         // Print
-                        if let Some(&data_id) = string_data_ids.get(var_name) {
+                        if let Some(&data_id) = string_data_ids.get(&var_name) {
                             let data_ref = self.module.declare_data_in_func(data_id, &mut builder.func);
                             let fmt_ptr = builder.ins().global_value(self.module.target_config().pointer_type(), data_ref);
                             builder.ins().call(printf_func_ref, &[fmt_ptr, val]);
@@ -127,8 +128,9 @@ fn compile_expression(
 ) -> Result<Value, String> {
     match expr {
         Expression::Number(n) => Ok(builder.ins().f64const(*n)),
-        Expression::Variable(name) => {
-            if let Some(&slot) = var_map.get(name) {
+        Expression::Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some(&slot) = var_map.get(&name) {
                 Ok(builder.ins().stack_load(types::F64, slot, 0))
             } else {
                 Err(format!("Variable {} not found", name))

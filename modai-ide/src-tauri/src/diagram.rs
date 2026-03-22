@@ -392,7 +392,7 @@ fn expr_to_display_string(e: &Expression) -> String {
                 format!("{}", n)
             }
         }
-        Expression::Variable(s) => s.clone(),
+        Expression::Variable(id) => rustmodlica::string_intern::resolve_id(*id),
         Expression::StringLiteral(s) => format!("\"{}\"", s),
         Expression::BinaryOp(l, op, r) => {
             let ops = match op {
@@ -962,7 +962,7 @@ pub fn apply_equation_edits(
         let start_val = if var.start_value.is_empty() {
             None
         } else {
-            Some(Expression::Variable(var.start_value.clone()))
+            Some(Expression::var(&var.start_value))
         };
         let decl = Declaration {
             name: var.name.clone(),

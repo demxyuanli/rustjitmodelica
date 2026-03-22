@@ -69,8 +69,8 @@ fn equations_for_connections(
                             flow_vars.insert(target_name);
                         } else {
                             potential_eqs.push(Equation::Simple(
-                                Expression::Variable(decl.name.clone()),
-                                Expression::Variable(target_name),
+                                Expression::var(&decl.name),
+                                Expression::Variable(crate::string_intern::intern(&target_name)),
                             ));
                         }
                     }
@@ -94,8 +94,8 @@ fn equations_for_connections(
                         flow_vars.insert(b_path.clone());
                     } else {
                         potential_eqs.push(Equation::Simple(
-                            Expression::Variable(a_path.clone()),
-                            Expression::Variable(b_path.clone()),
+                            Expression::var(a_path),
+                            Expression::var(b_path),
                         ));
                     }
                     break;
@@ -103,8 +103,8 @@ fn equations_for_connections(
             }
             if !found {
                 potential_eqs.push(Equation::Simple(
-                    Expression::Variable(a_path.clone()),
-                    Expression::Variable(b_path.clone()),
+                    Expression::var(a_path),
+                    Expression::var(b_path),
                 ));
             }
         }
@@ -130,12 +130,12 @@ fn equations_for_connections(
             }
         }
         if !component.is_empty() {
-            let mut expr = Expression::Variable(component[0].clone());
+            let mut expr = Expression::Variable(crate::string_intern::intern(&component[0]));
             for i in 1..component.len() {
                 expr = Expression::BinaryOp(
                     Box::new(expr),
                     Operator::Add,
-                    Box::new(Expression::Variable(component[i].clone())),
+                    Box::new(Expression::Variable(crate::string_intern::intern(&component[i]))),
                 );
             }
             out.push(Equation::Simple(expr, Expression::Number(0.0)));
@@ -239,8 +239,8 @@ pub fn resolve_connections(
                             flow_vars.insert(target_name);
                         } else {
                             potential_eqs.push(Equation::Simple(
-                                Expression::Variable(decl.name.clone()),
-                                Expression::Variable(target_name),
+                                Expression::var(&decl.name),
+                                Expression::Variable(crate::string_intern::intern(&target_name)),
                             ));
                         }
                     }
@@ -264,8 +264,8 @@ pub fn resolve_connections(
                         flow_vars.insert(b_path.clone());
                     } else {
                         potential_eqs.push(Equation::Simple(
-                            Expression::Variable(a_path.clone()),
-                            Expression::Variable(b_path.clone()),
+                            Expression::var(a_path),
+                            Expression::var(b_path),
                         ));
                     }
                     break;
@@ -280,8 +280,8 @@ pub fn resolve_connections(
                     }
                 }
                 potential_eqs.push(Equation::Simple(
-                    Expression::Variable(a_path.clone()),
-                    Expression::Variable(b_path.clone()),
+                    Expression::var(a_path),
+                    Expression::var(b_path),
                 ));
             }
         }
@@ -309,12 +309,12 @@ pub fn resolve_connections(
             }
 
             if component.len() > 0 {
-                let mut expr = Expression::Variable(component[0].clone());
+                let mut expr = Expression::Variable(crate::string_intern::intern(&component[0]));
                 for i in 1..component.len() {
                     expr = Expression::BinaryOp(
                         Box::new(expr),
                         Operator::Add,
-                        Box::new(Expression::Variable(component[i].clone())),
+                        Box::new(Expression::Variable(crate::string_intern::intern(&component[i]))),
                     );
                 }
                 flat.equations
@@ -369,11 +369,9 @@ pub fn resolve_connections(
 }
 
 fn find_connector_type(path: &str, flat: &FlattenedModel) -> Option<String> {
-    // If path is in instances, return its type
     if let Some(type_name) = flat.instances.get(path) {
         return Some(type_name.clone());
     }
-    // If path is a variable/component in declarations
     for decl in &flat.declarations {
         if decl.name == path {
             return Some(decl.type_name.clone());
@@ -382,5 +380,35 @@ fn find_connector_type(path: &str, flat: &FlattenedModel) -> Option<String> {
     if has_connector_members(path, flat) {
         return Some("connector".to_string());
     }
+
+    // Hierarchical prefix matching: try progressively longer prefixes against instances.
+    // Flattened paths use '_' as separator, so try splitting at each '_'.
+    let bytes = path.as_bytes();
+    let mut best_prefix_len = 0;
+    let mut best_type = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'_' {
+            let prefix = &path[..i];
+            if let Some(type_name) = flat.instances.get(prefix) {
+                best_prefix_len = i;
+                best_type = Some(type_name.clone());
+            }
+        }
+    }
+    if let Some(_parent_type) = best_type {
+        let full_prefix = &path[..best_prefix_len];
+        let suffix = &path[best_prefix_len + 1..];
+        let suffix_parts: Vec<&str> = suffix.split('_').collect();
+        for end in (1..=suffix_parts.len()).rev() {
+            let candidate = format!("{}_{}", full_prefix, suffix_parts[..end].join("_"));
+            if let Some(t) = flat.instances.get(&candidate) {
+                return Some(t.clone());
+            }
+            if has_connector_members(&candidate, flat) {
+                return Some("connector".to_string());
+            }
+        }
+    }
+
     None
 }

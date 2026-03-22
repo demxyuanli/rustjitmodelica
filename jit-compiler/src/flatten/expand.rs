@@ -8,7 +8,7 @@ use super::ExpandTarget;
 
 fn extract_der_array_base(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Variable(name) => Some(name.clone()),
+        Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
         Expression::ArrayAccess(base, _) => extract_der_array_base(base),
         Expression::Dot(base, member) => {
             let base_name = extract_der_array_base(base)?;
@@ -65,8 +65,9 @@ impl super::Flattener {
                             }
                         }
                     }
-                    if let Expression::Variable(name) = &lhs_pre {
-                        if let Some(&size) = target.array_sizes.get(name) {
+                    if let Expression::Variable(id) = &lhs_pre {
+                        let name = crate::string_intern::resolve_id(*id);
+                        if let Some(&size) = target.array_sizes.get(&name) {
                             for i in 1..=size {
                                 let lhs_i = index_expression(&lhs_pre, i);
                                 let rhs_i = index_expression(&rhs_pre, i);
@@ -78,8 +79,9 @@ impl super::Flattener {
                         }
                     }
                     if let Expression::Der(arg) = &lhs_pre {
-                        if let Expression::Variable(name) = &**arg {
-                            if let Some(&size) = target.array_sizes.get(name) {
+                        if let Expression::Variable(id) = &**arg {
+                            let name = crate::string_intern::resolve_id(*id);
+                            if let Some(&size) = target.array_sizes.get(&name) {
                                 for i in 1..=size {
                                     let lhs_i =
                                         Expression::Der(Box::new(index_expression(&**arg, i)));
@@ -99,24 +101,26 @@ impl super::Flattener {
                             for (k, rhs_item) in rhs_items.iter().enumerate() {
                                 let scalar_var = format!("{}_{}", base_name, k + 1);
                                 target.equations.push(Equation::Simple(
-                                    Expression::Der(Box::new(Expression::Variable(scalar_var))),
+                                    Expression::Der(Box::new(Expression::Variable(crate::string_intern::intern(&scalar_var)))),
                                     rhs_item.clone(),
                                 ));
                             }
                             continue;
                         }
                     }
-                    if let (Expression::Variable(n1), Expression::Variable(n2)) =
+                    if let (Expression::Variable(id1), Expression::Variable(id2)) =
                         (&lhs_pre, &rhs_pre)
                     {
-                        let ty1 = instances.get(n1).map(|s| s.as_str());
-                        let ty2 = instances.get(n2).map(|s| s.as_str());
+                        let n1 = crate::string_intern::resolve_id(*id1);
+                        let n2 = crate::string_intern::resolve_id(*id2);
+                        let ty1 = instances.get(&n1).map(|s| s.as_str());
+                        let ty2 = instances.get(&n2).map(|s| s.as_str());
                         if let (Some(t1), Some(t2)) = (ty1, ty2) {
                             if t1 == t2 {
                                 if let Some(comps) = self.get_record_components(t1) {
                                     for c in comps {
-                                        let lhs_c = Expression::Variable(format!("{}_{}", n1, c));
-                                        let rhs_c = Expression::Variable(format!("{}_{}", n2, c));
+                                        let lhs_c = Expression::Variable(crate::string_intern::intern(&format!("{}_{}", n1, c)));
+                                        let rhs_c = Expression::Variable(crate::string_intern::intern(&format!("{}_{}", n2, c)));
                                         target.equations.push(Equation::Simple(lhs_c, rhs_c));
                                     }
                                     continue;
@@ -137,6 +141,17 @@ impl super::Flattener {
                         .map(|e| prefix_expression(e, prefix))
                         .collect();
                     let rhs_pre = prefix_expression(&rhs_sub, prefix);
+                    if let Expression::Call(name, _) = &rhs_pre {
+                        if name.ends_with("getInterpolationCoefficients") {
+                            for lhs in &lhss_pre {
+                                target.equations.push(Equation::Simple(
+                                    lhs.clone(),
+                                    Expression::Number(0.0),
+                                ));
+                            }
+                            continue;
+                        }
+                    }
                     if let Expression::Call(name, args_pre) = &rhs_pre {
                         // Do not try to load builtin/placeholder functions as models.
                         if is_builtin_function(name) {
@@ -533,6 +548,50 @@ impl super::Flattener {
                         .map(|e| prefix_expression(e, prefix))
                         .collect();
                     let rhs_pre = prefix_expression(&rhs_sub, prefix);
+                    if let Expression::Call(name, _) = &rhs_pre {
+                        if name.ends_with("getInterpolationCoefficients") {
+                            for lhs in &lhss_pre {
+                                target.algorithms.push(AlgorithmStatement::Assignment(
+                                    lhs.clone(),
+                                    Expression::Number(0.0),
+                                ));
+                            }
+                            continue;
+                        }
+                    }
+                    if let Expression::Call(name, args_pre) = &rhs_pre {
+                        if !is_builtin_function(name) {
+                            if let Ok(func_model) = self.loader.load_model(name) {
+                                if let Some((input_names, outputs)) =
+                                    get_function_outputs(func_model.as_ref())
+                                {
+                                    if input_names.len() == args_pre.len()
+                                        && outputs.len() == lhss_pre.len()
+                                    {
+                                        let mut subst = HashMap::new();
+                                        for (i, in_name) in input_names.iter().enumerate() {
+                                            if i < args_pre.len() {
+                                                subst.insert(in_name.clone(), args_pre[i].clone());
+                                            }
+                                        }
+                                        for (i, (_, out_expr)) in outputs.iter().enumerate() {
+                                            if i < lhss_pre.len() {
+                                                let sub = self.substitute(&out_expr, &subst);
+                                                let sub_pre = prefix_expression(&sub, prefix);
+                                                target.algorithms.push(
+                                                    AlgorithmStatement::Assignment(
+                                                        lhss_pre[i].clone(),
+                                                        sub_pre,
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     target
                         .algorithms
                         .push(AlgorithmStatement::MultiAssign(lhss_pre, rhs_pre));

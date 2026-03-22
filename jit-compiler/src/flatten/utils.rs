@@ -27,9 +27,10 @@ pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, 
     let mut out_exprs: HashMap<String, Expression> = HashMap::new();
     for stmt in &model.algorithms {
         if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
-            if let Expression::Variable(v) = lhs {
-                if output_names.contains(v) {
-                    out_exprs.insert(v.clone(), rhs.clone());
+            if let Expression::Variable(id) = lhs {
+                let v = crate::string_intern::resolve_id(*id);
+                if output_names.contains(&v) {
+                    out_exprs.insert(v, rhs.clone());
                 }
             }
         }
@@ -48,14 +49,10 @@ pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, 
 /// (e.g. `package Medium2 = Modelica.Media.IdealGases.SingleGases.N2;`).
 /// If the first segment of `name` matches an inner class whose sole extends clause
 /// points to a base type, replace the prefix with that base type.
-pub fn resolve_inner_class_alias(inner_classes: &[Model], name: &str) -> String {
+pub fn resolve_inner_class_alias(model: &Model, name: &str) -> String {
     let first_seg = name.split('.').next().unwrap_or(name);
-    for ic in inner_classes {
-        if ic.name == first_seg
-            && ic.extends.len() == 1
-            && ic.declarations.is_empty()
-            && ic.equations.is_empty()
-        {
+    if let Some(ic) = model.find_inner_class(first_seg) {
+        if ic.extends.len() == 1 && ic.declarations.is_empty() && ic.equations.is_empty() {
             let base = &ic.extends[0].model_name;
             if name.len() > first_seg.len() {
                 return format!("{}{}", base, &name[first_seg.len()..]);
@@ -98,6 +95,23 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if t1 == t2 {
         return true;
     }
+    let is_likely_connector_type = |s: &str| {
+        let short = s.split('.').last().unwrap_or(s);
+        s.contains('.')
+            && (short.ends_with("Pin")
+                || short.ends_with("Port")
+                || short.ends_with("Plug")
+                || short.ends_with("Frame")
+                || short.ends_with("Frame_a")
+                || short.ends_with("Frame_b")
+                || short.ends_with("Frame_resolve")
+                || short.ends_with("Flange")
+                || short.ends_with("Flange_a")
+                || short.ends_with("Flange_b")
+                || short.ends_with("Support")
+                || short.ends_with("Input")
+                || short.ends_with("Output"))
+    };
     let is_real_like = |s: &str| {
         s == "Real"
             || s.starts_with("Modelica.SIunits.")
@@ -115,6 +129,11 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     };
     if (t1 == "connector" && is_scalar_signal_like(t2))
         || (t2 == "connector" && is_scalar_signal_like(t1))
+    {
+        return true;
+    }
+    if (t1 == "connector" && is_likely_connector_type(t2))
+        || (t2 == "connector" && is_likely_connector_type(t1))
     {
         return true;
     }
@@ -164,6 +183,9 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
         return true;
     }
     if both(t1, t2, "PositivePin", "NegativePin") {
+        return true;
+    }
+    if both(t1, t2, "InductiveCouplePinOut", "InductiveCouplePinIn") {
         return true;
     }
     // --- Electrical.Polyphase: PositivePlug, NegativePlug, Plug (treat as compatible) ---
@@ -258,6 +280,46 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
         return true;
     }
 
+    // --- StateGraph: paired directional connectors (Step_out/Step_in, etc.) ---
+    if both(t1, t2, "Step_out", "Step_in") {
+        return true;
+    }
+    if both(t1, t2, "Alternative_out", "Alternative_in") {
+        return true;
+    }
+    if both(t1, t2, "Parallel_out", "Parallel_in") {
+        return true;
+    }
+    if both(t1, t2, "Transition_out", "Transition_in") {
+        return true;
+    }
+    if t1.contains("Modelica.StateGraph.Interfaces")
+        && t2.contains("Modelica.StateGraph.Interfaces")
+    {
+        let base_out = t1_short.strip_suffix("_out");
+        let base_in = t2_short.strip_suffix("_in");
+        if let (Some(bo), Some(bi)) = (base_out, base_in) {
+            if !bo.is_empty() && bo == bi {
+                return true;
+            }
+        }
+        let base_out2 = t2_short.strip_suffix("_out");
+        let base_in2 = t1_short.strip_suffix("_in");
+        if let (Some(bo), Some(bi)) = (base_out2, base_in2) {
+            if !bo.is_empty() && bo == bi {
+                return true;
+            }
+        }
+    }
+
+    // --- StateGraph.Examples.Utilities: paired tank/valve flow connectors (MSL ControlledTanks) ---
+    if both(t1, t2, "Outflow1", "Outflow2") {
+        return true;
+    }
+    if both(t1, t2, "Inflow1", "Inflow2") {
+        return true;
+    }
+
     false
 }
 
@@ -308,7 +370,9 @@ pub fn merge_models(child: &mut Model, base: &Model) {
     // Inherit inner classes (e.g. replaceable model FlowModel) so that short names can be resolved
     // relative to the derived class context.
     for inner in &base.inner_classes {
-        if !child.inner_classes.iter().any(|c| c.name == inner.name) {
+        if !child.inner_class_index.contains_key(&inner.name) {
+            let idx = child.inner_classes.len();
+            child.inner_class_index.insert(inner.name.clone(), idx);
             child.inner_classes.push(inner.clone());
         }
     }

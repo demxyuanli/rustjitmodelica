@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+pub use crate::string_intern::{StringInterner, VarId};
+
 /// Top-level class kind: model (or connector, block, etc.) or function.
 /// T1-3: Dedicated Function variant for "function ... end function"; parser produces ClassItem::Function, loader converts to Model for pipeline.
 #[derive(Debug, Clone)]
@@ -41,6 +45,7 @@ impl From<Function> for Model {
             initial_algorithms: f.initial_algorithms,
             annotation: None,
             inner_classes: vec![],
+            inner_class_index: HashMap::new(),
             is_operator_record: false,
             type_aliases: vec![],
             imports: vec![],
@@ -67,6 +72,9 @@ pub struct Model {
     pub annotation: Option<String>,
     /// F1-3: nested classes inside package/model (e.g. package P model A ... end A; end P).
     pub inner_classes: Vec<Model>,
+    /// O(1) lookup index: inner class name -> position in `inner_classes`.
+    #[allow(dead_code)]
+    pub inner_class_index: HashMap<String, usize>,
     /// F1-4: operator record (parse-only; MSL compatibility).
     pub is_operator_record: bool,
     /// F1-4: type alias (e.g. type MyReal = Real;) parse-only; name -> base_type.
@@ -75,6 +83,21 @@ pub struct Model {
     pub imports: Vec<(String, String)>,
     /// F3-4: when is_function, external decl if present.
     pub external_info: Option<ExternalDecl>,
+}
+
+impl Model {
+    pub fn rebuild_inner_class_index(&mut self) {
+        self.inner_class_index.clear();
+        for (i, m) in self.inner_classes.iter().enumerate() {
+            self.inner_class_index.insert(m.name.clone(), i);
+        }
+    }
+
+    pub fn find_inner_class(&self, name: &str) -> Option<&Model> {
+        self.inner_class_index
+            .get(name)
+            .and_then(|&idx| self.inner_classes.get(idx))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -179,7 +202,7 @@ pub enum Equation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
-    Variable(String),
+    Variable(VarId),
     Number(f64),
     BinaryOp(Box<Expression>, Operator, Box<Expression>),
     Call(String, Vec<Expression>),
@@ -229,12 +252,27 @@ pub enum Operator {
     Or,
 }
 
+impl Expression {
+    /// Construct a Variable by interning the name via the global interner.
+    pub fn var(name: &str) -> Expression {
+        Expression::Variable(crate::string_intern::intern(name))
+    }
+
+    /// Get the variable name as a String (resolves VarId). Returns None if not a Variable.
+    pub fn var_name(&self) -> Option<String> {
+        match self {
+            Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
+            _ => None,
+        }
+    }
+}
+
 /// Converts a connector reference expression to a path string for diagram/connect.
 /// e.g. Variable("r") -> "r", Dot(box Variable("r"), "p") -> "r.p".
 /// Returns None for expressions that are not a simple variable or dot chain.
 pub fn expr_to_connector_path(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Variable(s) => Some(s.clone()),
+        Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
         Expression::Dot(inner, name) => {
             let prefix = expr_to_connector_path(inner)?;
             Some(format!("{}.{}", prefix, name))
@@ -276,24 +314,24 @@ fn eval_const_expr_flat_index(expr: &Expression) -> Option<f64> {
 pub(crate) fn flat_index_suffix_for_scalar_name(idx: &Expression) -> Option<String> {
     match idx {
         Expression::Number(n) => Some(((*n).round() as i64).to_string()),
-        Expression::Variable(v) => Some(v.clone()),
+        Expression::Variable(v) => Some(crate::string_intern::resolve_id(*v)),
         Expression::BinaryOp(lhs, op, rhs) => match op {
             Operator::Sub => match (&**lhs, &**rhs) {
                 (Expression::Variable(v), Expression::Number(k)) => Some(format!(
                     "{}_sub_{}",
-                    v,
+                    crate::string_intern::resolve_id(*v),
                     (*k).round() as i64
                 )),
                 (Expression::Number(k), Expression::Variable(v)) => Some(format!(
                     "{}_sub_from_{}",
-                    v,
+                    crate::string_intern::resolve_id(*v),
                     (*k).round() as i64
                 )),
                 _ => eval_const_expr_flat_index(idx).map(|x| (x.round() as i64).to_string()),
             },
             Operator::Add => match (&**lhs, &**rhs) {
                 (Expression::Variable(v), Expression::Number(k)) | (Expression::Number(k), Expression::Variable(v)) => {
-                    Some(format!("{}_add_{}", v, (*k).round() as i64))
+                    Some(format!("{}_add_{}", crate::string_intern::resolve_id(*v), (*k).round() as i64))
                 }
                 _ => eval_const_expr_flat_index(idx).map(|x| (x.round() as i64).to_string()),
             },
@@ -306,7 +344,7 @@ pub(crate) fn flat_index_suffix_for_scalar_name(idx: &Expression) -> Option<Stri
 /// Prefix used in flattened scalars for array/record tails: `u[k]` -> `u_k` (1-based index as in Modelica).
 pub fn expr_to_flat_scalar_prefix(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Variable(s) => Some(s.clone()),
+        Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
         Expression::ArrayAccess(arr, idx) => {
             let base = expr_to_flat_scalar_prefix(arr)?;
             let ix = flat_index_suffix_for_scalar_name(idx)?;
@@ -330,9 +368,8 @@ pub fn connector_path_to_expr(path: &str) -> Expression {
     let first = parts
         .next()
         .filter(|s| !s.is_empty())
-        .unwrap_or("x")
-        .to_string();
-    let mut expr = Expression::Variable(first);
+        .unwrap_or("x");
+    let mut expr = Expression::var(first);
     for segment in parts {
         if !segment.is_empty() {
             expr = Expression::Dot(Box::new(expr), segment.to_string());

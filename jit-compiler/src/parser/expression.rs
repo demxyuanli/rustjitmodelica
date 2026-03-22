@@ -271,6 +271,10 @@ pub(super) fn parse_function_call_expr(pair: Pair<Rule>) -> Expression {
                         item
                     };
                     match item.as_rule() {
+                        Rule::function_constructor_arg => {
+                            // MSL: Choices(annotation=Choices(choice=function f_nonlinear(p=p, h=h), ...)))
+                            // No runtime support; accept parse tree only.
+                        }
                                 Rule::redeclare_arg => {
                                     // Parse-only (MSL): record constructor like
                                     // Complex(redeclare SI.Current re "...", redeclare SI.Current im "...")
@@ -437,14 +441,14 @@ fn parse_factor(pair: Pair<Rule>) -> Expression {
             };
             Expression::Number(v)
         }
-        Rule::end_ref => Expression::Variable("end".to_string()),
+        Rule::end_ref => Expression::var("end"),
         _ => unreachable!("Unexpected factor rule: {:?}", inner.as_rule()),
     }
 }
 
 pub(super) fn parse_component_ref(pair: Pair<Rule>) -> Expression {
     let mut pairs = pair.into_inner();
-    let mut expr = Expression::Variable(normalize_identifier(pairs.next().unwrap().as_str()));
+    let mut expr = Expression::var(&normalize_identifier(pairs.next().unwrap().as_str()));
 
     for part in pairs {
         match part.as_rule() {

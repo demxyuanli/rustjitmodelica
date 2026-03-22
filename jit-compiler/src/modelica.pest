@@ -50,7 +50,7 @@ short_class_definition_rhs = { function_call | component_ref | ((input_kw | outp
 constrainedby_clause = { "constrainedby" ~ WHITESPACE? ~ type_name ~ string_comment? }
 short_class_definition = { class_prefixes ~ identifier ~ "=" ~ short_class_definition_rhs ~ array_subscript? ~ modification_part? ~ constrainedby_clause? ~ string_comment? ~ annotation? ~ ";"? }
 connector_alias_definition = { "connector" ~ identifier ~ "=" ~ (input_kw | output_kw)? ~ type_name ~ string_comment? ~ annotation? ~ ";"? }
-declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | model_definition | type_definition | declaration | annotation_clause)* }
+declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | redeclare_model_extends | model_definition | type_definition | declaration | annotation_clause)* }
 redeclare_function_extends = {
     "redeclare"
     ~ WHITESPACE?
@@ -64,6 +64,27 @@ redeclare_function_extends = {
     ~ declaration_section
     ~ WHITESPACE?
     ~ (initial_algorithm_section | algorithm_section)*
+    ~ WHITESPACE?
+    ~ external_section?
+    ~ WHITESPACE?
+    ~ annotation_clause*
+    ~ WHITESPACE?
+    ~ end_part
+}
+redeclare_model_extends = {
+    "redeclare"
+    ~ WHITESPACE?
+    ~ "model"
+    ~ WHITESPACE?
+    ~ "extends"
+    ~ WHITESPACE?
+    ~ identifier
+    ~ modification_part?
+    ~ (string_comment ~ WHITESPACE?)?
+    ~ WHITESPACE?
+    ~ declaration_section
+    ~ WHITESPACE?
+    ~ (initial_equation_section | initial_algorithm_section | equation_section | algorithm_section)*
     ~ WHITESPACE?
     ~ external_section?
     ~ WHITESPACE?
@@ -126,7 +147,7 @@ primitive_type = { ("Real" | "Integer" | "Boolean") ~ !(ASCII_ALPHANUMERIC | "_"
 // Allow arbitrary identifiers as type names for models/connectors
 type_name = { "package" | "function" | "model" | primitive_type | (!keyword ~ dotted_identifier) }
 
-keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "import" | "protected" | "public" | "final" | "parameter" | "flow" | "connect" | "if" | "then" | "else" | "elseif" | "for" | "loop" | "in" | "while" | "when" | "partial" | "encapsulated" | "expandable" | "enumeration" | "true" | "false" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "pure" | "impure" | "each" | "redeclare" | "annotation" | "assert" | "terminate" | "operator" | "type" | "external" | "replaceable" | "within" | "constrainedby") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = @{ ("model" | "end" | "equation" | "algorithm" | "initial" | "extends" | "import" | "protected" | "public" | "final" | "parameter" | "flow" | "stream" | "discrete" | "connect" | "if" | "then" | "else" | "elseif" | "elsewhen" | "for" | "loop" | "in" | "while" | "break" | "return" | "when" | "partial" | "encapsulated" | "expandable" | "enumeration" | "true" | "false" | "input" | "output" | "package" | "constant" | "terminal" | "function" | "pure" | "impure" | "each" | "redeclare" | "annotation" | "assert" | "terminate" | "operator" | "type" | "external" | "replaceable" | "within" | "constrainedby" | "record" | "block" | "connector" | "class") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 value_assignment = { "=" ~ expression }
 // attribute_modification removed
@@ -150,10 +171,11 @@ initial_algorithm_section = { "initial" ~ "algorithm" ~ algorithm_stmt+ }
 call_stmt = { function_call ~ ";" }
 break_stmt = { "break" ~ ";" }
 return_stmt = { "return" ~ ";" }
-algorithm_stmt = { annotation_clause | assert_stmt | terminate_stmt | reinit_clause | break_stmt | return_stmt | if_stmt | for_stmt | while_stmt | when_stmt | multi_assign_stmt | call_stmt | assignment_stmt }
+algorithm_stmt = { annotation_clause | assert_stmt | terminate_stmt | reinit_clause | break_stmt | return_stmt | if_stmt | for_stmt | while_stmt | when_stmt | multi_assign_stmt | call_stmt | visibility_clause | declaration | assignment_stmt }
 
 multi_assign_stmt = { "(" ~ component_ref? ~ ("," ~ component_ref?)+ ~ ")" ~ ":=" ~ expression ~ string_comment? ~ ";" }
-assignment_stmt = { component_ref ~ ":=" ~ expression ~ string_comment? ~ ";" }
+alg_lhs_ref = { "(" ~ component_ref ~ ")" | component_ref }
+assignment_stmt = { alg_lhs_ref ~ ":=" ~ expression ~ string_comment? ~ ";" }
 
 if_stmt = { "if" ~ expression ~ "then" ~ algorithm_stmt* ~ ("elseif" ~ expression ~ "then" ~ algorithm_stmt*)* ~ ("else" ~ algorithm_stmt*)? ~ "end" ~ "if" ~ ";" }
 
@@ -224,7 +246,8 @@ unary_plus = { "+" }
 der_call = { "der" ~ "(" ~ expression ~ ")" }
 named_arg = { final_kw? ~ identifier ~ "=" ~ expression }
 redeclare_arg = { "redeclare" ~ WHITESPACE? ~ type_name ~ WHITESPACE? ~ identifier ~ string_comment? }
-arg_item = { redeclare_arg | named_arg | expression }
+function_constructor_arg = { "function" ~ WHITESPACE? ~ dotted_identifier ~ "(" ~ arg_list? ~ ")" }
+arg_item = { function_constructor_arg | redeclare_arg | named_arg | expression }
 arg_list = { arg_item ~ ("," ~ arg_item)* }
 function_call = { dotted_identifier ~ "(" ~ arg_list? ~ ")" }
 initial_call = { "initial" ~ "(" ~ ")" }

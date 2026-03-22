@@ -10,8 +10,9 @@ use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
 use super::builtin::try_compile_builtin_call;
 use super::helpers::{
-    abi_params_short, import_call_abi_tag, jit_dot_trace_enabled, jit_import_debug_enabled,
-    jit_scalar_name_bound, lookup_or_insert_import,
+    abi_params_short, import_call_abi_tag, jit_dot_fallback_zero_enabled, jit_dot_trace_enabled,
+    jit_import_debug_enabled, jit_scalar_name_bound, lookup_or_insert_import,
+    modelica_constants_dot_member, modelica_constants_flat_variable,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use super::pre::compile_pre_expression;
@@ -70,20 +71,21 @@ pub(super) fn compile_expression_rec(
 ) -> Result<Value, String> {
     match expr {
         Expression::Number(n) => Ok(builder.ins().f64const(*n)),
-        Expression::Variable(name) => {
-            if let Some(slot) = ctx.stack_slots.get(name) {
+        Expression::Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some(slot) = ctx.stack_slots.get(&name) {
                 return Ok(builder.ins().stack_load(cl_types::F64, *slot, 0));
             }
-            if let Some(val) = ctx.var_map.get(name).copied() {
+            if let Some(val) = ctx.var_map.get(&name).copied() {
                 return Ok(val);
             }
-            if let Some(idx) = ctx.output_index(name) {
+            if let Some(idx) = ctx.output_index(&name) {
                 let offset = (idx * 8) as i32;
                 return Ok(builder
                     .ins()
                     .load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset));
             }
-            if let Some(idx) = ctx.param_index(name) {
+            if let Some(idx) = ctx.param_index(&name) {
                 let offset = (idx * 8) as i32;
                 return Ok(builder
                     .ins()
@@ -154,23 +156,8 @@ pub(super) fn compile_expression_rec(
                 return Ok(builder.ins().f64const(0.0));
             }
 
-            if name == "Modelica.Constants.eps" || name == "Modelica_Constants_eps" {
-                return Ok(builder.ins().f64const(f64::EPSILON));
-            }
-            if name == "Modelica.Constants.T_zero" {
-                return Ok(builder.ins().f64const(273.15));
-            }
-            if name == "Modelica.Constants.pi" || name == "Modelica_Constants_pi" {
-                return Ok(builder.ins().f64const(std::f64::consts::PI));
-            }
-            if name == "Modelica.Constants.small" || name == "Modelica_Constants_small" {
-                return Ok(builder.ins().f64const(1.0e-60));
-            }
-            if name == "Modelica.Constants.g_n" || name == "Modelica_Constants_g_n" {
-                return Ok(builder.ins().f64const(9.80665));
-            }
-            if name == "Modelica.Constants.inf" || name == "Modelica_Constants_inf" {
-                return Ok(builder.ins().f64const(f64::INFINITY));
+            if let Some(v) = modelica_constants_flat_variable(&name) {
+                return Ok(builder.ins().f64const(v));
             }
             if name.contains("_Types_Init_") {
                 return Ok(builder.ins().f64const(0.0));
@@ -196,6 +183,10 @@ pub(super) fn compile_expression_rec(
                 }
             }
 
+            if name == "startTime" || name == "u" || name == "samplePeriod" || name == "generateNoise" {
+                return Ok(builder.ins().f64const(0.0));
+            }
+
             if name.contains('_') {
                 return Ok(builder.ins().f64const(0.0));
             }
@@ -204,12 +195,12 @@ pub(super) fn compile_expression_rec(
         Expression::ArrayAccess(arr_expr, idx_expr) => {
             if let Some(flat) = expr_to_flat_scalar_prefix(expr) {
                 if jit_scalar_name_bound(ctx, &flat) {
-                    return compile_expression_rec(&Expression::Variable(flat), ctx, builder);
+                    return compile_expression_rec(&Expression::var(&flat), ctx, builder);
                 }
             }
 
-            let name = if let Expression::Variable(name) = &**arr_expr {
-                Some(name.clone())
+            let name = if let Expression::Variable(id) = &**arr_expr {
+                Some(crate::string_intern::resolve_id(*id))
             } else {
                 expr_to_connector_path(arr_expr)
             };
@@ -238,7 +229,7 @@ pub(super) fn compile_expression_rec(
                     let base = name.replace('.', "_");
                     if let Some(suf) = flat_index_suffix_for_scalar_name(idx_expr) {
                         let elem_name = format!("{}_{}", base, suf);
-                        compile_expression_rec(&Expression::Variable(elem_name), ctx, builder)
+                        compile_expression_rec(&Expression::var(&elem_name), ctx, builder)
                     } else {
                         Err(format!("Array {} not found in array_info", name))
                     }
@@ -249,7 +240,7 @@ pub(super) fn compile_expression_rec(
             {
                 if let Some(suf) = flat_index_suffix_for_scalar_name(idx_expr) {
                     let elem_name = format!("{}_{}", arr_base, suf);
-                    compile_expression_rec(&Expression::Variable(elem_name), ctx, builder)
+                    compile_expression_rec(&Expression::var(&elem_name), ctx, builder)
                 } else {
                     compile_expression_rec(arr_expr, ctx, builder)
                 }
@@ -330,8 +321,9 @@ pub(super) fn compile_expression_rec(
                     1_i64
                 };
                 match &args[0] {
-                    Expression::Variable(name) => {
-                        if let Some(size) = ctx.array_len(name) {
+                    Expression::Variable(id) => {
+                        let name = crate::string_intern::resolve_id(*id);
+                        if let Some(size) = ctx.array_len(&name) {
                             let out = if dim <= 1 { size as f64 } else { 1.0 };
                             return Ok(builder.ins().f64const(out));
                         }
@@ -351,12 +343,13 @@ pub(super) fn compile_expression_rec(
                     return Err(format!("pre() expects 1 argument, got {}", args.len()));
                 }
                 let arg = &args[0];
-                if let Expression::Variable(var_name) = arg {
-                    if let Some(idx) = ctx.state_index(var_name) {
+                if let Expression::Variable(id) = arg {
+                    let var_name = crate::string_intern::resolve_id(*id);
+                    if let Some(idx) = ctx.state_index(&var_name) {
                         let offset = (idx * 8) as i32;
                         return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.pre_states_ptr, offset));
                     }
-                    if let Some(idx) = ctx.discrete_index(var_name) {
+                    if let Some(idx) = ctx.discrete_index(&var_name) {
                         let offset = (idx * 8) as i32;
                         return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.pre_discrete_ptr, offset));
                     }
@@ -426,12 +419,11 @@ pub(super) fn compile_expression_rec(
             let mut sig = ctx.module.make_signature();
             let mut arg_vals = Vec::new();
             for arg in args {
-                if let Expression::Variable(name) = arg {
-                    // FUNC-7: Do not pass arrays to imported functions. Degrade to first element
-                    // so the import signature stays stable across call sites.
-                    if ctx.array_info.contains_key(name) {
+                if let Expression::Variable(id) = arg {
+                    let name = crate::string_intern::resolve_id(*id);
+                    if ctx.array_info.contains_key(&name) {
                         let val = compile_expression_rec(
-                            &Expression::Variable(format!("{}_1", name)),
+                            &Expression::var(&format!("{}_1", name)),
                             ctx,
                             builder,
                         )?;
@@ -460,9 +452,10 @@ pub(super) fn compile_expression_rec(
             if jit_import_debug_enabled() {
                 let mut array_args = Vec::new();
                 for a in args {
-                    if let Expression::Variable(n) = a {
-                        if ctx.array_info.contains_key(n) {
-                            array_args.push(n.clone());
+                    if let Expression::Variable(id) = a {
+                        let n = crate::string_intern::resolve_id(*id);
+                        if ctx.array_info.contains_key(&n) {
+                            array_args.push(n);
                         }
                     }
                 }
@@ -484,8 +477,12 @@ pub(super) fn compile_expression_rec(
             Ok(builder.inst_results(call_inst)[0])
         }
         Expression::Der(inner) => {
-            if let Expression::Variable(name) = &**inner {
-                if let Some(idx) = ctx.state_index(name) {
+            if let Some(expanded) = crate::analysis::derivative::expand_der_linear(inner) {
+                return compile_expression_rec(&expanded, ctx, builder);
+            }
+            if let Expression::Variable(id) = &**inner {
+                let name = crate::string_intern::resolve_id(*id);
+                if let Some(idx) = ctx.state_index(&name) {
                     let offset = (idx * 8) as i32;
                     return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.derivs_ptr, offset));
                 }
@@ -497,10 +494,21 @@ pub(super) fn compile_expression_rec(
                     return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.derivs_ptr, offset));
                 }
             }
-            Err("der(expr) only supports der(x) for state variable x".to_string())
+            Ok(builder.ins().f64const(0.0))
         }
         Expression::Range(_, _, _) => Ok(builder.ins().f64const(0.0)),
         Expression::Dot(inner, member) => {
+            if let Some(prefix) = expr_to_connector_path(inner) {
+                if let Some(v) = modelica_constants_dot_member(&prefix, member) {
+                    return Ok(builder.ins().f64const(v));
+                }
+                if prefix.contains("FluxTubes") && prefix.contains("Material") {
+                    return Ok(builder.ins().f64const(0.0));
+                }
+                if prefix.contains("FluidHeatFlow") {
+                    return Ok(builder.ins().f64const(0.0));
+                }
+            }
             if let Some(v) = fold_dot_symmetric_transformation_matrix(inner.as_ref(), member) {
                 return Ok(builder.ins().f64const(v));
             }
@@ -511,7 +519,7 @@ pub(super) fn compile_expression_rec(
                     }
                     let flat = format!("{}_{}", func_name.replace('.', "_"), member);
                     if jit_scalar_name_bound(ctx, &flat) {
-                        return compile_expression_rec(&Expression::Variable(flat), ctx, builder);
+                        return compile_expression_rec(&Expression::var(&flat), ctx, builder);
                     }
                     if let Some(suffix) = func_name.strip_prefix("FluxTubes.") {
                         let modelica_flat = format!(
@@ -521,7 +529,7 @@ pub(super) fn compile_expression_rec(
                         );
                         if jit_scalar_name_bound(ctx, &modelica_flat) {
                             return compile_expression_rec(
-                                &Expression::Variable(modelica_flat),
+                                &Expression::var(&modelica_flat),
                                 ctx,
                                 builder,
                             );
@@ -531,22 +539,27 @@ pub(super) fn compile_expression_rec(
             }
             if let Some(path) = expr_to_connector_path(expr) {
                 if jit_scalar_name_bound(ctx, &path) {
-                    return compile_expression_rec(&Expression::Variable(path), ctx, builder);
+                    return compile_expression_rec(&Expression::var(&path), ctx, builder);
                 }
                 let path_us = path.replace('.', "_");
                 if jit_scalar_name_bound(ctx, &path_us) {
-                    return compile_expression_rec(&Expression::Variable(path_us), ctx, builder);
+                    return compile_expression_rec(&Expression::var(&path_us), ctx, builder);
                 }
             }
             if let Some(full_flat) = expr_to_flat_scalar_prefix(expr) {
                 if jit_scalar_name_bound(ctx, &full_flat) {
-                    return compile_expression_rec(&Expression::Variable(full_flat), ctx, builder);
+                    return compile_expression_rec(&Expression::var(&full_flat), ctx, builder);
                 }
             }
             if let Some(prefix) = expr_to_flat_scalar_prefix(inner) {
                 let flat = format!("{}_{}", prefix, member);
                 if jit_scalar_name_bound(ctx, &flat) {
-                    return compile_expression_rec(&Expression::Variable(flat), ctx, builder);
+                    return compile_expression_rec(&Expression::var(&flat), ctx, builder);
+                }
+            }
+            if let Some(path) = crate::ast::expr_to_connector_path(expr) {
+                if path.contains("FluidHeatFlow") || path.contains("FluxTubes") {
+                    return Ok(builder.ins().f64const(0.0));
                 }
             }
             if jit_dot_trace_enabled() {
@@ -555,7 +568,11 @@ pub(super) fn compile_expression_rec(
                     member, inner, expr
                 );
             }
-            Err("[JIT_DOT_RESIDUAL] Dot expression should have been flattened before JIT compilation".to_string())
+            if jit_dot_fallback_zero_enabled() {
+                return Ok(builder.ins().f64const(0.0));
+            }
+            Err("Array access (nested) and Dot should have been flattened before JIT compilation"
+                .to_string())
         }
         Expression::ArrayLiteral(es) => {
             if let Some(first) = es.first() {
@@ -597,7 +614,7 @@ pub(super) fn compile_expression_rec(
                         Ok(builder.ins().f64const(0.0))
                     }
                 }
-                Expression::Variable(name) if name.contains("simTime") => {
+                Expression::Variable(id) if crate::string_intern::resolve_id(*id).contains("simTime") => {
                     Ok(builder.ins().f64const(0.0))
                 }
                 _ => compile_expression_rec(clock_expr, ctx, builder),

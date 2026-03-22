@@ -142,29 +142,44 @@ extern "C" fn rustmodlica_solve_linear_n(
     r: *const f64,
     dx: *mut f64,
 ) -> i32 {
+    thread_local! {
+        static BUF_JAC: std::cell::RefCell<Vec<f64>> = std::cell::RefCell::new(Vec::new());
+        static BUF_RHS: std::cell::RefCell<Vec<f64>> = std::cell::RefCell::new(Vec::new());
+        static BUF_A: std::cell::RefCell<Vec<f64>> = std::cell::RefCell::new(Vec::new());
+        static BUF_B: std::cell::RefCell<Vec<f64>> = std::cell::RefCell::new(Vec::new());
+    }
     if n <= 0 || jac.is_null() || r.is_null() || dx.is_null() {
         return -1;
     }
     let n_usize = n as usize;
-    let mut jac_base = vec![0.0; n_usize * n_usize];
-    let mut rhs_base = vec![0.0; n_usize];
+    BUF_JAC.with(|cell| {
+    BUF_RHS.with(|cell_rhs| {
+    BUF_A.with(|cell_a| {
+    BUF_B.with(|cell_b| {
+    let mut jac_base = cell.borrow_mut();
+    let mut rhs_base = cell_rhs.borrow_mut();
+    let mut a = cell_a.borrow_mut();
+    let mut b = cell_b.borrow_mut();
+    jac_base.resize(n_usize * n_usize, 0.0);
+    rhs_base.resize(n_usize, 0.0);
+    a.resize(n_usize * n_usize, 0.0);
+    b.resize(n_usize, 0.0);
     unsafe {
         std::ptr::copy_nonoverlapping(jac, jac_base.as_mut_ptr(), n_usize * n_usize);
         std::ptr::copy_nonoverlapping(r, rhs_base.as_mut_ptr(), n_usize);
-        for bi in &mut rhs_base {
+        for bi in &mut *rhs_base {
             *bi = -*bi;
         }
     }
 
     let mut lambda = 0.0_f64;
-    let max_lm_retries = 6_u32;
+    let max_lm_retries = 10_u32;
     for _retry in 0..=max_lm_retries {
-        let mut a = jac_base.clone();
-        let mut b = rhs_base.clone();
+        a.copy_from_slice(&jac_base);
+        b.copy_from_slice(&rhs_base);
         if lambda > 0.0 {
             for i in 0..n_usize {
-                let d = i * n_usize + i;
-                a[d] += lambda;
+                a[i * n_usize + i] += lambda;
             }
         }
 
@@ -215,10 +230,11 @@ extern "C" fn rustmodlica_solve_linear_n(
             return 0;
         }
 
-        lambda = if lambda == 0.0 { 1e-8 } else { lambda * 10.0 };
+        lambda = if lambda == 0.0 { 1e-6 } else { lambda * 10.0 };
     }
 
     1
+    })})})})
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -273,7 +289,7 @@ extern "C" fn rustmodlica_solve_linear_csr(
     }
 
     let mut lambda = 0.0_f64;
-    let max_lm_retries = 6_u32;
+    let max_lm_retries = 10_u32;
     for _retry in 0..=max_lm_retries {
         let mut vals = values_vec.clone();
         if lambda > 0.0 {
