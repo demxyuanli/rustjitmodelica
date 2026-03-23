@@ -99,6 +99,10 @@ function Get-TopLevelPackageName([string[]]$lines) {
 # Require real class-declaration shape after the name (not prose like "model shall be" in HTML docs).
 function Get-SimClassDeclNameFromLine([string]$ln) {
     if ($ln -match '^\s*//') { return $null }
+    # Partial model/block is not runnable as a standalone simulation target.
+    if ($ln -cmatch '^\s*(?:(?:encapsulated|replaceable|expandable)\s+)*partial\s+(?:model|block)\b') {
+        return ""
+    }
     $pat = '^\s*(?:(?:encapsulated|partial|replaceable|expandable)\s+)*(?:model|block)\s+([A-Za-z_][A-Za-z0-9_]*)(?=\s*(?:;|\(|\s+extends\b|//|"|$|\s+(?:equation|algorithm|protected|public|annotation|initial|final|parameter|discrete|input|output|inner|outer|stream|import)\b))'
     $m = [regex]::Match($ln, $pat)
     if (-not $m.Success) { return $null }
@@ -551,11 +555,13 @@ foreach ($m in $models) {
         $modelNotFoundSelf = $false
         $modelNotFoundDependency = $false
         $newtonFailed = $false
+        $constrainedbyFailed = $false
         $selfNotFoundPattern = '^Model not found:\s*' + [Regex]::Escape($m) + '\s*$'
         foreach ($ln in $outLines) {
             if ($ln -match $selfNotFoundPattern) { $modelNotFoundSelf = $true; break }
             if ($ln -match 'Model not found:') { $modelNotFoundDependency = $true }
             if ($ln -match 'Newton-Raphson failure') { $newtonFailed = $true }
+            if ($ln -match 'FLATTEN_CONSTRAINEDBY') { $constrainedbyFailed = $true }
         }
         if ($modelNotFoundSelf) {
             $skipped++
@@ -575,6 +581,12 @@ foreach ($m in $models) {
                 $skipped++
                 $results += "-- $m  exit=$exit  reason=newton_nonconverged_skip"
             }
+            continue
+        }
+        $isConstrainedByNegative = ($m -match '^ModelicaTest\.RedeclareSmoke\.ConstrainedBy(CoarseFalse|Illegal)$')
+        if ($constrainedbyFailed -and $isConstrainedByNegative) {
+            $ok++
+            $results += "OK $m  exit=$exit  reason=expected_constrainedby_failure"
             continue
         }
         $bad++
