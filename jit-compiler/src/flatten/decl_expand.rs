@@ -1,4 +1,4 @@
-use super::{eval_const_expr, eval_const_expr_with_array_sizes, index_expression, FlattenError, Flattener};
+use super::{eval_const_expr_with_param_exprs, index_expression, FlattenError, Flattener};
 use crate::ast::{Declaration, Expression, Model};
 use crate::diag::SourceLocation;
 use crate::loader::LoadError;
@@ -59,10 +59,42 @@ impl Flattener {
                         }
                     }
 
+                    const MAX_PARAM_PASSES: usize = 128;
+                    for _ in 0..MAX_PARAM_PASSES {
+                        let mut changed = false;
+                        for decl in &model.declarations {
+                            if decl.is_parameter {
+                                if let Some(val) = &decl.start_value {
+                                    let sub = self.substitute(val, &context);
+                                    if let Some(n) = eval_const_expr_with_param_exprs(
+                                        &sub,
+                                        &context,
+                                        &local_array_sizes,
+                                    ) {
+                                        let update = match context.get(&decl.name) {
+                                            None => true,
+                                            Some(Expression::Number(p)) => (n - p).abs() > 1e-12,
+                                            Some(_) => true,
+                                        };
+                                        if update {
+                                            context.insert(decl.name.clone(), Expression::Number(n));
+                                            changed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !changed {
+                            break;
+                        }
+                    }
+
                     for decl in &model.declarations {
                         if let Some(ref cond_expr) = decl.condition {
                             let cond_sub = self.substitute(cond_expr, &context);
-                            if let Some(v) = eval_const_expr(&cond_sub) {
+                            if let Some(v) =
+                                eval_const_expr_with_param_exprs(&cond_sub, &context, &local_array_sizes)
+                            {
                                 if v == 0.0 {
                                     continue;
                                 }
@@ -71,11 +103,11 @@ impl Flattener {
 
                         let array_len = if let Some(size_expr) = &decl.array_size {
                             let sub_expr = self.substitute(size_expr, &context);
-                            if let Some(val) = eval_const_expr(&sub_expr) {
-                                Some(val as usize)
-                            } else if let Some(val) =
-                                eval_const_expr_with_array_sizes(&sub_expr, &local_array_sizes)
-                            {
+                            if let Some(val) = eval_const_expr_with_param_exprs(
+                                &sub_expr,
+                                &context,
+                                &local_array_sizes,
+                            ) {
                                 Some(val as usize)
                             } else {
                                 eprintln!("Warning: Could not evaluate array size for '{}'", decl.name);

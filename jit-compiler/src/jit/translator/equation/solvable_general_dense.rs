@@ -6,6 +6,7 @@ use cranelift_module::{Linkage, Module};
 
 use crate::jit::context::TranslationContext;
 use crate::jit::translator::expr::compile_expression;
+use crate::solvable_limits::{validate_solvable_residual_count, JIT_DENSE_STACK_MAX_N};
 
 use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
 
@@ -17,13 +18,19 @@ pub(super) fn compile_solvable_block_general_dense_n(
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
     let n = residuals.len();
+    validate_solvable_residual_count(n)?;
     let ptr_type = ctx.module.target_config().pointer_type();
     let buf_size = (n * n + n + n) * 8;
-    let buf_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
-        cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
-        buf_size as u32,
-        0,
-    ));
+    let use_heap_workspace = n > JIT_DENSE_STACK_MAX_N;
+    let buf_slot_opt = if use_heap_workspace {
+        None
+    } else {
+        Some(builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
+            buf_size as u32,
+            0,
+        )))
+    };
     let iter_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
         cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
         8,
@@ -33,6 +40,7 @@ pub(super) fn compile_solvable_block_general_dense_n(
     builder.ins().stack_store(zero, iter_slot, 0);
     let eps = 1e-6_f64;
     let eps_val = builder.ins().f64const(eps);
+    let pre_loop_block = builder.create_block();
     let header_block = builder.create_block();
     let body_block = builder.create_block();
     let exit_block = builder.create_block();
@@ -40,7 +48,25 @@ pub(super) fn compile_solvable_block_general_dense_n(
     let solve_error_block = builder.create_block();
     let after_dense_n = builder.create_block();
     emit_assert_suppress_begin(ctx, builder)?;
+    builder.ins().jump(pre_loop_block, &[]);
+    builder.switch_to_block(pre_loop_block);
+    let base_ptr = if let Some(buf_slot) = buf_slot_opt {
+        builder.ins().stack_addr(ptr_type, buf_slot, 0)
+    } else {
+        let n_ws = builder.ins().iconst(cl_types::I32, n as i64);
+        let mut sig_ws = ctx.module.make_signature();
+        sig_ws.params.push(AbiParam::new(cl_types::I32));
+        sig_ws.returns.push(AbiParam::new(ptr_type));
+        let fid_ws = ctx
+            .module
+            .declare_function("rustmodlica_dense_newton_workspace", Linkage::Import, &sig_ws)
+            .map_err(|e| e.to_string())?;
+        let fr_ws = ctx.module.declare_func_in_func(fid_ws, &mut builder.func);
+        let call_ws = builder.ins().call(fr_ws, &[n_ws]);
+        builder.inst_results(call_ws)[0]
+    };
     builder.ins().jump(header_block, &[]);
+    builder.seal_block(pre_loop_block);
     builder.switch_to_block(header_block);
     let iter_val = builder.ins().stack_load(cl_types::F64, iter_slot, 0);
     let max_iter = builder.ins().f64const(200.0);
@@ -54,7 +80,6 @@ pub(super) fn compile_solvable_block_general_dense_n(
     builder.ins().return_(&[err_code]);
     builder.seal_block(iter_error_block);
     builder.switch_to_block(body_block);
-    let base_ptr = builder.ins().stack_addr(ptr_type, buf_slot, 0);
     let _jac_offset = 0i32;
     let r_offset = (n * n * 8) as i32;
     let dx_offset = ((n * n + n) * 8) as i32;

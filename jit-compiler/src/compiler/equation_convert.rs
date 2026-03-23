@@ -151,7 +151,17 @@ pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) 
 pub fn convert_eq_to_alg_stmt(eq: Equation) -> AlgorithmStatement {
     match eq {
         Equation::Simple(lhs, rhs) => AlgorithmStatement::Assignment(lhs, rhs),
-        Equation::CallStmt(expr) => AlgorithmStatement::CallStmt(expr),
+        Equation::CallStmt(expr) => {
+            if let Expression::Call(name, args) = &expr {
+                let is_reinit = name == "reinit" || name.ends_with(".reinit");
+                if is_reinit && args.len() == 2 {
+                    if let Some(var_name) = crate::ast::expr_to_flat_scalar_prefix(&args[0]) {
+                        return AlgorithmStatement::Reinit(var_name, args[1].clone());
+                    }
+                }
+            }
+            AlgorithmStatement::CallStmt(expr)
+        }
         Equation::Reinit(var, val) => AlgorithmStatement::Reinit(var, val),
         Equation::For(var, start, end, body) => {
             let alg_body = body.into_iter().map(convert_eq_to_alg_stmt).collect();

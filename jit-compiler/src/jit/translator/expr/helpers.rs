@@ -170,7 +170,7 @@ pub(super) fn jit_dot_fallback_zero_enabled() -> bool {
 }
 
 /// Cache hit avoids allocating `func_name` when ABI tag matches a prior declaration.
-pub(super) fn lookup_or_insert_import(
+pub(crate) fn lookup_or_insert_import(
     func_name: &str,
     abi_tag: String,
     sig: &Signature,

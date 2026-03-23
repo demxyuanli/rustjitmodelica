@@ -4,11 +4,27 @@ use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
+use std::sync::OnceLock;
 
 use crate::jit::context::TranslationContext;
 use crate::jit::translator::expr::compile_expression;
+use crate::solvable_limits::{
+    validate_solvable_residual_count, JIT_STACK_BUFFER_BYTES_MAX,
+};
 
 use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
+
+/// RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse — controls CSR path in Newton/tearing (default auto).
+fn newton_sparse_policy() -> &'static str {
+    static POLICY: OnceLock<String> = OnceLock::new();
+    POLICY
+        .get_or_init(|| {
+            std::env::var("RUSTMODLICA_NEWTON_SPARSE_POLICY")
+                .unwrap_or_else(|_| "auto".to_string())
+                .to_ascii_lowercase()
+        })
+        .as_str()
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct SparseJacobianPattern {
@@ -17,10 +33,21 @@ pub(super) struct SparseJacobianPattern {
     entries: Vec<(usize, usize)>,
 }
 
+pub(crate) fn solvable_block_uses_sparse_jacobian_path(
+    unknowns: &[String],
+    residuals: &[Expression],
+) -> bool {
+    build_sparse_jacobian_pattern(unknowns, residuals).is_some()
+}
+
 pub(super) fn build_sparse_jacobian_pattern(
     unknowns: &[String],
     residuals: &[Expression],
 ) -> Option<SparseJacobianPattern> {
+    let policy = newton_sparse_policy();
+    if policy == "dense" {
+        return None;
+    }
     let n = residuals.len();
     if n < 3 || unknowns.len() < n {
         return None;
@@ -46,7 +73,11 @@ pub(super) fn build_sparse_jacobian_pattern(
     }
 
     let nnz = col_idx.len();
-    if nnz == 0 || nnz >= n * n || nnz * 4 > n * n * 3 {
+    if nnz == 0 || nnz >= n * n {
+        return None;
+    }
+    // auto: use dense solve when Jacobian is not sparse enough; sparse: always use CSR when nnz < n*n.
+    if policy == "auto" && nnz * 4 > n * n * 3 {
         return None;
     }
 
@@ -66,6 +97,7 @@ pub(super) fn compile_solvable_block_general_sparse_n(
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
     let n = residuals.len();
+    validate_solvable_residual_count(n)?;
     let nnz = pattern.entries.len();
     let ptr_type = ctx.module.target_config().pointer_type();
     let row_ptr_bytes = pattern.row_ptr.len() * 4;
@@ -74,11 +106,16 @@ pub(super) fn compile_solvable_block_general_sparse_n(
     let r_offset = values_offset + nnz * 8;
     let dx_offset = r_offset + n * 8;
     let buf_size = dx_offset + n * 8;
-    let buf_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
-        cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
-        buf_size as u32,
-        0,
-    ));
+    let use_heap_workspace = buf_size > JIT_STACK_BUFFER_BYTES_MAX;
+    let buf_slot_opt = if use_heap_workspace {
+        None
+    } else {
+        Some(builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
+            buf_size as u32,
+            0,
+        )))
+    };
     let iter_slot = builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
         cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
         8,
@@ -86,7 +123,24 @@ pub(super) fn compile_solvable_block_general_sparse_n(
     ));
     let zero = builder.ins().f64const(0.0);
     builder.ins().stack_store(zero, iter_slot, 0);
-    let base_ptr = builder.ins().stack_addr(ptr_type, buf_slot, 0);
+    let base_ptr = if let Some(buf_slot) = buf_slot_opt {
+        builder.ins().stack_addr(ptr_type, buf_slot, 0)
+    } else {
+        let bsz = i32::try_from(buf_size).map_err(|_| {
+            "sparse Newton workspace size exceeds i32 (reduce SolvableBlock size)".to_string()
+        })?;
+        let bsz_val = builder.ins().iconst(cl_types::I32, i64::from(bsz));
+        let mut sig_b = ctx.module.make_signature();
+        sig_b.params.push(AbiParam::new(cl_types::I32));
+        sig_b.returns.push(AbiParam::new(ptr_type));
+        let fid_b = ctx
+            .module
+            .declare_function("rustmodlica_jit_workspace_bytes", Linkage::Import, &sig_b)
+            .map_err(|e| e.to_string())?;
+        let fr_b = ctx.module.declare_func_in_func(fid_b, &mut builder.func);
+        let call_b = builder.ins().call(fr_b, &[bsz_val]);
+        builder.inst_results(call_b)[0]
+    };
 
     for (idx, row) in pattern.row_ptr.iter().enumerate() {
         let off_val = builder.ins().iconst(ptr_type, (idx * 4) as i64);

@@ -1,7 +1,9 @@
 param(
   [string]$MslRoot = "",
   [string]$ModelicaTestRoot = "",
-  [switch]$IncludeResources
+  [switch]$IncludeResources,
+  [bool]$IncludeModelicaExamples = $true,
+  [string]$ModelicaExamplesSubdirs = "Fluid/Examples;Mechanics/MultiBody/Examples"
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,7 +50,7 @@ if (Test-Path $exePath) {
 }
 
 function PathToQualifiedName {
-  param([string]$FullPath, [string]$RootDir)
+  param([string]$FullPath, [string]$RootDir, [string]$PackagePrefix)
   $rel = $FullPath.Substring($RootDir.Length).TrimStart("\","/")
   $rel = $rel -replace "\\", "/"
   if ($rel.EndsWith(".mo")) { $rel = $rel.Substring(0, $rel.Length - 3) }
@@ -57,23 +59,54 @@ function PathToQualifiedName {
   if ($parts.Length -eq 0) { return $null }
   # Drop trailing "package" if caller accidentally passes package.mo
   if ($parts[$parts.Length - 1] -eq "package") { return $null }
-  return ("ModelicaTest." + ($parts -join "."))
-}
-
-$files = Get-ChildItem -Path $mt -Recurse -Filter "*.mo" -File | Where-Object { $_.Name -ne "package.mo" }
-if (-not $IncludeResources) {
-  $files = $files | Where-Object { $_.FullName -notmatch "\\Resources\\|/Resources/" }
+  return ($PackagePrefix + ($parts -join "."))
 }
 
 $cases = @()
-foreach ($f in $files) {
-  $q = PathToQualifiedName -FullPath $f.FullName -RootDir (Resolve-Path $mt).Path
+$mtAbs = (Resolve-Path $mt).Path
+$mtFiles = Get-ChildItem -Path $mt -Recurse -Filter "*.mo" -File | Where-Object { $_.Name -ne "package.mo" }
+if (-not $IncludeResources) {
+  $mtFiles = $mtFiles | Where-Object { $_.FullName -notmatch "\\Resources\\|/Resources/" }
+}
+foreach ($f in $mtFiles) {
+  $q = PathToQualifiedName -FullPath $f.FullName -RootDir $mtAbs -PackagePrefix "ModelicaTest."
   if ($q) { $cases += $q }
+}
+
+if ($IncludeModelicaExamples) {
+  $mRoot = Join-Path $PSScriptRoot "..\Modelica"
+  if (-not (Test-Path (Join-Path $mRoot "package.mo"))) {
+    throw "Modelica root does not contain package.mo: $mRoot"
+  }
+
+  $mRootAbs = (Resolve-Path $mRoot).Path
+  $subdirs = @()
+  if (-not [string]::IsNullOrWhiteSpace($ModelicaExamplesSubdirs)) {
+    $subdirs = $ModelicaExamplesSubdirs.Split(";") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+  }
+
+  foreach ($sub in $subdirs) {
+    $subPath = Join-Path $mRootAbs $sub
+    if (-not (Test-Path $subPath)) {
+      Write-Host ("Skip missing Modelica examples subdir: " + $subPath)
+      continue
+    }
+
+    $subFiles = Get-ChildItem -Path $subPath -Recurse -Filter "*.mo" -File | Where-Object { $_.Name -ne "package.mo" }
+    if (-not $IncludeResources) {
+      $subFiles = $subFiles | Where-Object { $_.FullName -notmatch "\\Resources\\|/Resources/" }
+    }
+
+    foreach ($f in $subFiles) {
+      $q = PathToQualifiedName -FullPath $f.FullName -RootDir $mRootAbs -PackagePrefix "Modelica."
+      if ($q) { $cases += $q }
+    }
+  }
 }
 
 $cases = $cases | Sort-Object -Unique
 
-Write-Host ("ModelicaTest cases: " + $cases.Count)
+Write-Host ("Validation cases: " + $cases.Count)
 
 $ok = 0
 $fail = 0
@@ -81,16 +114,16 @@ $firstFailure = $null
 
 foreach ($name in $cases) {
   Write-Host "=== validate $name"
-  $args = @("--lib-path=$msl", "--validate", $name)
+  $runArgs = @("--lib-path=$msl", "--validate", $name)
   $out = ""
   $exit = 0
   try {
     if ($exe -eq "cargo") {
-      $outLines = & cargo run --release -- @args 2>&1
+      $outLines = & cargo run --release -- @runArgs 2>&1
       $out = ($outLines -join "`n")
       $exit = $LASTEXITCODE
     } else {
-      $outLines = & $exe @args 2>&1
+      $outLines = & $exe @runArgs 2>&1
       $out = ($outLines -join "`n")
       $exit = $LASTEXITCODE
     }

@@ -1,0 +1,35 @@
+{
+  "schema": "rustmodlica_flat_snapshot_v1",
+  "declarations": [
+    {
+      "name": "b_u",
+      "type_name": "Real",
+      "is_flow": false,
+      "is_parameter": false,
+      "is_input": false,
+      "is_output": false,
+      "replaceable": false,
+      "constrainedby_type": null
+    },
+    {
+      "name": "b_v",
+      "type_name": "Real",
+      "is_flow": false,
+      "is_parameter": false,
+      "is_input": false,
+      "is_output": false,
+      "replaceable": false,
+      "constrainedby_type": null
+    }
+  ],
+  "instances": {
+    "b": "ModelicaTest.RedeclareSmoke.RedeclareExtendsExample.LocalBase"
+  },
+  "array_sizes": {},
+  "equations": [
+    "b_u = 1",
+    "b_v = 2"
+  ],
+  "initial_equations": [],
+  "connections": []
+}

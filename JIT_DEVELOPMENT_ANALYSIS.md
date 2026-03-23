@@ -355,8 +355,10 @@ JIT 编译器为代数环生成内联 Newton 迭代：
 | `rk4` | 显式定步长 | 经典四阶 Runge-Kutta | [x] 过零二分法 |
 | `rk45` | 显式自适应 | Dormand-Prince 5(4) | [x] 误差控制步长 |
 | `implicit` | 隐式定步长 | 后向 Euler + 不动点迭代 | [x] 过零二分法 |
+| `cvode` | SUNDIALS 变步长 | BDF + Newton（ODE 子集） | [x] 支持 `when + zero-crossing + reinit` 主路径 |
+| `ida` | SUNDIALS DAE | index-1 子集（`IDASetId`） | [x] 支持 `when + zero-crossing + reinit` 主路径 |
 
-通过 CLI 选择：`--solver=rk4|rk45|implicit`
+通过 CLI 选择：`--solver=rk4|rk45|implicit|cvode|ida`（`cvode/ida` 需 `--features sundials`）
 
 ### 4.2 事件处理
 
@@ -417,6 +419,24 @@ JIT 编译器为代数环生成内联 Newton 迭代：
 | 输出间隔 | `--output-interval` | 0.01 |
 | 结果文件 | `--result-file` | stdout |
 | 输出格式 | `--output-format` | csv |
+
+### 4.6.1 event-scan 参数基准源（SUNDIALS 事件调参）
+
+为避免多文档参数漂移，`event-scan` 参数定义以 `README.md` 的 `3.1) 事件参数扫描（event-scan）` 为唯一基准源；本节仅保留调用示例。
+
+推荐批量命令（Windows PowerShell）：
+
+```powershell
+cargo run -p rustmodlica --features sundials -- event-scan `
+  --lib-path="d:\source\repos\rustmodlica\jit-compiler\TestLib" `
+  --models=BouncingBall,YourOtherModel `
+  --count-values=0.0004,0.0005,0.0006,0.0008 `
+  --tail-velocity-values=0.02,0.03,0.04,0.05 `
+  --aggregate-mode=sum `
+  --aggregate-report=compact `
+  --quiet=all `
+  --output-file="d:\source\repos\rustmodlica\build_event_compare\event_scan_result.json"
+```
 
 ### 4.7 仿真性能
 
@@ -747,6 +767,13 @@ JIT 编译器为代数环生成内联 Newton 迭代：
 | `RUSTMODLICA_JIT_IMPORT_DEBUG` | 启用 JIT 导入调试日志 |
 | `RUSTMODLICA_JIT_DOT_TRACE` | 启用点表达式追踪 |
 | `RUSTMODLICA_JIT_VERIFIER_DUMP` | 验证器失败时转储函数 IR |
+| `RUSTMODLICA_EVENT_DEADBAND` | SUNDIALS 事件时间去抖阈值 |
+| `RUSTMODLICA_EVENT_COUNT_DEADBAND` | 事件计数去重阈值 |
+| `RUSTMODLICA_EVENT_MAX_SAME_HITS` | 同一事件时刻最大重复命中次数 |
+| `RUSTMODLICA_TAIL_CROSSING_DEADBAND` | 末段 crossing 去抖阈值 |
+| `RUSTMODLICA_TAIL_HEIGHT_DEADBAND` | 末段高度过滤阈值 |
+| `RUSTMODLICA_TAIL_VELOCITY_DEADBAND` | 末段速度过滤阈值 |
+| `RUSTMODLICA_SUNDIALS_EVENT_LOG` | SUNDIALS 事件日志开关（0/1） |
 
 ---
 

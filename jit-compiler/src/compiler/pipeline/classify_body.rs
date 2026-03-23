@@ -270,7 +270,9 @@ pub(crate) fn classify_variables(
         collect_previous_vars_alg(stmt, &mut previous_vars);
     }
     for name in previous_vars {
-        discrete_vars.insert(name);
+        if !state_vars.contains(&name) {
+            discrete_vars.insert(name);
+        }
     }
 
     let decl_index: HashMap<String, usize> = flat_model

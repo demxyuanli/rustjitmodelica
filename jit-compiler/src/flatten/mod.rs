@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 mod error;
 mod decl_expand;
+mod real_fft_sample_points;
+mod param_expr_eval;
 mod import_resolve;
 mod inheritance;
 mod record;
@@ -27,9 +29,9 @@ pub mod flat_snapshot;
 use self::connections::resolve_connections;
 #[allow(unused_imports)]
 pub use self::expressions::{
-    eval_const_expr, eval_const_expr_with_array_sizes, eval_const_expr_with_params, expr_to_path,
-    index_expression, prefix_expression,
+    eval_const_expr, eval_const_expr_with_params, expr_to_path, index_expression, prefix_expression,
 };
+pub use self::param_expr_eval::{eval_const_expr_with_array_sizes, eval_const_expr_with_param_exprs};
 pub use self::structures::FlattenedModel;
 
 pub(crate) struct ExpandTarget<'a> {

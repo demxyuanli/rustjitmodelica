@@ -30,8 +30,26 @@ impl super::Flattener {
     ) {
         for eq in equations {
             match eq {
-                Equation::CallStmt(_) => {
-                    // Parse-only: ignore call statements in equation sections.
+                Equation::CallStmt(expr) => {
+                    // Keep reinit() semantics when parser classifies it as call_stmt
+                    // (grammar currently matches call_stmt before reinit_clause).
+                    if let Expression::Call(name, args) = expr {
+                        let is_reinit = name == "reinit" || name.ends_with(".reinit");
+                        if is_reinit && args.len() == 2 {
+                            if let Some(var_flat) = crate::ast::expr_to_flat_scalar_prefix(&args[0])
+                            {
+                                let val_sub = self.substitute_stack(&args[1], context_stack);
+                                target.algorithms.push(AlgorithmStatement::Reinit(
+                                    if prefix.is_empty() {
+                                        var_flat
+                                    } else {
+                                        format!("{}_{}", prefix, var_flat).replace('.', "_")
+                                    },
+                                    prefix_expression(&val_sub, prefix),
+                                ));
+                            }
+                        }
+                    }
                 }
                 Equation::Simple(lhs, rhs) => {
                     let lhs_sub = self.substitute_stack(lhs, context_stack);

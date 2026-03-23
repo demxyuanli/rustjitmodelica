@@ -5,6 +5,7 @@ pub(crate) mod inline;
 mod jacobian;
 mod pipeline;
 mod compile_model;
+mod solvable_scale_warn;
 
 use std::collections::{HashMap, HashSet};
 
@@ -426,6 +427,10 @@ pub struct Artifacts {
     pub newton_tearing_var_names: Vec<String>,
     pub atol: f64,
     pub rtol: f64,
+    /// Backend DAE differential index (for IDA / warnings).
+    pub differential_index: u32,
+    /// IDA `IDASetId` vector; same length as `states`, from `SimulationDae` layout.
+    pub ida_component_id: Vec<f64>,
     pub solver: String,
     pub output_interval: f64,
     pub result_file: Option<String>,

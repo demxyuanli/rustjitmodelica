@@ -1,0 +1,24 @@
+{
+  "schema": "rustmodlica_flat_snapshot_v1",
+  "declarations": [
+    {
+      "name": "p_x",
+      "type_name": "Real",
+      "is_flow": false,
+      "is_parameter": false,
+      "is_input": false,
+      "is_output": false,
+      "replaceable": false,
+      "constrainedby_type": null
+    }
+  ],
+  "instances": {
+    "p": "ModelicaTest.RedeclareSmoke.ConstrainedUsage.CP"
+  },
+  "array_sizes": {},
+  "equations": [
+    "p_x = 1"
+  ],
+  "initial_equations": [],
+  "connections": []
+}

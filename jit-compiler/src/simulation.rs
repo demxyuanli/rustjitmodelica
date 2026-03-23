@@ -15,6 +15,13 @@ mod newton_recovery;
 mod sim_io;
 mod step;
 mod types;
+#[cfg(feature = "sundials")]
+mod sundials;
+
+#[cfg(feature = "sundials")]
+pub use sundials::{
+    kinsol_solve_square_spgmr, parse_linsol_env, KinResidualFn, KinsolCallbackPack, SundialsLinSolKind,
+};
 
 pub type SimulationResult = types::SimulationResult;
 pub use self::types::run_simulation_collect;
@@ -45,6 +52,10 @@ pub fn run_simulation(
     newton_tearing_var_names: &[String],
     atol: f64,
     rtol: f64,
+    #[cfg_attr(not(feature = "sundials"), allow(unused_variables))]
+    differential_index: u32,
+    #[cfg_attr(not(feature = "sundials"), allow(unused_variables))]
+    ida_component_id: &[f64],
     solver: &str,
     output_interval: f64,
     result_file: Option<&str>,
@@ -63,6 +74,78 @@ pub fn run_simulation(
     let mut pre_discrete_vals = vec![0.0; discrete_vals.len()];
     let mut homotopy_lambda: f64 = 1.0;
     let homotopy_lambda_ptr: *const f64 = &homotopy_lambda;
+
+    let wants_cvode = solver == "cvode";
+    let wants_ida = solver == "ida";
+    #[cfg(not(feature = "sundials"))]
+    {
+        if wants_cvode || wants_ida {
+            return Err(
+                "solver cvode/ida requires building rustmodlica with --features sundials (optional: sundials-vendor)"
+                    .to_string(),
+            );
+        }
+    }
+    #[cfg(feature = "sundials")]
+    {
+        if wants_cvode || wants_ida {
+            if !newton_tearing_var_names.is_empty() {
+                return Err(
+                    "solver cvode/ida does not support models with Newton tearing".to_string(),
+                );
+            }
+            if wants_cvode {
+                return self::sundials::run_with_cvode(
+                    calc_derivs,
+                    when_count,
+                    crossings_count,
+                    states,
+                    discrete_vals,
+                    params,
+                    state_vars,
+                    discrete_vars,
+                    output_vars,
+                    output_start_vals,
+                    state_var_index,
+                    t_end,
+                    dt,
+                    numeric_ode_jacobian,
+                    symbolic_ode_jacobian,
+                    newton_tearing_var_names,
+                    atol,
+                    rtol,
+                    output_interval,
+                    result_file,
+                    result_collector,
+                );
+            }
+            return self::sundials::run_with_ida(
+                calc_derivs,
+                when_count,
+                crossings_count,
+                states,
+                discrete_vals,
+                params,
+                state_vars,
+                discrete_vars,
+                output_vars,
+                output_start_vals,
+                state_var_index,
+                t_end,
+                dt,
+                numeric_ode_jacobian,
+                symbolic_ode_jacobian,
+                newton_tearing_var_names,
+                atol,
+                rtol,
+                differential_index,
+                ida_component_id,
+                output_interval,
+                result_file,
+                result_collector,
+            );
+        }
+    }
 
     // RT1-3: Use adaptive RK45 only when solver is rk45 and no when/zero-crossing.
     let use_adaptive = solver == "rk45" && when_count == 0 && crossings_count == 0;

@@ -49,7 +49,7 @@ pub(super) fn parse_array_index(name: &str) -> Option<(String, usize)> {
 }
 
 /// Emit C residual function: void residual(double t, const double* x, double* xdot, const double* p, double* y).
-/// Supports Simple equations and SolvableBlock with 1 to 32 residuals (Newton in C; IR4-1 aligned with JIT).
+/// Supports Simple equations and SolvableBlock with 1..=MAX_SOLVABLE_RESIDUALS Newton (C; IR4-1 aligned with JIT).
 pub fn emit_residual(
     _state_vars: &[String],
     _param_vars: &[String],

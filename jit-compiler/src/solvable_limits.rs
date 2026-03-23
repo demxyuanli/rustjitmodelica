@@ -1,0 +1,57 @@
+//! SolvableBlock (Newton tearing) scale limits and JIT workspace policy.
+//!
+//! Scale targets (memory / asymptotic cost, not OMC coupling):
+//! - **n ~ 500**: dense Jacobian is about 500*500*8 B ≈ 2 MiB per factorization buffer; Gaussian elimination is O(n^3) (~1.25e8 mul-adds per step). Feasible for offline solves if storage is **heap**, not the default thread stack (~1 MiB).
+//! - **n ~ 2000**: dense Jacobian is about 32 MiB per buffer and O(n^3) dominates; **sparse** Jacobian + sparse/iterative linear algebra is effectively required for practical turnaround.
+//!
+//! This crate keeps **dense** Newton for moderate `n` with a **heap workspace** once `n` exceeds a small stack-safe threshold.
+//!
+//! ## Planned: sparse direct / iterative linear solve (not implemented)
+//! - **Direct**: symbolic/numeric sparse Jacobian in CSR/CSC; factorize with KLU/UMFPACK-style LU or Cholesky when structurally symmetric PD; reuse symbolic factorization across steps.
+//! - **Iterative**: GMRES/BiCGSTAB + Jacobian-vector products (avoid forming full J) or sparse J + ILU preconditioner; line search unchanged.
+//! - **Selection**: auto-pick by `nnz/n`, condition hints, or user flag; keep dense path for small `n`.
+
+/// Maximum number of residuals (and matched unknowns) accepted for a single `SolvableBlock` in JIT and C emission.
+pub const MAX_SOLVABLE_RESIDUALS: usize = 2048;
+
+/// Emit a compile-time warning when dense Newton `n` exceeds this (sparse path skipped).
+pub const DENSE_NEWTON_WARN_MIN_N: usize = 512;
+
+/// Emit a compile-time warning when a dense Jacobian buffer would exceed this size (bytes).
+pub const DENSE_JACOBIAN_WARN_BYTES: usize = 2 * 1024 * 1024;
+
+/// Use faer sparse LU for CSR solves when `n` is at least this (in-tree solver below for small systems).
+pub const CSR_FAER_SPARSE_LU_MIN_N: usize = 48;
+
+/// Prefer faer when average row nnz is not huge (avoids pathological wide rows in one shot).
+pub const CSR_FAER_MAX_AVG_NNZ_PER_ROW: usize = 256;
+
+/// Dense Newton: use Cranelift stack slot for J,r,dx only while `n` is small enough to stay well under typical thread stack limits.
+pub const JIT_DENSE_STACK_MAX_N: usize = 64;
+
+/// Sparse (and other) Newton: if the packed workspace would exceed this size, use a thread-local heap buffer instead of a stack slot.
+pub const JIT_STACK_BUFFER_BYTES_MAX: usize = 64 * 1024;
+
+/// `rustmodlica_solve_linear_csr` / [`crate::sparse_solve::CsrMatrix`] routing.
+#[inline]
+pub fn csr_use_faer_sparse_lu(n: usize, nnz: usize) -> bool {
+    if n < CSR_FAER_SPARSE_LU_MIN_N || nnz == 0 {
+        return false;
+    }
+    if nnz >= n.saturating_mul(n) / 2 {
+        return false;
+    }
+    let max_nnz = n.saturating_mul(CSR_FAER_MAX_AVG_NNZ_PER_ROW);
+    nnz <= max_nnz
+}
+
+pub fn validate_solvable_residual_count(n: usize) -> Result<(), String> {
+    if n == 0 || n > MAX_SOLVABLE_RESIDUALS {
+        Err(format!(
+            "SolvableBlock residual count {} not in 1..={}",
+            n, MAX_SOLVABLE_RESIDUALS
+        ))
+    } else {
+        Ok(())
+    }
+}

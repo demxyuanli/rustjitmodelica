@@ -33,7 +33,7 @@ $cases = @(
     @("TestLib/ForTest", "pass"),
     @("TestLib/WhenTest", "pass"),
     @("TestLib/BouncingBall", "pass"),
-    @("TestLib/Pendulum", "fail"),   # index-2 DAE; solver may fail without index reduction
+    @("TestLib/Pendulum", "pass"),   # requires index reduction args below
     @("TestLib/BLTTest", "pass"),
     @("TestLib/TearingTest", "pass"),
     @("TestLib/ArrayTest", "pass"),
@@ -68,7 +68,7 @@ $cases = @(
     @("TestLib/Ground", "pass"),
     @("TestLib/BadSyntax", "fail"),
     @("TestLib/UnknownTypeError", "fail"),
-    @("TestLib/OverdeterminedIndex2Warn", "fail"),  # index-2, Newton fails at t=0
+    @("TestLib/OverdeterminedIndex2Warn", "pass"),  # index-2, now solved via homotopy/index-reduction
     @("TestLib/SimpleRecord", "pass"),
     @("TestLib/SimpleBlockTest", "pass"),
     @("TestLib/SimpleBlock", "pass"),
@@ -82,22 +82,32 @@ $cases = @(
     @("TestLib/TypeAliasTest", "pass"),
     @("TestLib/ReplaceableTest", "pass"),
     @("TestLib/ClockedPartitionTest", "pass"),
+    @("TestLib/ClockedTwoRates", "pass"),
+    @("ModelicaTest.JitStress.SyncOmCompare", "pass"),
     @("TestLib/HoldPreviousTest", "pass"),
     @("TestLib/IntervalClockTest", "pass"),
     @("TestLib/DefaultArgTest", "pass"),
     @("TestLib/ReinitTest", "pass"),
     @("TestLib/ExtLibAnnotationTest", "pass"),
     @("TestLib/ArrayArgTest", "pass"),
-    @("TestLib/SubSuperShiftSampleTest", "fail"),
+    @("TestLib/SubSuperShiftSampleTest", "pass"),
     @("TestLib/RestParamTest", "pass")
 )
+$repoRoot = $PSScriptRoot
+$jitRoot = Join-Path $repoRoot "jit-compiler"
+Push-Location $jitRoot
+$caseExtraArgs = @{
+    "TestLib/Pendulum" = @("--index-reduction-method=dummyDerivative")
+}
 $ok = 0
 $bad = 0
 $results = @()
 foreach ($c in $cases) {
     $name = $c[0]
     $expect = $c[1]
-    $null = & cargo run --release -- $name 2>&1
+    $extra = @()
+    if ($caseExtraArgs.ContainsKey($name)) { $extra = $caseExtraArgs[$name] }
+    $null = & cargo run --release -- @extra -- $name 2>&1
     $exit = $LASTEXITCODE
     $actual = if ($exit -eq 0) { "pass" } else { "fail" }
     $match = ($actual -eq $expect)
@@ -122,7 +132,7 @@ $scriptTests = @(
 )
 foreach ($t in $scriptTests) {
     $name = $t.name
-    $scriptPath = $t.path
+    $scriptPath = Join-Path ".." $t.path
     $expect = $t.expect
     $null = & cargo run --release -- --script=$scriptPath 2>&1
     $exit = $LASTEXITCODE
@@ -175,7 +185,54 @@ if ($fmiOk) { $ok++ } else { $bad++ }
 $sym = if ($fmiOk) { "OK" } else { "!!" }
 $results += "$sym FMI/emit-fmu  expect=modelDescription.xml and fmi2_cs.c  actual=$(if ($fmiOk) { 'pass' } else { 'fail' })"
 
+$modelicaDirScript = Join-Path $repoRoot "run_modelica_dir_regression.ps1"
+if (Test-Path $modelicaDirScript) {
+    $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $modelicaDirScript -Root $repoRoot -MaxCases 0 -AllLibraryMo -NewtonCountsAsFailed 2>&1
+    $exitModelicaDir = $LASTEXITCODE
+    $modelicaDirOk = ($exitModelicaDir -eq 0)
+    if ($modelicaDirOk) { $ok++ } else { $bad++ }
+    $sym = if ($modelicaDirOk) { "OK" } else { "!!" }
+    $results += "$sym DIR-MSL+ModelicaTest  expect=self-consistency invariants  actual=$(if ($modelicaDirOk) { 'pass' } else { 'fail' }) (exit $exitModelicaDir)"
+}
+
+$eventScanMatrixScript = Join-Path $repoRoot "jit-compiler\scripts\run_event_scan_matrix.ps1"
+if (Test-Path $eventScanMatrixScript) {
+    $eventOutDir = "build_stability/event_scan_matrix_ci"
+    $eventLibPath = Join-Path $repoRoot "jit-compiler"
+    $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $eventScanMatrixScript `
+        -Root $repoRoot `
+        -OutDir $eventOutDir `
+        -LibPaths @($eventLibPath) 2>&1
+    $eventExit = $LASTEXITCODE
+    $eventReport = Join-Path $repoRoot "$eventOutDir\consistency_report.txt"
+    $eventCsv = Join-Path $repoRoot "$eventOutDir\deadband_matrix_stability.csv"
+    $eventUnsupported = Join-Path $repoRoot "$eventOutDir\unsupported_models.txt"
+    $eventNondet = 0
+    $eventConfigErr = 0
+    $eventUnsupportedCount = 0
+    if (Test-Path $eventReport) {
+        $reportLines = Get-Content $eventReport
+        foreach ($line in $reportLines) {
+            if ($line -match '^nondeterministic=(\d+)$') { $eventNondet = [int]$Matches[1] }
+            if ($line -match '^config_error=(\d+)$') { $eventConfigErr = [int]$Matches[1] }
+            if ($line -match '^unsupported=(\d+)$') { $eventUnsupportedCount = [int]$Matches[1] }
+        }
+    } elseif (Test-Path $eventCsv) {
+        $rows = Import-Csv $eventCsv
+        $eventNondet = @($rows | Where-Object { $_.status -eq "nondeterministic" }).Count
+        $eventConfigErr = @($rows | Where-Object { $_.status -eq "config_error" -or $_.status -eq "error" }).Count
+        $eventUnsupportedCount = @($rows | Where-Object { $_.status -eq "unsupported" }).Count
+    } else {
+        $eventConfigErr = 1
+    }
+    $eventOk = ($eventExit -eq 0) -and ($eventNondet -eq 0) -and ($eventConfigErr -eq 0)
+    if ($eventOk) { $ok++ } else { $bad++ }
+    $sym = if ($eventOk) { "OK" } else { "!!" }
+    $results += "$sym EVENT-SCAN-MATRIX  expect=nondeterministic=0 and config_error=0  actual=$(if ($eventOk) { 'pass' } else { 'fail' }) (nondeterministic=$eventNondet, config_error=$eventConfigErr, unsupported=$eventUnsupportedCount, csv=$eventCsv, unsupported_file=$eventUnsupported)"
+}
+
 $results | ForEach-Object { Write-Host $_ }
 Write-Host ""
 Write-Host "Summary: $ok passed (match expected), $bad mismatch"
+Pop-Location
 if ($bad -gt 0) { exit 1 }

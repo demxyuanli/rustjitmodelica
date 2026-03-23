@@ -111,13 +111,15 @@ fn equations_for_connections(
     }
     let mut out = potential_eqs;
     let mut visited = HashSet::new();
-    for var in &flow_vars {
-        if visited.contains(var) {
+    let mut flow_vars_sorted: Vec<String> = flow_vars.iter().cloned().collect();
+    flow_vars_sorted.sort_unstable();
+    for var in flow_vars_sorted {
+        if visited.contains(&var) {
             continue;
         }
         let mut component = Vec::new();
         let mut stack = vec![var.clone()];
-        visited.insert(var.clone());
+        visited.insert(var);
         while let Some(curr) = stack.pop() {
             component.push(curr.clone());
             if let Some(neighbors) = flow_adj.get(&curr) {
@@ -130,6 +132,7 @@ fn equations_for_connections(
             }
         }
         if !component.is_empty() {
+            component.sort_unstable();
             let mut expr = Expression::Variable(crate::string_intern::intern(&component[0]));
             for i in 1..component.len() {
                 expr = Expression::BinaryOp(
@@ -290,11 +293,13 @@ pub fn resolve_connections(
     flat.equations.extend(potential_eqs);
 
     let mut visited = HashSet::new();
-    for var in &flow_vars {
-        if !visited.contains(var) {
+    let mut flow_vars_sorted: Vec<String> = flow_vars.iter().cloned().collect();
+    flow_vars_sorted.sort_unstable();
+    for var in flow_vars_sorted {
+        if !visited.contains(&var) {
             let mut component = Vec::new();
             let mut stack = vec![var.clone()];
-            visited.insert(var.clone());
+            visited.insert(var);
 
             while let Some(curr) = stack.pop() {
                 component.push(curr.clone());
@@ -308,7 +313,8 @@ pub fn resolve_connections(
                 }
             }
 
-            if component.len() > 0 {
+            if !component.is_empty() {
+                component.sort_unstable();
                 let mut expr = Expression::Variable(crate::string_intern::intern(&component[0]));
                 for i in 1..component.len() {
                     expr = Expression::BinaryOp(

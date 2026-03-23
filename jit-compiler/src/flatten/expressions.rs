@@ -444,51 +444,6 @@ pub fn eval_const_expr_with_params(
     }
 }
 
-pub fn eval_const_expr_with_array_sizes(
-    expr: &Expression,
-    array_sizes: &HashMap<String, usize>,
-) -> Option<f64> {
-    match expr {
-        Expression::Number(n) => Some(*n),
-        Expression::Variable(id) => {
-            let name = crate::string_intern::resolve_id(*id);
-            array_sizes.get(&name).map(|v| *v as f64)
-        }
-        Expression::BinaryOp(lhs, op, rhs) => {
-            let l = eval_const_expr_with_array_sizes(lhs, array_sizes)?;
-            let r = eval_const_expr_with_array_sizes(rhs, array_sizes)?;
-            match op {
-                Operator::Add => Some(l + r),
-                Operator::Sub => Some(l - r),
-                Operator::Mul => Some(l * r),
-                Operator::Div => Some(l / r),
-                _ => None,
-            }
-        }
-        Expression::If(cond, t_expr, f_expr) => {
-            let c = eval_const_expr_with_array_sizes(cond, array_sizes)?;
-            if c != 0.0 {
-                eval_const_expr_with_array_sizes(t_expr, array_sizes)
-            } else {
-                eval_const_expr_with_array_sizes(f_expr, array_sizes)
-            }
-        }
-        Expression::Call(func, args) if func == "size" => {
-            let first = args.first()?;
-            match first {
-                Expression::Variable(id) => {
-                    let name = crate::string_intern::resolve_id(*id);
-                    array_sizes.get(&name).map(|v| *v as f64)
-                }
-                Expression::ArrayLiteral(items) => Some(items.len() as f64),
-                Expression::Number(_) => Some(1.0),
-                _ => None,
-            }
-        }
-        _ => eval_const_expr(expr),
-    }
-}
-
 pub fn expr_to_path(expr: &Expression) -> Option<String> {
     match expr {
         Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),

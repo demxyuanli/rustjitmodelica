@@ -3,6 +3,7 @@ use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
 
 use crate::jit::context::TranslationContext;
+use crate::solvable_limits::validate_solvable_residual_count;
 
 pub(super) use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
 use super::solvable_general_dense::compile_solvable_block_general_dense_n;
@@ -17,6 +18,7 @@ pub(super) fn compile_solvable_block_general_n(
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
     let n = residuals.len();
+    validate_solvable_residual_count(n)?;
     let slots: Vec<_> = unknowns
         .iter()
         .take(n)

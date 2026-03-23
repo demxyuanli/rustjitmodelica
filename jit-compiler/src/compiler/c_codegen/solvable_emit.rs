@@ -4,6 +4,7 @@ use super::context::CCodegenContext;
 use super::equation_emit::emit_one_equation;
 use super::expr_emit::expr_to_c;
 use crate::ast::{Equation, Expression};
+use crate::solvable_limits::MAX_SOLVABLE_RESIDUALS;
 use std::io::Write;
 
 pub(super) fn sorted_eqs_need_solve_dense(sorted_eqs: &[Equation]) -> bool {
@@ -16,7 +17,7 @@ pub(super) fn sorted_eqs_need_solve_dense(sorted_eqs: &[Equation]) -> bool {
         {
             residuals.len() >= 1
                 && unknowns.len() >= 1
-                && unknowns.len() <= 32
+                && unknowns.len() <= MAX_SOLVABLE_RESIDUALS
                 && residuals.len() >= unknowns.len()
         } else {
             false
@@ -323,7 +324,7 @@ pub(super) fn emit_solvable_block_residual(
             ..
         } if residuals.len() >= 1
             && unknowns.len() >= 1
-            && unknowns.len() <= 32
+            && unknowns.len() <= MAX_SOLVABLE_RESIDUALS
             && residuals.len() >= unknowns.len() =>
         {
             let n = unknowns.len();
@@ -345,12 +346,17 @@ pub(super) fn emit_solvable_block_residual(
                 .collect();
             let ctx_inner = ctx.clone().with_overrides(&ov);
             writeln!(out, "  {{").map_err(|e| e.to_string())?;
+            writeln!(out, "    const int n = {};", n).map_err(|e| e.to_string())?;
             writeln!(
                 out,
-                "    double local_[32], res[32], J[32*32], dx[32]; int n = {};",
-                n
+                "    double *ws = (double*)malloc(sizeof(double) * (size_t)(n * n + 2 * n));"
             )
             .map_err(|e| e.to_string())?;
+            writeln!(out, "    if (ws) {{").map_err(|e| e.to_string())?;
+            writeln!(out, "    double *local_ = ws;").map_err(|e| e.to_string())?;
+            writeln!(out, "    double *res = local_ + n;").map_err(|e| e.to_string())?;
+            writeln!(out, "    double *J = res + n;").map_err(|e| e.to_string())?;
+            writeln!(out, "    double *dx = J + n * n;").map_err(|e| e.to_string())?;
             for (i, &idx) in indices.iter().enumerate() {
                 writeln!(out, "    local_[{}] = y[{}];", i, idx).map_err(|e| e.to_string())?;
             }
@@ -408,12 +414,15 @@ pub(super) fn emit_solvable_block_residual(
                     }
                 }
             }
+            writeln!(out, "    free(ws);").map_err(|e| e.to_string())?;
+            writeln!(out, "    }}").map_err(|e| e.to_string())?;
             writeln!(out, "  }}").map_err(|e| e.to_string())?;
             Ok(())
         }
         Equation::SolvableBlock { residuals, .. } => Err(format!(
-            "C codegen: SolvableBlock with {} residuals not supported (1 to 32 allowed)",
-            residuals.len()
+            "C codegen: SolvableBlock with {} residuals not supported (1 to {} allowed)",
+            residuals.len(),
+            MAX_SOLVABLE_RESIDUALS
         )),
         _ => Err("internal: emit_solvable_block_residual expects SolvableBlock".to_string()),
     }

@@ -34,6 +34,10 @@ pub enum ScriptCommand {
     GetErrorString,
     /// SCRIPT-5: switch current model to a previously loaded one by name.
     SwitchModel(String),
+    /// OMC-style: compile-only check (prints true on success).
+    InstantiateModel(String),
+    /// OMC-style: load model, set t_end and dt, run simulation (model t_end dt).
+    SimulateModel { model: String, t_end: f64, dt: f64 },
     Simulate,
     Quit,
     CommentOrEmpty,
@@ -236,6 +240,31 @@ pub fn parse_script_line(line: &str) -> Option<ScriptCommand> {
             return Some(ScriptCommand::SwitchModel(line[start..].trim().to_string()));
         }
     }
+    if let Some(rest) = lower.strip_prefix("instantiatemodel ") {
+        let name = rest.trim();
+        if !name.is_empty() {
+            let start = line.len().saturating_sub(rest.len());
+            return Some(ScriptCommand::InstantiateModel(
+                line[start..].trim().to_string(),
+            ));
+        }
+    }
+    if let Some(rest) = lower.strip_prefix("simulatemodel ") {
+        let rest = rest.trim();
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let te: f64 = parts[parts.len() - 2].parse().ok()?;
+            let dtt: f64 = parts[parts.len() - 1].parse().ok()?;
+            let model = parts[..parts.len() - 2].join(" ");
+            if !model.is_empty() {
+                return Some(ScriptCommand::SimulateModel {
+                    model,
+                    t_end: te,
+                    dt: dtt,
+                });
+            }
+        }
+    }
     None
 }
 
@@ -320,6 +349,89 @@ impl ScriptRunner {
                     Ok(true)
                 } else {
                     Err(format!("switchModel: model '{}' not loaded (load it first)", name).into())
+                }
+            }
+            ScriptCommand::InstantiateModel(model_name) => {
+                let warn_level = self.compiler.options.warnings_level.clone();
+                let out = self.compiler.compile(&model_name)?;
+                let warnings = self.compiler.take_warnings();
+                if warn_level != "none" {
+                    for w in &warnings {
+                        if warn_level == "error" {
+                            return Err(w.to_string().into());
+                        }
+                        eprintln!("{}", w);
+                    }
+                }
+                match out {
+                    CompileOutput::Simulation(_) => {
+                        println!("true");
+                        Ok(true)
+                    }
+                    CompileOutput::FunctionRun(_) => {
+                        Err("instantiateModel: expected simulation model".into())
+                    }
+                    CompileOutput::FlatSnapshotDone => Err(
+                        "instantiateModel: flat-snapshot-only produced no simulation model".into(),
+                    ),
+                }
+            }
+            ScriptCommand::SimulateModel { model, t_end, dt } => {
+                println!("Loading model: {}", model);
+                let warn_level = self.compiler.options.warnings_level.clone();
+                let out = self.compiler.compile(&model)?;
+                let warnings = self.compiler.take_warnings();
+                if warn_level != "none" {
+                    for w in &warnings {
+                        if warn_level == "error" {
+                            return Err(w.to_string().into());
+                        }
+                        eprintln!("{}", w);
+                    }
+                }
+                match out {
+                    CompileOutput::Simulation(mut artifacts) => {
+                        artifacts.t_end = t_end;
+                        artifacts.dt = dt;
+                        self.artifacts_map.insert(model.clone(), artifacts);
+                        self.current_model = Some(model);
+                        let arts = self.current_artifacts_ref()?;
+                        run_simulation(
+                            arts.calc_derivs,
+                            arts.when_count,
+                            arts.crossings_count,
+                            arts.states.clone(),
+                            arts.discrete_vals.clone(),
+                            arts.params.clone(),
+                            &arts.state_vars,
+                            &arts.discrete_vars,
+                            &arts.output_vars,
+                            &arts.output_start_vals,
+                            &arts.state_var_index,
+                            arts.t_end,
+                            arts.dt,
+                            arts.numeric_ode_jacobian,
+                            arts.symbolic_ode_jacobian.as_ref(),
+                            &arts.newton_tearing_var_names,
+                            arts.atol,
+                            arts.rtol,
+                            arts.differential_index,
+                            arts.ida_component_id.as_slice(),
+                            &arts.solver,
+                            arts.output_interval,
+                            arts.result_file.as_deref(),
+                            None,
+                        )?;
+                        Ok(true)
+                    }
+                    CompileOutput::FunctionRun(v) => Err(format!(
+                        "simulateModel: expected simulation model, got function result {}",
+                        v
+                    )
+                    .into()),
+                    CompileOutput::FlatSnapshotDone => Err(
+                        "simulateModel: flat-snapshot-only produced no simulation artifacts".into(),
+                    ),
                 }
             }
             ScriptCommand::SetParameter(name, value) => {
@@ -526,6 +638,8 @@ impl ScriptRunner {
                     &arts.newton_tearing_var_names,
                     arts.atol,
                     arts.rtol,
+                    arts.differential_index,
+                    arts.ida_component_id.as_slice(),
                     &arts.solver,
                     arts.output_interval,
                     arts.result_file.as_deref(),
@@ -555,7 +669,7 @@ impl ScriptRunner {
                     }
                 }
                 None => {
-                    return Err(format!("Script line {}: unknown command (supported: load/loadClass/buildModel/translateModel, use/switchModel, setParameter, setStartValue, setStopTime, setResultFile, saveResult, save, setTolerance, plot/plotAll, getParameter, getVariable, getErrorString, eval, simulate, quit)", line_no).into());
+                    return Err(format!("Script line {}: unknown command (supported: load/loadClass/buildModel/translateModel, use/switchModel, instantiateModel, simulateModel, setParameter, setStartValue, setStopTime, setResultFile, saveResult, save, setTolerance, plot/plotAll, getParameter, getVariable, getErrorString, eval, simulate, quit)", line_no).into());
                 }
             }
         }

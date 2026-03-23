@@ -10,7 +10,7 @@ use rustmodlica::ast::{
 use rustmodlica::parser;
 use rustmodlica::unparse;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,9 +126,9 @@ const LEGACY_LAYOUT_FILE_NAME: &str = ".modai/diagram-layout.json";
 #[serde(rename_all = "camelCase")]
 struct DiagramPersistentState {
     #[serde(default)]
-    layout: HashMap<String, LayoutPoint>,
+    layout: BTreeMap<String, LayoutPoint>,
     #[serde(default)]
-    connection_lines: HashMap<String, LineAnnotation>,
+    connection_lines: BTreeMap<String, LineAnnotation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diagram_annotation: Option<IconDiagramAnnotation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,13 +164,13 @@ fn load_persistent_state(
 ) -> Option<DiagramPersistentState> {
     let path = state_file_path(project_dir);
     let content = std::fs::read_to_string(&path).ok()?;
-    let all: HashMap<String, DiagramPersistentState> = serde_json::from_str(&content).ok()?;
+    let all: BTreeMap<String, DiagramPersistentState> = serde_json::from_str(&content).ok()?;
     let key = normalize_relative_path(relative_path);
     if let Some(state) = all.get(&key) {
         return Some(state.clone());
     }
     load_legacy_layout_from_file(project_dir, relative_path).map(|layout| DiagramPersistentState {
-        layout,
+        layout: layout.into_iter().collect(),
         ..DiagramPersistentState::default()
     })
 }
@@ -185,7 +185,7 @@ fn save_persistent_state(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let key = normalize_relative_path(relative_path);
-    let mut all: HashMap<String, DiagramPersistentState> = std::fs::read_to_string(&path)
+    let mut all: BTreeMap<String, DiagramPersistentState> = std::fs::read_to_string(&path)
         .ok()
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default();
@@ -587,7 +587,7 @@ pub fn get_diagram_data_from_source(
     if let (Some(pdir), Some(rpath)) = (project_dir, relative_path) {
         if let Some(state) = load_persistent_state(pdir, rpath) {
             if !state.layout.is_empty() {
-                diagram.layout = Some(state.layout);
+                diagram.layout = Some(state.layout.into_iter().collect());
             }
             if let Some(annotation) = state.diagram_annotation {
                 diagram.diagram_annotation = Some(annotation);
@@ -615,7 +615,7 @@ pub fn get_diagram_data_from_source(
                                 (connection_key(&connection.from, &connection.to), line.clone())
                             })
                         })
-                        .collect(),
+                        .collect::<BTreeMap<_, _>>(),
                     diagram_annotation: diagram.diagram_annotation.clone(),
                     icon_annotation: diagram.icon_annotation.clone(),
                 },
@@ -704,7 +704,9 @@ fn apply_component_to_declaration(decl: &mut Declaration, component: &ComponentI
             modification.value = parse_param_expression(&new_value).or(modification.value.clone());
         }
     }
-    for (name, value) in incoming_mods {
+    let mut remaining_mods: Vec<(String, String)> = incoming_mods.into_iter().collect();
+    remaining_mods.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    for (name, value) in remaining_mods {
         if let Some(expr) = parse_param_expression(&value) {
             decl.modifications.push(rustmodlica::ast::Modification {
                 name,
@@ -810,7 +812,11 @@ pub fn apply_diagram_edits(
 
     if let (Some(pdir), Some(rpath)) = (project_dir, relative_path) {
         let state = DiagramPersistentState {
-            layout: layout.cloned().unwrap_or_default(),
+            layout: layout
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect::<BTreeMap<_, _>>(),
             connection_lines: connections
                 .iter()
                 .filter_map(|connection| {
@@ -819,7 +825,7 @@ pub fn apply_diagram_edits(
                         .as_ref()
                         .map(|line| (connection_key(&connection.from, &connection.to), line.clone()))
                 })
-                .collect(),
+                .collect::<BTreeMap<_, _>>(),
             diagram_annotation: diagram_annotation.cloned(),
             icon_annotation: icon_annotation.cloned(),
         };
