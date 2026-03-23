@@ -17,3 +17,15 @@ build_modelica_dir_regress/
 build_electrical_regress/
 build_modelicatest_regress/
 build_full_regress/
+build_event_compare/
+build_modelica_dir_regress_jitstress/
+build_modelica_dir_regress_modelicatest/
+build_tmp_*.csv
+build_*.csv
+rust_out.csv
+tmp_*.c
+jit-compiler/build_regress_*/
+target_*/
+build_*/
+jit-compiler/_smoke_*.csv
+jit-compiler/_smoke_*.json
