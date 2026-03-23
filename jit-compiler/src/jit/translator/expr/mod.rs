@@ -1,6 +1,6 @@
 mod builtin;
 mod compile;
-mod helpers;
+pub(crate) mod helpers;
 mod matrix;
 mod pre;
 

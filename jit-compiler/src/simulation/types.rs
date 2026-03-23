@@ -1,12 +1,30 @@
 use std::collections::HashMap;
 use crate::ast::Expression;
 use crate::jit::CalcDerivsFunc;
+use serde::ser::SerializeMap;
 
 /// Serializable simulation time series for IDE/Plotly (time + series per variable).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationResult {
     pub time: Vec<f64>,
+    #[serde(serialize_with = "serialize_series_sorted")]
     pub series: HashMap<String, Vec<f64>>,
+}
+
+fn serialize_series_sorted<S>(
+    series: &HashMap<String, Vec<f64>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut entries: Vec<(&String, &Vec<f64>)> = series.iter().collect();
+    entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    let mut map = serializer.serialize_map(Some(entries.len()))?;
+    for (k, v) in entries {
+        map.serialize_entry(k, v)?;
+    }
+    map.end()
 }
 
 /// Row collector for run_simulation when collecting in-memory (time, states, discrete, outputs).
@@ -31,6 +49,8 @@ pub fn run_simulation_collect(
     newton_tearing_var_names: &[String],
     atol: f64,
     rtol: f64,
+    differential_index: u32,
+    ida_component_id: &[f64],
     solver: &str,
     output_interval: f64,
 ) -> Result<SimulationResult, String> {
@@ -59,6 +79,8 @@ pub fn run_simulation_collect(
         newton_tearing_var_names,
         atol,
         rtol,
+        differential_index,
+        ida_component_id,
         solver,
         output_interval,
         None,

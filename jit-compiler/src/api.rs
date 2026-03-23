@@ -119,6 +119,8 @@ pub fn simulate_from_source(
         &artifacts.newton_tearing_var_names,
         artifacts.atol,
         artifacts.rtol,
+        artifacts.differential_index,
+        artifacts.ida_component_id.as_slice(),
         &artifacts.solver,
         artifacts.output_interval,
     )?;

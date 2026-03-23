@@ -1,6 +1,37 @@
-// IR4-4: Sparse linear solve. CSR format; solve A*x = b via dense fallback for small n.
-// For large n a proper sparse LU or iterative solver can be substituted.
-#![allow(dead_code)]
+// IR4-4: Sparse linear solve (CSR). Large n + moderate nnz: faer sparse LU first; else dense or in-tree elimination.
+use crate::solvable_limits::csr_use_faer_sparse_lu;
+use faer::linalg::solvers::Solve;
+use faer::sparse::linalg::solvers::Lu;
+use faer::sparse::{SparseRowMat, SymbolicSparseRowMat};
+use faer::Mat;
+
+fn try_solve_csr_faer_lu(
+    n: usize,
+    row_ptr: &[usize],
+    col_idx: &[usize],
+    values: &[f64],
+    b: &[f64],
+    x: &mut [f64],
+) -> Result<(), ()> {
+    if row_ptr.len() != n + 1 || col_idx.len() != values.len() || b.len() < n || x.len() < n {
+        return Err(());
+    }
+    let sym = SymbolicSparseRowMat::<usize, usize, usize>::new_unsorted_checked(
+        n,
+        n,
+        row_ptr.to_vec(),
+        None,
+        col_idx.to_vec(),
+    );
+    let a = SparseRowMat::new(sym, values.to_vec());
+    let lu: Lu<usize, f64> = a.sp_lu().map_err(|_| ())?;
+    let mut rhs = Mat::<f64>::from_fn(n, 1, |i, _| b[i]);
+    lu.solve_in_place(&mut rhs);
+    for i in 0..n {
+        x[i] = *rhs.get(i, 0);
+    }
+    Ok(())
+}
 
 /// Compressed sparse row: row_ptr.len() == n+1, col_idx and values have nnz entries.
 #[derive(Debug, Clone)]
@@ -24,6 +55,20 @@ impl CsrMatrix {
             return Err(());
         }
         let nnz = self.nnz();
+        if csr_use_faer_sparse_lu(n, nnz) {
+            if try_solve_csr_faer_lu(
+                n,
+                &self.row_ptr,
+                &self.col_idx,
+                &self.values,
+                b,
+                x,
+            )
+            .is_ok()
+            {
+                return Ok(());
+            }
+        }
         if nnz >= n * n / 2 || n <= 4 {
             let mut dense = vec![0.0; n * n];
             for i in 0..n {

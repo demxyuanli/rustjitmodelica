@@ -1,9 +1,57 @@
 use crate::ast::Expression;
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
+use cranelift_module::{Linkage, Module};
 
 use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
+
+/// `sample(interval)` / `sample(start, interval)` and package-qualified `.sample` / `.interval`.
+/// Must run before the generic "Modelica.* passthrough first arg" fallback.
+fn compile_periodic_sample_call(
+    args: &[Expression],
+    ctx: &mut TranslationContext,
+    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
+    compile_rec: fn(
+        &Expression,
+        &mut TranslationContext,
+        &mut cranelift::frontend::FunctionBuilder<'_>,
+    ) -> Result<Value, String>,
+) -> Result<Value, String> {
+    if args.is_empty() {
+        return Ok(builder.ins().f64const(0.0));
+    }
+    if args.len() != 1 && args.len() != 2 {
+        return Err(format!(
+            "sample/interval expect 0, 1 or 2 arguments, got {}",
+            args.len()
+        ));
+    }
+    let time_val = ctx
+        .var_map
+        .get("time")
+        .copied()
+        .ok_or_else(|| "sample/interval requires time in context".to_string())?;
+    let mut sig = ctx.module.make_signature();
+    sig.params.push(AbiParam::new(cl_types::F64));
+    sig.params.push(AbiParam::new(cl_types::F64));
+    sig.returns.push(AbiParam::new(cl_types::F64));
+    let func_id = ctx
+        .module
+        .declare_function("rustmodlica_sample", Linkage::Import, &sig)
+        .map_err(|e| e.to_string())?;
+    let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+    let (t_arg, interval_arg) = if args.len() == 1 {
+        (time_val, compile_rec(&args[0], ctx, builder)?)
+    } else {
+        let start_val = compile_rec(&args[0], ctx, builder)?;
+        let interval_val = compile_rec(&args[1], ctx, builder)?;
+        let t_rel = builder.ins().fsub(time_val, start_val);
+        (t_rel, interval_val)
+    };
+    let call_inst = builder.ins().call(func_ref, &[t_arg, interval_arg]);
+    Ok(builder.inst_results(call_inst)[0])
+}
 
 pub(super) fn try_compile_builtin_call(
     func_name: &str,
@@ -16,6 +64,13 @@ pub(super) fn try_compile_builtin_call(
         &mut cranelift::frontend::FunctionBuilder<'_>,
     ) -> Result<Value, String>,
 ) -> Option<Result<Value, String>> {
+    if func_name == "sample"
+        || func_name.ends_with(".sample")
+        || func_name == "interval"
+        || func_name.ends_with(".interval")
+    {
+        return Some(compile_periodic_sample_call(args, ctx, builder, compile_rec));
+    }
     // Generic namespace helper fallback: package-qualified helper calls are often not linked as
     // standalone symbols in validate mode. Degrade to passthrough placeholder.
     if let Some(head) = func_name.split('.').next() {
@@ -666,19 +721,6 @@ pub(super) fn try_compile_builtin_call(
         let one = builder.ins().f64const(1.0);
         let is_zero = builder.ins().fcmp(FloatCC::Equal, v, zero);
         return Some(Ok(builder.ins().select(is_zero, one, zero)));
-    }
-    if func_name == "sample"
-        || func_name == "interval"
-        || func_name.ends_with(".sample")
-        || func_name.ends_with(".interval")
-    {
-        if args.is_empty() {
-            return Some(Ok(builder.ins().f64const(0.0)));
-        }
-        if args.len() != 1 && args.len() != 2 {
-            return Some(Err(format!("sample/interval expect 0, 1 or 2 arguments, got {}", args.len())));
-        }
-        return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "subSample"
         || func_name == "backSample"

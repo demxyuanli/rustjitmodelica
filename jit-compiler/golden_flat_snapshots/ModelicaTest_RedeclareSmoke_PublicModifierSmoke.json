@@ -1,0 +1,11 @@
+{
+  "schema": "rustmodlica_flat_snapshot_v1",
+  "declarations": [],
+  "instances": {},
+  "array_sizes": {},
+  "equations": [
+    "x = 0"
+  ],
+  "initial_equations": [],
+  "connections": []
+}

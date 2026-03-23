@@ -138,6 +138,19 @@ pub struct SimulationDae {
     pub initial: InitialDae,
 }
 
+/// IDA `ID` vector aligned with integrated state order (`state_vars`): 1.0 = differential, 0.0 = algebraic.
+/// Current JIT states are differential-only; algebraic unknowns live in outputs, so entries are typically 1.0.
+pub fn ida_component_id_for_states(simulation_dae: &SimulationDae, state_count: usize) -> Vec<f64> {
+    let mut id = vec![1.0_f64; state_count];
+    let alg = simulation_dae.dae.variables.algebraic_set();
+    for (i, name) in simulation_dae.dae.variables.states.iter().enumerate() {
+        if i < state_count && alg.contains(name.as_str()) {
+            id[i] = 0.0;
+        }
+    }
+    id
+}
+
 impl SimulationDae {
     #[allow(dead_code)]
     pub fn state_count(&self) -> usize {

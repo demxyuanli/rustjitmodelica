@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::analysis::analyze_initial_equations;
 use crate::ast::{Equation, Expression};
 use crate::backend_dae::{
-    build_simulation_dae, ClockPartition as BackendClockPartition, SimulationDae,
+    build_simulation_dae, ida_component_id_for_states, ClockPartition as BackendClockPartition,
+    SimulationDae,
 };
 use crate::diag::WarningInfo;
 use crate::i18n;
@@ -12,7 +13,7 @@ use crate::jit::Jit;
 
 use super::{
     c_codegen, collect_all_called_names, collect_external_calls, inline, jacobian,
-    Artifacts, CompileOutput, Compiler,
+    solvable_scale_warn, Artifacts, CompileOutput, Compiler,
 };
 use super::pipeline::{
     analyze_equations, build_runtime_algorithms, classify_variables,
@@ -227,6 +228,8 @@ pub(super) fn compile(
             constraint_equation_count,
             &backend_clock_partitions,
         );
+        let ida_component_id = ida_component_id_for_states(&simulation_dae, states.len());
+        let dae_differential_index = simulation_dae.dae.differential_index;
 
         let external_list = collect_external_calls(
             &mut compiler.loader,
@@ -516,6 +519,12 @@ pub(super) fn compile(
 
         let t_end = compiler.options.t_end;
         let dt = compiler.options.dt;
+        solvable_scale_warn::push_dense_newton_scale_warnings(
+            &alg_equations,
+            &mut compiler.warnings,
+            model_file_path.clone(),
+            &compiler.options.warnings_level,
+        );
         let mut jit = if all_symbols.is_empty() {
             Jit::new()
         } else {
@@ -557,6 +566,8 @@ pub(super) fn compile(
                     newton_tearing_var_names,
                     atol: compiler.options.atol,
                     rtol: compiler.options.rtol,
+                    differential_index: dae_differential_index,
+                    ida_component_id,
                     solver: compiler.options.solver.clone(),
                     output_interval: compiler.options.output_interval,
                     result_file: compiler.options.result_file.clone(),

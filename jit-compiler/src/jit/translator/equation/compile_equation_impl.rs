@@ -1,14 +1,15 @@
 use crate::analysis::collect_vars_expr;
 use crate::ast::Equation;
+use crate::flatten::utils::convert_eq_to_alg;
 use std::collections::HashSet;
 
 use crate::jit::context::TranslationContext;
+use crate::solvable_limits::MAX_SOLVABLE_RESIDUALS;
 
+use crate::jit::translator::algorithm::compile_algorithm_stmt;
 use super::assign::{compile_for_equation, compile_simple_equation};
 use super::solvable::compile_solvable_block_general_n;
-use super::solvable_three_residual::compile_three_residual_solvable_block;
 use super::solvable_tearing::compile_single_unknown_or_tearing_solvable_block;
-use super::solvable_two_residual::compile_two_residual_solvable_block;
 
 fn compile_single_residual_solvable_block(
     unknowns: &[String],
@@ -60,16 +61,16 @@ fn compile_solvable_block_dispatch(
     ctx: &mut TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
-    if residuals.len() >= 2 && residuals.len() <= 32 && unknowns.len() == residuals.len() {
-        compile_solvable_block_general_n(unknowns, residuals, ctx, builder)?;
-    } else if residuals.len() == 2 && unknowns.len() >= 2 {
-        compile_two_residual_solvable_block(unknowns, residuals, ctx, builder)?;
-    } else if residuals.len() == 3 && unknowns.len() >= 3 {
-        compile_three_residual_solvable_block(unknowns, residuals, ctx, builder)?;
-    } else if residuals.len() >= 4 && residuals.len() <= 32 && unknowns.len() >= residuals.len() {
-        compile_solvable_block_general_n(unknowns, residuals, ctx, builder)?;
+    if residuals.len() >= 2
+        && residuals.len() <= MAX_SOLVABLE_RESIDUALS
+        && unknowns.len() >= residuals.len()
+    {
+        let r = residuals.len();
+        compile_solvable_block_general_n(&unknowns[..r], residuals, ctx, builder)?;
     } else if (residuals.len() == 1 && (tearing_var.is_some() || !unknowns.is_empty()))
-        || (residuals.len() >= 2 && residuals.len() <= 32 && unknowns.len() == 1)
+        || (residuals.len() >= 2
+            && residuals.len() <= MAX_SOLVABLE_RESIDUALS
+            && unknowns.len() == 1)
     {
         compile_single_unknown_or_tearing_solvable_block(
             unknowns, tearing_var, inner_eqs, residuals, ctx, builder,
@@ -80,8 +81,9 @@ fn compile_solvable_block_dispatch(
         )?;
             } else {
                 return Err(format!(
-                    "SolvableBlock with {} residuals is not supported (1 to 32 allowed)",
-                    residuals.len()
+                    "SolvableBlock with {} residuals is not supported (1 to {} allowed)",
+                    residuals.len(),
+                    MAX_SOLVABLE_RESIDUALS
                 ));
             }
     Ok(())
@@ -110,8 +112,13 @@ pub fn compile_equation(
                 unknowns, tearing_var, inner_eqs, residuals, ctx, builder,
             )?;
         }
-        Equation::If(..) => {
-            return Err("if-equation not yet supported in JIT; use algorithm if(cond) then ... end if instead".to_string());
+        Equation::If(..)
+        | Equation::When(..)
+        | Equation::Reinit(..)
+        | Equation::Assert(..)
+        | Equation::Terminate(..) => {
+            let alg = convert_eq_to_alg(eq.clone());
+            compile_algorithm_stmt(&alg, ctx, builder)?;
         }
         Equation::MultiAssign(_, _) => {
             return Err("MultiAssign should not reach JIT (expand in flatten)".to_string());

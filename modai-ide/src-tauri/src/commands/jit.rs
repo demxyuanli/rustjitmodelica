@@ -262,6 +262,8 @@ pub fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationRes
         &artifacts.newton_tearing_var_names,
         artifacts.atol,
         artifacts.rtol,
+        artifacts.differential_index,
+        artifacts.ida_component_id.as_slice(),
         &artifacts.solver,
         artifacts.output_interval,
     )
@@ -366,6 +368,8 @@ pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, 
         &artifacts.newton_tearing_var_names,
         artifacts.atol,
         artifacts.rtol,
+        artifacts.differential_index,
+        artifacts.ida_component_id.as_slice(),
         &artifacts.solver,
         artifacts.output_interval,
     )

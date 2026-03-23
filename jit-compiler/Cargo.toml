@@ -11,6 +11,14 @@ path = "src/lib.rs"
 name = "rustmodlica"
 path = "src/main.rs"
 
+[features]
+default = []
+# SUNDIALS CVODE/IDA/KINSOL via sundials-sys (system install or enable `sundials-vendor`).
+sundials = ["dep:sundials-sys", "dep:libc"]
+sundials-vendor = ["sundials", "sundials-sys/build_libraries"]
+# SUNLinSol KLU + sparse Jacobian matrix (SuiteSparse KLU); heavy dependency.
+sundials-klu = ["sundials", "sundials-sys/klu"]
+
 [dependencies]
 anyhow = "1.0.102"
 serde = { version = "1.0", features = ["derive"] }
@@ -26,3 +34,8 @@ pest = "2.8.6"
 pest_derive = "2.8.6"
 petgraph = "0.6"
 thiserror = "2.0.18"
+realfft = "3.4"
+# Sparse LU for CSR Newton (see sparse_solve / native rustmodlica_solve_linear_csr).
+faer = { version = "0.24", default-features = false, features = ["std", "sparse-linalg"] }
+libc = { version = "0.2", optional = true }
+sundials-sys = { version = "0.6.2", optional = true, default-features = false, features = ["cvode", "ida", "kinsol"] }

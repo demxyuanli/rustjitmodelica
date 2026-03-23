@@ -17,25 +17,12 @@ pub(super) fn parse_for_loop(pair: Pair<Rule>) -> Equation {
     let mut body = Vec::new();
 
     for stmt in inner {
-        let inner_stmt = stmt.into_inner().next().unwrap();
-        match inner_stmt.as_rule() {
-            Rule::equation => {
-                let mut eq_parts = inner_stmt.into_inner();
-                let lhs = expression::parse_expression(eq_parts.next().unwrap());
-                let rhs = expression::parse_expression(eq_parts.next().unwrap());
-                body.push(Equation::Simple(lhs, rhs));
-            }
-            Rule::connect_clause => {
-                let mut conn_inner = inner_stmt.into_inner();
-                let a_expr = expression::parse_expression(conn_inner.next().unwrap());
-                let b_expr = expression::parse_expression(conn_inner.next().unwrap());
-                body.push(Equation::Connect(a_expr, b_expr));
-            }
-            Rule::for_loop => {
-                body.push(parse_for_loop(inner_stmt));
-            }
-            _ => {}
-        }
+        let parsed = if stmt.as_rule() == Rule::equation_stmt {
+            parse_equation_stmt_inner(stmt.into_inner().next().unwrap())
+        } else {
+            parse_equation_stmt_inner(stmt)
+        };
+        body.push(parsed);
     }
 
     Equation::For(loop_var, Box::new(start_expr), Box::new(end_expr), body)
@@ -62,6 +49,22 @@ pub(super) fn parse_when_equation(pair: Pair<Rule>) -> Equation {
                     else_whens.last_mut().unwrap().1.push(stmt);
                 }
             }
+            Rule::equation
+            | Rule::connect_clause
+            | Rule::for_loop
+            | Rule::when_equation
+            | Rule::if_equation
+            | Rule::reinit_clause
+            | Rule::assert_stmt
+            | Rule::terminate_stmt
+            | Rule::call_stmt => {
+                let stmt = parse_equation_stmt_inner(token);
+                if else_whens.is_empty() {
+                    main_body.push(stmt);
+                } else {
+                    else_whens.last_mut().unwrap().1.push(stmt);
+                }
+            }
             _ => {}
         }
     }
@@ -79,6 +82,24 @@ pub(super) fn parse_if_equation(pair: Pair<Rule>) -> Equation {
         match token.as_rule() {
             Rule::equation_stmt => {
                 let eq = parse_equation_stmt_inner(token.into_inner().next().unwrap());
+                if let Some(ref mut v) = else_eqs {
+                    v.push(eq);
+                } else if let Some(last) = elseif_list.last_mut() {
+                    last.1.push(eq);
+                } else {
+                    then_eqs.push(eq);
+                }
+            }
+            Rule::equation
+            | Rule::connect_clause
+            | Rule::for_loop
+            | Rule::when_equation
+            | Rule::if_equation
+            | Rule::reinit_clause
+            | Rule::assert_stmt
+            | Rule::terminate_stmt
+            | Rule::call_stmt => {
+                let eq = parse_equation_stmt_inner(token);
                 if let Some(ref mut v) = else_eqs {
                     v.push(eq);
                 } else if let Some(last) = elseif_list.last_mut() {

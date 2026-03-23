@@ -158,7 +158,9 @@ pub(super) fn emit_extern_declarations(
     external_names: Option<&HashSet<String>>,
     out: &mut dyn Write,
 ) -> Result<(), String> {
-    for (name, kinds) in external_sigs {
+    let mut ordered: Vec<(&String, &Vec<ArgKind>)> = external_sigs.iter().collect();
+    ordered.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    for (name, kinds) in ordered {
         if let Some(ext_set) = external_names {
             if !ext_set.contains(name) {
                 continue;

@@ -16,11 +16,14 @@ pub mod i18n;
 pub mod instantiate;
 pub mod jit;
 mod loader_compat;
+mod math_fft;
+mod modelica_random;
 pub mod loader;
 pub mod parser;
 pub mod script;
 pub mod simulation;
 pub mod solver;
+pub mod solvable_limits;
 pub mod sparse_solve;
 pub mod string_intern;
 pub mod unparse;
@@ -31,3 +34,7 @@ pub use string_intern::{StringInterner, VarId};
 pub use equation_graph::{EquationGraph, EquationGraphEdge, EquationGraphNode};
 pub use loader::{LoadError, ModelLoader};
 pub use simulation::{run_simulation, run_simulation_collect, SimulationResult};
+#[cfg(feature = "sundials")]
+pub use simulation::{
+    kinsol_solve_square_spgmr, parse_linsol_env, KinResidualFn, KinsolCallbackPack, SundialsLinSolKind,
+};

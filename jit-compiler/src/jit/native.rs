@@ -133,6 +133,51 @@ extern "C" fn modelica_string(x: f64) -> f64 {
     x
 }
 
+thread_local! {
+    static DENSE_NEWTON_JRD_WORKSPACE: std::cell::RefCell<Vec<f64>> =
+        std::cell::RefCell::new(Vec::new());
+    static JIT_RAW_U64_WORKSPACE: std::cell::RefCell<Vec<u64>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+/// Contiguous [J row-major n*n][r n][dx n], 8-byte aligned. Thread-local; reused across calls.
+#[allow(clippy::cast_possible_truncation)]
+extern "C" fn rustmodlica_dense_newton_workspace(n: i32) -> *mut f64 {
+    if n <= 0 {
+        return std::ptr::null_mut();
+    }
+    let n_usize = n as usize;
+    if n_usize > crate::solvable_limits::MAX_SOLVABLE_RESIDUALS {
+        return std::ptr::null_mut();
+    }
+    let len = n_usize
+        .saturating_mul(n_usize)
+        .saturating_add(n_usize)
+        .saturating_add(n_usize);
+    DENSE_NEWTON_JRD_WORKSPACE.with(|cell| {
+        let mut v = cell.borrow_mut();
+        v.resize(len, 0.0);
+        v.as_mut_ptr()
+    })
+}
+
+/// Scratch memory for large sparse-Newton packed buffers; pointer is 8-byte aligned.
+#[allow(clippy::cast_possible_truncation)]
+extern "C" fn rustmodlica_jit_workspace_bytes(min_bytes: i32) -> *mut u8 {
+    if min_bytes <= 0 {
+        return std::ptr::null_mut();
+    }
+    let b = min_bytes as usize;
+    let words = (b + 7) / 8;
+    JIT_RAW_U64_WORKSPACE.with(|cell| {
+        let mut v = cell.borrow_mut();
+        if v.len() < words {
+            v.resize(words, 0);
+        }
+        v.as_mut_ptr() as *mut u8
+    })
+}
+
 /// Solves J * dx = -r for dx (dense n x n). Returns 0 on success, non-zero if singular.
 /// Used by general Newton tearing (SolvableBlock with N > 3 residuals).
 #[allow(clippy::cast_possible_truncation)]
@@ -405,6 +450,14 @@ pub fn register_symbols(builder: &mut JITBuilder) {
         rustmodlica_solve_linear_n as *const u8,
     );
     builder.symbol(
+        "rustmodlica_dense_newton_workspace",
+        rustmodlica_dense_newton_workspace as *const u8,
+    );
+    builder.symbol(
+        "rustmodlica_jit_workspace_bytes",
+        rustmodlica_jit_workspace_bytes as *const u8,
+    );
+    builder.symbol(
         "rustmodlica_solve_linear_csr",
         rustmodlica_solve_linear_csr as *const u8,
     );
@@ -421,6 +474,19 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol(
         "rustmodlica_assert_suppress_end",
         rustmodlica_assert_suppress_end as *const u8,
+    );
+
+    builder.symbol(
+        "rustmodlica_math_real_fft",
+        crate::math_fft::rustmodlica_math_real_fft as *const u8,
+    );
+    builder.symbol(
+        "rustmodlica_math_random_msl",
+        crate::modelica_random::rustmodlica_math_random_msl as *const u8,
+    );
+    builder.symbol(
+        "rustmodlica_real_fft_write_to_file",
+        crate::math_fft::rustmodlica_real_fft_write_to_file as *const u8,
     );
 }
 
@@ -479,9 +545,14 @@ pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     set.insert("Modelica.Math.div");
     set.insert("Modelica.Math.integer");
     set.insert("rustmodlica_solve_linear_n");
+    set.insert("rustmodlica_dense_newton_workspace");
+    set.insert("rustmodlica_jit_workspace_bytes");
     set.insert("rustmodlica_solve_linear_csr");
     set.insert("rustmodlica_assert_suppress_begin");
     set.insert("rustmodlica_assert_suppress_end");
+    set.insert("rustmodlica_math_real_fft");
+    set.insert("rustmodlica_math_random_msl");
+    set.insert("rustmodlica_real_fft_write_to_file");
     set.insert("assert");
     set.insert("terminate");
     set.insert("Boolean");

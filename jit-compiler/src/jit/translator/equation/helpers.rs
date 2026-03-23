@@ -25,42 +25,6 @@ pub fn compile_inner_simple_assignments(
     Ok(())
 }
 
-pub fn init_unknown_slot_from_output_or_default(
-    var: &str,
-    slot: StackSlot,
-    ctx: &TranslationContext,
-    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
-) {
-    if let Some(idx) = ctx.output_index(var) {
-        let offset = (idx * 8) as i32;
-        let init_val = builder
-            .ins()
-            .load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset);
-        builder.ins().stack_store(init_val, slot, 0);
-    } else {
-        let dv = crate::compiler::geometric_default_for_name(var);
-        let fv = if dv != 0.0 { dv } else { 1e-3 };
-        let fb = builder.ins().f64const(fv);
-        builder.ins().stack_store(fb, slot, 0);
-    }
-}
-
-pub fn write_unknown_outputs(
-    vars_and_slots: &[(&str, StackSlot)],
-    ctx: &TranslationContext,
-    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
-) {
-    for (var, slot) in vars_and_slots {
-        let val = builder.ins().stack_load(cl_types::F64, *slot, 0);
-        if let Some(idx) = ctx.output_index(var) {
-            let offset = (idx * 8) as i32;
-            builder
-                .ins()
-                .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
-        }
-    }
-}
-
 pub fn store_diag_residual_and_x(
     ctx: &TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,

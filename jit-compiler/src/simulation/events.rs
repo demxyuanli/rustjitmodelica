@@ -44,6 +44,13 @@ pub(crate) fn run_event_iteration_at_time(
     prev_outputs: &mut [f64],
     w: &mut dyn std::io::Write,
 ) -> Result<EventIterationOutcome, String> {
+    let trace_events = std::env::var("RUSTMODLICA_EVENT_TRACE")
+        .ok()
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false);
     let mut event_iter_count = 0;
     const ALG_FIXED_POINT_MAX: u32 = 15;
     let do_alg_iter =
@@ -52,6 +59,16 @@ pub(crate) fn run_event_iteration_at_time(
     prev_outputs.fill(0.0);
 
     loop {
+        let prev_state_snapshot = if trace_events {
+            Some(states.to_vec())
+        } else {
+            None
+        };
+        let prev_discrete_snapshot = if trace_events {
+            Some(discrete_vals.to_vec())
+        } else {
+            None
+        };
         unsafe {
             native::suppress_assert_begin();
             let status = (calc_derivs)(
@@ -193,6 +210,20 @@ pub(crate) fn run_event_iteration_at_time(
         }
 
         let mut converged = true;
+        let mut state_changed = false;
+        let mut discrete_changed = false;
+        if let Some(prev) = &prev_state_snapshot {
+            state_changed = prev
+                .iter()
+                .zip(states.iter())
+                .any(|(a, b)| (a - b).abs() > 1e-12);
+        }
+        if let Some(prev) = &prev_discrete_snapshot {
+            discrete_changed = prev
+                .iter()
+                .zip(discrete_vals.iter())
+                .any(|(a, b)| (a - b).abs() > 1e-12);
+        }
         if when_count > 0 {
             for i in 0..when_count {
                 let idx_pre = i * 2;
@@ -204,7 +235,22 @@ pub(crate) fn run_event_iteration_at_time(
                     when_states[idx_pre] = new_val;
                     converged = false;
                 }
+                if trace_events {
+                    eprintln!(
+                        "[event-trace] t={:.6} iter={} when[{}] pre={:.0} new={:.0}",
+                        time, event_iter_count, i, pre_val, new_val
+                    );
+                }
             }
+        }
+        if state_changed || discrete_changed {
+            converged = false;
+        }
+        if trace_events {
+            eprintln!(
+                "[event-trace] t={:.6} iter={} state_changed={} discrete_changed={} converged={}",
+                time, event_iter_count, state_changed, discrete_changed, converged
+            );
         }
 
         if converged {
