@@ -53,17 +53,18 @@ pub(super) fn collect_external_calls_with_signature(
                 let kinds: Vec<ArgKind> = args
                     .iter()
                     .map(|a| {
-                        if let Variable(id) = a {
-                            let n = crate::string_intern::resolve_id(*id);
-                            if array_base_in_ctx(ctx, &n) {
-                                ArgKind::Array
-                            } else {
-                                ArgKind::Scalar
+                        match a {
+                            Variable(id) => {
+                                let n = crate::string_intern::resolve_id(*id);
+                                if array_base_in_ctx(ctx, &n) {
+                                    ArgKind::Array
+                                } else {
+                                    ArgKind::Scalar
+                                }
                             }
-                        } else if matches!(a, crate::ast::Expression::StringLiteral(_)) {
-                            ArgKind::String
-                        } else {
-                            ArgKind::Scalar
+                            ArrayLiteral(_) => ArgKind::Array,
+                            crate::ast::Expression::StringLiteral(_) => ArgKind::String,
+                            _ => ArgKind::Scalar,
                         }
                     })
                     .collect();

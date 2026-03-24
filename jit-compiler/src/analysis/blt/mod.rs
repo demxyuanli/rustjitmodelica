@@ -103,6 +103,22 @@ fn try_index_reduction(
     state_vars: &[String],
     options: &AnalysisOptions,
 ) -> Option<Vec<Equation>> {
+    fn normalize_index_method(method: &str) -> &str {
+        let m = method.trim();
+        if m.eq_ignore_ascii_case("pantelides") {
+            "pantelides"
+        } else if m.eq_ignore_ascii_case("pantelidesdummy")
+            || m.eq_ignore_ascii_case("dummyderivative")
+        {
+            "dummyDerivative"
+        } else if m.eq_ignore_ascii_case("debugprint") {
+            "debugPrint"
+        } else if m.eq_ignore_ascii_case("none") {
+            "none"
+        } else {
+            method
+        }
+    }
     fn max_pantelides_order() -> usize {
         std::env::var("RUSTMODLICA_PANTELIDES_MAX_ORDER")
             .ok()
@@ -117,10 +133,8 @@ fn try_index_reduction(
         .enumerate()
         .filter_map(|(i, o)| if o.is_none() { Some(i) } else { None })
         .collect();
-    let use_dummy = matches!(
-        options.index_reduction_method.as_str(),
-        "dummyDerivative" | "pantelides" | "pantelidesDummy"
-    );
+    let method = normalize_index_method(&options.index_reduction_method);
+    let use_dummy = matches!(method, "dummyDerivative" | "pantelides");
 
     for eq_idx in unassigned {
         let eq = &equations[eq_idx];
@@ -445,7 +459,11 @@ pub fn sort_algebraic_equations(
     let mut assigned_var: Vec<Option<usize>> = Vec::new();
     let mut assigned_eq: Vec<Option<usize>> = Vec::new();
 
-    let max_index_reduction_rounds = 20;
+    let max_index_reduction_rounds = std::env::var("RUSTMODLICA_INDEX_REDUCTION_MAX_ROUNDS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map(|v| v.clamp(1, 64))
+        .unwrap_or(20);
     let mut round = 0u32;
     let mut index_reduction_rounds = 0u32;
     let mut prev_unassigned_count: Option<usize> = None;
@@ -541,7 +559,8 @@ pub fn sort_algebraic_equations(
         if differential_index == 1 {
             break;
         }
-        if options.index_reduction_method == "none" {
+        let index_method = options.index_reduction_method.trim();
+        if index_method.eq_ignore_ascii_case("none") {
             break;
         }
         if let Some(prev) = prev_unassigned_count {

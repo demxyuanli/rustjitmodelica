@@ -66,6 +66,29 @@ pub(super) fn select_tearing_variable(
         let w_residual = env_weight("RUSTMODLICA_TEAR_W_RESIDUAL", 0.5);
         occ * w_occ + nonlinear_hits * w_nonlin - solve_bias * w_solve + residual_size_bias * w_residual
     }
+    fn dm_candidate_score(block_eqs: &[Equation], u: &str) -> f64 {
+        let mut occ = 0.0_f64;
+        let mut nonlinear = 0.0_f64;
+        let mut solvable = 0.0_f64;
+        let mut weighted_pos = 0.0_f64;
+        for (idx, eq) in block_eqs.iter().enumerate() {
+            if equation_contains_var(eq, u) {
+                occ += 1.0;
+                weighted_pos += 1.0 / ((idx + 1) as f64);
+                if equation_nonlinear_for_var(eq, u) {
+                    nonlinear += 1.0;
+                }
+                if solve_for_variable(eq, u).is_some() {
+                    solvable += 1.0;
+                }
+            }
+        }
+        let w_occ = env_weight("RUSTMODLICA_TEAR_DM_W_OCC", 1.0);
+        let w_nonlin = env_weight("RUSTMODLICA_TEAR_DM_W_NONLINEAR", 2.0);
+        let w_front = env_weight("RUSTMODLICA_TEAR_DM_W_FRONTLOAD", 0.5);
+        let w_solve = env_weight("RUSTMODLICA_TEAR_DM_W_SOLVABLE", 0.8);
+        occ * w_occ + nonlinear * w_nonlin + weighted_pos * w_front - solvable * w_solve
+    }
 
     if block_unknowns.is_empty() {
         return None;
@@ -106,6 +129,18 @@ pub(super) fn select_tearing_variable(
             let mut best_score = f64::INFINITY;
             for u in block_unknowns {
                 let score = candidate_score(block_eqs, u);
+                if score < best_score {
+                    best_score = score;
+                    best = u.clone();
+                }
+            }
+            Some(best)
+        }
+        "dm" | "dulmageMendelsohn" | "dulmage-mendelsohn" => {
+            let mut best = block_unknowns[0].clone();
+            let mut best_score = f64::INFINITY;
+            for u in block_unknowns {
+                let score = dm_candidate_score(block_eqs, u);
                 if score < best_score {
                     best_score = score;
                     best = u.clone();

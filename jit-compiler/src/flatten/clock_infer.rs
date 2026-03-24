@@ -22,6 +22,8 @@ impl Flattener {
                     let lower = name.to_ascii_lowercase();
                     if lower == "sample"
                         || lower.ends_with(".sample")
+                        || lower == "clock"
+                        || lower.ends_with(".clock")
                         || lower == "interval"
                         || lower.ends_with(".interval")
                         || lower == "subsample"
@@ -61,7 +63,12 @@ impl Flattener {
                     Expression::Number(dt) => format!("sample_{}", dt),
                     _ => fallback(),
                 },
-                Expression::Call(name, args) if name == "sample" || name.ends_with(".sample") => {
+                Expression::Call(name, args)
+                    if name == "sample"
+                        || name.ends_with(".sample")
+                        || name.eq_ignore_ascii_case("clock")
+                        || name.ends_with(".clock") =>
+                {
                     let dt = args.first().and_then(|a| {
                         if let Expression::Number(n) = a {
                             Some(*n)

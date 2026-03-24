@@ -11,6 +11,14 @@ fn escape_xml(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+fn fmi_generation_tool() -> String {
+    std::env::var("RUSTMODLICA_FMI_GENERATION_TOOL")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "rustmodlica".to_string())
+}
+
 /// Emit modelDescription.xml for FMI 2.0 Co-Simulation.
 pub fn emit_model_description(
     out: &mut dyn Write,
@@ -26,9 +34,10 @@ pub fn emit_model_description(
     writeln!(out, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "<fmiModelDescription modelName=\"{}\" guid=\"{}\" generationTool=\"rustmodlica\" version=\"1.0\" fmiVersion=\"2.0\">",
+        "<fmiModelDescription modelName=\"{}\" guid=\"{}\" generationTool=\"{}\" version=\"1.0\" fmiVersion=\"2.0\">",
         escape_xml(model_name),
-        escape_xml(guid)
+        escape_xml(guid),
+        escape_xml(&fmi_generation_tool())
     )
     .map_err(|e| e.to_string())?;
     writeln!(
@@ -113,9 +122,10 @@ pub fn emit_model_description_me(
     writeln!(out, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "<fmiModelDescription modelName=\"{}\" guid=\"{}\" generationTool=\"rustmodlica\" version=\"1.0\" fmiVersion=\"2.0\">",
+        "<fmiModelDescription modelName=\"{}\" guid=\"{}\" generationTool=\"{}\" version=\"1.0\" fmiVersion=\"2.0\">",
         escape_xml(model_name),
-        escape_xml(guid)
+        escape_xml(guid),
+        escape_xml(&fmi_generation_tool())
     )
     .map_err(|e| e.to_string())?;
     writeln!(

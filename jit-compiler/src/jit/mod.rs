@@ -22,11 +22,21 @@ pub use self::types::{ArrayInfo, ArrayType, CalcDerivsFunc};
 use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
 
 fn jit_opt_level_from_env() -> String {
-    std::env::var("RUSTMODLICA_CRANELIFT_OPT_LEVEL")
+    let raw = std::env::var("RUSTMODLICA_CRANELIFT_OPT_LEVEL")
         .ok()
         .map(|s| s.trim().to_ascii_lowercase())
-        .filter(|s| matches!(s.as_str(), "none" | "speed" | "speed_and_size"))
-        .unwrap_or_else(|| "speed".to_string())
+        .unwrap_or_else(|| "speed".to_string());
+    match raw.as_str() {
+        "none" | "speed" | "speed_and_size" => raw,
+        "size" | "small" => "speed_and_size".to_string(),
+        unknown => {
+            eprintln!(
+                "RUSTMODLICA_CRANELIFT_OPT_LEVEL='{}' is not recognized, using 'speed'.",
+                unknown
+            );
+            "speed".to_string()
+        }
+    }
 }
 
 fn emit_sample_trigger(

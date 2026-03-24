@@ -117,10 +117,14 @@ impl EventDebounceConfig {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .filter(|v| *v > 0)
         }
+        let base_scale = env_f64("RUSTMODLICA_EVENT_DEADBAND_SCALE").unwrap_or(1.0);
+        let count_scale = env_f64("RUSTMODLICA_EVENT_COUNT_DEADBAND_SCALE").unwrap_or(1.0);
+        let clamped_dt = dt.abs().clamp(1e-9, 1.0);
         Self {
-            base_deadband: env_f64("RUSTMODLICA_EVENT_DEADBAND").unwrap_or_else(|| (dt.abs() * 0.25).max(1e-7)),
+            base_deadband: env_f64("RUSTMODLICA_EVENT_DEADBAND")
+                .unwrap_or_else(|| ((clamped_dt * 0.25) * base_scale).max(1e-7)),
             count_deadband: env_f64("RUSTMODLICA_EVENT_COUNT_DEADBAND")
-                .unwrap_or_else(|| (dt.abs() * 0.5).max(1e-6)),
+                .unwrap_or_else(|| ((clamped_dt * 0.5) * count_scale).max(1e-6)),
             max_same_event_hits: env_u32("RUSTMODLICA_EVENT_MAX_SAME_HITS").unwrap_or(8),
         }
     }

@@ -278,11 +278,25 @@ pub fn solve_dense_in_place(n: usize, a: &mut [f64], b: &[f64], x: &mut [f64]) -
 
 /// Build CSR from (row, col, value) triples; assumes 0-based indices.
 pub fn csr_from_triples(n: usize, triples: &[(usize, usize, f64)]) -> CsrMatrix {
-    let mut row_ptr = vec![0usize; n + 1];
-    for (i, _, _) in triples {
-        if *i < n {
-            row_ptr[*i + 1] += 1;
+    let mut compact: Vec<(usize, usize, f64)> = triples
+        .iter()
+        .copied()
+        .filter(|(i, j, _)| *i < n && *j < n)
+        .collect();
+    compact.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    let mut merged: Vec<(usize, usize, f64)> = Vec::with_capacity(compact.len());
+    for (i, j, v) in compact {
+        if let Some((li, lj, lv)) = merged.last_mut() {
+            if *li == i && *lj == j {
+                *lv += v;
+                continue;
+            }
         }
+        merged.push((i, j, v));
+    }
+    let mut row_ptr = vec![0usize; n + 1];
+    for (i, _, _) in &merged {
+        row_ptr[*i + 1] += 1;
     }
     for i in 1..=n {
         row_ptr[i] += row_ptr[i - 1];
@@ -291,14 +305,12 @@ pub fn csr_from_triples(n: usize, triples: &[(usize, usize, f64)]) -> CsrMatrix 
     let mut col_idx = vec![0usize; nnz];
     let mut values = vec![0.0; nnz];
     let mut pos = row_ptr.clone();
-    for (i, j, v) in triples {
-        if *i < n && *j < n {
-            let p = pos[*i];
-            if p < row_ptr[*i + 1] {
-                col_idx[p] = *j;
-                values[p] = *v;
-                pos[*i] += 1;
-            }
+    for (i, j, v) in merged {
+        let p = pos[i];
+        if p < row_ptr[i + 1] {
+            col_idx[p] = j;
+            values[p] = v;
+            pos[i] += 1;
         }
     }
     CsrMatrix {

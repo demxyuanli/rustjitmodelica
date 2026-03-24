@@ -26,9 +26,19 @@ fn default_linsol_auto(n: usize) -> SundialsLinSolKind {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(64);
+    let klu_min_n = std::env::var("RUSTMODLICA_SUNDIALS_KLU_MIN_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(512);
+    let spgmr_max_n = std::env::var("RUSTMODLICA_SUNDIALS_SPGMR_MAX_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(klu_min_n.saturating_sub(1));
     if n <= dense_max_n {
         SundialsLinSolKind::Dense
-    } else if cfg!(feature = "sundials-klu") && n >= 512 {
+    } else if n <= spgmr_max_n {
+        SundialsLinSolKind::Spgmr
+    } else if cfg!(feature = "sundials-klu") && n >= klu_min_n {
         #[cfg(feature = "sundials-klu")]
         {
             SundialsLinSolKind::Klu
@@ -61,6 +71,10 @@ pub fn parse_linsol_env(n: usize) -> SundialsLinSolKind {
                 return SundialsLinSolKind::Klu;
             }
         }
+        eprintln!(
+            "RUSTMODLICA_SUNDIALS_LINSOL='{}' is not recognized, falling back to auto policy.",
+            s
+        );
         default_linsol_auto(n)
     }
 }
@@ -99,6 +113,13 @@ pub fn attach_for_cvode_ida(
     n: sunindextype,
     kind: SundialsLinSolKind,
 ) -> Result<AttachedSunLinSol, String> {
+    fn spgmr_krylov_dim_from_env() -> i32 {
+        std::env::var("RUSTMODLICA_SUNDIALS_SPGMR_MAXL")
+            .ok()
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .map(|v| v.clamp(5, 256))
+            .unwrap_or(30)
+    }
     unsafe {
         match kind {
             SundialsLinSolKind::Dense => {
@@ -118,7 +139,8 @@ pub fn attach_for_cvode_ida(
                 })
             }
             SundialsLinSolKind::Spgmr => {
-                let ls = SUNLinSol_SPGMR(y, SUN_PREC_NONE as i32, 30, ctx);
+                let maxl = spgmr_krylov_dim_from_env();
+                let ls = SUNLinSol_SPGMR(y, SUN_PREC_NONE as i32, maxl, ctx);
                 if ls.is_null() {
                     return Err("SUNLinSol_SPGMR returned null".to_string());
                 }
