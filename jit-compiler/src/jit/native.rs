@@ -292,6 +292,13 @@ extern "C" fn rustmodlica_solve_linear_csr(
     r: *const f64,
     dx: *mut f64,
 ) -> i32 {
+    let dual_validate = std::env::var("RUSTMODLICA_NEWTON_DUAL_VALIDATE")
+        .ok()
+        .map(|v| {
+            let t = v.trim().to_ascii_lowercase();
+            t == "1" || t == "true" || t == "on" || t == "yes"
+        })
+        .unwrap_or(false);
     let sparse_debug = std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
         .ok()
         .map(|v| {
@@ -364,6 +371,46 @@ extern "C" fn rustmodlica_solve_linear_csr(
         };
         let mut solution = vec![0.0; n_usize];
         if matrix.solve_in_place(&rhs, &mut solution).is_ok() {
+            if dual_validate {
+                let mut dense = vec![0.0_f64; n_usize * n_usize];
+                for row in 0..n_usize {
+                    let start = row_ptr_vec[row];
+                    let end = row_ptr_vec[row + 1];
+                    for k in start..end {
+                        let col = col_idx_vec[k];
+                        if col < n_usize {
+                            dense[row * n_usize + col] = matrix.values[k];
+                        }
+                    }
+                }
+                let mut dense_dx = vec![0.0_f64; n_usize];
+                let dense_status = rustmodlica_solve_linear_n(
+                    n,
+                    dense.as_ptr(),
+                    r,
+                    dense_dx.as_mut_ptr(),
+                );
+                if dense_status == 0 {
+                    let mut max_delta = 0.0_f64;
+                    for i in 0..n_usize {
+                        let d = (dense_dx[i] - solution[i]).abs();
+                        if d > max_delta {
+                            max_delta = d;
+                        }
+                    }
+                    if sparse_debug {
+                        eprintln!(
+                            "[newton-sparse] dual-validate n={} nnz={} max|dx_sparse-dx_dense|={:.3e}",
+                            n_usize, nnz_usize, max_delta
+                        );
+                    }
+                } else if sparse_debug {
+                    eprintln!(
+                        "[newton-sparse] dual-validate dense fallback failed status={}",
+                        dense_status
+                    );
+                }
+            }
             unsafe {
                 std::ptr::copy_nonoverlapping(solution.as_ptr(), dx, n_usize);
             }

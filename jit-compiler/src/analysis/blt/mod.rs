@@ -103,13 +103,24 @@ fn try_index_reduction(
     state_vars: &[String],
     options: &AnalysisOptions,
 ) -> Option<Vec<Equation>> {
+    fn max_pantelides_order() -> usize {
+        std::env::var("RUSTMODLICA_PANTELIDES_MAX_ORDER")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .map(|v| v.clamp(2, 6))
+            .unwrap_or(3)
+    }
+
     let der_map = build_der_map(equations);
     let unassigned: Vec<usize> = assigned_var
         .iter()
         .enumerate()
         .filter_map(|(i, o)| if o.is_none() { Some(i) } else { None })
         .collect();
-    let use_dummy = options.index_reduction_method == "dummyDerivative";
+    let use_dummy = matches!(
+        options.index_reduction_method.as_str(),
+        "dummyDerivative" | "pantelides" | "pantelidesDummy"
+    );
 
     for eq_idx in unassigned {
         let eq = &equations[eq_idx];
@@ -155,15 +166,18 @@ fn try_index_reduction(
             }
         }
 
-        // Phase 1b: Try second differentiation for higher-index systems
-        let diff2 = time_derivative(&diff_expr, state_vars);
-        let diff2_sub_raw = substitute_der_in_expr(&diff2, &der_map);
-        let diff2_sub = simplify_expr(&diff2_sub_raw);
-        for alg_var in &alg_vars {
-            if let Some(sol) = solve_residual_linear(&diff2_sub, alg_var) {
-                let mut new_eqs = equations.to_vec();
-                new_eqs[eq_idx] = Equation::Simple(Expression::var(alg_var), sol);
-                return Some(new_eqs);
+        // Phase 1b: generalized Pantelides-like repeated differentiation.
+        let max_order = max_pantelides_order();
+        let mut lifted = diff_expr.clone();
+        for _ord in 2..=max_order {
+            lifted = time_derivative(&lifted, state_vars);
+            let lifted_sub = simplify_expr(&substitute_der_in_expr(&lifted, &der_map));
+            for alg_var in &alg_vars {
+                if let Some(sol) = solve_residual_linear(&lifted_sub, alg_var) {
+                    let mut new_eqs = equations.to_vec();
+                    new_eqs[eq_idx] = Equation::Simple(Expression::var(alg_var), sol);
+                    return Some(new_eqs);
+                }
             }
         }
 
@@ -252,6 +266,10 @@ pub struct SortAlgebraicResult {
     pub constraint_equation_count: usize,
     pub constant_conflict_count: usize,
     pub alias_map: HashMap<String, Expression>,
+    pub index_reduction_rounds: u32,
+    pub dummy_derivative_equation_count: usize,
+    pub tearing_block_count: usize,
+    pub tearing_residual_equation_count: usize,
 }
 
 pub fn sort_algebraic_equations(
@@ -429,6 +447,7 @@ pub fn sort_algebraic_equations(
 
     let max_index_reduction_rounds = 20;
     let mut round = 0u32;
+    let mut index_reduction_rounds = 0u32;
     let mut prev_unassigned_count: Option<usize> = None;
     loop {
         round += 1;
@@ -546,10 +565,22 @@ pub fn sort_algebraic_equations(
             options,
         ) {
             equations = new_eqs;
+            index_reduction_rounds = round;
         } else {
             break;
         }
     }
+
+    let dummy_derivative_equation_count = equations
+        .iter()
+        .filter(|eq| {
+            matches!(
+                eq,
+                Equation::Simple(Expression::Variable(id), _)
+                    if resolve_id(*id).starts_with("$dummy_")
+            )
+        })
+        .count();
 
     let constraint_equation_count = assigned_var.iter().filter(|o| o.is_none()).count();
     let constant_conflict_count = eq_infos
@@ -583,6 +614,10 @@ pub fn sort_algebraic_equations(
             constraint_equation_count: 0,
             constant_conflict_count,
             alias_map,
+            index_reduction_rounds,
+            dummy_derivative_equation_count,
+            tearing_block_count: 1,
+            tearing_residual_equation_count: equations.len(),
         };
     }
 
@@ -679,6 +714,8 @@ pub fn sort_algebraic_equations(
     }
 
     let mut sorted_equations = Vec::new();
+    let mut tearing_block_count = 0usize;
+    let mut tearing_residual_equation_count = 0usize;
 
     if blt_trace {
         eprintln!("[blt] solve_blocks");
@@ -715,6 +752,8 @@ pub fn sort_algebraic_equations(
                         equations: vec![],
                         residuals: vec![make_residual(eq)],
                     });
+                    tearing_block_count += 1;
+                    tearing_residual_equation_count += 1;
                     current_known.insert(var_name.clone());
                 }
             } else {
@@ -732,6 +771,8 @@ pub fn sort_algebraic_equations(
                         equations: vec![],
                         residuals: vec![make_residual(eq)],
                     });
+                    tearing_block_count += 1;
+                    tearing_residual_equation_count += 1;
                 } else {
                     // Keep residual equation without introducing synthetic "__dummy" unknowns.
                     // Pick a real variable from the residual as tearing variable so JIT can
@@ -753,6 +794,8 @@ pub fn sort_algebraic_equations(
                         equations: vec![],
                         residuals: vec![residual],
                     });
+                    tearing_block_count += 1;
+                    tearing_residual_equation_count += 1;
                 }
             }
         } else {
@@ -788,6 +831,8 @@ pub fn sort_algebraic_equations(
                 equations: vec![],
                 residuals: block_eqs.iter().map(|eq| make_residual(eq)).collect(),
             });
+            tearing_block_count += 1;
+            tearing_residual_equation_count += block_eqs.len();
 
             for u in block_unknowns {
                 current_known.insert(u);
@@ -803,5 +848,9 @@ pub fn sort_algebraic_equations(
         constraint_equation_count,
         constant_conflict_count,
         alias_map,
+        index_reduction_rounds,
+        dummy_derivative_equation_count,
+        tearing_block_count,
+        tearing_residual_equation_count,
     }
 }

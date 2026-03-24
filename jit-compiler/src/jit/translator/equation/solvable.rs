@@ -8,7 +8,11 @@ use crate::solvable_limits::validate_solvable_residual_count;
 pub(super) use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
 use super::solvable_general_dense::compile_solvable_block_general_dense_n;
 use super::solvable_general_sparse::{
-    build_sparse_jacobian_pattern, compile_solvable_block_general_sparse_n,
+    build_sparse_jacobian_pattern, compile_solvable_block_general_sparse_n, SparseJacobianPattern,
+};
+use super::linearized::{
+    parse_newton_path_preference, NewtonLinearizationStats, NewtonLinearizedSystem,
+    NewtonPathPreference,
 };
 
 pub(super) fn compile_solvable_block_general_n(
@@ -17,6 +21,13 @@ pub(super) fn compile_solvable_block_general_n(
     ctx: &mut TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
+    fn dual_path_check_enabled() -> bool {
+        std::env::var("RUSTMODLICA_NEWTON_DUAL_PATH_CHECK")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+            .unwrap_or(false)
+    }
+
     let n = residuals.len();
     validate_solvable_residual_count(n)?;
     let slots: Vec<_> = unknowns
@@ -47,15 +58,73 @@ pub(super) fn compile_solvable_block_general_n(
             builder.ins().stack_store(fallback, *slot, 0);
         }
     }
-    if let Some(pattern) = build_sparse_jacobian_pattern(&unknowns[..n], residuals) {
-        return compile_solvable_block_general_sparse_n(
-            unknowns,
-            residuals,
-            &slots,
-            &pattern,
-            ctx,
-            builder,
+    let preference = parse_newton_path_preference();
+    let sparse_pattern: Option<SparseJacobianPattern> = if preference == NewtonPathPreference::DenseOnly {
+        None
+    } else {
+        build_sparse_jacobian_pattern(&unknowns[..n], residuals)
+    };
+
+    let selected = if let Some(ref pattern) = sparse_pattern {
+        NewtonLinearizedSystem::Csr(NewtonLinearizationStats {
+            residual_count: n,
+            nnz: pattern.nnz(),
+        })
+    } else {
+        NewtonLinearizedSystem::Dense(NewtonLinearizationStats {
+            residual_count: n,
+            nnz: n.saturating_mul(n),
+        })
+    };
+
+    let path_trace = std::env::var("RUSTMODLICA_NEWTON_PATH_TRACE")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false);
+    if path_trace {
+        match &selected {
+            NewtonLinearizedSystem::Dense(stats) => {
+                eprintln!(
+                    "[newton-path] dense n={} nnz={} pref={:?}",
+                    stats.residual_count, stats.nnz, preference
+                );
+            }
+            NewtonLinearizedSystem::Csr(stats) => {
+                eprintln!(
+                    "[newton-path] csr n={} nnz={} pref={:?}",
+                    stats.residual_count, stats.nnz, preference
+                );
+            }
+        }
+    }
+
+    if dual_path_check_enabled() && path_trace {
+        eprintln!(
+            "[newton-path] dual-check=on n={} selected={:?}",
+            n,
+            selected.kind()
         );
     }
-    compile_solvable_block_general_dense_n(unknowns, residuals, &slots, ctx, builder)
+
+    match (preference, selected, sparse_pattern.as_ref()) {
+        (NewtonPathPreference::SparseOnly, NewtonLinearizedSystem::Dense(_), _) => {
+            compile_solvable_block_general_dense_n(unknowns, residuals, &slots, ctx, builder)
+        }
+        (_, NewtonLinearizedSystem::Csr(_), Some(pattern)) => {
+            compile_solvable_block_general_sparse_n(
+                unknowns,
+                residuals,
+                &slots,
+                pattern,
+                ctx,
+                builder,
+            )
+        }
+        (_, NewtonLinearizedSystem::Dense(_), _) => {
+            compile_solvable_block_general_dense_n(unknowns, residuals, &slots, ctx, builder)
+        }
+        (_, NewtonLinearizedSystem::Csr(_), None) => Err(
+            "sparse Newton path selected but no CSR Jacobian pattern available".to_string(),
+        ),
+    }
 }

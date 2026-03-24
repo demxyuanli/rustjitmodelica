@@ -18,7 +18,23 @@ impl Flattener {
                 | Expression::SuperSample(c, n)
                 | Expression::ShiftSample(c, n) => expr_contains_clock(c) || expr_contains_clock(n),
                 Expression::BinaryOp(l, _, r) => expr_contains_clock(l) || expr_contains_clock(r),
-                Expression::Call(_, args) => args.iter().any(expr_contains_clock),
+                Expression::Call(name, args) => {
+                    let lower = name.to_ascii_lowercase();
+                    if lower == "sample"
+                        || lower.ends_with(".sample")
+                        || lower == "interval"
+                        || lower.ends_with(".interval")
+                        || lower == "subsample"
+                        || lower.ends_with(".subsample")
+                        || lower == "supersample"
+                        || lower.ends_with(".supersample")
+                        || lower == "shiftsample"
+                        || lower.ends_with(".shiftsample")
+                    {
+                        return true;
+                    }
+                    args.iter().any(expr_contains_clock)
+                }
                 Expression::ArrayAccess(base, idx) => {
                     expr_contains_clock(base) || expr_contains_clock(idx)
                 }
@@ -81,6 +97,29 @@ impl Flattener {
                     clock_partition_key_from_condition(c),
                     format!("{:?}", n)
                 ),
+                Expression::Call(name, args)
+                    if name.eq_ignore_ascii_case("sample") || name.ends_with(".sample") =>
+                {
+                    let dt = args.first().and_then(|a| {
+                        if let Expression::Number(n) = a {
+                            Some(*n)
+                        } else {
+                            None
+                        }
+                    });
+                    let st = args.get(1).and_then(|a| {
+                        if let Expression::Number(n) = a {
+                            Some(*n)
+                        } else {
+                            None
+                        }
+                    });
+                    match (dt, st) {
+                        (Some(d), Some(s)) => format!("sample_{}_{}", d, s),
+                        (Some(d), None) => format!("sample_{}", d),
+                        _ => fallback(),
+                    }
+                }
                 _ => fallback(),
             }
         }

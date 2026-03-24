@@ -97,6 +97,24 @@ pub fn expr_to_c(expr: &Expression, ctx: &CCodegenContext) -> Result<String, Str
                 "integer" if args.len() == 1 => Ok(format!("floor({})", args_str)),
                 "floor" => Ok(format!("floor({})", args_str)),
                 "ceil" => Ok(format!("ceil({})", args_str)),
+                "sample" if args.len() == 1 => Ok(format!(
+                    "((fmod(t, {i}) < 1e-12 || ({i} - fmod(t, {i})) < 1e-12) ? 1.0 : 0.0)",
+                    i = args_c[0]
+                )),
+                "sample" if args.len() == 2 => Ok(format!(
+                    "((fmod((t - ({s})), {i}) < 1e-12 || ({i} - fmod((t - ({s})), {i})) < 1e-12) ? 1.0 : 0.0)",
+                    s = args_c[0],
+                    i = args_c[1]
+                )),
+                "interval" if args.len() == 1 => Ok(args_c[0].clone()),
+                "subSample" if args.len() == 2 => Ok(format!("(({}) * ({}))", args_c[0], args_c[1])),
+                "superSample" if args.len() == 2 => Ok(format!(
+                    "(({}) / ((({}) == 0.0) ? 1.0 : ({})))",
+                    args_c[0], args_c[1], args_c[1]
+                )),
+                "shiftSample" if args.len() == 2 => Ok(format!("(({}) + ({}))", args_c[0], args_c[1])),
+                "hold" if args.len() == 1 => Ok(args_c[0].clone()),
+                "previous" if args.len() == 1 => Ok(args_c[0].clone()),
                 _ => {
                     if ctx
                         .external_fns
@@ -162,16 +180,23 @@ pub fn expr_to_c(expr: &Expression, ctx: &CCodegenContext) -> Result<String, Str
         Dot(_, _) | Range(_, _, _) | ArrayLiteral(_) | ArrayComprehension { .. } => {
             Err("C codegen: Dot/Range/ArrayLiteral not supported (flatten first)".to_string())
         }
-        Sample(_) | Interval(_) => Err(
-            "C codegen: sample()/interval() not supported (SYNC-1); use when/zero-crossing"
-                .to_string(),
-        ),
+        Sample(inner) => {
+            let i = expr_to_c(inner, ctx)?;
+            Ok(format!(
+                "((fmod(t, {i}) < 1e-12 || ({i} - fmod(t, {i})) < 1e-12) ? 1.0 : 0.0)",
+                i = i
+            ))
+        }
+        Interval(inner) => expr_to_c(inner, ctx),
         Hold(inner) => expr_to_c(inner, ctx),
-        Previous(_inner) => {
-            Err("C codegen: previous() not supported in C emission (use pre or JIT)".to_string())
-        }
-        SubSample(_c, _n) | SuperSample(_c, _n) | ShiftSample(_c, _n) => {
-            Err("C codegen: subSample/superSample/shiftSample not supported (SYNC-5)".to_string())
-        }
+        Previous(inner) => expr_to_c(inner, ctx),
+        SubSample(c, n) => Ok(format!("(({}) * ({}))", expr_to_c(c, ctx)?, expr_to_c(n, ctx)?)),
+        SuperSample(c, n) => Ok(format!(
+            "(({}) / ((({}) == 0.0) ? 1.0 : ({})))",
+            expr_to_c(c, ctx)?,
+            expr_to_c(n, ctx)?,
+            expr_to_c(n, ctx)?
+        )),
+        ShiftSample(c, n) => Ok(format!("(({}) + ({}))", expr_to_c(c, ctx)?, expr_to_c(n, ctx)?)),
     }
 }

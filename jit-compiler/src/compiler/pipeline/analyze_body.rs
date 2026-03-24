@@ -74,6 +74,12 @@ pub(crate) fn analyze_equations(
     log_stage_timing(stage_trace, "sort_equations", sort_started_at);
 
     let mut alg_equations = sort_result.sorted_equations;
+    if stage_trace && sort_result.index_reduction_rounds > 0 {
+        eprintln!(
+            "[stage] index_reduction rounds={} dummy_derivatives={}",
+            sort_result.index_reduction_rounds, sort_result.dummy_derivative_equation_count
+        );
+    }
 
     // Register dummy derivative variables created by index reduction as output (algebraic) vars
     for eq in &alg_equations {

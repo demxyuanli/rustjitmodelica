@@ -31,6 +31,12 @@ pub(super) struct SparseJacobianPattern {
     entries: Vec<(usize, usize)>,
 }
 
+impl SparseJacobianPattern {
+    pub(super) fn nnz(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 pub(crate) fn solvable_block_uses_sparse_jacobian_path(
     unknowns: &[String],
     residuals: &[Expression],

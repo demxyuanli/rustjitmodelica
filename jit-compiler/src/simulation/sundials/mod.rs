@@ -28,7 +28,10 @@ use super::events::{run_event_iteration_at_time, EventIterationOutcome};
 use super::newton_recovery::{fail_if_assert_storm, print_newton_diag};
 use super::sim_io::{flush_writer, write_csv_line};
 use super::step::maybe_print_numeric_jacobian;
-use super::types::ResultCollector;
+use super::types::{
+    EventDebounceConfig, EventQueue, QueuedEvent, QueuedEventKind, ResultCollector,
+    SundialsRuntimeConfig,
+};
 
 use linsol::attach_for_cvode_ida;
 
@@ -313,9 +316,13 @@ pub(crate) fn run_with_ida(
     result_file: Option<&str>,
     mut result_collector: Option<&mut ResultCollector>,
 ) -> Result<(), String> {
-    if differential_index > 1 {
+    let allow_high_index = std::env::var("RUSTMODLICA_IDA_ALLOW_HIGH_INDEX")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false);
+    if differential_index > 1 && !allow_high_index {
         return Err(format!(
-            "solver ida requires differential index <= 1 (got {})",
+            "solver ida requires differential index <= 1 (got {}), set RUSTMODLICA_IDA_ALLOW_HIGH_INDEX=1 to force run",
             differential_index
         ));
     }
@@ -392,6 +399,17 @@ fn run_sundials_common(
     result_file: Option<&str>,
     result_collector: &mut Option<&mut ResultCollector>,
 ) -> Result<(), String> {
+    let rt_cfg = SundialsRuntimeConfig::from_env();
+    if std::env::var("RUSTMODLICA_SUNDIALS_TRACE_CONFIG")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false)
+    {
+        eprintln!(
+            "[sundials-config] max_order={:?} max_nonlin_iters={:?} max_step={:?}",
+            rt_cfg.max_order, rt_cfg.max_nonlin_iters, rt_cfg.max_step
+        );
+    }
     warn_if_unsupported_backend_requested();
     let n = states.len();
     if n == 0 {
@@ -551,6 +569,12 @@ fn run_sundials_common(
                     return Err(format!("CVodeSStolerances failed: {}", tr));
                 }
                 CVodeSetUserData(mem, ud_ptr as *mut c_void);
+                if let Some(max_ord) = rt_cfg.max_order {
+                    let _ = sundials_sys::CVodeSetMaxOrd(mem, max_ord);
+                }
+                if let Some(max_step) = rt_cfg.max_step {
+                    let _ = sundials_sys::CVodeSetMaxStep(mem, max_step as sunrealtype);
+                }
                 let lr = CVodeSetLinearSolver(mem, ls_pack.linsol, ls_pack.jacobian);
                 if lr != sundials_sys::CVLS_SUCCESS as i32 {
                     drop(ls_pack);
@@ -726,6 +750,12 @@ fn run_sundials_common(
                     return Err(format!("IDASStolerances failed: {}", tr));
                 }
                 IDASetUserData(mem, ud_ptr as *mut c_void);
+                if let Some(max_ord) = rt_cfg.max_order {
+                    let _ = sundials_sys::IDASetMaxOrd(mem, max_ord);
+                }
+                if let Some(max_step) = rt_cfg.max_step {
+                    let _ = sundials_sys::IDASetMaxStep(mem, max_step as sunrealtype);
+                }
                 let lr = IDASetLinearSolver(mem, ls_pack.linsol, ls_pack.jacobian);
                 if lr != sundials_sys::IDALS_SUCCESS as i32 {
                     drop(ls_pack);
@@ -881,11 +911,10 @@ unsafe fn drive_print_loop(
     *tret = 0.0_f64;
     let mut time = *tret;
     let min_step = 1e-10_f64;
-    let event_deadband = env_f64("RUSTMODLICA_EVENT_DEADBAND")
-        .unwrap_or_else(|| (dt.abs() * 0.25).max(1e-7));
-    let count_deadband = env_f64("RUSTMODLICA_EVENT_COUNT_DEADBAND")
-        .unwrap_or_else(|| (dt.abs() * 0.5).max(1e-6));
-    let max_same_event_hits = env_u32("RUSTMODLICA_EVENT_MAX_SAME_HITS").unwrap_or(8_u32);
+    let debounce_cfg = EventDebounceConfig::adaptive_from_dt(dt);
+    let event_deadband = debounce_cfg.base_deadband;
+    let count_deadband = debounce_cfg.count_deadband;
+    let max_same_event_hits = debounce_cfg.max_same_event_hits;
     let tail_crossing_deadband = env_f64("RUSTMODLICA_TAIL_CROSSING_DEADBAND").unwrap_or(5e-3);
     let tail_height_deadband = env_f64("RUSTMODLICA_TAIL_HEIGHT_DEADBAND").unwrap_or(2e-4);
     let tail_velocity_deadband = env_f64("RUSTMODLICA_TAIL_VELOCITY_DEADBAND").unwrap_or(3e-2);
@@ -901,6 +930,7 @@ unsafe fn drive_print_loop(
     let mut eval_when_states = vec![0.0_f64; when_states.len()];
     let mut eval_crossings = vec![0.0_f64; crossings.len()];
     let mut roots_found = vec![0_i32; crossings.len()];
+    let mut event_queue = EventQueue::default();
     while time <= t_end + epsilon {
         native::reset_assert_counter();
         pre_states.copy_from_slice(states);
@@ -934,10 +964,12 @@ unsafe fn drive_print_loop(
             prev_outputs,
             &[],
             w,
+            Some(&mut event_queue),
         )? {
             EventIterationOutcome::TerminatedOk => return Ok(()),
             EventIterationOutcome::Completed => {}
         }
+        let _dispatched_events = event_queue.drain_sorted();
 
         maybe_print_numeric_jacobian(
             numeric_ode_jacobian,
@@ -1112,12 +1144,28 @@ unsafe fn drive_print_loop(
                     if step_code == CV_ROOT_RETURN as i32 {
                         let _ = CVodeGetRootInfo(mem, roots_found.as_mut_ptr());
                         root_triggered = roots_found.iter().any(|&v| v != 0);
+                        for (idx, root) in roots_found.iter().enumerate() {
+                            if *root != 0 {
+                                event_queue.push_unique(QueuedEvent {
+                                    time,
+                                    kind: QueuedEventKind::ZeroCrossing(idx),
+                                });
+                            }
+                        }
                     }
                 }
                 SundialsKind::Ida => {
                     if step_code == IDA_ROOT_RETURN as i32 {
                         let _ = IDAGetRootInfo(mem, roots_found.as_mut_ptr());
                         root_triggered = roots_found.iter().any(|&v| v != 0);
+                        for (idx, root) in roots_found.iter().enumerate() {
+                            if *root != 0 {
+                                event_queue.push_unique(QueuedEvent {
+                                    time,
+                                    kind: QueuedEventKind::ZeroCrossing(idx),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -1129,6 +1177,10 @@ unsafe fn drive_print_loop(
             let c_curr = crossings[i];
             if c_prev * c_curr < 0.0 {
                 event_found = true;
+                event_queue.push_unique(QueuedEvent {
+                    time,
+                    kind: QueuedEventKind::ZeroCrossing(i),
+                });
                 let d = c_curr - c_prev;
                 if d.abs() > 1e-12 {
                     let alpha = (-c_prev / d).clamp(0.0, 1.0);

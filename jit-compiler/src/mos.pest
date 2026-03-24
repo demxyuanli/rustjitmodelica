@@ -1,0 +1,61 @@
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+
+script = { SOI ~ stmt* ~ EOI }
+
+stmt = {
+    comment
+  | if_stmt
+  | for_stmt
+  | assign_stmt
+  | expr_stmt
+}
+
+semi = _{ ";" }
+comment = { ("//" ~ (!NEWLINE ~ ANY)*) | ("#" ~ (!NEWLINE ~ ANY)*) }
+
+assign_stmt = { identifier ~ (":=" | "=") ~ expr ~ semi? }
+expr_stmt = { expr ~ semi }
+
+if_stmt = { "if" ~ expr ~ "then" ~ stmt* ~ elseif_branch* ~ else_branch? ~ "end" ~ "if" ~ semi? }
+elseif_branch = { "elseif" ~ expr ~ "then" ~ stmt* }
+else_branch = { "else" ~ stmt* }
+
+for_stmt = { "for" ~ identifier ~ "in" ~ for_iter ~ "loop" ~ stmt* ~ "end" ~ "for" ~ semi? }
+for_iter = { range_expr | expr }
+range_expr = { expr ~ ":" ~ expr ~ (":" ~ expr)? }
+
+expr = _{ comparison }
+comparison = { additive ~ (comp_op ~ additive)* }
+comp_op = { "==" | "<>" | "<=" | ">=" | "<" | ">" }
+additive = { multiplicative ~ (add_op ~ multiplicative)* }
+add_op = { "+" | "-" }
+multiplicative = { unary ~ (mul_op ~ unary)* }
+mul_op = { "*" | "/" }
+unary = { unary_op* ~ primary }
+unary_op = { "+" | "-" | "not" }
+
+primary = _{
+    function_call
+  | array_literal
+  | record_literal
+  | number
+  | string
+  | boolean
+  | identifier
+  | "(" ~ expr ~ ")"
+}
+
+function_call = { qualified_identifier ~ "(" ~ arg_list? ~ ")" }
+arg_list = { argument ~ ("," ~ argument)* }
+argument = { named_argument | expr }
+named_argument = { identifier ~ "=" ~ expr }
+
+array_literal = { "{" ~ (expr ~ ("," ~ expr)*)? ~ "}" }
+record_literal = { "record" ~ "(" ~ (record_field ~ ("," ~ record_field)*)? ~ ")" }
+record_field = { identifier ~ "=" ~ expr }
+
+qualified_identifier = @{ identifier ~ ("." ~ identifier)* }
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+boolean = { "true" | "false" }
+number = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ (^"e" ~ ("+"|"-")? ~ ASCII_DIGIT+)? }
+string = @{ "\"" ~ ( "\\\"" | !("\"") ~ ANY )* ~ "\"" }

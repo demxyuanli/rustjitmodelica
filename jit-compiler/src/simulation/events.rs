@@ -10,10 +10,31 @@ use super::newton_recovery::{
     print_newton_diag, recover_newton_at_t0,
 };
 use super::sim_io::flush_writer;
+use super::types::{EventQueue, QueuedEvent, QueuedEventKind};
 
 pub(crate) enum EventIterationOutcome {
     Completed,
     TerminatedOk,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SyncEvent {
+    priority: u32,
+}
+
+#[derive(Debug, Default)]
+struct SyncEventQueue {
+    items: Vec<SyncEvent>,
+}
+
+impl SyncEventQueue {
+    fn push(&mut self, event: SyncEvent) {
+        self.items.push(event);
+    }
+
+    fn sort_by_priority(&mut self) {
+        self.items.sort_by_key(|e| e.priority);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -45,6 +66,7 @@ pub(crate) fn run_event_iteration_at_time(
     prev_outputs: &mut [f64],
     clock_partition_schedule: &[ClockPartitionScheduleEntry],
     w: &mut dyn std::io::Write,
+    mut event_queue: Option<&mut EventQueue>,
 ) -> Result<EventIterationOutcome, String> {
     fn sample_active(time: f64, start: f64, interval: f64) -> bool {
         if interval <= 0.0 {
@@ -69,6 +91,14 @@ pub(crate) fn run_event_iteration_at_time(
             }
         })
         .collect();
+    if let Some(queue) = event_queue.as_mut() {
+        for partition_id in &active_partition_ids {
+            queue.push_unique(QueuedEvent {
+                time,
+                kind: QueuedEventKind::ClockPartition((*partition_id).to_string()),
+            });
+        }
+    }
 
     let trace_events = std::env::var("RUSTMODLICA_EVENT_TRACE")
         .ok()
@@ -86,6 +116,11 @@ pub(crate) fn run_event_iteration_at_time(
             && (clock_partition_schedule.is_empty() || !active_partition_ids.is_empty());
     let mut alg_iter = 0u32;
     prev_outputs.fill(0.0);
+    let mut sync_queue = SyncEventQueue::default();
+    if !active_partition_ids.is_empty() {
+        sync_queue.push(SyncEvent { priority: 0 });
+        sync_queue.sort_by_priority();
+    }
 
     loop {
         let prev_state_snapshot = if trace_events {
@@ -263,6 +298,12 @@ pub(crate) fn run_event_iteration_at_time(
                 if pre_val != new_val {
                     when_states[idx_pre] = new_val;
                     converged = false;
+                    if let Some(queue) = event_queue.as_mut() {
+                        queue.push_unique(QueuedEvent {
+                            time,
+                            kind: QueuedEventKind::WhenEdge(i),
+                        });
+                    }
                 }
                 if trace_events {
                     eprintln!(

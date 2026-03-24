@@ -14,5 +14,10 @@ pub(crate) use function_body::get_function_body;
 const MAX_INLINE_RECURSION_DEPTH: u32 = 64;
 
 pub fn inline_function_calls(flat: &mut FlattenedModel, loader: &mut ModelLoader) {
-    traverse::inline_function_calls_in_model(flat, loader, MAX_INLINE_RECURSION_DEPTH);
+    let max_depth = std::env::var("RUSTMODLICA_INLINE_MAX_DEPTH")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(MAX_INLINE_RECURSION_DEPTH);
+    traverse::inline_function_calls_in_model(flat, loader, max_depth);
 }

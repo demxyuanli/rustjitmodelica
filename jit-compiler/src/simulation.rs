@@ -30,7 +30,7 @@ use self::events::{run_event_iteration_at_time, EventIterationOutcome};
 use self::newton_recovery::{allow_zero_residual_newton, fail_if_assert_storm, print_newton_diag};
 use self::sim_io::{flush_writer, write_csv_line};
 use self::step::maybe_print_numeric_jacobian;
-use self::types::ResultCollector;
+use self::types::{EventQueue, QueuedEvent, QueuedEventKind, ResultCollector};
 
 const CSV_ROWS_PER_FLUSH: u32 = 64;
 
@@ -196,6 +196,7 @@ pub fn run_simulation(
     let mut diag_state = vec![0.0_f64; states.len()];
     let mut scratch_outputs_for_step = vec![0.0_f64; output_vars.len()];
     let mut prev_outputs = vec![0.0; output_vars.len()];
+    let mut event_queue = EventQueue::default();
     let mut save_states = vec![0.0_f64; states.len()];
     let mut save_discrete = vec![0.0_f64; discrete_vals.len()];
     let mut save_crossings = vec![0.0_f64; crossings_count];
@@ -266,9 +267,44 @@ pub fn run_simulation(
             &mut prev_outputs,
             clock_partition_schedule,
             &mut **w,
+            Some(&mut event_queue),
         )? {
             EventIterationOutcome::TerminatedOk => return Ok(()),
             EventIterationOutcome::Completed => {}
+        }
+        let dispatched_events = event_queue.drain_sorted();
+        if !dispatched_events.is_empty() {
+            let trace_dispatch = std::env::var("RUSTMODLICA_EVENT_TRACE")
+                .ok()
+                .map(|v| {
+                    let t = v.trim();
+                    t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+                })
+                .unwrap_or(false);
+            if trace_dispatch {
+                for ev in &dispatched_events {
+                    match &ev.kind {
+                        QueuedEventKind::ClockPartition(id) => {
+                            eprintln!(
+                                "[event-dispatch] t={:.6} kind=clock_partition id={}",
+                                ev.time, id
+                            );
+                        }
+                        QueuedEventKind::WhenEdge(idx) => {
+                            eprintln!(
+                                "[event-dispatch] t={:.6} kind=when_edge idx={}",
+                                ev.time, idx
+                            );
+                        }
+                        QueuedEventKind::ZeroCrossing(idx) => {
+                            eprintln!(
+                                "[event-dispatch] t={:.6} kind=zero_crossing idx={}",
+                                ev.time, idx
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         maybe_print_numeric_jacobian(
@@ -487,6 +523,10 @@ pub fn run_simulation(
 
             if c_prev * c_curr < 0.0 {
                 event_found = true;
+                event_queue.push_unique(QueuedEvent {
+                    time: t_trial,
+                    kind: QueuedEventKind::ZeroCrossing(i),
+                });
                 let diff = c_curr - c_prev;
                 if diff.abs() > 1e-12 {
                     // Linear Interpolation: 0 = prev + alpha * diff

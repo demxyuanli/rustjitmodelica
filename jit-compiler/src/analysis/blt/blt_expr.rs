@@ -5,12 +5,68 @@ use std::collections::HashMap;
 use crate::analysis::expression_utils::{expression_is_zero, make_binary, make_num};
 use crate::analysis::variable_collection::{contains_var, equation_contains_var};
 
+fn expr_is_nonlinear_in_var(expr: &Expression, var: &str) -> bool {
+    match expr {
+        Expression::BinaryOp(lhs, Operator::Mul, rhs) => {
+            contains_var(lhs, var) && contains_var(rhs, var)
+        }
+        Expression::BinaryOp(lhs, _, rhs) => {
+            expr_is_nonlinear_in_var(lhs, var) || expr_is_nonlinear_in_var(rhs, var)
+        }
+        Expression::Call(_, args) => args.iter().any(|a| contains_var(a, var)),
+        Expression::If(c, t, e) => {
+            expr_is_nonlinear_in_var(c, var)
+                || expr_is_nonlinear_in_var(t, var)
+                || expr_is_nonlinear_in_var(e, var)
+        }
+        _ => false,
+    }
+}
+
+fn equation_nonlinear_for_var(eq: &Equation, var: &str) -> bool {
+    match eq {
+        Equation::Simple(lhs, rhs) => expr_is_nonlinear_in_var(lhs, var) || expr_is_nonlinear_in_var(rhs, var),
+        Equation::SolvableBlock { residuals, .. } => residuals.iter().any(|r| expr_is_nonlinear_in_var(r, var)),
+        _ => false,
+    }
+}
+
 pub(super) fn select_tearing_variable(
     block_unknowns: &[String],
     block_eqs: &[Equation],
     _unknown_map: &HashMap<String, usize>,
     method: &str,
 ) -> Option<String> {
+    fn env_weight(name: &str, default_v: f64) -> f64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+            .unwrap_or(default_v)
+    }
+
+    fn candidate_score(block_eqs: &[Equation], u: &str) -> f64 {
+        let occ = block_eqs
+            .iter()
+            .filter(|eq| equation_contains_var(eq, u))
+            .count() as f64;
+        let nonlinear_hits = block_eqs
+            .iter()
+            .filter(|eq| equation_nonlinear_for_var(eq, u))
+            .count() as f64;
+        let solve_bias = block_eqs
+            .iter()
+            .filter(|eq| solve_for_variable(eq, u).is_some())
+            .count() as f64;
+        let residual_size_bias = if occ > 0.0 { 1.0 / occ } else { 1.0 };
+
+        let w_occ = env_weight("RUSTMODLICA_TEAR_W_OCC", 1.0);
+        let w_nonlin = env_weight("RUSTMODLICA_TEAR_W_NONLINEAR", 3.0);
+        let w_solve = env_weight("RUSTMODLICA_TEAR_W_SOLVABLE", 0.75);
+        let w_residual = env_weight("RUSTMODLICA_TEAR_W_RESIDUAL", 0.5);
+        occ * w_occ + nonlinear_hits * w_nonlin - solve_bias * w_solve + residual_size_bias * w_residual
+    }
+
     if block_unknowns.is_empty() {
         return None;
     }
@@ -40,6 +96,18 @@ pub(super) fn select_tearing_variable(
                     .count();
                 if count < best_score {
                     best_score = count;
+                    best = u.clone();
+                }
+            }
+            Some(best)
+        }
+        "smart" | "hybrid" | "smartBlock" => {
+            let mut best = block_unknowns[0].clone();
+            let mut best_score = f64::INFINITY;
+            for u in block_unknowns {
+                let score = candidate_score(block_eqs, u);
+                if score < best_score {
+                    best_score = score;
                     best = u.clone();
                 }
             }

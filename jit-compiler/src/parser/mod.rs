@@ -8,6 +8,7 @@ mod eq_parse;
 mod expression;
 mod helpers;
 mod model_parse;
+pub mod mos_parse;
 mod preparse;
 
 use pest_derive::Parser;

@@ -21,6 +21,14 @@ use self::translator::{compile_algorithm_stmt, compile_equation};
 pub use self::types::{ArrayInfo, ArrayType, CalcDerivsFunc};
 use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
 
+fn jit_opt_level_from_env() -> String {
+    std::env::var("RUSTMODLICA_CRANELIFT_OPT_LEVEL")
+        .ok()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| matches!(s.as_str(), "none" | "speed" | "speed_and_size"))
+        .unwrap_or_else(|| "speed".to_string())
+}
+
 fn emit_sample_trigger(
     start: f64,
     interval: f64,
@@ -117,7 +125,12 @@ impl Jit {
     pub fn new_with_extra_symbols(
         extra: Option<&std::collections::HashMap<String, *const u8>>,
     ) -> Self {
-        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
+        let mut flag_builder = settings::builder();
+        let _ = flag_builder.set("opt_level", &jit_opt_level_from_env());
+        let isa_builder = cranelift_native::builder().unwrap();
+        let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
+        let mut builder =
+            JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
 
         register_symbols(&mut builder);
         if let Some(map) = extra {

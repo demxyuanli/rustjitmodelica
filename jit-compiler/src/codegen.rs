@@ -15,7 +15,19 @@ pub struct Codegen {
 
 impl Codegen {
     pub fn new() -> Self {
-        let flag_builder = settings::builder();
+        let mut flag_builder = settings::builder();
+        let opt_level = std::env::var("RUSTMODLICA_CRANELIFT_AOT_OPT_LEVEL")
+            .ok()
+            .unwrap_or_else(|| "speed".to_string());
+        let _ = flag_builder.set("opt_level", opt_level.trim());
+        // Keep best-effort toggles non-fatal across Cranelift versions.
+        if std::env::var("RUSTMODLICA_CRANELIFT_ENABLE_SIMD")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+            .unwrap_or(false)
+        {
+            let _ = flag_builder.set("enable_simd", "true");
+        }
         let isa_builder = cranelift_native::builder().unwrap();
         let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
 

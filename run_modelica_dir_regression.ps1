@@ -12,6 +12,8 @@ param(
     [string]$IncludePattern = "",
     [string]$ExcludePattern = "",
     [string[]]$ExtraArgs = @(),
+    # Additional local Modelica library roots (repeatable), used when local mirror is incomplete.
+    [string[]]$LibPath = @(),
     # When set, every .mo under jit-compiler/Modelica and jit-compiler/ModelicaTest is eligible (full MSL + tests).
     # Default (off) keeps only ModelicaTest and Modelica/*/Examples for faster runs.
     [switch]$AllLibraryMo,
@@ -321,6 +323,10 @@ function Get-UnresolvedModelSet([string]$summaryPath) {
             }
         }
         if ($modelName -ne "") { $set[$modelName] = $true }
+        if ($modelName -ne "") {
+            $normName = Normalize-ModelName $modelName
+            if ($normName -ne "") { $set[$normName] = $true }
+        }
     }
     return $set
 }
@@ -332,16 +338,37 @@ function Get-SkipModelNamesFromSummary([string]$summaryPath) {
     $lines = (Get-FileLines $summaryPath 0).Lines
     foreach ($ln in $lines) {
         $t = $ln.Trim()
-        if (-not $t.StartsWith("--")) { continue }
-        $rest = $t.Substring(2).TrimStart()
+        $rest = ""
+        if ($t.StartsWith("--")) {
+            $rest = $t.Substring(2).TrimStart()
+        } elseif ($t.StartsWith("!!")) {
+            $rest = $t.Substring(2).TrimStart()
+        } else {
+            continue
+        }
         if ($rest -eq "") { continue }
         $name = (($rest -split '\s+', 2)[0]).Trim()
         if ($name -eq "") { continue }
+        $name = Normalize-ModelName $name
         if ($seen.ContainsKey($name)) { continue }
         $seen[$name] = $true
         $list.Add($name)
     }
     return $list
+}
+
+function Normalize-ModelName([string]$name) {
+    if ([string]::IsNullOrWhiteSpace($name)) { return $name }
+    # Compatibility rewrite: older summaries used flattened MediaTestModels path
+    # without TestsWithFluid segment.
+    if ($name -match '^ModelicaTest\.Media\.MediaTestModels\.') {
+        $name = $name -replace '^ModelicaTest\.Media\.MediaTestModels\.', 'ModelicaTest.Media.TestsWithFluid.MediaTestModels.'
+    }
+    # Compatibility rewrite: Fluid pump monitoring moved under BaseClasses.
+    if ($name -match '^Modelica\.Fluid\.Machines\.PumpMonitoring\.') {
+        $name = $name -replace '^Modelica\.Fluid\.Machines\.PumpMonitoring\.', 'Modelica.Fluid.Machines.BaseClasses.PumpMonitoring.'
+    }
+    return $name
 }
 
 function Test-MoFullPathMatchesRegex([string]$fullPath, [string]$pattern) {
@@ -382,20 +409,76 @@ if ($missingLibraryItems.Count -gt 0) {
 }
 Write-Host "Library preflight OK: $modelicaLibRoot ; $modelicaTestLibRoot"
 
+$resolvedLibRoots = New-Object System.Collections.Generic.List[string]
+foreach ($lp in $LibPath) {
+    if ([string]::IsNullOrWhiteSpace($lp)) { continue }
+    $abs = $lp
+    if (-not [System.IO.Path]::IsPathRooted($abs)) {
+        $abs = Join-Path $repoRoot $abs
+    }
+    if (-not (Test-Path -LiteralPath $abs)) {
+        Write-Error "Configured LibPath does not exist: $abs"
+        exit 3
+    }
+    $norm = (Resolve-Path -LiteralPath $abs).Path
+    if (-not $resolvedLibRoots.Contains($norm)) {
+        # If caller passes a bundle root containing Modelica/ and ModelicaTest/,
+        # expand to package roots directly for loader compatibility.
+        $bundleModelica = Join-Path $norm "Modelica"
+        $bundleModelicaTest = Join-Path $norm "ModelicaTest"
+        $addedExpanded = $false
+        if (Test-Path -LiteralPath (Join-Path $bundleModelica "package.mo")) {
+            if (-not $resolvedLibRoots.Contains($bundleModelica)) { $resolvedLibRoots.Add($bundleModelica) }
+            $addedExpanded = $true
+        }
+        if (Test-Path -LiteralPath (Join-Path $bundleModelicaTest "package.mo")) {
+            if (-not $resolvedLibRoots.Contains($bundleModelicaTest)) { $resolvedLibRoots.Add($bundleModelicaTest) }
+            $addedExpanded = $true
+        }
+        if (-not $addedExpanded) {
+            $resolvedLibRoots.Add($norm)
+        }
+    }
+}
+# If caller provides LibPath explicitly, treat it as authoritative to avoid
+# incomplete local mirrors shadowing complete external libraries.
+if ($resolvedLibRoots.Count -eq 0) {
+    if (Test-Path -LiteralPath $modelicaLibRoot) {
+        $normLocalModelica = (Resolve-Path -LiteralPath $modelicaLibRoot).Path
+        if (-not $resolvedLibRoots.Contains($normLocalModelica)) { $resolvedLibRoots.Add($normLocalModelica) }
+    }
+    if (Test-Path -LiteralPath $modelicaTestLibRoot) {
+        $normLocalModelicaTest = (Resolve-Path -LiteralPath $modelicaTestLibRoot).Path
+        if (-not $resolvedLibRoots.Contains($normLocalModelicaTest)) { $resolvedLibRoots.Add($normLocalModelicaTest) }
+    }
+}
+Write-Host ("Effective lib roots: " + ($resolvedLibRoots -join "; "))
+
 # Preflight semantic check: verify MediaTestModels namespace is actually loadable.
 # This catches incomplete local ModelicaTest mirrors early.
 $preflightArgs = @(
-    "--lib-path=$modelicaLibRoot",
-    "--lib-path=$modelicaTestLibRoot",
     "--validate",
-    "ModelicaTest.Media.MediaTestModels.Air.SimpleAir"
+    "ModelicaTest.Media.TestsWithFluid.MediaTestModels.Air.SimpleAir"
 )
+foreach ($lr in $resolvedLibRoots) { $preflightArgs = @("--lib-path=$lr") + $preflightArgs }
 Push-Location $jitRoot
 $preflightOut = & $exe @preflightArgs 2>&1
 $preflightExit = $LASTEXITCODE
 Pop-Location
 if ($preflightExit -ne 0) {
-    Write-Error "Local library preflight failed: ModelicaTest.Media.MediaTestModels.Air.SimpleAir is not loadable. Local ModelicaTest sources are incomplete or inconsistent."
+    $pfDetail = ""
+    foreach ($ln in $preflightOut) {
+        $s = $ln.ToString()
+        if ($s -match 'Model not found:' -or $s -match 'Could not find model:' -or $s -match 'error') {
+            $pfDetail = $s.Trim()
+            break
+        }
+    }
+    if ($pfDetail -ne "") {
+        Write-Error ("Local library preflight failed: ModelicaTest.Media.TestsWithFluid.MediaTestModels.Air.SimpleAir is not loadable. detail=" + $pfDetail + " ; add complete library roots via -LibPath.")
+    } else {
+        Write-Error "Local library preflight failed: ModelicaTest.Media.TestsWithFluid.MediaTestModels.Air.SimpleAir is not loadable. Add complete library roots via -LibPath."
+    }
     exit 4
 }
 
@@ -446,10 +529,18 @@ if ($OnlySkipsFromSummary -ne "") {
     }
     Write-Host "Skip-only run from summary: $($models.Count) model(s)"
 } else {
-    $moDirs = @(
-        (Join-Path $jitRoot "Modelica"),
-        (Join-Path $jitRoot "ModelicaTest")
-    )
+    $moDirs = @()
+    foreach ($lr in $resolvedLibRoots) {
+        if ($lr -match '\\Modelica$' -or $lr -match '\\ModelicaTest$') {
+            if (Test-Path -LiteralPath $lr) { $moDirs += $lr }
+        }
+    }
+    if ($moDirs.Count -eq 0) {
+        $moDirs = @(
+            (Join-Path $jitRoot "Modelica"),
+            (Join-Path $jitRoot "ModelicaTest")
+        )
+    }
 
     $moFiles = @()
     foreach ($d in $moDirs) {
@@ -480,8 +571,9 @@ if ($OnlySkipsFromSummary -ne "") {
         if ($f.Name -ieq "package.mo") { continue }
         $mns = Get-ModelNamesFromMoFile $f.FullName
         foreach ($mn in $mns) {
-            if ($mn -ne "" -and -not $models.Contains($mn)) {
-                $models.Add($mn)
+            $mnNorm = Normalize-ModelName $mn
+            if ($mnNorm -ne "" -and -not $models.Contains($mnNorm)) {
+                $models.Add($mnNorm)
             }
         }
     }
@@ -558,7 +650,7 @@ foreach ($m in $models) {
         $cliArgs += "--index-reduction-method=dummyDerivative"
     }
     $cliArgs += $ExtraArgs
-    $cliArgs += @("--lib-path=$modelicaLibRoot", "--lib-path=$modelicaTestLibRoot")
+    foreach ($lr in $resolvedLibRoots) { $cliArgs += "--lib-path=$lr" }
     $cliArgs += @("--solver=$Solver", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
 
     $usedImplicitRetry = $false
@@ -575,7 +667,7 @@ foreach ($m in $models) {
     if ($exit -ne 0 -and $newtonFailedFirstTry -and $Solver -ne "implicit" -and $allowImplicitRetry) {
         $retryArgs = @()
         $retryArgs += $ExtraArgs
-        $retryArgs += @("--lib-path=$modelicaLibRoot", "--lib-path=$modelicaTestLibRoot")
+        foreach ($lr in $resolvedLibRoots) { $retryArgs += "--lib-path=$lr" }
         $retryArgs += @("--index-reduction-method=dummyDerivative", "--solver=implicit", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
         $retryLines = & $exe @retryArgs 2>&1
         $retryExit = $LASTEXITCODE
@@ -588,7 +680,7 @@ foreach ($m in $models) {
             $reArgs = @()
             if (-not $hasIndexReductionArg) { $reArgs += "--index-reduction-method=dummyDerivative" }
             $reArgs += $ExtraArgs
-            $reArgs += @("--lib-path=$modelicaLibRoot", "--lib-path=$modelicaTestLibRoot")
+            foreach ($lr in $resolvedLibRoots) { $reArgs += "--lib-path=$lr" }
             $reArgs += @("--solver=$Solver", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
             $reLines = & $exe @reArgs 2>&1
             $reExit = $LASTEXITCODE

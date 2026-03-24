@@ -31,6 +31,101 @@ where
 /// Row collector for run_simulation when collecting in-memory (time, states, discrete, outputs).
 pub type ResultCollector = Vec<(f64, Vec<f64>, Vec<f64>, Vec<f64>)>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueuedEventKind {
+    WhenEdge(usize),
+    ZeroCrossing(usize),
+    ClockPartition(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueuedEvent {
+    pub time: f64,
+    pub kind: QueuedEventKind,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct EventQueue {
+    items: Vec<QueuedEvent>,
+}
+
+impl EventQueue {
+    pub fn push_unique(&mut self, event: QueuedEvent) {
+        if self.items.iter().any(|existing| existing == &event) {
+            return;
+        }
+        self.items.push(event);
+    }
+
+    pub fn drain_sorted(&mut self) -> Vec<QueuedEvent> {
+        self.items.sort_by(|a, b| a.time.total_cmp(&b.time));
+        std::mem::take(&mut self.items)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct SundialsRuntimeConfig {
+    pub max_order: Option<i32>,
+    pub max_nonlin_iters: Option<i32>,
+    pub max_step: Option<f64>,
+}
+
+impl SundialsRuntimeConfig {
+    #[allow(dead_code)]
+    pub fn from_env() -> Self {
+        fn env_i32(name: &str) -> Option<i32> {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<i32>().ok())
+                .filter(|v| *v > 0)
+        }
+        fn env_f64(name: &str) -> Option<f64> {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0)
+        }
+        Self {
+            max_order: env_i32("RUSTMODLICA_SUNDIALS_MAX_ORDER"),
+            max_nonlin_iters: env_i32("RUSTMODLICA_SUNDIALS_MAX_NL_ITERS"),
+            max_step: env_f64("RUSTMODLICA_SUNDIALS_MAX_STEP"),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct EventDebounceConfig {
+    pub base_deadband: f64,
+    pub count_deadband: f64,
+    pub max_same_event_hits: u32,
+}
+
+impl EventDebounceConfig {
+    #[allow(dead_code)]
+    pub fn adaptive_from_dt(dt: f64) -> Self {
+        fn env_f64(name: &str) -> Option<f64> {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0)
+        }
+        fn env_u32(name: &str) -> Option<u32> {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .filter(|v| *v > 0)
+        }
+        Self {
+            base_deadband: env_f64("RUSTMODLICA_EVENT_DEADBAND").unwrap_or_else(|| (dt.abs() * 0.25).max(1e-7)),
+            count_deadband: env_f64("RUSTMODLICA_EVENT_COUNT_DEADBAND")
+                .unwrap_or_else(|| (dt.abs() * 0.5).max(1e-6)),
+            max_same_event_hits: env_u32("RUSTMODLICA_EVENT_MAX_SAME_HITS").unwrap_or(8),
+        }
+    }
+}
+
 pub fn run_simulation_collect(
     calc_derivs: CalcDerivsFunc,
     when_count: usize,

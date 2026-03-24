@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use crate::analysis::analyze_initial_equations;
 use crate::ast::{Equation, Expression};
@@ -20,6 +21,51 @@ use super::pipeline::{
     analyze_equations, build_runtime_algorithms, classify_variables,
     collect_newton_tearing_var_names, flatten_and_inline, stage_trace_enabled,
 };
+
+fn maybe_write_aot_cache_marker(
+    model_name: &str,
+    alg_equations: &[Equation],
+    diff_equations: &[Equation],
+    options: &crate::compiler::CompilerOptions,
+) -> bool {
+    let Ok(cache_dir) = std::env::var("RUSTMODLICA_AOT_CACHE_DIR") else {
+        return false;
+    };
+    if cache_dir.trim().is_empty() {
+        return false;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    model_name.hash(&mut hasher);
+    options.solver.hash(&mut hasher);
+    options.index_reduction_method.hash(&mut hasher);
+    options.tearing_method.hash(&mut hasher);
+    options.generate_dynamic_jacobian.hash(&mut hasher);
+    alg_equations.len().hash(&mut hasher);
+    diff_equations.len().hash(&mut hasher);
+    for eq in alg_equations.iter().chain(diff_equations.iter()) {
+        format!("{:?}", eq).hash(&mut hasher);
+    }
+    let key = format!("{:016x}", hasher.finish());
+    let cache_root = std::path::PathBuf::from(cache_dir);
+    let _ = std::fs::create_dir_all(&cache_root);
+    let path = cache_root.join(format!("{}.aot-marker", key));
+    if path.exists() {
+        eprintln!("[aot-cache] hit {}", path.display());
+        return true;
+    }
+    let payload = format!(
+        "model={}\nkey={}\nsolver={}\nalg_eqs={}\ndiff_eqs={}\n",
+        model_name,
+        key,
+        options.solver,
+        alg_equations.len(),
+        diff_equations.len()
+    );
+    if std::fs::write(&path, payload).is_ok() {
+        eprintln!("[aot-cache] store {}", path.display());
+    }
+    false
+}
 
 fn parse_clock_partition_trigger(id: &str) -> ClockPartitionTrigger {
     if let Some(rest) = id.strip_prefix("sample_") {
@@ -482,6 +528,7 @@ pub(super) fn compile(
 
         let algorithms = build_runtime_algorithms(&flat_model, stage_trace);
         let newton_tearing_var_names = collect_newton_tearing_var_names(&alg_equations);
+        let _aot_cache_hit = maybe_write_aot_cache_marker(model_name, &alg_equations, &diff_equations, opts);
         let mut clock_partition_schedule: Vec<ClockPartitionScheduleEntry> = Vec::new();
         for part in &backend_clock_partitions {
             let mut var_names: Vec<String> = part.var_names.iter().cloned().collect();
