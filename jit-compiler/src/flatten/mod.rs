@@ -82,6 +82,7 @@ impl Flattener {
             clocked_var_names: std::collections::HashSet::new(),
             clock_partitions: Vec::new(),
             clock_signal_connections: Vec::new(),
+            stream_peer_map: HashMap::new(),
             interner: StringInterner::new(),
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),

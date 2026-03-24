@@ -1,0 +1,4 @@
+loadModel("SolvableBlock4Res");
+setStopTime(0.05);
+simulate(model="SolvableBlock4Res", stopTime=0.05, stepSize=0.01, method="rk45", resultFile="omc_newton_symbolic_dense.csv");
+quit();

@@ -12,6 +12,7 @@ use super::helpers::{
     write_back_inner_simple_equations_and_tearing_output,
 };
 use super::solvable::{emit_assert_suppress_begin, emit_assert_suppress_end};
+use crate::analysis::partial_derivative;
 
 #[allow(clippy::too_many_arguments)]
 fn emit_bad_jacobian_retry_or_exit(
@@ -200,6 +201,26 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
         .as_ref()
         .cloned()
         .unwrap_or_else(|| unknowns[0].clone());
+    let symbolic_trace = std::env::var("RUSTMODLICA_NEWTON_SYMBOLIC_TRACE")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false);
+    let symbolic_enabled = std::env::var("RUSTMODLICA_NEWTON_SYMBOLIC_JACOBIAN")
+        .ok()
+        .map(|v| !matches!(v.trim(), "0" | "false" | "FALSE" | "off" | "OFF"))
+        .unwrap_or(true);
+    let symbolic_derivative = if symbolic_enabled {
+        Some(partial_derivative(&residuals[0], &t_var))
+    } else {
+        None
+    };
+    if symbolic_trace {
+        eprintln!(
+            "[newton-symbolic] tearing var={} symbolic={}",
+            t_var,
+            symbolic_derivative.is_some()
+        );
+    }
     ctx.var_map.remove(&t_var);
     let t_slot = *ctx
         .stack_slots
@@ -268,13 +289,17 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
         builder.ins().store(MemFlags::new(), res_val, pr, 0);
         builder.ins().store(MemFlags::new(), x, px, 0);
     }
-    let epsilon = builder.ins().f64const(1e-6);
-    let x_p = builder.ins().fadd(x, epsilon);
-    builder.ins().stack_store(x_p, t_slot, 0);
-    compile_inner_simple_assignments(inner_eqs, ctx, builder)?;
-    let res_p = compile_expression(&residuals[0], ctx, builder)?;
-    let diff_res = builder.ins().fsub(res_p, res_val);
-    let j_val = builder.ins().fdiv(diff_res, epsilon);
+    let j_val = if let Some(d_expr) = symbolic_derivative.as_ref() {
+        compile_expression(d_expr, ctx, builder)?
+    } else {
+        let epsilon = builder.ins().f64const(1e-6);
+        let x_p = builder.ins().fadd(x, epsilon);
+        builder.ins().stack_store(x_p, t_slot, 0);
+        compile_inner_simple_assignments(inner_eqs, ctx, builder)?;
+        let res_p = compile_expression(&residuals[0], ctx, builder)?;
+        let diff_res = builder.ins().fsub(res_p, res_val);
+        builder.ins().fdiv(diff_res, epsilon)
+    };
     let j_abs = builder.ins().fabs(j_val);
     let j_min = builder.ins().f64const(1e-12);
     let bad_jac = builder.ins().fcmp(FloatCC::LessThan, j_abs, j_min);

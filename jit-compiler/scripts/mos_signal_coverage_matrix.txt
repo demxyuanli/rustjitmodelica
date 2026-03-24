@@ -1,0 +1,20 @@
+MOS Signal Coverage Matrix
+Last updated: 2026-03-24
+target_semantic_coverage_percent,98
+target_modelica34_percent,100
+
+case,focus,status,target,current,gap,enforced
+omc_regression_named_simulate.mos,simulate_named_args,pass,98,100,0,yes
+omc_regression_if_for.mos,if_for_control_flow,pass,98,100,0,yes
+omc_regression_for_range.mos,for_range_1_10_and_1_2_10,pass,98,100,0,yes
+omc_regression_simulate_named_combo.mos,simulate_named_combo,pass,98,100,0,yes
+omc_regression_elseif_nested_for.mos,elseif_nested_for,pass,98,100,0,yes
+omc_regression_reverse_range.mos,reverse_range_5_-2_1,pass,98,100,0,yes
+omc_regression_mixed_simulate_args.mos,simulate_positional_plus_named,pass,98,100,0,yes
+omc_regression_sync_signal.mos,sample_interval_sub_super_shift,pass,98,100,0,yes
+omc_regression_sync_super_shift.mos,sample_super_shift_real_semantics,pass,98,100,0,yes
+omc_regression_newton_symbolic_dense.mos,newton_symbolic_jacobian_dense,pass,98,100,0,yes
+omc_regression_newton_symbolic_sparse.mos,newton_symbolic_jacobian_sparse,pass,98,100,0,yes
+omc_regression_stream_semantics.mos,instream_actualstream_minimal_semantics,pass,98,100,0,yes
+omc_regression_algorithm_elsewhen.mos,algorithm_when_elsewhen_execution,pass,98,100,0,yes
+omc_regression_direction_switch_stream.mos,stream_direction_switch_semantics,pass,98,100,0,yes

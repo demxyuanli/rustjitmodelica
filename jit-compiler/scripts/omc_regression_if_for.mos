@@ -1,0 +1,12 @@
+loadModel("BouncingBall");
+nRuns := 2;
+if nRuns > 1 then
+  setStopTime(0.3);
+else
+  setStopTime(0.1);
+end if;
+for i in {1, 2} loop
+  setResultFile("omc_if_for_run.csv");
+  simulate();
+end for;
+quit();

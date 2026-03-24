@@ -1,0 +1,3 @@
+loadModel("DirectionSwitchStream");
+simulate(model="DirectionSwitchStream", stopTime=1.0, stepSize=0.02, method="rk45", resultFile="omc_direction_switch_stream.csv");
+quit();

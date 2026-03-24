@@ -1,0 +1,15 @@
+loadModel("BouncingBall");
+sum := 0;
+for i in 1:3 loop
+  sum := sum + i;
+end for;
+for j in 1:2:5 loop
+  sum := sum + j;
+end for;
+if sum == 15 then
+  setStopTime(0.2);
+else
+  setStopTime(0.1);
+end if;
+simulate(model="BouncingBall", stopTime=0.2, numberOfIntervals=20, method="rk45", resultFile="omc_for_range.csv");
+quit();

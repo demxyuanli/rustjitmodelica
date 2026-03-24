@@ -240,6 +240,11 @@ pub fn resolve_connections(
                                 .push(decl.name.clone());
                             flow_vars.insert(decl.name.clone());
                             flow_vars.insert(target_name);
+                        } else if decl.is_stream {
+                            flat.stream_peer_map
+                                .insert(decl.name.clone(), target_name.clone());
+                            flat.stream_peer_map
+                                .insert(target_name.clone(), decl.name.clone());
                         } else {
                             potential_eqs.push(Equation::Simple(
                                 Expression::var(&decl.name),
@@ -265,6 +270,9 @@ pub fn resolve_connections(
                             .push(a_path.clone());
                         flow_vars.insert(a_path.clone());
                         flow_vars.insert(b_path.clone());
+                    } else if decl.is_stream {
+                        flat.stream_peer_map.insert(a_path.clone(), b_path.clone());
+                        flat.stream_peer_map.insert(b_path.clone(), a_path.clone());
                     } else {
                         potential_eqs.push(Equation::Simple(
                             Expression::var(a_path),

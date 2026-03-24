@@ -1,0 +1,3 @@
+loadModel("StreamSemanticSmoke");
+simulate(model="StreamSemanticSmoke", stopTime=0.1, stepSize=0.01, method="rk45", resultFile="omc_stream_semantics.csv");
+quit();

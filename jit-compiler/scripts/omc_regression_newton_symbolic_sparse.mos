@@ -1,0 +1,4 @@
+loadModel("SolvableBlockSparse3");
+setStopTime(0.05);
+simulate(model="SolvableBlockSparse3", stopTime=0.05, stepSize=0.01, method="rk45", resultFile="omc_newton_symbolic_sparse.csv");
+quit();

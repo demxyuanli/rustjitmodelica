@@ -176,6 +176,7 @@ pub struct Declaration {
     pub constrainedby_type: Option<String>,
     pub is_parameter: bool,
     pub is_flow: bool,
+    pub is_stream: bool,
     pub is_discrete: bool,
     pub is_input: bool,
     pub is_output: bool,

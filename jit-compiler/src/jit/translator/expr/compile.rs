@@ -686,13 +686,62 @@ pub(super) fn compile_expression_rec(
                 compile_expression_rec(clock_expr, ctx, builder)
             }
         }
-        Expression::SuperSample(clock_expr, _n) | Expression::ShiftSample(clock_expr, _n) => {
-            if matches!(expr, Expression::SuperSample(_, _)) {
+        Expression::SuperSample(clock_expr, n_expr) => {
+            if let Expression::Sample(interval_expr) = &**clock_expr {
+                let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
+                let n_val = compile_expression_rec(n_expr, ctx, builder)?;
+                let one = builder.ins().f64const(1.0);
+                let zero = builder.ins().f64const(0.0);
+                let n_non_zero = builder.ins().fcmp(FloatCC::NotEqual, n_val, zero);
+                let n_safe = builder.ins().select(n_non_zero, n_val, one);
+                let scaled_interval = builder.ins().fdiv(interval_val, n_safe);
+                let time_val = ctx
+                    .var_map
+                    .get("time")
+                    .copied()
+                    .ok_or("superSample(sample(...), n) requires time in context".to_string())?;
+                let mut sig = ctx.module.make_signature();
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.returns.push(AbiParam::new(cl_types::F64));
+                let func_id = ctx
+                    .module
+                    .declare_function("rustmodlica_sample", Linkage::Import, &sig)
+                    .map_err(|e| e.to_string())?;
+                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+                let call_inst = builder.ins().call(func_ref, &[time_val, scaled_interval]);
+                Ok(builder.inst_results(call_inst)[0])
+            } else {
                 warn_clock_degrade_once("superSample");
+                compile_expression_rec(clock_expr, ctx, builder)
+            }
+        }
+        Expression::ShiftSample(clock_expr, n_expr) => {
+            if let Expression::Sample(interval_expr) = &**clock_expr {
+                let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
+                let n_val = compile_expression_rec(n_expr, ctx, builder)?;
+                let shift = builder.ins().fmul(interval_val, n_val);
+                let time_val = ctx
+                    .var_map
+                    .get("time")
+                    .copied()
+                    .ok_or("shiftSample(sample(...), n) requires time in context".to_string())?;
+                let shifted_t = builder.ins().fsub(time_val, shift);
+                let mut sig = ctx.module.make_signature();
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.returns.push(AbiParam::new(cl_types::F64));
+                let func_id = ctx
+                    .module
+                    .declare_function("rustmodlica_sample", Linkage::Import, &sig)
+                    .map_err(|e| e.to_string())?;
+                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+                let call_inst = builder.ins().call(func_ref, &[shifted_t, interval_val]);
+                Ok(builder.inst_results(call_inst)[0])
             } else {
                 warn_clock_degrade_once("shiftSample");
+                compile_expression_rec(clock_expr, ctx, builder)
             }
-            compile_expression_rec(clock_expr, ctx, builder)
         }
     }
 }

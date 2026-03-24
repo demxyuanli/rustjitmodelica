@@ -1,0 +1,4 @@
+loadModel("BouncingBall");
+simulate(model="BouncingBall", stopTime=0.6, numberOfIntervals=60, tolerance=1e-5, method="rk45", resultFile="omc_named_combo.csv");
+getErrorString();
+quit();

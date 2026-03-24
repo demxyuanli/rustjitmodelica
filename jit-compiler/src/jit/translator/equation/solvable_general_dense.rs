@@ -9,11 +9,13 @@ use crate::jit::translator::expr::compile_expression;
 use crate::solvable_limits::{validate_solvable_residual_count, JIT_DENSE_STACK_MAX_N};
 
 use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
+use super::solvable::SymbolicJacobianPlan;
 
 pub(super) fn compile_solvable_block_general_dense_n(
     unknowns: &[String],
     residuals: &[Expression],
     slots: &[StackSlot],
+    symbolic_plan: &SymbolicJacobianPlan,
     ctx: &mut TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
@@ -113,10 +115,14 @@ pub(super) fn compile_solvable_block_general_dense_n(
         let xjp = builder.ins().fadd(xj, eps_val);
         builder.ins().stack_store(xjp, slots[j], 0);
         for i in 0..n {
-            let rp = compile_expression(&residuals[i], ctx, builder)?;
-            let r_orig = r_vals[i];
-            let dr = builder.ins().fsub(rp, r_orig);
-            let jac_ij = builder.ins().fdiv(dr, eps_val);
+            let jac_ij = if let Some(d_expr) = symbolic_plan.get(i, j) {
+                compile_expression(d_expr, ctx, builder)?
+            } else {
+                let rp = compile_expression(&residuals[i], ctx, builder)?;
+                let r_orig = r_vals[i];
+                let dr = builder.ins().fsub(rp, r_orig);
+                builder.ins().fdiv(dr, eps_val)
+            };
             let off = (i * n + j) * 8;
             let off_val = builder.ins().iconst(ptr_type, off as i64);
             let addr = builder.ins().iadd(base_ptr, off_val);

@@ -1,0 +1,12 @@
+loadModel("BouncingBall");
+acc := 0;
+for i in 5:-2:1 loop
+  acc := acc + i;
+end for;
+if acc == 9 then
+  setStopTime(0.2);
+else
+  setStopTime(0.1);
+end if;
+simulate(model="BouncingBall", stopTime=0.2, numberOfIntervals=20, tolerance=1e-6, method="rk45", resultFile="omc_reverse_range.csv");
+quit();

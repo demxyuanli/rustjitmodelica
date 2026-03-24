@@ -40,6 +40,8 @@ pub struct FlattenedModel {
     pub clock_partitions: Vec<ClockPartition>,
     /// SYNC-6: Pairs of connector instance paths when both sides are clock connectors (infer same clock network).
     pub clock_signal_connections: Vec<(String, String)>,
+    /// STREAM-MVP: 2-port stream peer mapping (stream var -> opposite side stream var).
+    pub stream_peer_map: HashMap<String, String>,
     pub interner: StringInterner,
     /// `InstId` is index into `inst_records`.
     pub inst_records: Vec<InstPathRecord>,

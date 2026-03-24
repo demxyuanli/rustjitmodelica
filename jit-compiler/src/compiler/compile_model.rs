@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::path::Path;
 
 use crate::analysis::analyze_initial_equations;
 use crate::ast::{Equation, Expression};
@@ -88,6 +89,58 @@ fn parse_clock_partition_trigger(id: &str) -> ClockPartitionTrigger {
         }
     }
     ClockPartitionTrigger::Always
+}
+
+fn parse_coverage_status() -> Option<(f64, f64, f64, f64, Vec<String>)> {
+    let candidate_paths = [
+        Path::new("scripts/coverage_status.json"),
+        Path::new("jit-compiler/scripts/coverage_status.json"),
+    ];
+    let path = candidate_paths.iter().find(|p| p.exists())?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let sem_target = v.get("semantic_target_percent")?.as_f64()?;
+    let sem_current = v.get("semantic_current_percent")?.as_f64()?;
+    let m34_target = v.get("modelica34_target_percent")?.as_f64()?;
+    let m34_current = v.get("modelica34_current_percent")?.as_f64()?;
+    let gaps = v
+        .get("gaps")
+        .and_then(|g| g.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some((sem_target, sem_current, m34_target, m34_current, gaps))
+}
+
+fn maybe_coverage_target_warning_message() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let Some((sem_target, sem_current, m34_target, m34_current, gaps)) = parse_coverage_status() else {
+        return Ok(None);
+    };
+    let sem_ok = sem_current + f64::EPSILON >= sem_target;
+    let m34_ok = m34_current + f64::EPSILON >= m34_target;
+    if sem_ok && m34_ok {
+        return Ok(None);
+    }
+    let gap_text = if gaps.is_empty() {
+        "none listed".to_string()
+    } else {
+        gaps.join(", ")
+    };
+    let msg = format!(
+        "coverage target not met: semantic {:.2}% / target {:.2}%, Modelica 3.4 {:.2}% / target {:.2}%. gaps: {}. Run `powershell -ExecutionPolicy Bypass -File scripts/run_mos_regression.ps1` and refresh `scripts/coverage_status.json`.",
+        sem_current, sem_target, m34_current, m34_target, gap_text
+    );
+    let strict = std::env::var("RUSTMODLICA_COVERAGE_STRICT")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false);
+    if strict {
+        return Err(msg.into());
+    }
+    Ok(Some(msg))
 }
 
 pub(super) fn compile(
@@ -214,6 +267,19 @@ pub(super) fn compile(
                 ),
                 source: None,
             });
+        }
+        if opts.warnings_level != "none" {
+            if let Some(msg) = maybe_coverage_target_warning_message()? {
+                compiler.warnings.push(WarningInfo {
+                    path: model_file_path.clone(),
+                    line: 0,
+                    column: 0,
+                    message: msg,
+                    source: None,
+                });
+            }
+        } else {
+            let _ = maybe_coverage_target_warning_message()?;
         }
 
         let mut known_at_initial = HashSet::new();

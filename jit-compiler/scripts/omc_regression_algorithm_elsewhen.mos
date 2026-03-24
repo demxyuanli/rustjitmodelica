@@ -1,0 +1,3 @@
+loadModel("AlgorithmElseWhen");
+simulate(model="AlgorithmElseWhen", stopTime=1.2, stepSize=0.02, method="rk45", resultFile="omc_algorithm_elsewhen.csv");
+quit();

@@ -5,6 +5,7 @@ use cranelift_module::{Linkage, Module};
 
 use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
+use std::sync::OnceLock;
 
 /// `sample(interval)` / `sample(start, interval)` and package-qualified `.sample` / `.interval`.
 /// Must run before the generic "Modelica.* passthrough first arg" fallback.
@@ -53,6 +54,31 @@ fn compile_periodic_sample_call(
     Ok(builder.inst_results(call_inst)[0])
 }
 
+fn stream_flow_name(stream_name: &str) -> Option<String> {
+    stream_name
+        .strip_suffix("_h_outflow")
+        .map(|prefix| format!("{}_m_flow", prefix))
+}
+
+fn stream_peer_name(stream_name: &str) -> Option<String> {
+    if let Some(prefix) = stream_name.strip_suffix("_a_h_outflow") {
+        return Some(format!("{}_b_h_outflow", prefix));
+    }
+    if let Some(prefix) = stream_name.strip_suffix("_b_h_outflow") {
+        return Some(format!("{}_a_h_outflow", prefix));
+    }
+    None
+}
+
+fn value_name_exists(ctx: &TranslationContext, name: &str) -> bool {
+    ctx.state_index(name).is_some()
+        || ctx.discrete_index(name).is_some()
+        || ctx.output_index(name).is_some()
+        || ctx.param_index(name).is_some()
+        || ctx.stack_slots.contains_key(name)
+        || ctx.var_map.contains_key(name)
+}
+
 pub(super) fn try_compile_builtin_call(
     func_name: &str,
     args: &[Expression],
@@ -64,6 +90,29 @@ pub(super) fn try_compile_builtin_call(
         &mut cranelift::frontend::FunctionBuilder<'_>,
     ) -> Result<Value, String>,
 ) -> Option<Result<Value, String>> {
+    fn warn_stream_semantics_once(kind: &'static str) {
+        static INSTREAM_WARNED: OnceLock<()> = OnceLock::new();
+        static ACTUAL_WARNED: OnceLock<()> = OnceLock::new();
+        static PEER_WARNED: OnceLock<()> = OnceLock::new();
+        match kind {
+            "inStream" => {
+                let _ = INSTREAM_WARNED.get_or_init(|| {
+                    eprintln!("[stream-semantics] inStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
+                });
+            }
+            "actualStream" => {
+                let _ = ACTUAL_WARNED.get_or_init(|| {
+                    eprintln!("[stream-semantics] actualStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
+                });
+            }
+            "peerMissing" => {
+                let _ = PEER_WARNED.get_or_init(|| {
+                    eprintln!("[stream-semantics] stream peer/flow mapping not found, fallback to passthrough for this model path")
+                });
+            }
+            _ => {}
+        }
+    }
     if func_name == "sample"
         || func_name.ends_with(".sample")
         || func_name == "interval"
@@ -270,15 +319,79 @@ pub(super) fn try_compile_builtin_call(
         }
         return Some(compile_rec(&args[0], ctx, builder));
     }
-    if func_name == "inStream" {
-        if args.is_empty() {
-            return Some(Ok(builder.ins().f64const(0.0)));
+    if func_name == "inStream" || func_name.ends_with(".inStream") {
+        if args.len() != 1 {
+            return Some(Err(format!(
+                "inStream() minimal JIT semantics expects exactly 1 argument, got {}",
+                args.len()
+            )));
+        }
+        warn_stream_semantics_once("inStream");
+        if let Expression::Variable(id) = &args[0] {
+            let stream_name = crate::string_intern::resolve_id(*id);
+            if let (Some(flow_name), Some(peer_name)) =
+                (stream_flow_name(&stream_name), stream_peer_name(&stream_name))
+            {
+                if value_name_exists(ctx, &flow_name) && value_name_exists(ctx, &peer_name) {
+                    let flow_v = match compile_rec(&Expression::var(&flow_name), ctx, builder) {
+                        Ok(v) => v,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let peer_v = match compile_rec(&Expression::var(&peer_name), ctx, builder) {
+                        Ok(v) => v,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let self_v = match compile_rec(&args[0], ctx, builder) {
+                        Ok(v) => v,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let eps = builder.ins().f64const(1e-12);
+                    let outflow = builder.ins().fcmp(FloatCC::GreaterThan, flow_v, eps);
+                    return Some(Ok(builder.ins().select(outflow, peer_v, self_v)));
+                }
+            }
+            warn_stream_semantics_once("peerMissing");
         }
         return Some(compile_rec(&args[0], ctx, builder));
     }
-    if func_name == "actualStream" {
-        if args.is_empty() {
-            return Some(Ok(builder.ins().f64const(0.0)));
+    if func_name == "actualStream" || func_name.ends_with(".actualStream") {
+        if args.len() != 1 {
+            return Some(Err(format!(
+                "actualStream() minimal JIT semantics expects exactly 1 argument, got {}",
+                args.len()
+            )));
+        }
+        warn_stream_semantics_once("actualStream");
+        if let Expression::Variable(id) = &args[0] {
+            let stream_name = crate::string_intern::resolve_id(*id);
+            if let Some(flow_name) = stream_flow_name(&stream_name) {
+                if value_name_exists(ctx, &flow_name) {
+                    let flow_v = match compile_rec(&Expression::var(&flow_name), ctx, builder) {
+                        Ok(v) => v,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let self_v = match compile_rec(&args[0], ctx, builder) {
+                        Ok(v) => v,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let instream_v = if let Some(peer_name) = stream_peer_name(&stream_name) {
+                        if value_name_exists(ctx, &peer_name) {
+                            match compile_rec(&Expression::var(&peer_name), ctx, builder) {
+                                Ok(v) => v,
+                                Err(e) => return Some(Err(e)),
+                            }
+                        } else {
+                            self_v
+                        }
+                    } else {
+                        self_v
+                    };
+                    let eps = builder.ins().f64const(1e-12);
+                    let outflow = builder.ins().fcmp(FloatCC::GreaterThan, flow_v, eps);
+                    return Some(Ok(builder.ins().select(outflow, self_v, instream_v)));
+                }
+            }
+            warn_stream_semantics_once("peerMissing");
         }
         return Some(compile_rec(&args[0], ctx, builder));
     }

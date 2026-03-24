@@ -538,6 +538,58 @@ impl ScriptRunner {
                             .ok_or_else(|| "shiftSample n must be numeric".to_string())?;
                         Ok(MosValue::Number(c + n))
                     }
+                    "abs" => {
+                        if args.len() != 1 {
+                            return Err("abs(x) expects one argument".into());
+                        }
+                        let v = self
+                            .eval_mos_expr(&args[0].value)?
+                            .as_f64()
+                            .ok_or_else(|| "abs(x): x must be numeric".to_string())?;
+                        Ok(MosValue::Number(v.abs()))
+                    }
+                    "sqrt" => {
+                        if args.len() != 1 {
+                            return Err("sqrt(x) expects one argument".into());
+                        }
+                        let v = self
+                            .eval_mos_expr(&args[0].value)?
+                            .as_f64()
+                            .ok_or_else(|| "sqrt(x): x must be numeric".to_string())?;
+                        if v < 0.0 {
+                            return Err("sqrt(x): x must be >= 0".into());
+                        }
+                        Ok(MosValue::Number(v.sqrt()))
+                    }
+                    "min" | "max" => {
+                        if args.len() != 2 {
+                            return Err(format!("{}(a, b) expects two arguments", name).into());
+                        }
+                        let a = self
+                            .eval_mos_expr(&args[0].value)?
+                            .as_f64()
+                            .ok_or_else(|| format!("{}(a, b): a must be numeric", name))?;
+                        let b = self
+                            .eval_mos_expr(&args[1].value)?
+                            .as_f64()
+                            .ok_or_else(|| format!("{}(a, b): b must be numeric", name))?;
+                        Ok(MosValue::Number(if lower == "min" { a.min(b) } else { a.max(b) }))
+                    }
+                    "string" => {
+                        if args.len() != 1 {
+                            return Err("String(x) expects one argument".into());
+                        }
+                        let v = self.eval_mos_expr(&args[0].value)?;
+                        let s = match v {
+                            MosValue::String(s) => s,
+                            MosValue::Number(n) => n.to_string(),
+                            MosValue::Bool(b) => {
+                                if b { "true".to_string() } else { "false".to_string() }
+                            }
+                            MosValue::Array(_) => return Err("String(array) is not supported".into()),
+                        };
+                        Ok(MosValue::String(s))
+                    }
                     _ => Err("nested function call expression is not supported in strict mode".into()),
                 }
             }

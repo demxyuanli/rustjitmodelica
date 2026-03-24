@@ -13,6 +13,7 @@ use crate::solvable_limits::{
 };
 
 use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
+use super::solvable::SymbolicJacobianPlan;
 
 fn sparse_debug_enabled() -> bool {
     std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
@@ -95,6 +96,7 @@ pub(super) fn compile_solvable_block_general_sparse_n(
     unknowns: &[String],
     residuals: &[Expression],
     slots: &[StackSlot],
+    symbolic_plan: &SymbolicJacobianPlan,
     pattern: &SparseJacobianPattern,
     ctx: &mut TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
@@ -230,9 +232,13 @@ pub(super) fn compile_solvable_block_general_sparse_n(
         let x_col = builder.ins().stack_load(cl_types::F64, slots[*col], 0);
         let x_col_perturbed = builder.ins().fadd(x_col, eps_val);
         builder.ins().stack_store(x_col_perturbed, slots[*col], 0);
-        let rp = compile_expression(&residuals[*row], ctx, builder)?;
-        let dr = builder.ins().fsub(rp, r_vals[*row]);
-        let jac = builder.ins().fdiv(dr, eps_val);
+        let jac = if let Some(d_expr) = symbolic_plan.get(*row, *col) {
+            compile_expression(d_expr, ctx, builder)?
+        } else {
+            let rp = compile_expression(&residuals[*row], ctx, builder)?;
+            let dr = builder.ins().fsub(rp, r_vals[*row]);
+            builder.ins().fdiv(dr, eps_val)
+        };
         builder
             .ins()
             .store(MemFlags::new(), jac, value_ptrs[entry_idx], 0);

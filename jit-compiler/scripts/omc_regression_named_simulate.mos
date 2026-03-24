@@ -1,0 +1,5 @@
+loadModel("BouncingBall");
+setStopTime(1.2);
+simulate(model="BouncingBall", stopTime=1.2, stepSize=0.01, tolerance=1e-6, method="rk45", resultFile="omc_named_simulate.csv");
+getErrorString();
+quit();

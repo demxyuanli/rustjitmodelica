@@ -1,4 +1,5 @@
 use crate::ast::Expression;
+use crate::analysis::partial_derivative;
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
 
@@ -14,6 +15,74 @@ use super::linearized::{
     parse_newton_path_preference, NewtonLinearizationStats, NewtonLinearizedSystem,
     NewtonPathPreference,
 };
+
+#[derive(Debug, Clone)]
+pub(super) struct SymbolicJacobianPlan {
+    n: usize,
+    entries: Vec<Option<Expression>>,
+}
+
+impl SymbolicJacobianPlan {
+    pub(super) fn get(&self, row: usize, col: usize) -> Option<&Expression> {
+        self.entries
+            .get(row.saturating_mul(self.n).saturating_add(col))
+            .and_then(|e| e.as_ref())
+    }
+}
+
+fn symbolic_jacobian_enabled() -> bool {
+    std::env::var("RUSTMODLICA_NEWTON_SYMBOLIC_JACOBIAN")
+        .ok()
+        .map(|v| !matches!(v.trim(), "0" | "false" | "FALSE" | "off" | "OFF"))
+        .unwrap_or(true)
+}
+
+fn symbolic_safe_expr(expr: &Expression) -> bool {
+    match expr {
+        Expression::Number(_) | Expression::Variable(_) => true,
+        Expression::BinaryOp(lhs, _, rhs) => symbolic_safe_expr(lhs) && symbolic_safe_expr(rhs),
+        Expression::Call(name, args) => {
+            if args.len() == 1 {
+                matches!(
+                    name.as_str(),
+                    "sin" | "cos" | "exp" | "log" | "ln" | "sqrt" | "tan" | "asin" | "acos" | "atan" | "abs"
+                ) && symbolic_safe_expr(&args[0])
+            } else if args.len() == 2 && name == "atan2" {
+                symbolic_safe_expr(&args[0]) && symbolic_safe_expr(&args[1])
+            } else {
+                false
+            }
+        }
+        Expression::If(cond, then_expr, else_expr) => {
+            symbolic_safe_expr(cond) && symbolic_safe_expr(then_expr) && symbolic_safe_expr(else_expr)
+        }
+        // Keep MVP conservative: avoid calls/array/dot/etc in symbolic plan.
+        _ => false,
+    }
+}
+
+pub(super) fn build_symbolic_jacobian_plan(
+    unknowns: &[String],
+    residuals: &[Expression],
+) -> SymbolicJacobianPlan {
+    let n = residuals.len();
+    let mut entries = Vec::with_capacity(n.saturating_mul(n));
+    for residual in residuals {
+        for unknown in unknowns.iter().take(n) {
+            if symbolic_jacobian_enabled() && symbolic_safe_expr(residual) {
+                let d = partial_derivative(residual, unknown);
+                if symbolic_safe_expr(&d) {
+                    entries.push(Some(d));
+                } else {
+                    entries.push(None);
+                }
+            } else {
+                entries.push(None);
+            }
+        }
+    }
+    SymbolicJacobianPlan { n, entries }
+}
 
 pub(super) fn compile_solvable_block_general_n(
     unknowns: &[String],
@@ -106,22 +175,38 @@ pub(super) fn compile_solvable_block_general_n(
         );
     }
 
+    let symbolic_plan = build_symbolic_jacobian_plan(unknowns, residuals);
     match (preference, selected, sparse_pattern.as_ref()) {
         (NewtonPathPreference::SparseOnly, NewtonLinearizedSystem::Dense(_), _) => {
-            compile_solvable_block_general_dense_n(unknowns, residuals, &slots, ctx, builder)
+            compile_solvable_block_general_dense_n(
+                unknowns,
+                residuals,
+                &slots,
+                &symbolic_plan,
+                ctx,
+                builder,
+            )
         }
         (_, NewtonLinearizedSystem::Csr(_), Some(pattern)) => {
             compile_solvable_block_general_sparse_n(
                 unknowns,
                 residuals,
                 &slots,
+                &symbolic_plan,
                 pattern,
                 ctx,
                 builder,
             )
         }
         (_, NewtonLinearizedSystem::Dense(_), _) => {
-            compile_solvable_block_general_dense_n(unknowns, residuals, &slots, ctx, builder)
+            compile_solvable_block_general_dense_n(
+                unknowns,
+                residuals,
+                &slots,
+                &symbolic_plan,
+                ctx,
+                builder,
+            )
         }
         (_, NewtonLinearizedSystem::Csr(_), None) => Err(
             "sparse Newton path selected but no CSR Jacobian pattern available".to_string(),

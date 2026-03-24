@@ -8,6 +8,7 @@ pub fn parse_declaration_pair(decl_pair: pest::iterators::Pair<Rule>, declaratio
     let mut decl_inner = decl_pair.into_inner();
     let mut is_parameter = false;
     let mut is_flow = false;
+    let mut is_stream = false;
     let mut is_discrete = false;
     let mut is_input = false;
     let mut is_output = false;
@@ -34,6 +35,7 @@ pub fn parse_declaration_pair(decl_pair: pest::iterators::Pair<Rule>, declaratio
             Rule::parameter_kw => is_parameter = true,
             Rule::constant_kw => is_parameter = true,
             Rule::flow_kw => is_flow = true,
+            Rule::stream_kw => is_stream = true,
             Rule::discrete_kw => is_discrete = true,
             Rule::input_kw => is_input = true,
             Rule::output_kw => is_output = true,
@@ -197,6 +199,7 @@ pub fn parse_declaration_pair(decl_pair: pest::iterators::Pair<Rule>, declaratio
             constrainedby_type: constrainedby_type.clone(),
             is_parameter,
             is_flow,
+            is_stream,
             is_discrete,
             is_input,
             is_output,

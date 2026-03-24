@@ -140,12 +140,31 @@ pub(super) fn parse_algorithm_stmt(pair: Pair<Rule>) -> AlgorithmStatement {
             let mut inner = pair.into_inner();
             let cond = expression::parse_expression(inner.next().unwrap());
             let mut body = Vec::new();
-            let else_whens = Vec::new();
-
+            let mut else_whens: Vec<(Expression, Vec<AlgorithmStatement>)> = Vec::new();
+            let mut current_cond: Option<Expression> = None;
+            let mut current_body: Vec<AlgorithmStatement> = Vec::new();
             for stmt in inner {
-                if stmt.as_rule() == Rule::algorithm_stmt {
-                    body.push(parse_algorithm_stmt(stmt.into_inner().next().unwrap()));
+                match stmt.as_rule() {
+                    Rule::algorithm_stmt => {
+                        let parsed = parse_algorithm_stmt(stmt.into_inner().next().unwrap());
+                        if current_cond.is_some() {
+                            current_body.push(parsed);
+                        } else {
+                            body.push(parsed);
+                        }
+                    }
+                    Rule::expression => {
+                        if let Some(prev_cond) = current_cond.take() {
+                            else_whens.push((prev_cond, current_body));
+                            current_body = Vec::new();
+                        }
+                        current_cond = Some(expression::parse_expression(stmt));
+                    }
+                    _ => {}
                 }
+            }
+            if let Some(prev_cond) = current_cond.take() {
+                else_whens.push((prev_cond, current_body));
             }
             AlgorithmStatement::When(cond, body, else_whens)
         }

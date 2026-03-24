@@ -1,0 +1,13 @@
+loadModel("BouncingBall");
+time := 0.4;
+base := interval(0.2);
+fast := superSample(base, 2);
+shifted := shiftSample(base, 1);
+check := fast + shifted;
+if check >= 0 then
+  setStopTime(0.2);
+else
+  setStopTime(0.1);
+end if;
+simulate(model="BouncingBall", stopTime=0.2, stepSize=0.01, method="rk45", resultFile="omc_sync_super_shift.csv");
+quit();
