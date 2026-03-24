@@ -1,6 +1,6 @@
 # RustModlica JIT 编译器开发进度全面分析
 
-**日期**: 2026-03-21
+**日期**: 2026-03-24
 **代码库**: 65 个 Rust 源文件, 约 28,000 行代码
 **二进制**: `target/release/rustmodlica.exe` (7.88 MB, x86-64 Windows)
 **后端**: Cranelift 0.128.3 (JIT + AOT)
@@ -683,6 +683,22 @@ cargo run -p rustmodlica --features sundials -- event-scan `
 
 ## 8. 差距分析与后续方向
 
+### 8.0 本轮已落地更新（SYNC 首版闭环）
+
+本轮已完成同步语义首版闭环改造，关键点如下：
+
+- 新增 `ClockPartitionSchedule` 并从 `compile_model` 透传到 JIT/仿真执行层。
+- JIT 从固定线性执行升级为按分区执行，并支持 `sample` 触发门控执行块。
+- 事件迭代接入激活分区集合，并可通过事件 trace 观察分区激活顺序。
+- 对 `subSample/superSample/shiftSample` 增加首版降级诊断，避免无提示退化。
+- `run_regression.ps1` 固化 clocked 双跑稳定性检查（CSV 哈希一致）。
+
+对应结果：
+
+- 全量目录回归：`1944 passed, 0 failed, 23 skipped`（exit 0）
+- 全量总回归：`114 passed, 0 mismatch`
+- event-scan matrix：`nondeterministic=0, config_error=0`
+
 ### 8.1 OpenModelica 对齐状态
 
 所有 P1、P2、P3 对齐任务均已完整实现（62/62）：
@@ -701,7 +717,7 @@ cargo run -p rustmodlica --features sundials -- event-scan `
 | JIT 中的算法多赋值 | `(a,b,...):=f(x)` 在 JIT 中返回错误 | 低（实际中很少使用） | 低 |
 | 外部函数数组/字符串 ABI | 仅支持标量参数；数组 ptr+size 和字符串已文档化但未实现 | 中（限制外部库集成） | 中 |
 | 完整 `.mos` 脚本语言 | 简化子集；非完整 OMC `.mos` | 低（IDE 补偿） | 低 |
-| JIT Newton 中的稀疏 Jacobian | API 存在；Newton 仍使用密集型 | 中（大型系统的性能） | 中 |
+| JIT Newton 中的稀疏 Jacobian | API 存在；Newton 主链路仍以密集型为主 | 中（大型系统的性能） | 中 |
 | 大规模/刚性系统 | 定位于中小规模模型 | 高（工业用例） | 中 |
 | 深递归 / 不纯函数 | 深度受限；副作用被阻止 | 低（小众场景） | 低 |
 | MultiBody 几何初始化 | 已闭环（RollingWheel/Cylinder/JointUSP 通过） | 低 | 低 |
@@ -721,9 +737,9 @@ cargo run -p rustmodlica --features sundials -- event-scan `
 
 | 优先级 | 方向 | 关键任务 |
 |--------|------|---------|
-| 高 | Newton 严格回归 | 开启 Newton failure 计入失败的全量门禁并清理边界模型 |
-| 高 | 字符串驻留迁移 | 将 `Expression::Variable(String)` 全局替换为 `Expression::Variable(VarId)` |
-| 中 | JIT 中的稀疏 Jacobian | 将 CSR 稀疏线性求解接入 Newton/撕裂管线 |
+| 高 | 稀疏 Jacobian 主链路接入 | 将 CSR 稀疏解法真正接入 Newton 撕裂默认路径并完成性能对标 |
+| 高 | 同步语义二阶段增强 | 完善 super/shift/backSample 的分区语义与调度一致性 |
+| 中 | 字符串驻留迁移 | 将 `Expression::Variable(String)` 全局替换为 `Expression::Variable(VarId)` |
 | 中 | 外部函数 ABI | 实现数组 ptr+size 和字符串参数传递 |
 | 中 | 连接器类型解析 | 改进展平器对深层嵌套连接器的类型推断 |
 | 低 | 完整 `.mos` 脚本 | 扩展脚本命令集以覆盖常见 OMC 场景 |

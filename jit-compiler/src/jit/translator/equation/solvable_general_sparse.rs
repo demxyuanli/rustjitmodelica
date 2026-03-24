@@ -4,26 +4,24 @@ use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
-use std::sync::OnceLock;
 
 use crate::jit::context::TranslationContext;
 use crate::jit::translator::expr::compile_expression;
 use crate::solvable_limits::{
-    validate_solvable_residual_count, JIT_STACK_BUFFER_BYTES_MAX,
+    newton_sparse_policy_from_env, should_use_newton_sparse_path, validate_solvable_residual_count,
+    JIT_STACK_BUFFER_BYTES_MAX,
 };
 
 use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
 
-/// RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse — controls CSR path in Newton/tearing (default auto).
-fn newton_sparse_policy() -> &'static str {
-    static POLICY: OnceLock<String> = OnceLock::new();
-    POLICY
-        .get_or_init(|| {
-            std::env::var("RUSTMODLICA_NEWTON_SPARSE_POLICY")
-                .unwrap_or_else(|_| "auto".to_string())
-                .to_ascii_lowercase()
+fn sparse_debug_enabled() -> bool {
+    std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
+        .ok()
+        .map(|v| {
+            let t = v.trim().to_ascii_lowercase();
+            t == "1" || t == "true" || t == "on" || t == "yes"
         })
-        .as_str()
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone)]
@@ -44,10 +42,7 @@ pub(super) fn build_sparse_jacobian_pattern(
     unknowns: &[String],
     residuals: &[Expression],
 ) -> Option<SparseJacobianPattern> {
-    let policy = newton_sparse_policy();
-    if policy == "dense" {
-        return None;
-    }
+    let policy = newton_sparse_policy_from_env();
     let n = residuals.len();
     if n < 3 || unknowns.len() < n {
         return None;
@@ -73,12 +68,14 @@ pub(super) fn build_sparse_jacobian_pattern(
     }
 
     let nnz = col_idx.len();
-    if nnz == 0 || nnz >= n * n {
+    if !should_use_newton_sparse_path(policy, n, nnz, unknowns.len()) {
         return None;
     }
-    // auto: use dense solve when Jacobian is not sparse enough; sparse: always use CSR when nnz < n*n.
-    if policy == "auto" && nnz * 4 > n * n * 3 {
-        return None;
+    if sparse_debug_enabled() {
+        eprintln!(
+            "[newton-sparse] select pattern n={} nnz={} policy={:?}",
+            n, nnz, policy
+        );
     }
 
     Some(SparseJacobianPattern {
@@ -190,6 +187,15 @@ pub(super) fn compile_solvable_block_general_sparse_n(
     let dx_offset_val = builder.ins().iconst(ptr_type, dx_offset as i64);
     let dx_ptr = builder.ins().iadd(base_ptr, dx_offset_val);
 
+    let value_ptrs: Vec<Value> = (0..nnz)
+        .map(|entry_idx| {
+            let off_val = builder
+                .ins()
+                .iconst(ptr_type, (values_offset + entry_idx * 8) as i64);
+            builder.ins().iadd(base_ptr, off_val)
+        })
+        .collect();
+
     let mut r_vals = Vec::with_capacity(n);
     for (i, residual) in residuals.iter().enumerate() {
         let rv = compile_expression(residual, ctx, builder)?;
@@ -221,11 +227,9 @@ pub(super) fn compile_solvable_block_general_sparse_n(
         let rp = compile_expression(&residuals[*row], ctx, builder)?;
         let dr = builder.ins().fsub(rp, r_vals[*row]);
         let jac = builder.ins().fdiv(dr, eps_val);
-        let off_val = builder
+        builder
             .ins()
-            .iconst(ptr_type, (values_offset + entry_idx * 8) as i64);
-        let addr = builder.ins().iadd(base_ptr, off_val);
-        builder.ins().store(MemFlags::new(), jac, addr, 0);
+            .store(MemFlags::new(), jac, value_ptrs[entry_idx], 0);
         builder.ins().stack_store(x_col, slots[*col], 0);
     }
 
@@ -368,7 +372,6 @@ pub(super) fn compile_solvable_block_general_sparse_n(
     builder.seal_block(ls_hdr_s);
     builder.seal_block(ls_accept_s);
     builder.seal_block(update_block);
-    builder.seal_block(header_block);
     builder.seal_block(body_block);
     builder.seal_block(perturb_block);
     builder.switch_to_block(solve_error_block);
@@ -387,6 +390,7 @@ pub(super) fn compile_solvable_block_general_sparse_n(
         builder.ins().jump(header_block, &[]);
     }
     builder.seal_block(solve_error_block);
+    builder.seal_block(header_block);
     builder.switch_to_block(exit_block);
     emit_assert_suppress_end(ctx, builder)?;
     for (var, slot) in unknowns.iter().take(n).zip(slots) {

@@ -292,6 +292,13 @@ extern "C" fn rustmodlica_solve_linear_csr(
     r: *const f64,
     dx: *mut f64,
 ) -> i32 {
+    let sparse_debug = std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
+        .ok()
+        .map(|v| {
+            let t = v.trim().to_ascii_lowercase();
+            t == "1" || t == "true" || t == "on" || t == "yes"
+        })
+        .unwrap_or(false);
     if n <= 0
         || nnz < 0
         || row_ptr.is_null()
@@ -360,12 +367,30 @@ extern "C" fn rustmodlica_solve_linear_csr(
             unsafe {
                 std::ptr::copy_nonoverlapping(solution.as_ptr(), dx, n_usize);
             }
+            if sparse_debug && lambda > 0.0 {
+                eprintln!(
+                    "[newton-sparse] csr lm accepted lambda={:.3e} n={} nnz={}",
+                    lambda, n_usize, nnz_usize
+                );
+            }
             return 0;
         }
 
         lambda = if lambda == 0.0 { 1e-8 } else { lambda * 10.0 };
+        if sparse_debug {
+            eprintln!(
+                "[newton-sparse] csr lm retry lambda={:.3e} n={} nnz={}",
+                lambda, n_usize, nnz_usize
+            );
+        }
     }
 
+    if sparse_debug {
+        eprintln!(
+            "[newton-sparse] csr lm failed n={} nnz={} retries={}",
+            n_usize, nnz_usize, max_lm_retries
+        );
+    }
     1
 }
 

@@ -16,6 +16,7 @@ use super::helpers::{
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use super::pre::compile_pre_expression;
+use std::sync::OnceLock;
 
 fn fold_dot_hysteresis_record(func_name: &str, member: &str) -> Option<f64> {
     if !func_name.ends_with("HysteresisEverettParameter.M330_50A") {
@@ -32,6 +33,40 @@ fn fold_dot_hysteresis_record(func_name: &str, member: &str) -> Option<f64> {
         "K" => Some(50.0),
         "sigma" => Some(2.2e6),
         _ => None,
+    }
+}
+
+fn warn_clock_degrade_once(kind: &'static str) {
+    static SUPER_WARNED: OnceLock<()> = OnceLock::new();
+    static SHIFT_WARNED: OnceLock<()> = OnceLock::new();
+    static SUB_WARNED: OnceLock<()> = OnceLock::new();
+    let enabled = std::env::var("RUSTMODLICA_SYNC_WARN")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(true);
+    if !enabled {
+        return;
+    }
+    match kind {
+        "superSample" => {
+            if SUPER_WARNED.set(()).is_ok() {
+                eprintln!("[SYNC_GUARD] superSample currently uses first-version passthrough semantics.");
+            }
+        }
+        "shiftSample" => {
+            if SHIFT_WARNED.set(()).is_ok() {
+                eprintln!("[SYNC_GUARD] shiftSample currently uses first-version passthrough semantics.");
+            }
+        }
+        "subSample" => {
+            if SUB_WARNED.set(()).is_ok() {
+                eprintln!("[SYNC_GUARD] subSample without sample(base) falls back to passthrough.");
+            }
+        }
+        _ => {}
     }
 }
 
@@ -647,10 +682,16 @@ pub(super) fn compile_expression_rec(
                 let call_inst = builder.ins().call(func_ref, &[time_val, scaled_interval]);
                 Ok(builder.inst_results(call_inst)[0])
             } else {
+                warn_clock_degrade_once("subSample");
                 compile_expression_rec(clock_expr, ctx, builder)
             }
         }
         Expression::SuperSample(clock_expr, _n) | Expression::ShiftSample(clock_expr, _n) => {
+            if matches!(expr, Expression::SuperSample(_, _)) {
+                warn_clock_degrade_once("superSample");
+            } else {
+                warn_clock_degrade_once("shiftSample");
+            }
             compile_expression_rec(clock_expr, ctx, builder)
         }
     }

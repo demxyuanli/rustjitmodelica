@@ -277,6 +277,19 @@ function Test-IsDocLikeModelName([string]$modelName) {
     return $false
 }
 
+function Test-IsNonSimulatableModelName([string]$modelName) {
+    if ([string]::IsNullOrWhiteSpace($modelName)) { return $true }
+    $parts = $modelName -split '\.'
+    foreach ($p in $parts) {
+        if ($p -eq "Interfaces" -or $p -eq "BaseClasses") { return $true }
+    }
+    $leaf = $parts[$parts.Length - 1]
+    if ($leaf -match '^Partial') { return $true }
+    if ($leaf -match 'Base$') { return $true }
+    if ($leaf -in @("IdealHeatTransfer", "ConstantHeatTransfer", "OuterStatePort", "MinLimiter")) { return $true }
+    return $false
+}
+
 function Get-FirstErrorLine([string]$logPath) {
     if (-not (Test-Path -LiteralPath $logPath)) { return "" }
     $lines = (Get-FileLines $logPath 120).Lines
@@ -343,6 +356,8 @@ function Test-MoFullPathMatchesRegex([string]$fullPath, [string]$pattern) {
 
 $repoRoot = Get-NormalizedPath $Root
 $jitRoot = Join-Path $repoRoot "jit-compiler"
+$modelicaLibRoot = Join-Path $jitRoot "Modelica"
+$modelicaTestLibRoot = Join-Path $jitRoot "ModelicaTest"
 $exe = if ($ExePath -ne "") {
     if ([System.IO.Path]::IsPathRooted($ExePath)) { $ExePath } else { Join-Path $repoRoot $ExePath }
 } else {
@@ -351,6 +366,37 @@ $exe = if ($ExePath -ne "") {
 if (-not (Test-Path -LiteralPath $exe)) {
     Write-Error "Build first: cargo build --release"
     exit 1
+}
+
+# Preflight: local MSL/ModelicaTest libraries must be present and resolvable.
+$missingLibraryItems = New-Object System.Collections.Generic.List[string]
+if (-not (Test-Path -LiteralPath $modelicaLibRoot)) { $missingLibraryItems.Add($modelicaLibRoot) }
+if (-not (Test-Path -LiteralPath $modelicaTestLibRoot)) { $missingLibraryItems.Add($modelicaTestLibRoot) }
+$modelicaPkgMo = Join-Path $modelicaLibRoot "package.mo"
+$modelicaTestPkgMo = Join-Path $modelicaTestLibRoot "package.mo"
+if (-not (Test-Path -LiteralPath $modelicaPkgMo)) { $missingLibraryItems.Add($modelicaPkgMo) }
+if (-not (Test-Path -LiteralPath $modelicaTestPkgMo)) { $missingLibraryItems.Add($modelicaTestPkgMo) }
+if ($missingLibraryItems.Count -gt 0) {
+    Write-Error ("Local library preflight failed. Missing required library paths/files: " + ($missingLibraryItems -join ", "))
+    exit 3
+}
+Write-Host "Library preflight OK: $modelicaLibRoot ; $modelicaTestLibRoot"
+
+# Preflight semantic check: verify MediaTestModels namespace is actually loadable.
+# This catches incomplete local ModelicaTest mirrors early.
+$preflightArgs = @(
+    "--lib-path=$modelicaLibRoot",
+    "--lib-path=$modelicaTestLibRoot",
+    "--validate",
+    "ModelicaTest.Media.MediaTestModels.Air.SimpleAir"
+)
+Push-Location $jitRoot
+$preflightOut = & $exe @preflightArgs 2>&1
+$preflightExit = $LASTEXITCODE
+Pop-Location
+if ($preflightExit -ne 0) {
+    Write-Error "Local library preflight failed: ModelicaTest.Media.MediaTestModels.Air.SimpleAir is not loadable. Local ModelicaTest sources are incomplete or inconsistent."
+    exit 4
 }
 
 # On Windows, rustmodlica.exe with sundials feature needs runtime DLLs from
@@ -388,7 +434,7 @@ if ($OnlySkipsFromSummary -ne "") {
         exit 2
     }
     foreach ($sn in (Get-SkipModelNamesFromSummary $skipSummaryPath)) {
-        if (-not (Test-IsDocLikeModelName $sn)) {
+        if (-not (Test-IsDocLikeModelName $sn) -and -not (Test-IsNonSimulatableModelName $sn)) {
             $models.Add($sn)
         }
     }
@@ -441,8 +487,16 @@ if ($OnlySkipsFromSummary -ne "") {
     }
 
     $docFiltered = @($models | Where-Object { -not (Test-IsDocLikeModelName $_) })
+    $simFiltered = @($docFiltered | Where-Object { -not (Test-IsNonSimulatableModelName $_) })
+    $removedBySimFilter = $docFiltered.Count - $simFiltered.Count
+    if ($removedBySimFilter -gt 0) {
+        Write-Host "Filtered non-simulatable candidates: $removedBySimFilter"
+        $diffPath = Join-Path $outPath "filtered_non_simulatable.txt"
+        @($docFiltered | Where-Object { Test-IsNonSimulatableModelName $_ }) | Sort-Object -Unique | Set-Content -LiteralPath $diffPath -Encoding UTF8
+        Write-Host "Filtered list written: $diffPath"
+    }
     $models = New-Object System.Collections.Generic.List[string]
-    foreach ($mn in $docFiltered) {
+    foreach ($mn in $simFiltered) {
         $models.Add($mn)
     }
 
@@ -504,6 +558,7 @@ foreach ($m in $models) {
         $cliArgs += "--index-reduction-method=dummyDerivative"
     }
     $cliArgs += $ExtraArgs
+    $cliArgs += @("--lib-path=$modelicaLibRoot", "--lib-path=$modelicaTestLibRoot")
     $cliArgs += @("--solver=$Solver", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
 
     $usedImplicitRetry = $false
@@ -520,6 +575,7 @@ foreach ($m in $models) {
     if ($exit -ne 0 -and $newtonFailedFirstTry -and $Solver -ne "implicit" -and $allowImplicitRetry) {
         $retryArgs = @()
         $retryArgs += $ExtraArgs
+        $retryArgs += @("--lib-path=$modelicaLibRoot", "--lib-path=$modelicaTestLibRoot")
         $retryArgs += @("--index-reduction-method=dummyDerivative", "--solver=implicit", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
         $retryLines = & $exe @retryArgs 2>&1
         $retryExit = $LASTEXITCODE
@@ -532,6 +588,7 @@ foreach ($m in $models) {
             $reArgs = @()
             if (-not $hasIndexReductionArg) { $reArgs += "--index-reduction-method=dummyDerivative" }
             $reArgs += $ExtraArgs
+            $reArgs += @("--lib-path=$modelicaLibRoot", "--lib-path=$modelicaTestLibRoot")
             $reArgs += @("--solver=$Solver", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
             $reLines = & $exe @reArgs 2>&1
             $reExit = $LASTEXITCODE
@@ -564,13 +621,13 @@ foreach ($m in $models) {
             if ($ln -match 'FLATTEN_CONSTRAINEDBY') { $constrainedbyFailed = $true }
         }
         if ($modelNotFoundSelf) {
-            $skipped++
-            $results += "-- $m  exit=$exit  reason=model_not_found_skip"
+            $bad++
+            $results += "!! $m  exit=$exit  reason=config_model_not_found_self"
             continue
         }
         if ($modelNotFoundDependency) {
-            $skipped++
-            $results += "-- $m  exit=$exit  reason=dependency_model_missing_skip"
+            $bad++
+            $results += "!! $m  exit=$exit  reason=config_model_dependency_missing"
             continue
         }
         if ($newtonFailed) {

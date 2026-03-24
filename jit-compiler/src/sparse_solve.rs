@@ -1,9 +1,21 @@
-// IR4-4: Sparse linear solve (CSR). Large n + moderate nnz: faer sparse LU first; else dense or in-tree elimination.
-use crate::solvable_limits::csr_use_faer_sparse_lu;
+// IR4-4: Sparse linear solve (CSR). Large n + moderate nnz: faer sparse LU first; then in-tree sparse elimination; finally dense fallback.
+use crate::solvable_limits::{csr_should_fallback_to_dense, csr_use_faer_sparse_lu};
 use faer::linalg::solvers::Solve;
 use faer::sparse::linalg::solvers::Lu;
 use faer::sparse::{SparseRowMat, SymbolicSparseRowMat};
 use faer::Mat;
+
+const PIVOT_EPS: f64 = 1e-14;
+
+fn sparse_debug_enabled() -> bool {
+    std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
+        .ok()
+        .map(|v| {
+            let t = v.trim().to_ascii_lowercase();
+            t == "1" || t == "true" || t == "on" || t == "yes"
+        })
+        .unwrap_or(false)
+}
 
 fn try_solve_csr_faer_lu(
     n: usize,
@@ -48,13 +60,14 @@ impl CsrMatrix {
     }
 
     /// Solve A * x = b; x overwritten. Returns Ok(()) or Err on singular.
-    /// Uses sparse Gaussian elimination for small systems; avoids dense conversion.
+    /// Fallback order: faer sparse LU -> in-tree sparse elimination -> dense.
     pub fn solve_in_place(&self, b: &[f64], x: &mut [f64]) -> Result<(), ()> {
         let n = self.n;
         if b.len() < n || x.len() < n {
             return Err(());
         }
         let nnz = self.nnz();
+        let debug = sparse_debug_enabled();
         if csr_use_faer_sparse_lu(n, nnz) {
             if try_solve_csr_faer_lu(
                 n,
@@ -66,20 +79,14 @@ impl CsrMatrix {
             )
             .is_ok()
             {
+                if debug {
+                    eprintln!("[newton-sparse] csr solve path=faer_lu n={} nnz={}", n, nnz);
+                }
                 return Ok(());
             }
-        }
-        if nnz >= n * n / 2 || n <= 4 {
-            let mut dense = vec![0.0; n * n];
-            for i in 0..n {
-                for p in self.row_ptr[i]..self.row_ptr[i + 1] {
-                    let j = self.col_idx[p];
-                    if j < n {
-                        dense[i * n + j] = self.values[p];
-                    }
-                }
+            if debug {
+                eprintln!("[newton-sparse] csr solve fallback from=faer_lu reason=fail n={} nnz={}", n, nnz);
             }
-            return solve_dense_in_place(n, &mut dense, b, x);
         }
 
         // Sparse Gaussian elimination with partial pivoting using linked-list rows.
@@ -112,8 +119,11 @@ impl CsrMatrix {
                     }
                 }
             }
-            if pivot_val.abs() < 1e-14 {
-                return Err(());
+            if pivot_val.abs() < PIVOT_EPS {
+                if debug {
+                    eprintln!("[newton-sparse] csr solve fallback from=sparse_elim reason=small_pivot k={}", k);
+                }
+                return self.solve_dense_fallback(n, b, x, debug);
             }
             perm.swap(k, pivot_row);
 
@@ -173,12 +183,50 @@ impl CsrMatrix {
                     sum -= val * x[col];
                 }
             }
-            if diag.abs() < 1e-14 {
-                return Err(());
+            if diag.abs() < PIVOT_EPS {
+                if debug {
+                    eprintln!("[newton-sparse] csr solve fallback from=back_sub reason=small_diag k={}", k);
+                }
+                return self.solve_dense_fallback(n, b, x, debug);
             }
             x[k] = sum / diag;
         }
+        if debug {
+            eprintln!("[newton-sparse] csr solve path=sparse_elim n={} nnz={}", n, nnz);
+        }
         Ok(())
+    }
+
+    fn solve_dense_fallback(
+        &self,
+        n: usize,
+        b: &[f64],
+        x: &mut [f64],
+        debug: bool,
+    ) -> Result<(), ()> {
+        let nnz = self.nnz();
+        if debug {
+            eprintln!(
+                "[newton-sparse] csr solve path=dense_fallback n={} nnz={} trigger={}",
+                n,
+                nnz,
+                if csr_should_fallback_to_dense(n, nnz) {
+                    "policy_or_pivot"
+                } else {
+                    "pivot"
+                }
+            );
+        }
+        let mut dense = vec![0.0; n * n];
+        for i in 0..n {
+            for p in self.row_ptr[i]..self.row_ptr[i + 1] {
+                let j = self.col_idx[p];
+                if j < n {
+                    dense[i * n + j] = self.values[p];
+                }
+            }
+        }
+        solve_dense_in_place(n, &mut dense, b, x)
     }
 }
 
@@ -198,7 +246,7 @@ pub fn solve_dense_in_place(n: usize, a: &mut [f64], b: &[f64], x: &mut [f64]) -
                 max_row = i;
             }
         }
-        if max_val < 1e-14 {
+        if max_val < PIVOT_EPS {
             return Err(());
         }
         if max_row != k {

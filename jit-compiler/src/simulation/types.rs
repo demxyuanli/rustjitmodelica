@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::ast::Expression;
+use crate::compiler::ClockPartitionScheduleEntry;
 use crate::jit::CalcDerivsFunc;
 use serde::ser::SerializeMap;
 
@@ -53,6 +54,7 @@ pub fn run_simulation_collect(
     ida_component_id: &[f64],
     solver: &str,
     output_interval: f64,
+    clock_partition_schedule: &[ClockPartitionScheduleEntry],
 ) -> Result<SimulationResult, String> {
     let estimated_rows = if output_interval > 0.0 {
         (t_end / output_interval) as usize + 2
@@ -84,6 +86,7 @@ pub fn run_simulation_collect(
         solver,
         output_interval,
         None,
+        clock_partition_schedule,
         Some(&mut collector),
     )?;
     let mut time = Vec::with_capacity(collector.len());

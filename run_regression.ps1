@@ -105,6 +105,7 @@ $results = @()
 foreach ($c in $cases) {
     $name = $c[0]
     $expect = $c[1]
+    Write-Host "[CASE] $name"
     $extra = @()
     if ($caseExtraArgs.ContainsKey($name)) { $extra = $caseExtraArgs[$name] }
     $null = & cargo run --release -- @extra -- $name 2>&1
@@ -132,6 +133,7 @@ $scriptTests = @(
 )
 foreach ($t in $scriptTests) {
     $name = $t.name
+    Write-Host "[SCRIPT] $name"
     $scriptPath = Join-Path ".." $t.path
     $expect = $t.expect
     $null = & cargo run --release -- --script=$scriptPath 2>&1
@@ -149,6 +151,7 @@ $emitCTests = @(
 if (-not (Test-Path build_regress_emit)) { New-Item -ItemType Directory -Path build_regress_emit | Out-Null }
 foreach ($t in $emitCTests) {
     $name = $t.name
+    Write-Host "[EMIT-C] $name"
     $expect = $t.expect
     $null = & cargo run --release -- $t.opts $t.model 2>&1
     $exit = $LASTEXITCODE
@@ -173,13 +176,41 @@ $sym = if ($func7Ok) { "OK" } else { "!!" }
 $results += "$sym FUNC-7/EmitC/StringArgExtFunc  expect=emit C with string ABI  actual=$(if ($func7Ok) { 'pass' } else { 'fail' })"
 # SYNC-2: clocked semantics (when sample(...)); run with backend-dae-info and check clocked line present
 $sync2Out = & cargo run --release -- --backend-dae-info TestLib/ClockedPartitionTest 2>&1
+Write-Host "[SYNC] ClockedPartitionTest backend info"
 $sync2Ok = ($LASTEXITCODE -eq 0) -and ($sync2Out -match "clocked")
 if ($sync2Ok) { $ok++ } else { $bad++ }
 $sym = if ($sync2Ok) { "OK" } else { "!!" }
 $results += "$sym SYNC-2/ClockedPartitionTest  expect=backend clocked output  actual=$(if ($sync2Ok) { 'pass' } else { 'fail' })"
+# SYNC freeze: run clocked models twice and require deterministic CSV output
+$clockedDeterminismCases = @(
+    "TestLib/ClockedPartitionTest",
+    "TestLib/ClockedTwoRates",
+    "TestLib/HoldPreviousTest",
+    "TestLib/SubSuperShiftSampleTest"
+)
+foreach ($m in $clockedDeterminismCases) {
+    Write-Host "[SYNC-DET] $m"
+    $safeName = $m.Replace("/", "_").Replace(".", "_")
+    $csvA = "build_regress_clocked_${safeName}_a.csv"
+    $csvB = "build_regress_clocked_${safeName}_b.csv"
+    $null = & cargo run --release -- --solver=rk4 --output-interval=0.001 --result-file=$csvA $m 2>&1
+    $e1 = $LASTEXITCODE
+    $null = & cargo run --release -- --solver=rk4 --output-interval=0.001 --result-file=$csvB $m 2>&1
+    $e2 = $LASTEXITCODE
+    $same = $false
+    if ($e1 -eq 0 -and $e2 -eq 0 -and (Test-Path $csvA) -and (Test-Path $csvB)) {
+        $h1 = (Get-FileHash -Algorithm SHA256 $csvA).Hash
+        $h2 = (Get-FileHash -Algorithm SHA256 $csvB).Hash
+        $same = ($h1 -eq $h2)
+    }
+    if ($same) { $ok++ } else { $bad++ }
+    $sym = if ($same) { "OK" } else { "!!" }
+    $results += "$sym SYNC-DET/$m  expect=stable repeated output  actual=$(if ($same) { 'pass' } else { 'fail' })"
+}
 # FMI emit: --emit-fmu produces modelDescription.xml and fmi2_cs.c
 if (-not (Test-Path build_regress_fmu)) { New-Item -ItemType Directory -Path build_regress_fmu | Out-Null }
 $null = & cargo run --release -- --emit-fmu=build_regress_fmu TestLib/SimpleTest 2>&1
+Write-Host "[FMI] emit-fmu"
 $fmiOk = ($LASTEXITCODE -eq 0) -and (Test-Path "build_regress_fmu\modelDescription.xml") -and (Test-Path "build_regress_fmu\fmi2_cs.c")
 if ($fmiOk) { $ok++ } else { $bad++ }
 $sym = if ($fmiOk) { "OK" } else { "!!" }
@@ -187,6 +218,7 @@ $results += "$sym FMI/emit-fmu  expect=modelDescription.xml and fmi2_cs.c  actua
 
 $modelicaDirScript = Join-Path $repoRoot "run_modelica_dir_regression.ps1"
 if (Test-Path $modelicaDirScript) {
+    Write-Host "[DIR] run_modelica_dir_regression.ps1"
     $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $modelicaDirScript -Root $repoRoot -MaxCases 0 -AllLibraryMo -NewtonCountsAsFailed 2>&1
     $exitModelicaDir = $LASTEXITCODE
     $modelicaDirOk = ($exitModelicaDir -eq 0)
@@ -197,6 +229,7 @@ if (Test-Path $modelicaDirScript) {
 
 $eventScanMatrixScript = Join-Path $repoRoot "jit-compiler\scripts\run_event_scan_matrix.ps1"
 if (Test-Path $eventScanMatrixScript) {
+    Write-Host "[EVENT-SCAN] run_event_scan_matrix.ps1"
     $eventOutDir = "build_stability/event_scan_matrix_ci"
     $eventLibPath = Join-Path $repoRoot "jit-compiler"
     $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $eventScanMatrixScript `

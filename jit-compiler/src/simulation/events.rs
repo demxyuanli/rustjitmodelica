@@ -1,6 +1,7 @@
 //! Fixed-point event iteration at the current simulation time (when clauses, algebraic refinement).
 
 use crate::i18n;
+use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
 use crate::jit::native;
 use crate::jit::CalcDerivsFunc;
 
@@ -42,8 +43,33 @@ pub(crate) fn run_event_iteration_at_time(
     diag_call_index: &mut u32,
     diag_time: &mut f64,
     prev_outputs: &mut [f64],
+    clock_partition_schedule: &[ClockPartitionScheduleEntry],
     w: &mut dyn std::io::Write,
 ) -> Result<EventIterationOutcome, String> {
+    fn sample_active(time: f64, start: f64, interval: f64) -> bool {
+        if interval <= 0.0 {
+            return false;
+        }
+        let phase = (time - start) / interval;
+        let k = phase.floor();
+        let frac = phase - k;
+        frac < 1e-12 || (1.0 - frac) < 1e-12 || (time - start).abs() < 1e-12
+    }
+
+    let active_partition_ids: Vec<&str> = clock_partition_schedule
+        .iter()
+        .filter_map(|p| match p.trigger {
+            ClockPartitionTrigger::Always => Some(p.id.as_str()),
+            ClockPartitionTrigger::Sample { start, interval } => {
+                if sample_active(time, start, interval) {
+                    Some(p.id.as_str())
+                } else {
+                    None
+                }
+            }
+        })
+        .collect();
+
     let trace_events = std::env::var("RUSTMODLICA_EVENT_TRACE")
         .ok()
         .map(|v| {
@@ -54,7 +80,10 @@ pub(crate) fn run_event_iteration_at_time(
     let mut event_iter_count = 0;
     const ALG_FIXED_POINT_MAX: u32 = 15;
     let do_alg_iter =
-        states.is_empty() && !output_vars.is_empty() && !newton_tearing_var_names.is_empty();
+        states.is_empty()
+            && !output_vars.is_empty()
+            && !newton_tearing_var_names.is_empty()
+            && (clock_partition_schedule.is_empty() || !active_partition_ids.is_empty());
     let mut alg_iter = 0u32;
     prev_outputs.fill(0.0);
 
@@ -247,6 +276,17 @@ pub(crate) fn run_event_iteration_at_time(
             converged = false;
         }
         if trace_events {
+            if !clock_partition_schedule.is_empty() {
+                let ids = if active_partition_ids.is_empty() {
+                    "-".to_string()
+                } else {
+                    active_partition_ids.join("|")
+                };
+                eprintln!(
+                    "[event-trace] t={:.6} active_clock_partitions={}",
+                    time, ids
+                );
+            }
             eprintln!(
                 "[event-trace] t={:.6} iter={} state_changed={} discrete_changed={} converged={}",
                 time, event_iter_count, state_changed, discrete_changed, converged

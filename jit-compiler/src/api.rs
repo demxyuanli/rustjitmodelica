@@ -123,6 +123,7 @@ pub fn simulate_from_source(
         artifacts.ida_component_id.as_slice(),
         &artifacts.solver,
         artifacts.output_interval,
+        &artifacts.clock_partition_schedule,
     )?;
     Ok(result)
 }

@@ -1,6 +1,7 @@
 // RT1-1: DAE/ODE solver with events. Adaptive RK45 when no when/zero-crossing; fixed-step with
 // event detection and reinit when when/zero-crossing present. Event iteration at each time step.
 use crate::ast::Expression;
+use crate::compiler::ClockPartitionScheduleEntry;
 use crate::i18n;
 use crate::jit::{native, CalcDerivsFunc};
 use crate::solver::{AdaptiveRK45Solver, BackwardEulerSolver, RungeKutta4Solver, Solver, System};
@@ -59,6 +60,7 @@ pub fn run_simulation(
     solver: &str,
     output_interval: f64,
     result_file: Option<&str>,
+    clock_partition_schedule: &[ClockPartitionScheduleEntry],
     mut result_collector: Option<&mut ResultCollector>,
 ) -> Result<(), String> {
     let mut time = 0.0;
@@ -262,6 +264,7 @@ pub fn run_simulation(
             &mut diag_call_index,
             &mut diag_time,
             &mut prev_outputs,
+            clock_partition_schedule,
             &mut **w,
         )? {
             EventIterationOutcome::TerminatedOk => return Ok(()),

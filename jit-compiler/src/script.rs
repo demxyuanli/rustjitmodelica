@@ -420,6 +420,7 @@ impl ScriptRunner {
                             &arts.solver,
                             arts.output_interval,
                             arts.result_file.as_deref(),
+                            &arts.clock_partition_schedule,
                             None,
                         )?;
                         Ok(true)
@@ -643,6 +644,7 @@ impl ScriptRunner {
                     &arts.solver,
                     arts.output_interval,
                     arts.result_file.as_deref(),
+                    &arts.clock_partition_schedule,
                     None,
                 )?;
                 Ok(true)

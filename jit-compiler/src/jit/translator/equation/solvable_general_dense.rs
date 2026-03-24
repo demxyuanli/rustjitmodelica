@@ -248,7 +248,6 @@ pub(super) fn compile_solvable_block_general_dense_n(
     builder.seal_block(ls_hdr_n);
     builder.seal_block(ls_accept_n);
     builder.seal_block(update_block);
-    builder.seal_block(header_block);
     builder.seal_block(body_block);
     builder.seal_block(perturb_block);
     builder.switch_to_block(solve_error_block);
@@ -267,6 +266,7 @@ pub(super) fn compile_solvable_block_general_dense_n(
         builder.ins().jump(header_block, &[]);
     }
     builder.seal_block(solve_error_block);
+    builder.seal_block(header_block);
     builder.switch_to_block(exit_block);
     emit_assert_suppress_end(ctx, builder)?;
     for (var, slot) in unknowns.iter().take(n).zip(slots.iter()) {

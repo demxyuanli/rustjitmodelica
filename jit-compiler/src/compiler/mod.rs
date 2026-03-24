@@ -403,6 +403,22 @@ pub enum CompileOutput {
     FlatSnapshotDone,
 }
 
+#[derive(Clone, Debug)]
+pub enum ClockPartitionTrigger {
+    Always,
+    Sample { start: f64, interval: f64 },
+}
+
+#[derive(Clone, Debug)]
+pub struct ClockPartitionScheduleEntry {
+    pub id: String,
+    pub trigger: ClockPartitionTrigger,
+    pub var_names: Vec<String>,
+    pub algorithm_indices: Vec<usize>,
+    pub alg_equation_indices: Vec<usize>,
+    pub diff_equation_indices: Vec<usize>,
+}
+
 pub struct Artifacts {
     pub calc_derivs: CalcDerivsFunc,
     pub states: Vec<f64>,
@@ -417,6 +433,7 @@ pub struct Artifacts {
     /// SYNC-2: Clock partitions for event/solver (e.g. clocked state handling).
     #[allow(dead_code)]
     pub clock_partitions: Vec<BackendClockPartition>,
+    pub clock_partition_schedule: Vec<ClockPartitionScheduleEntry>,
     pub when_count: usize,
     pub crossings_count: usize,
     pub t_end: f64,

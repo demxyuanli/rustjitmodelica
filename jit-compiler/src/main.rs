@@ -90,6 +90,7 @@ fn run_repl_loop(artifacts: Artifacts) -> Result<(), RunError> {
                 &artifacts.solver,
                 artifacts.output_interval,
                 artifacts.result_file.as_deref(),
+                &artifacts.clock_partition_schedule,
                 None,
             )?;
             println!("{}", i18n::msg0("simulation_completed"));
@@ -368,6 +369,7 @@ fn run_collect_with_solver(artifacts: &Artifacts, solver: &str) -> Result<ScanMe
         solver,
         artifacts.output_interval,
         Some(temp_path_str.as_str()),
+        &artifacts.clock_partition_schedule,
         None,
     )?;
     let csv = std::fs::read_to_string(&temp_path)
@@ -1237,6 +1239,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     artifacts.ida_component_id.as_slice(),
                     &artifacts.solver,
                     artifacts.output_interval,
+                    &artifacts.clock_partition_schedule,
                 )?;
                 println!("{}", serde_json::to_string(&result).unwrap_or_default());
                 return Ok(());
@@ -1268,6 +1271,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 &artifacts.solver,
                 artifacts.output_interval,
                 artifacts.result_file.as_deref(),
+                &artifacts.clock_partition_schedule,
                 None,
             )?;
             if !json_mode {

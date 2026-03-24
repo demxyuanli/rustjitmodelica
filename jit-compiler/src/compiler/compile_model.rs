@@ -13,12 +13,36 @@ use crate::jit::Jit;
 
 use super::{
     c_codegen, collect_all_called_names, collect_external_calls, inline, jacobian,
-    solvable_scale_warn, Artifacts, CompileOutput, Compiler,
+    solvable_scale_warn, Artifacts, ClockPartitionScheduleEntry, ClockPartitionTrigger,
+    CompileOutput, Compiler,
 };
 use super::pipeline::{
     analyze_equations, build_runtime_algorithms, classify_variables,
     collect_newton_tearing_var_names, flatten_and_inline, stage_trace_enabled,
 };
+
+fn parse_clock_partition_trigger(id: &str) -> ClockPartitionTrigger {
+    if let Some(rest) = id.strip_prefix("sample_") {
+        let parts: Vec<&str> = rest.split('_').collect();
+        if parts.len() == 1 {
+            if let Ok(interval) = parts[0].parse::<f64>() {
+                if interval > 0.0 {
+                    return ClockPartitionTrigger::Sample {
+                        start: 0.0,
+                        interval,
+                    };
+                }
+            }
+        } else if parts.len() == 2 {
+            if let (Ok(interval), Ok(start)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                if interval > 0.0 {
+                    return ClockPartitionTrigger::Sample { start, interval };
+                }
+            }
+        }
+    }
+    ClockPartitionTrigger::Always
+}
 
 pub(super) fn compile(
     compiler: &mut Compiler,
@@ -458,6 +482,54 @@ pub(super) fn compile(
 
         let algorithms = build_runtime_algorithms(&flat_model, stage_trace);
         let newton_tearing_var_names = collect_newton_tearing_var_names(&alg_equations);
+        let mut clock_partition_schedule: Vec<ClockPartitionScheduleEntry> = Vec::new();
+        for part in &backend_clock_partitions {
+            let mut var_names: Vec<String> = part.var_names.iter().cloned().collect();
+            var_names.sort_unstable();
+            let var_set: HashSet<String> = var_names.iter().cloned().collect();
+
+            let mut algorithm_indices = Vec::new();
+            for (idx, stmt) in algorithms.iter().enumerate() {
+                let mut modified = HashSet::new();
+                crate::jit::analysis::collect_modified(stmt, &mut modified);
+                if modified.iter().any(|v| var_set.contains(v)) {
+                    algorithm_indices.push(idx);
+                }
+            }
+
+            let mut alg_equation_indices = Vec::new();
+            for (idx, eq) in alg_equations.iter().enumerate() {
+                let mut modified = HashSet::new();
+                crate::jit::analysis::collect_modified_equations(
+                    std::slice::from_ref(eq),
+                    &mut modified,
+                );
+                if modified.iter().any(|v| var_set.contains(v)) {
+                    alg_equation_indices.push(idx);
+                }
+            }
+
+            let mut diff_equation_indices = Vec::new();
+            for (idx, eq) in diff_equations.iter().enumerate() {
+                let mut modified = HashSet::new();
+                crate::jit::analysis::collect_modified_equations(
+                    std::slice::from_ref(eq),
+                    &mut modified,
+                );
+                if modified.iter().any(|v| var_set.contains(v)) {
+                    diff_equation_indices.push(idx);
+                }
+            }
+
+            clock_partition_schedule.push(ClockPartitionScheduleEntry {
+                id: part.id.clone(),
+                trigger: parse_clock_partition_trigger(&part.id),
+                var_names,
+                algorithm_indices,
+                alg_equation_indices,
+                diff_equation_indices,
+            });
+        }
 
         let lib_paths: Vec<std::path::PathBuf> = if !compiler.options.external_libs.is_empty() {
             compiler.options
@@ -539,6 +611,7 @@ pub(super) fn compile(
             &alg_equations,
             &diff_equations,
             &algorithms,
+            &clock_partition_schedule,
             t_end,
             &newton_tearing_var_names,
         );
@@ -557,6 +630,7 @@ pub(super) fn compile(
                     output_start_vals,
                     state_var_index,
                     clock_partitions: backend_clock_partitions,
+                    clock_partition_schedule,
                     when_count,
                     crossings_count,
                     t_end,

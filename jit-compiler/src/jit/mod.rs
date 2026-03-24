@@ -19,6 +19,73 @@ use self::native::register_symbols;
 use self::translator::expr::compile_expression;
 use self::translator::{compile_algorithm_stmt, compile_equation};
 pub use self::types::{ArrayInfo, ArrayType, CalcDerivsFunc};
+use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
+
+fn emit_sample_trigger(
+    start: f64,
+    interval: f64,
+    t_ctx: &mut TranslationContext,
+    builder: &mut FunctionBuilder,
+) -> Result<Value, String> {
+    let time_val = t_ctx
+        .var_map
+        .get("time")
+        .copied()
+        .ok_or_else(|| "sample trigger requires time".to_string())?;
+    let mut sig = t_ctx.module.make_signature();
+    sig.params.push(AbiParam::new(cl_types::F64));
+    sig.params.push(AbiParam::new(cl_types::F64));
+    sig.returns.push(AbiParam::new(cl_types::F64));
+    let func_id = t_ctx
+        .module
+        .declare_function("rustmodlica_sample", Linkage::Import, &sig)
+        .map_err(|e| e.to_string())?;
+    let func_ref = t_ctx.module.declare_func_in_func(func_id, &mut builder.func);
+    let start_val = builder.ins().f64const(start);
+    let interval_val = builder.ins().f64const(interval);
+    let t_rel = builder.ins().fsub(time_val, start_val);
+    let call = builder.ins().call(func_ref, &[t_rel, interval_val]);
+    Ok(builder.inst_results(call)[0])
+}
+
+fn compile_guarded_partition(
+    trigger_val: Value,
+    t_ctx: &mut TranslationContext,
+    builder: &mut FunctionBuilder,
+    algorithms: &[AlgorithmStatement],
+    alg_equations: &[Equation],
+    diff_equations: &[Equation],
+    entry: &ClockPartitionScheduleEntry,
+) -> Result<(), String> {
+    let zero = builder.ins().f64const(0.0);
+    let active = builder.ins().fcmp(FloatCC::NotEqual, trigger_val, zero);
+    let then_block = builder.create_block();
+    let cont_block = builder.create_block();
+    builder.ins().brif(active, then_block, &[], cont_block, &[]);
+
+    builder.switch_to_block(then_block);
+    for idx in &entry.algorithm_indices {
+        if let Some(stmt) = algorithms.get(*idx) {
+            compile_algorithm_stmt(stmt, t_ctx, builder)?;
+        }
+    }
+    for idx in &entry.alg_equation_indices {
+        if let Some(eq) = alg_equations.get(*idx) {
+            compile_equation(eq, t_ctx, builder)?;
+        }
+    }
+    for idx in &entry.diff_equation_indices {
+        if let Some(eq) = diff_equations.get(*idx) {
+            compile_equation(eq, t_ctx, builder)?;
+        }
+    }
+    builder.ins().jump(cont_block, &[]);
+    builder.seal_block(then_block);
+
+    builder.switch_to_block(cont_block);
+    builder.seal_block(cont_block);
+    Ok(())
+}
 
 pub struct Jit {
     builder_context: FunctionBuilderContext,
@@ -79,6 +146,7 @@ impl Jit {
         alg_equations: &[Equation],
         diff_equations: &[Equation],
         algorithms: &[AlgorithmStatement],
+        clock_partition_schedule: &[ClockPartitionScheduleEntry],
         _t_end: f64,
         newton_tearing_var_names: &[String],
     ) -> Result<(CalcDerivsFunc, usize, usize), String> {
@@ -258,17 +326,65 @@ impl Jit {
                 Some(&mut string_data_counter),
             );
 
-            for stmt in algorithms {
-                compile_algorithm_stmt(stmt, &mut t_ctx, &mut builder)?;
+            let mut covered_algorithms = HashSet::new();
+            let mut covered_alg_equations = HashSet::new();
+            let mut covered_diff_equations = HashSet::new();
+
+            for entry in clock_partition_schedule {
+                covered_algorithms.extend(entry.algorithm_indices.iter().copied());
+                covered_alg_equations.extend(entry.alg_equation_indices.iter().copied());
+                covered_diff_equations.extend(entry.diff_equation_indices.iter().copied());
+
+                match entry.trigger {
+                    ClockPartitionTrigger::Always => {
+                        for idx in &entry.algorithm_indices {
+                            if let Some(stmt) = algorithms.get(*idx) {
+                                compile_algorithm_stmt(stmt, &mut t_ctx, &mut builder)?;
+                            }
+                        }
+                        for idx in &entry.alg_equation_indices {
+                            if let Some(eq) = alg_equations.get(*idx) {
+                                compile_equation(eq, &mut t_ctx, &mut builder)?;
+                            }
+                        }
+                        for idx in &entry.diff_equation_indices {
+                            if let Some(eq) = diff_equations.get(*idx) {
+                                compile_equation(eq, &mut t_ctx, &mut builder)?;
+                            }
+                        }
+                    }
+                    ClockPartitionTrigger::Sample { start, interval } => {
+                        let trigger_val = emit_sample_trigger(start, interval, &mut t_ctx, &mut builder)?;
+                        compile_guarded_partition(
+                            trigger_val,
+                            &mut t_ctx,
+                            &mut builder,
+                            algorithms,
+                            alg_equations,
+                            diff_equations,
+                            entry,
+                        )?;
+                    }
+                }
+            }
+
+            for (idx, stmt) in algorithms.iter().enumerate() {
+                if !covered_algorithms.contains(&idx) {
+                    compile_algorithm_stmt(stmt, &mut t_ctx, &mut builder)?;
+                }
             }
             when_count = *t_ctx.when_idx;
             crossings_count = *t_ctx.crossings_idx;
 
-            for eq in alg_equations {
-                compile_equation(eq, &mut t_ctx, &mut builder)?;
+            for (idx, eq) in alg_equations.iter().enumerate() {
+                if !covered_alg_equations.contains(&idx) {
+                    compile_equation(eq, &mut t_ctx, &mut builder)?;
+                }
             }
-            for eq in diff_equations {
-                compile_equation(eq, &mut t_ctx, &mut builder)?;
+            for (idx, eq) in diff_equations.iter().enumerate() {
+                if !covered_diff_equations.contains(&idx) {
+                    compile_equation(eq, &mut t_ctx, &mut builder)?;
+                }
             }
 
             for (var_name, slot) in &stack_slots {

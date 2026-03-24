@@ -26,11 +26,57 @@ pub const CSR_FAER_SPARSE_LU_MIN_N: usize = 48;
 /// Prefer faer when average row nnz is not huge (avoids pathological wide rows in one shot).
 pub const CSR_FAER_MAX_AVG_NNZ_PER_ROW: usize = 256;
 
+/// Auto sparse Jacobian path requires `nnz / (n*n)` <= this ratio.
+pub const NEWTON_SPARSE_AUTO_MAX_DENSITY: f64 = 0.75;
+
 /// Dense Newton: use Cranelift stack slot for J,r,dx only while `n` is small enough to stay well under typical thread stack limits.
 pub const JIT_DENSE_STACK_MAX_N: usize = 64;
 
 /// Sparse (and other) Newton: if the packed workspace would exceed this size, use a thread-local heap buffer instead of a stack slot.
 pub const JIT_STACK_BUFFER_BYTES_MAX: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewtonSparsePolicy {
+    Auto,
+    Dense,
+    Sparse,
+}
+
+#[inline]
+pub fn newton_sparse_policy_from_env() -> NewtonSparsePolicy {
+    match std::env::var("RUSTMODLICA_NEWTON_SPARSE_POLICY")
+        .ok()
+        .unwrap_or_else(|| "auto".to_string())
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "dense" => NewtonSparsePolicy::Dense,
+        "sparse" => NewtonSparsePolicy::Sparse,
+        _ => NewtonSparsePolicy::Auto,
+    }
+}
+
+#[inline]
+pub fn should_use_newton_sparse_path(
+    policy: NewtonSparsePolicy,
+    n: usize,
+    nnz: usize,
+    unknown_count: usize,
+) -> bool {
+    if policy == NewtonSparsePolicy::Dense {
+        return false;
+    }
+    if n < 3 || unknown_count < n || nnz == 0 || nnz >= n.saturating_mul(n) {
+        return false;
+    }
+    if policy == NewtonSparsePolicy::Sparse {
+        return true;
+    }
+    let dense_size = n.saturating_mul(n);
+    let density = (nnz as f64) / (dense_size as f64);
+    density <= NEWTON_SPARSE_AUTO_MAX_DENSITY
+}
 
 /// `rustmodlica_solve_linear_csr` / [`crate::sparse_solve::CsrMatrix`] routing.
 #[inline]
@@ -43,6 +89,11 @@ pub fn csr_use_faer_sparse_lu(n: usize, nnz: usize) -> bool {
     }
     let max_nnz = n.saturating_mul(CSR_FAER_MAX_AVG_NNZ_PER_ROW);
     nnz <= max_nnz
+}
+
+#[inline]
+pub fn csr_should_fallback_to_dense(n: usize, nnz: usize) -> bool {
+    nnz >= n.saturating_mul(n) / 2 || n <= 4
 }
 
 pub fn validate_solvable_residual_count(n: usize) -> Result<(), String> {

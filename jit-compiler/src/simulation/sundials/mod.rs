@@ -932,6 +932,7 @@ unsafe fn drive_print_loop(
             diag_call_index,
             diag_time,
             prev_outputs,
+            &[],
             w,
         )? {
             EventIterationOutcome::TerminatedOk => return Ok(()),
