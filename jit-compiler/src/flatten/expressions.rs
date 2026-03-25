@@ -153,6 +153,10 @@ pub fn prefix_expression(expr: &Expression, prefix: &str) -> Expression {
             Box::new(prefix_expression(c, prefix)),
             Box::new(prefix_expression(n, prefix)),
         ),
+        Expression::BackSample(c, n) => Expression::BackSample(
+            Box::new(prefix_expression(c, prefix)),
+            Box::new(prefix_expression(n, prefix)),
+        ),
         Expression::StringLiteral(s) => Expression::StringLiteral(s.clone()),
     }
 }

@@ -44,6 +44,7 @@ pub(super) fn substitute_expr(expr: &Expression, subst: &HashMap<String, Express
         SubSample(c, n) => SubSample(Box::new(substitute_expr(c, subst)), Box::new(substitute_expr(n, subst))),
         SuperSample(c, n) => SuperSample(Box::new(substitute_expr(c, subst)), Box::new(substitute_expr(n, subst))),
         ShiftSample(c, n) => ShiftSample(Box::new(substitute_expr(c, subst)), Box::new(substitute_expr(n, subst))),
+        BackSample(c, n) => BackSample(Box::new(substitute_expr(c, subst)), Box::new(substitute_expr(n, subst))),
         StringLiteral(s) => StringLiteral(s.clone()),
     }
 }

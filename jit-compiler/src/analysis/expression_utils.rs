@@ -313,6 +313,7 @@ pub fn partial_derivative(expr: &Expression, var: &str) -> Expression {
         | Expression::SubSample(_, _)
         | Expression::SuperSample(_, _)
         | Expression::ShiftSample(_, _)
+        | Expression::BackSample(_, _)
         | Expression::StringLiteral(_) => Expression::Number(0.0),
     }
 }

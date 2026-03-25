@@ -26,7 +26,10 @@ pub use sundials::{
 
 pub type SimulationResult = types::SimulationResult;
 pub use self::types::run_simulation_collect;
-use self::events::{run_event_iteration_at_time, EventIterationOutcome};
+use self::events::{
+    perf_enabled, perf_inc_clock_dispatch, perf_reset_counters, perf_snapshot,
+    run_event_iteration_at_time, EventIterationOutcome,
+};
 use self::newton_recovery::{allow_zero_residual_newton, fail_if_assert_storm, print_newton_diag};
 use self::sim_io::{flush_writer, write_csv_line};
 use self::step::maybe_print_numeric_jacobian;
@@ -63,6 +66,9 @@ pub fn run_simulation(
     clock_partition_schedule: &[ClockPartitionScheduleEntry],
     mut result_collector: Option<&mut ResultCollector>,
 ) -> Result<(), String> {
+    if perf_enabled() {
+        perf_reset_counters();
+    }
     let mut time = 0.0;
     let mut derivs = vec![0.0; states.len()];
     let mut outputs = if output_start_vals.len() == output_vars.len() {
@@ -285,6 +291,9 @@ pub fn run_simulation(
                 for ev in &dispatched_events {
                     match &ev.kind {
                         QueuedEventKind::ClockPartition(id) => {
+                            if perf_enabled() {
+                                perf_inc_clock_dispatch();
+                            }
                             eprintln!(
                                 "[event-dispatch] t={:.6} kind=clock_partition id={}",
                                 ev.time, id
@@ -648,6 +657,13 @@ pub fn run_simulation(
         println!(
             "{}",
             i18n::msg("adaptive_rk45_steps", &[&adaptive_step_count])
+        );
+    }
+    if perf_enabled() {
+        let (event_iter_total, clock_dispatch_total) = perf_snapshot();
+        eprintln!(
+            "[perf] event_iter_total={} clock_dispatch_total={}",
+            event_iter_total, clock_dispatch_total
         );
     }
     flush_writer(w)?;

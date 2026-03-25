@@ -198,5 +198,6 @@ pub fn expr_to_c(expr: &Expression, ctx: &CCodegenContext) -> Result<String, Str
             expr_to_c(n, ctx)?
         )),
         ShiftSample(c, n) => Ok(format!("(({}) + ({}))", expr_to_c(c, ctx)?, expr_to_c(n, ctx)?)),
+        BackSample(c, n) => Ok(format!("(({}) * ({}))", expr_to_c(c, ctx)?, expr_to_c(n, ctx)?)),
     }
 }

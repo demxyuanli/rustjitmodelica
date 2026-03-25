@@ -371,6 +371,9 @@ pub(super) fn compile_pre_expression(
         Expression::Interval(_) => Err("interval() not supported in pre() (SYNC-1)".to_string()),
         Expression::Hold(inner) => compile_pre_expression(inner, ctx, builder),
         Expression::Previous(inner) => compile_pre_expression(inner, ctx, builder),
-        Expression::SubSample(c, _) | Expression::SuperSample(c, _) | Expression::ShiftSample(c, _) => compile_pre_expression(c, ctx, builder),
+        Expression::SubSample(c, _)
+        | Expression::SuperSample(c, _)
+        | Expression::ShiftSample(c, _)
+        | Expression::BackSample(c, _) => compile_pre_expression(c, ctx, builder),
     }
 }

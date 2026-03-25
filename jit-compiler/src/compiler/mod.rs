@@ -54,6 +54,25 @@ pub struct CompilerOptions {
     pub coarse_constrainedby_only: bool,
 }
 
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct CompilePerfReport {
+    pub model_name: String,
+    pub load_model_ms: u64,
+    pub flatten_inline_ms: u64,
+    pub analyze_ms: u64,
+    pub backend_dae_ms: u64,
+    pub external_resolve_ms: u64,
+    pub jit_ms: u64,
+    pub state_count: usize,
+    pub discrete_count: usize,
+    pub param_count: usize,
+    pub alg_eq_count: usize,
+    pub diff_eq_count: usize,
+    pub aot_cache_status: String,
+    pub jit_compile_ok: bool,
+    pub jit_error: Option<String>,
+}
+
 impl Default for CompilerOptions {
     fn default() -> Self {
         CompilerOptions {
@@ -92,6 +111,8 @@ pub struct Compiler {
     pub(crate) external_symbol_ptrs: HashMap<String, *const u8>,
     /// Global string interner for variable name deduplication across compilation stages.
     pub interner: crate::string_intern::StringInterner,
+    /// Structured compile-time performance report for the last compile call.
+    pub last_compile_perf: Option<CompilePerfReport>,
 }
 
 impl Default for ExternalLibs {
@@ -153,7 +174,8 @@ pub(super) fn collect_all_called_names(
             | Expression::Previous(inner) => collect_calls_expr(inner, out),
             Expression::SubSample(c, n)
             | Expression::SuperSample(c, n)
-            | Expression::ShiftSample(c, n) => {
+            | Expression::ShiftSample(c, n)
+            | Expression::BackSample(c, n) => {
                 collect_calls_expr(c, out);
                 collect_calls_expr(n, out);
             }
@@ -285,7 +307,8 @@ pub(super) fn collect_external_calls(
             | Expression::Previous(inner) => collect_calls_expr(inner, out),
             Expression::SubSample(c, n)
             | Expression::SuperSample(c, n)
-            | Expression::ShiftSample(c, n) => {
+            | Expression::ShiftSample(c, n)
+            | Expression::BackSample(c, n) => {
                 collect_calls_expr(c, out);
                 collect_calls_expr(n, out);
             }
@@ -488,11 +511,16 @@ impl Compiler {
             external_libraries: ExternalLibs::default(),
             external_symbol_ptrs: HashMap::new(),
             interner: crate::string_intern::StringInterner::new(),
+            last_compile_perf: None,
         }
     }
 
     pub fn take_warnings(&mut self) -> Vec<WarningInfo> {
         std::mem::take(&mut self.warnings)
+    }
+
+    pub fn take_compile_perf_report(&mut self) -> Option<CompilePerfReport> {
+        self.last_compile_perf.take()
     }
 
     /// Compile a model from source code in memory (for IDE / single-file). Caller may add_path

@@ -53,7 +53,10 @@ pub fn eval_jac_expr_at_state(
         Expression::Interval(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
         Expression::Hold(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
         Expression::Previous(inner) => eval_jac_expr_at_state(inner, state_var_index, states),
-        Expression::SubSample(c, _) | Expression::SuperSample(c, _) | Expression::ShiftSample(c, _) => {
+        Expression::SubSample(c, _)
+        | Expression::SuperSample(c, _)
+        | Expression::ShiftSample(c, _)
+        | Expression::BackSample(c, _) => {
             eval_jac_expr_at_state(c, state_var_index, states)
         }
         Expression::StringLiteral(_) => 0.0,

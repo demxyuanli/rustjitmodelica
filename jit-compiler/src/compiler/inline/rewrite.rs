@@ -336,6 +336,10 @@ pub(super) fn inline_expr(
             Box::new(inline_expr(c, loader, cache, depth + 1, max_depth)),
             Box::new(inline_expr(n, loader, cache, depth + 1, max_depth)),
         ),
+        BackSample(c, n) => BackSample(
+            Box::new(inline_expr(c, loader, cache, depth + 1, max_depth)),
+            Box::new(inline_expr(n, loader, cache, depth + 1, max_depth)),
+        ),
         StringLiteral(s) => StringLiteral(s.clone()),
     }
 }

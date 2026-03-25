@@ -177,5 +177,29 @@ pub fn eval_expr(expr: &Expression, vars: &HashMap<String, f64>) -> Result<f64, 
             let nn = eval_expr(n, vars)?;
             Ok(c + nn)
         }
+        BackSample(clock, n) => match clock.as_ref() {
+            Sample(period) => {
+                let p = eval_expr(period, vars)?;
+                if p <= 0.0 {
+                    return Err("backSample(sample(...), n): period must be > 0".into());
+                }
+                let nn = eval_expr(n, vars)?;
+                let n_safe = if nn == 0.0 { 1.0 } else { nn };
+                let t = vars.get("time").copied().unwrap_or(0.0);
+                let slow = n_safe * p;
+                let t0 = (n_safe - 1.0) * p;
+                let shifted_t = t - t0;
+                let phase = shifted_t / slow;
+                let frac = phase - phase.floor();
+                Ok(if frac.abs() < 1e-12 || (1.0 - frac).abs() < 1e-12 {
+                    1.0
+                } else if shifted_t < 1e-12 {
+                    1.0
+                } else {
+                    0.0
+                })
+            }
+            _ => eval_expr(clock, vars),
+        },
     }
 }

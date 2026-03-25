@@ -383,6 +383,7 @@ fn expr_contains_array_literal(expr: &Expression) -> bool {
         Expression::SubSample(a, b)
         | Expression::SuperSample(a, b)
         | Expression::ShiftSample(a, b)
+        | Expression::BackSample(a, b)
         | Expression::ArrayAccess(a, b) => {
             expr_contains_array_literal(a) || expr_contains_array_literal(b)
         }
@@ -419,6 +420,7 @@ fn expr_contains_array_comprehension(expr: &Expression) -> bool {
         Expression::SubSample(a, b)
         | Expression::SuperSample(a, b)
         | Expression::ShiftSample(a, b)
+        | Expression::BackSample(a, b)
         | Expression::ArrayAccess(a, b) => {
             expr_contains_array_comprehension(a) || expr_contains_array_comprehension(b)
         }

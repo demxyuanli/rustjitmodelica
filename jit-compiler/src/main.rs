@@ -7,11 +7,34 @@ use rustmodlica::i18n;
 use rustmodlica::script;
 use serde::Serialize;
 use std::env;
+use std::fs;
 use std::io::Read;
 use std::process::ExitCode;
 use std::thread;
+use std::time::Instant;
 
 type RunError = error::AppError;
+
+fn maybe_write_perf_json(
+    perf_json_path: &Option<String>,
+    compiler: &mut Compiler,
+    model_name: &str,
+    warnings_count: usize,
+) -> Result<(), RunError> {
+    let Some(path) = perf_json_path.as_ref() else {
+        return Ok(());
+    };
+    let payload = serde_json::json!({
+        "model": model_name,
+        "warnings_count": warnings_count,
+        "compile_perf": compiler.take_compile_perf_report()
+    });
+    let text = serde_json::to_string_pretty(&payload)
+        .map_err(|e| RunError::Message(format!("serialize perf json failed: {}", e)))?;
+    fs::write(path, text)
+        .map_err(|e| RunError::Message(format!("write perf json '{}' failed: {}", path, e)))?;
+    Ok(())
+}
 
 fn emit_validate_json(
     success: bool,
@@ -871,6 +894,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut model_name = None;
     let mut validate_only = false;
     let mut output_format: Option<String> = None;
+    let mut perf_json_path: Option<String> = None;
     let mut emit_flat_snapshot: Option<String> = None;
     let mut flat_snapshot_only = false;
     let mut coarse_constrainedby_only = false;
@@ -980,12 +1004,15 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if let Some(v) = a.strip_prefix("--output-format=") {
             output_format = Some(v.to_string());
             i += 1;
+        } else if let Some(v) = a.strip_prefix("--perf-json=") {
+            perf_json_path = Some(v.to_string());
+            i += 1;
         } else if !a.starts_with('-') {
             model_name = Some(a.clone());
             i += 1;
             break;
         } else {
-            i += 1;
+            return Err(format!("unknown argument: {}", a).into());
         }
     }
     if i < args.len() {
@@ -1029,7 +1056,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
+                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
                 args[0]
             );
             return Err(msg.into());
@@ -1097,6 +1124,14 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
             i18n::msg("compiling", &[&effective_model as &dyn std::fmt::Display])
         );
     }
+    let perf_enabled = std::env::var("RUSTMODLICA_PERF_TRACE")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false);
+    let compile_t0 = if perf_enabled { Some(Instant::now()) } else { None };
     let out = match compiler.compile(&effective_model) {
         Ok(o) => o,
         Err(e) => {
@@ -1108,7 +1143,11 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
             return Err(e.into());
         }
     };
+    if let Some(t0) = compile_t0 {
+        eprintln!("[perf] compile_ms={}", t0.elapsed().as_millis());
+    }
     let warnings = compiler.take_warnings();
+    maybe_write_perf_json(&perf_json_path, &mut compiler, &effective_model, warnings.len())?;
     let warn_level = compiler.options.warnings_level.as_str();
     if validate_only {
         match &out {
@@ -1216,6 +1255,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 return Ok(());
             }
             if output_format.as_deref() == Some("json") {
+                let sim_t0 = if perf_enabled { Some(Instant::now()) } else { None };
                 let result = run_simulation_collect(
                     artifacts.calc_derivs,
                     artifacts.when_count,
@@ -1241,12 +1281,16 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     artifacts.output_interval,
                     &artifacts.clock_partition_schedule,
                 )?;
+                if let Some(t0) = sim_t0 {
+                    eprintln!("[perf] sim_ms={}", t0.elapsed().as_millis());
+                }
                 println!("{}", serde_json::to_string(&result).unwrap_or_default());
                 return Ok(());
             }
             if !json_mode {
                 println!("{}", i18n::msg0("starting_simulation"));
             }
+            let sim_t0 = if perf_enabled { Some(Instant::now()) } else { None };
             run_simulation(
                 artifacts.calc_derivs,
                 artifacts.when_count,
@@ -1274,6 +1318,9 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 &artifacts.clock_partition_schedule,
                 None,
             )?;
+            if let Some(t0) = sim_t0 {
+                eprintln!("[perf] sim_ms={}", t0.elapsed().as_millis());
+            }
             if !json_mode {
                 println!("{}", i18n::msg0("simulation_completed"));
             }

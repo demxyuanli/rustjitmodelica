@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::time::Instant;
 
 use crate::analysis::analyze_initial_equations;
 use crate::ast::{Equation, Expression};
@@ -16,24 +17,57 @@ use crate::jit::Jit;
 use super::{
     c_codegen, collect_all_called_names, collect_external_calls, inline, jacobian,
     solvable_scale_warn, Artifacts, ClockPartitionScheduleEntry, ClockPartitionTrigger,
-    CompileOutput, Compiler,
+    CompileOutput, CompilePerfReport, Compiler,
 };
 use super::pipeline::{
     analyze_equations, build_runtime_algorithms, classify_variables,
     collect_newton_tearing_var_names, flatten_and_inline, stage_trace_enabled,
 };
 
+#[derive(Debug, Clone, Copy)]
+enum AotCacheStatus {
+    DisabledNoEnv,
+    DisabledEmptyDir,
+    Hit,
+    Store,
+    WriteFailed,
+    MkdirFailed,
+}
+
+impl AotCacheStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::DisabledNoEnv => "disabled_no_env",
+            Self::DisabledEmptyDir => "disabled_empty_dir",
+            Self::Hit => "hit",
+            Self::Store => "store",
+            Self::WriteFailed => "write_failed",
+            Self::MkdirFailed => "mkdir_failed",
+        }
+    }
+}
+
+fn perf_trace_enabled() -> bool {
+    std::env::var("RUSTMODLICA_PERF_TRACE")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
 fn maybe_write_aot_cache_marker(
     model_name: &str,
     alg_equations: &[Equation],
     diff_equations: &[Equation],
     options: &crate::compiler::CompilerOptions,
-) -> bool {
+) -> AotCacheStatus {
     let Ok(cache_dir) = std::env::var("RUSTMODLICA_AOT_CACHE_DIR") else {
-        return false;
+        return AotCacheStatus::DisabledNoEnv;
     };
     if cache_dir.trim().is_empty() {
-        return false;
+        return AotCacheStatus::DisabledEmptyDir;
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     model_name.hash(&mut hasher);
@@ -48,11 +82,16 @@ fn maybe_write_aot_cache_marker(
     }
     let key = format!("{:016x}", hasher.finish());
     let cache_root = std::path::PathBuf::from(cache_dir);
-    let _ = std::fs::create_dir_all(&cache_root);
+    if std::fs::create_dir_all(&cache_root).is_err() {
+        return AotCacheStatus::MkdirFailed;
+    }
     let path = cache_root.join(format!("{}.aot-marker", key));
     if path.exists() {
         eprintln!("[aot-cache] hit {}", path.display());
-        return true;
+        if perf_trace_enabled() {
+            eprintln!("[perf] aot_cache=hit key={}", key);
+        }
+        return AotCacheStatus::Hit;
     }
     let payload = format!(
         "model={}\nkey={}\nsolver={}\nalg_eqs={}\ndiff_eqs={}\n",
@@ -64,28 +103,92 @@ fn maybe_write_aot_cache_marker(
     );
     if std::fs::write(&path, payload).is_ok() {
         eprintln!("[aot-cache] store {}", path.display());
+        if perf_trace_enabled() {
+            eprintln!("[perf] aot_cache=store key={}", key);
+        }
+        return AotCacheStatus::Store;
     }
-    false
+    if perf_trace_enabled() {
+        eprintln!("[perf] aot_cache=write_failed key={}", key);
+    }
+    AotCacheStatus::WriteFailed
 }
 
 fn parse_clock_partition_trigger(id: &str) -> ClockPartitionTrigger {
-    if let Some(rest) = id.strip_prefix("sample_") {
-        let parts: Vec<&str> = rest.split('_').collect();
-        if parts.len() == 1 {
-            if let Ok(interval) = parts[0].parse::<f64>() {
-                if interval > 0.0 {
-                    return ClockPartitionTrigger::Sample {
-                        start: 0.0,
-                        interval,
-                    };
-                }
+    fn parse_clock_factor(token: &str) -> Option<f64> {
+        if let Ok(v) = token.parse::<f64>() {
+            if v <= 0.0 {
+                return Some(1.0);
             }
-        } else if parts.len() == 2 {
-            if let (Ok(interval), Ok(start)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
-                if interval > 0.0 {
-                    return ClockPartitionTrigger::Sample { start, interval };
+            return Some(v);
+        }
+        if let Some(inner) = token
+            .strip_prefix("Number(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            if let Ok(v) = inner.parse::<f64>() {
+                if v <= 0.0 {
+                    return Some(1.0);
                 }
+                return Some(v);
             }
+            return None;
+        }
+        None
+    }
+
+    fn parse_sample_key(key: &str) -> Option<(f64, f64)> {
+        let rest = key.strip_prefix("sample_")?;
+        let mut parts = rest.splitn(2, '_');
+        let interval = parts.next()?.parse::<f64>().ok()?;
+        if interval <= 0.0 {
+            return None;
+        }
+        let start = parts
+            .next()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        Some((start, interval))
+    }
+
+    fn parse_derived_key(key: &str) -> Option<(f64, f64)> {
+        let (op, rest) = if let Some(r) = key.strip_prefix("subSample_") {
+            ("sub", r)
+        } else if let Some(r) = key.strip_prefix("superSample_") {
+            ("super", r)
+        } else if let Some(r) = key.strip_prefix("shiftSample_") {
+            ("shift", r)
+        } else if let Some(r) = key.strip_prefix("backSample_") {
+            ("back", r)
+        } else {
+            return None;
+        };
+        let split = rest.rfind('_')?;
+        let (base_key, factor_token) = rest.split_at(split);
+        let factor = parse_clock_factor(factor_token.trim_start_matches('_'))?;
+        if factor == 0.0 {
+            return None;
+        }
+        let (base_start, base_interval) = parse_clock_key(base_key)?;
+        match op {
+            "sub" => Some((base_start, base_interval * factor)),
+            "super" => Some((base_start, base_interval / factor)),
+            "shift" => Some((base_start + factor * base_interval, base_interval)),
+            "back" => Some((
+                base_start + (factor - 1.0) * base_interval,
+                base_interval * factor,
+            )),
+            _ => None,
+        }
+    }
+
+    fn parse_clock_key(key: &str) -> Option<(f64, f64)> {
+        parse_sample_key(key).or_else(|| parse_derived_key(key))
+    }
+
+    if let Some((start, interval)) = parse_clock_key(id) {
+        if interval > 0.0 {
+            return ClockPartitionTrigger::Sample { start, interval };
         }
     }
     ClockPartitionTrigger::Always
@@ -148,21 +251,32 @@ pub(super) fn compile(
     model_name: &str,
 ) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
         let stage_trace = stage_trace_enabled();
+        let perf_trace = perf_trace_enabled();
+        compiler.last_compile_perf = None;
 
         compiler.warnings.clear();
         compiler.loader.set_quiet(compiler.options.quiet);
         let opts = &compiler.options;
         let model_file_path = format!("{}.mo", model_name.replace('.', "/"));
+        let mut perf_report = CompilePerfReport {
+            model_name: model_name.to_string(),
+            ..Default::default()
+        };
         if !compiler.options.quiet {
             println!(
                 "{}",
                 i18n::msg("loading_model", &[&model_name as &dyn std::fmt::Display])
             );
         }
+        let load_t0 = Instant::now();
         let mut root_model = compiler
             .loader
             .load_model(model_name)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        perf_report.load_model_ms = load_t0.elapsed().as_millis() as u64;
+        if perf_trace {
+            eprintln!("[perf] compile_phase.load_model_ms={}", perf_report.load_model_ms);
+        }
 
         if root_model.as_ref().is_function {
             if !compiler.options.quiet {
@@ -173,6 +287,7 @@ pub(super) fn compile(
                 }
             }
             let value = compiler.run_function_once(model_name)?;
+            compiler.last_compile_perf = Some(perf_report);
             return Ok(CompileOutput::FunctionRun(value));
         }
 
@@ -184,6 +299,7 @@ pub(super) fn compile(
             .emit_flat_snapshot
             .as_deref()
             .map(std::path::Path::new);
+        let flatten_t0 = Instant::now();
         let frontend = flatten_and_inline(
             &mut root_model,
             model_name,
@@ -193,8 +309,16 @@ pub(super) fn compile(
             snap_path,
             compiler.options.coarse_constrainedby_only,
         )?;
+        perf_report.flatten_inline_ms = flatten_t0.elapsed().as_millis() as u64;
+        if perf_trace {
+            eprintln!(
+                "[perf] compile_phase.flatten_inline_ms={}",
+                perf_report.flatten_inline_ms
+            );
+        }
         let flat_model = frontend.flat_model;
         if compiler.options.flat_snapshot_only {
+            compiler.last_compile_perf = Some(perf_report);
             return Ok(CompileOutput::FlatSnapshotDone);
         }
         let total_equations = frontend.total_equations;
@@ -208,12 +332,17 @@ pub(super) fn compile(
             println!("{}", i18n::msg0("analyzing_variables"));
         }
 
+        let analyze_t0 = Instant::now();
         let mut variable_layout = classify_variables(&flat_model, opts.quiet, stage_trace);
         if !compiler.options.quiet {
             println!("{}", i18n::msg0("normalizing_derivatives"));
             println!("{}", i18n::msg0("performing_structure_analysis"));
         }
         let analysis_stage = analyze_equations(&flat_model, &mut variable_layout, opts, stage_trace);
+        perf_report.analyze_ms = analyze_t0.elapsed().as_millis() as u64;
+        if perf_trace {
+            eprintln!("[perf] compile_phase.analyze_ms={}", perf_report.analyze_ms);
+        }
         let state_vars_sorted = variable_layout.state_vars;
         let discrete_vars_sorted = variable_layout.discrete_vars;
         let param_vars = variable_layout.param_vars;
@@ -229,6 +358,11 @@ pub(super) fn compile(
         let params = variable_layout.params;
         let alg_equations = analysis_stage.alg_equations;
         let diff_equations = analysis_stage.diff_equations;
+        perf_report.state_count = state_vars_sorted.len();
+        perf_report.discrete_count = discrete_vars_sorted.len();
+        perf_report.param_count = param_vars.len();
+        perf_report.alg_eq_count = alg_equations.len();
+        perf_report.diff_eq_count = diff_equations.len();
         let differential_index = analysis_stage.differential_index;
         let constraint_equation_count = analysis_stage.constraint_equation_count;
         let constant_conflict_count = analysis_stage.constant_conflict_count;
@@ -349,6 +483,7 @@ pub(super) fn compile(
                 var_names: p.var_names.clone(),
             })
             .collect();
+        let dae_t0 = Instant::now();
         let simulation_dae: SimulationDae = build_simulation_dae(
             &state_vars_sorted,
             &discrete_vars_sorted,
@@ -366,7 +501,15 @@ pub(super) fn compile(
         );
         let ida_component_id = ida_component_id_for_states(&simulation_dae, states.len());
         let dae_differential_index = simulation_dae.dae.differential_index;
+        perf_report.backend_dae_ms = dae_t0.elapsed().as_millis() as u64;
+        if perf_trace {
+            eprintln!(
+                "[perf] compile_phase.backend_dae_ms={}",
+                perf_report.backend_dae_ms
+            );
+        }
 
+        let external_t0 = Instant::now();
         let external_list = collect_external_calls(
             &mut compiler.loader,
             &alg_equations,
@@ -594,7 +737,12 @@ pub(super) fn compile(
 
         let algorithms = build_runtime_algorithms(&flat_model, stage_trace);
         let newton_tearing_var_names = collect_newton_tearing_var_names(&alg_equations);
-        let _aot_cache_hit = maybe_write_aot_cache_marker(model_name, &alg_equations, &diff_equations, opts);
+        let aot_cache_status =
+            maybe_write_aot_cache_marker(model_name, &alg_equations, &diff_equations, opts);
+        perf_report.aot_cache_status = aot_cache_status.as_str().to_string();
+        if perf_trace {
+            eprintln!("[perf] aot_cache_status={}", aot_cache_status.as_str());
+        }
         let mut clock_partition_schedule: Vec<ClockPartitionScheduleEntry> = Vec::new();
         for part in &backend_clock_partitions {
             let mut var_names: Vec<String> = part.var_names.iter().cloned().collect();
@@ -701,6 +849,15 @@ pub(super) fn compile(
                 name
             ).into());
         }
+        if perf_trace {
+            perf_report.external_resolve_ms = external_t0.elapsed().as_millis() as u64;
+            eprintln!(
+                "[perf] compile_phase.external_resolve_ms={}",
+                perf_report.external_resolve_ms
+            );
+        } else {
+            perf_report.external_resolve_ms = external_t0.elapsed().as_millis() as u64;
+        }
 
         let t_end = compiler.options.t_end;
         let dt = compiler.options.dt;
@@ -715,6 +872,7 @@ pub(super) fn compile(
         } else {
             Jit::new_with_extra_symbols(Some(&all_symbols))
         };
+        let jit_t0 = Instant::now();
         let res = jit.compile(
             &state_vars_sorted,
             &discrete_vars_sorted,
@@ -728,9 +886,16 @@ pub(super) fn compile(
             t_end,
             &newton_tearing_var_names,
         );
+        perf_report.jit_ms = jit_t0.elapsed().as_millis() as u64;
+        if perf_trace {
+            eprintln!("[perf] compile_phase.jit_ms={}", perf_report.jit_ms);
+        }
 
         match res {
             Ok((calc_derivs, when_count, crossings_count)) => {
+                perf_report.jit_compile_ok = true;
+                perf_report.jit_error = None;
+                compiler.last_compile_perf = Some(perf_report);
                 Ok(CompileOutput::Simulation(Artifacts {
                     calc_derivs,
                     states,
@@ -761,11 +926,17 @@ pub(super) fn compile(
                     user_stub_jits,
                 }))
             }
-            Err(e) => Err(format!(
-                "JIT compilation failed: {}{}",
-                e,
-                compiler.source_loc_suffix(model_name)
-            )
-            .into()),
+            Err(e) => {
+                let err_text = e.to_string();
+                perf_report.jit_compile_ok = false;
+                perf_report.jit_error = Some(err_text.clone());
+                compiler.last_compile_perf = Some(perf_report);
+                Err(format!(
+                    "JIT compilation failed: {}{}",
+                    err_text,
+                    compiler.source_loc_suffix(model_name)
+                )
+                .into())
+            }
         }
 }

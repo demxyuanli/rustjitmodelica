@@ -4,6 +4,8 @@ use crate::i18n;
 use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
 use crate::jit::native;
 use crate::jit::CalcDerivsFunc;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::newton_recovery::{
     allow_algebraic_newton_fallback, allow_zero_residual_newton, fail_if_assert_storm,
@@ -15,6 +17,42 @@ use super::types::{EventQueue, QueuedEvent, QueuedEventKind};
 pub(crate) enum EventIterationOutcome {
     Completed,
     TerminatedOk,
+}
+
+static PERF_EVENT_ITER_TOTAL: AtomicU64 = AtomicU64::new(0);
+static PERF_CLOCK_DISPATCH_TOTAL: AtomicU64 = AtomicU64::new(0);
+static PERF_ENABLED: OnceLock<bool> = OnceLock::new();
+
+pub(crate) fn perf_enabled() -> bool {
+    *PERF_ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_PERF_TRACE")
+            .ok()
+            .map(|v| {
+                let t = v.trim();
+                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) fn perf_reset_counters() {
+    PERF_EVENT_ITER_TOTAL.store(0, Ordering::Relaxed);
+    PERF_CLOCK_DISPATCH_TOTAL.store(0, Ordering::Relaxed);
+}
+
+pub(crate) fn perf_inc_event_iter() {
+    PERF_EVENT_ITER_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn perf_inc_clock_dispatch() {
+    PERF_CLOCK_DISPATCH_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn perf_snapshot() -> (u64, u64) {
+    (
+        PERF_EVENT_ITER_TOTAL.load(Ordering::Relaxed),
+        PERF_CLOCK_DISPATCH_TOTAL.load(Ordering::Relaxed),
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -69,13 +107,14 @@ pub(crate) fn run_event_iteration_at_time(
     mut event_queue: Option<&mut EventQueue>,
 ) -> Result<EventIterationOutcome, String> {
     fn sample_active(time: f64, start: f64, interval: f64) -> bool {
+        const SAMPLE_EPS: f64 = 1e-9;
         if interval <= 0.0 {
             return false;
         }
         let phase = (time - start) / interval;
         let k = phase.floor();
         let frac = phase - k;
-        frac < 1e-12 || (1.0 - frac) < 1e-12 || (time - start).abs() < 1e-12
+        frac < SAMPLE_EPS || (1.0 - frac) < SAMPLE_EPS || (time - start).abs() < SAMPLE_EPS
     }
 
     let active_partition_ids: Vec<&str> = clock_partition_schedule
@@ -133,6 +172,14 @@ pub(crate) fn run_event_iteration_at_time(
         } else {
             None
         };
+        // Reset "new" when-condition slots before each derivative/event evaluation.
+        // Generated evaluators may only write active conditions; keeping stale values
+        // here can suppress later rising edges on periodic clock partitions.
+        if when_count > 0 {
+            for i in 0..when_count {
+                when_states[i * 2 + 1] = 0.0;
+            }
+        }
         unsafe {
             native::suppress_assert_begin();
             let status = (calc_derivs)(
@@ -339,6 +386,9 @@ pub(crate) fn run_event_iteration_at_time(
         }
 
         event_iter_count += 1;
+        if perf_enabled() {
+            perf_inc_event_iter();
+        }
         if event_iter_count > 100 {
             eprintln!("{}", i18n::msg("event_loop_no_converge", &[&time]));
             break;

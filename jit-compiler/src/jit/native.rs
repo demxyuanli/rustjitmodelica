@@ -444,15 +444,16 @@ extern "C" fn rustmodlica_solve_linear_csr(
 /// SYNC-3: sample(interval) - returns 1.0 at sample instants (0, interval, 2*interval, ...), else 0.0.
 /// Approximates "at sample point" by fmod(t, interval) near zero or t near zero.
 extern "C" fn rustmodlica_sample(t: f64, interval: f64) -> f64 {
+    const SAMPLE_EPS: f64 = 1e-9;
     if interval <= 0.0 {
         return 0.0;
     }
     let phase = t / interval;
     let k = phase.floor();
     let frac = phase - k;
-    if frac < 1e-12 || (1.0 - frac) < 1e-12 {
+    if frac < SAMPLE_EPS || (1.0 - frac) < SAMPLE_EPS {
         1.0
-    } else if t < 1e-12 {
+    } else if t.abs() < SAMPLE_EPS {
         1.0
     } else {
         0.0

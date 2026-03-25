@@ -16,6 +16,38 @@ use super::helpers::{
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use super::pre::compile_pre_expression;
+
+fn compile_base_sample_trigger(
+    clock_expr: &Expression,
+    ctx: &mut TranslationContext,
+    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
+) -> Result<Option<(Value, Value)>, String> {
+    let time_val = ctx
+        .var_map
+        .get("time")
+        .copied()
+        .ok_or("sample-based clock requires time in context".to_string())?;
+    match clock_expr {
+        Expression::Sample(interval_expr) => {
+            let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
+            Ok(Some((time_val, interval_val)))
+        }
+        Expression::Call(name, args)
+            if (name.eq_ignore_ascii_case("sample") || name.ends_with(".sample"))
+                && (args.len() == 1 || args.len() == 2) =>
+        {
+            let interval_val = compile_expression_rec(args.last().unwrap(), ctx, builder)?;
+            if args.len() == 2 {
+                let start_val = compile_expression_rec(&args[0], ctx, builder)?;
+                let t_rel = builder.ins().fsub(time_val, start_val);
+                Ok(Some((t_rel, interval_val)))
+            } else {
+                Ok(Some((time_val, interval_val)))
+            }
+        }
+        _ => Ok(None),
+    }
+}
 use std::sync::OnceLock;
 
 fn fold_dot_hysteresis_record(func_name: &str, member: &str) -> Option<f64> {
@@ -661,15 +693,15 @@ pub(super) fn compile_expression_rec(
         Expression::Hold(inner) => compile_expression_rec(inner, ctx, builder),
         Expression::Previous(inner) => compile_pre_expression(inner, ctx, builder),
         Expression::SubSample(clock_expr, n_expr) => {
-            if let Expression::Sample(interval_expr) = &**clock_expr {
-                let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
+            if let Some((time_arg, interval_val)) =
+                compile_base_sample_trigger(clock_expr, ctx, builder)?
+            {
                 let n_val = compile_expression_rec(n_expr, ctx, builder)?;
-                let scaled_interval = builder.ins().fmul(interval_val, n_val);
-                let time_val = ctx
-                    .var_map
-                    .get("time")
-                    .copied()
-                    .ok_or("subSample(sample(...), n) requires time in context".to_string())?;
+                let zero = builder.ins().f64const(0.0);
+                let one = builder.ins().f64const(1.0);
+                let n_pos = builder.ins().fcmp(FloatCC::GreaterThan, n_val, zero);
+                let n_safe = builder.ins().select(n_pos, n_val, one);
+                let scaled_interval = builder.ins().fmul(interval_val, n_safe);
                 let mut sig = ctx.module.make_signature();
                 sig.params.push(AbiParam::new(cl_types::F64));
                 sig.params.push(AbiParam::new(cl_types::F64));
@@ -679,7 +711,7 @@ pub(super) fn compile_expression_rec(
                     .declare_function("rustmodlica_sample", Linkage::Import, &sig)
                     .map_err(|e| e.to_string())?;
                 let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                let call_inst = builder.ins().call(func_ref, &[time_val, scaled_interval]);
+                let call_inst = builder.ins().call(func_ref, &[time_arg, scaled_interval]);
                 Ok(builder.inst_results(call_inst)[0])
             } else {
                 warn_clock_degrade_once("subSample");
@@ -687,19 +719,15 @@ pub(super) fn compile_expression_rec(
             }
         }
         Expression::SuperSample(clock_expr, n_expr) => {
-            if let Expression::Sample(interval_expr) = &**clock_expr {
-                let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
+            if let Some((time_arg, interval_val)) =
+                compile_base_sample_trigger(clock_expr, ctx, builder)?
+            {
                 let n_val = compile_expression_rec(n_expr, ctx, builder)?;
                 let one = builder.ins().f64const(1.0);
                 let zero = builder.ins().f64const(0.0);
-                let n_non_zero = builder.ins().fcmp(FloatCC::NotEqual, n_val, zero);
-                let n_safe = builder.ins().select(n_non_zero, n_val, one);
+                let n_pos = builder.ins().fcmp(FloatCC::GreaterThan, n_val, zero);
+                let n_safe = builder.ins().select(n_pos, n_val, one);
                 let scaled_interval = builder.ins().fdiv(interval_val, n_safe);
-                let time_val = ctx
-                    .var_map
-                    .get("time")
-                    .copied()
-                    .ok_or("superSample(sample(...), n) requires time in context".to_string())?;
                 let mut sig = ctx.module.make_signature();
                 sig.params.push(AbiParam::new(cl_types::F64));
                 sig.params.push(AbiParam::new(cl_types::F64));
@@ -709,7 +737,7 @@ pub(super) fn compile_expression_rec(
                     .declare_function("rustmodlica_sample", Linkage::Import, &sig)
                     .map_err(|e| e.to_string())?;
                 let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                let call_inst = builder.ins().call(func_ref, &[time_val, scaled_interval]);
+                let call_inst = builder.ins().call(func_ref, &[time_arg, scaled_interval]);
                 Ok(builder.inst_results(call_inst)[0])
             } else {
                 warn_clock_degrade_once("superSample");
@@ -717,16 +745,12 @@ pub(super) fn compile_expression_rec(
             }
         }
         Expression::ShiftSample(clock_expr, n_expr) => {
-            if let Expression::Sample(interval_expr) = &**clock_expr {
-                let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
+            if let Some((time_arg, interval_val)) =
+                compile_base_sample_trigger(clock_expr, ctx, builder)?
+            {
                 let n_val = compile_expression_rec(n_expr, ctx, builder)?;
                 let shift = builder.ins().fmul(interval_val, n_val);
-                let time_val = ctx
-                    .var_map
-                    .get("time")
-                    .copied()
-                    .ok_or("shiftSample(sample(...), n) requires time in context".to_string())?;
-                let shifted_t = builder.ins().fsub(time_val, shift);
+                let shifted_t = builder.ins().fsub(time_arg, shift);
                 let mut sig = ctx.module.make_signature();
                 sig.params.push(AbiParam::new(cl_types::F64));
                 sig.params.push(AbiParam::new(cl_types::F64));
@@ -740,6 +764,37 @@ pub(super) fn compile_expression_rec(
                 Ok(builder.inst_results(call_inst)[0])
             } else {
                 warn_clock_degrade_once("shiftSample");
+                compile_expression_rec(clock_expr, ctx, builder)
+            }
+        }
+        Expression::BackSample(clock_expr, n_expr) => {
+            // MLS: first tick of backSample(u, factor) is shifted (factor-1) base-clock ticks
+            // vs first tick of subSample(u, factor); same slow period as subSample.
+            if let Some((time_arg, interval_val)) =
+                compile_base_sample_trigger(clock_expr, ctx, builder)?
+            {
+                let n_val = compile_expression_rec(n_expr, ctx, builder)?;
+                let one = builder.ins().f64const(1.0);
+                let zero = builder.ins().f64const(0.0);
+                let n_pos = builder.ins().fcmp(FloatCC::GreaterThan, n_val, zero);
+                let n_safe = builder.ins().select(n_pos, n_val, one);
+                let n_minus_one = builder.ins().fsub(n_safe, one);
+                let slow_period = builder.ins().fmul(n_safe, interval_val);
+                let t0 = builder.ins().fmul(n_minus_one, interval_val);
+                let shifted_t = builder.ins().fsub(time_arg, t0);
+                let mut sig = ctx.module.make_signature();
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.params.push(AbiParam::new(cl_types::F64));
+                sig.returns.push(AbiParam::new(cl_types::F64));
+                let func_id = ctx
+                    .module
+                    .declare_function("rustmodlica_sample", Linkage::Import, &sig)
+                    .map_err(|e| e.to_string())?;
+                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
+                let call_inst = builder.ins().call(func_ref, &[shifted_t, slow_period]);
+                Ok(builder.inst_results(call_inst)[0])
+            } else {
+                warn_clock_degrade_once("backSample");
                 compile_expression_rec(clock_expr, ctx, builder)
             }
         }

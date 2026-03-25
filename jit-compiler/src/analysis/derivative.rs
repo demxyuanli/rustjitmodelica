@@ -94,6 +94,9 @@ pub fn normalize_der(expr: &Expression) -> Expression {
         Expression::ShiftSample(c, n) => {
             Expression::ShiftSample(Box::new(normalize_der(c)), Box::new(normalize_der(n)))
         }
+        Expression::BackSample(c, n) => {
+            Expression::BackSample(Box::new(normalize_der(c)), Box::new(normalize_der(n)))
+        }
         _ => expr.clone(),
     }
 }
@@ -134,7 +137,8 @@ fn collect_vars_in_expr(expr: &Expression, out: &mut HashSet<String>) {
         Expression::Previous(inner) => collect_vars_in_expr(inner, out),
         Expression::SubSample(c, n)
         | Expression::SuperSample(c, n)
-        | Expression::ShiftSample(c, n) => {
+        | Expression::ShiftSample(c, n)
+        | Expression::BackSample(c, n) => {
             collect_vars_in_expr(c, out);
             collect_vars_in_expr(n, out);
         }
@@ -177,7 +181,8 @@ fn collect_states_from_expr(expr: &Expression, states: &mut HashSet<String>) {
         Expression::Previous(inner) => collect_states_from_expr(inner, states),
         Expression::SubSample(c, n)
         | Expression::SuperSample(c, n)
-        | Expression::ShiftSample(c, n) => {
+        | Expression::ShiftSample(c, n)
+        | Expression::BackSample(c, n) => {
             collect_states_from_expr(c, states);
             collect_states_from_expr(n, states);
         }

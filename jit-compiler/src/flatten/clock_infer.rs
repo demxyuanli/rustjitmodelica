@@ -16,7 +16,8 @@ impl Flattener {
                 | Expression::Previous(inner) => expr_contains_clock(inner),
                 Expression::SubSample(c, n)
                 | Expression::SuperSample(c, n)
-                | Expression::ShiftSample(c, n) => expr_contains_clock(c) || expr_contains_clock(n),
+                | Expression::ShiftSample(c, n)
+                | Expression::BackSample(c, n) => expr_contains_clock(c) || expr_contains_clock(n),
                 Expression::BinaryOp(l, _, r) => expr_contains_clock(l) || expr_contains_clock(r),
                 Expression::Call(name, args) => {
                     let lower = name.to_ascii_lowercase();
@@ -32,6 +33,8 @@ impl Flattener {
                         || lower.ends_with(".supersample")
                         || lower == "shiftsample"
                         || lower.ends_with(".shiftsample")
+                        || lower == "backsample"
+                        || lower.ends_with(".backsample")
                     {
                         return true;
                     }
@@ -69,22 +72,24 @@ impl Flattener {
                         || name.eq_ignore_ascii_case("clock")
                         || name.ends_with(".clock") =>
                 {
-                    let dt = args.first().and_then(|a| {
+                    let start = args.first().and_then(|a| {
                         if let Expression::Number(n) = a {
                             Some(*n)
                         } else {
                             None
                         }
                     });
-                    let st = args.get(1).and_then(|a| {
+                    let interval = args.get(1).and_then(|a| {
                         if let Expression::Number(n) = a {
                             Some(*n)
                         } else {
                             None
                         }
                     });
-                    match (dt, st) {
-                        (Some(d), Some(s)) => format!("sample_{}_{}", d, s),
+                    match (start, interval) {
+                        // Modelica sample(start, interval) => partition key sample_<interval>_<start>
+                        (Some(s), Some(d)) => format!("sample_{}_{}", d, s),
+                        // Fallback to sample(interval) style when only one numeric arg is known.
                         (Some(d), None) => format!("sample_{}", d),
                         _ => fallback(),
                     }
@@ -104,25 +109,30 @@ impl Flattener {
                     clock_partition_key_from_condition(c),
                     format!("{:?}", n)
                 ),
+                Expression::BackSample(c, n) => format!(
+                    "backSample_{}_{}",
+                    clock_partition_key_from_condition(c),
+                    format!("{:?}", n)
+                ),
                 Expression::Call(name, args)
                     if name.eq_ignore_ascii_case("sample") || name.ends_with(".sample") =>
                 {
-                    let dt = args.first().and_then(|a| {
+                    let start = args.first().and_then(|a| {
                         if let Expression::Number(n) = a {
                             Some(*n)
                         } else {
                             None
                         }
                     });
-                    let st = args.get(1).and_then(|a| {
+                    let interval = args.get(1).and_then(|a| {
                         if let Expression::Number(n) = a {
                             Some(*n)
                         } else {
                             None
                         }
                     });
-                    match (dt, st) {
-                        (Some(d), Some(s)) => format!("sample_{}_{}", d, s),
+                    match (start, interval) {
+                        (Some(s), Some(d)) => format!("sample_{}_{}", d, s),
                         (Some(d), None) => format!("sample_{}", d),
                         _ => fallback(),
                     }

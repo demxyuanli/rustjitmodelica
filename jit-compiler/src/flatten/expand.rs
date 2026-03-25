@@ -49,6 +49,7 @@ fn array_literal_depth(expr: &Expression) -> usize {
         Expression::SubSample(a, b)
         | Expression::SuperSample(a, b)
         | Expression::ShiftSample(a, b)
+        | Expression::BackSample(a, b)
         | Expression::ArrayAccess(a, b) => array_literal_depth(a).max(array_literal_depth(b)),
         Expression::Dot(base, _) => array_literal_depth(base),
         Expression::If(c, t, f) => array_literal_depth(c)
@@ -79,6 +80,7 @@ fn expr_contains_array_comprehension(expr: &Expression) -> bool {
         Expression::SubSample(a, b)
         | Expression::SuperSample(a, b)
         | Expression::ShiftSample(a, b)
+        | Expression::BackSample(a, b)
         | Expression::ArrayAccess(a, b) => {
             expr_contains_array_comprehension(a) || expr_contains_array_comprehension(b)
         }
@@ -274,7 +276,7 @@ impl super::Flattener {
                     if let Expression::Call(name, args_pre) = &rhs_pre {
                         if !complex_lhs_targets.is_empty() {
                             eprintln!(
-                                "Error: MultiAssign in '{}' uses complex LHS target(s) [{}] like arr[i].field, which require field-store semantics and are treated as hard error in backend.",
+                                "Error: MultiAssign expansion in '{}' uses complex LHS target(s) [{}] (e.g. arr[i].field). This requires field-store semantics and is a hard backend error. Hint: assign to temporaries and copy fields/elements explicitly.",
                                 name,
                                 complex_lhs_targets.join(", ")
                             );
@@ -312,7 +314,7 @@ impl super::Flattener {
                                             if is_complex_lhs_target(lhs) {
                                                 shape_mismatch = true;
                                                 eprintln!(
-                                                    "Error: MultiAssign output shape mismatch in '{}': complex LHS target {:?} requires field-store semantics (for example arr[i].field), which is unsupported in backend. This is treated as hard error.",
+                                                    "Error: MultiAssign output shape mismatch in '{}': complex LHS target {:?} requires field-store semantics (e.g. arr[i].field). Backend does not support this; treat as hard error. Hint: use a temporary record/array and then assign fields/elements.",
                                                     name, lhs
                                                 );
                                                 break;
@@ -322,7 +324,7 @@ impl super::Flattener {
                                                 shape_mismatch = true;
                                                 if nested_depth > 1 || has_comp {
                                                     eprintln!(
-                                                        "Error: MultiAssign output shape mismatch in '{}': output '{}' is multidimensional/comprehension-like and cannot bind to scalar-like LHS {:?}. This is treated as hard error in backend.",
+                                                        "Error: MultiAssign output shape mismatch in '{}': output '{}' is multidimensional/comprehension-like and cannot bind to scalar-like LHS {:?}. Backend requires scalar-like MultiAssign outputs here. Hint: flatten or assign element-wise.",
                                                         name, out_spec.name, lhs
                                                     );
                                                 } else {
@@ -337,7 +339,7 @@ impl super::Flattener {
                                             {
                                                 shape_mismatch = true;
                                                 eprintln!(
-                                                    "Warning: MultiAssign output shape mismatch in '{}': non-scalar-like LHS {:?} cannot receive scalar output {:?}",
+                                                    "Warning: MultiAssign output shape mismatch in '{}': non-scalar-like LHS {:?} cannot receive scalar output {:?}. Keeping MultiAssign for backend handling.",
                                                     name, lhs, sub
                                                 );
                                                 break;
@@ -345,7 +347,7 @@ impl super::Flattener {
                                             if is_scalar_lhs_target(lhs) && is_record_like {
                                                 shape_mismatch = true;
                                                 eprintln!(
-                                                    "Error: MultiAssign output shape mismatch in '{}': output '{}' has record-like type '{}' and cannot bind to scalar-like LHS {:?}. This is treated as hard error in backend.",
+                                                    "Error: MultiAssign output shape mismatch in '{}': output '{}' has record-like type '{}' and cannot bind to scalar-like LHS {:?}. This is a hard backend error. Hint: bind the record to a variable, then read fields.",
                                                     name, out_spec.name, out_spec.resolved_type_name, lhs
                                                 );
                                                 break;

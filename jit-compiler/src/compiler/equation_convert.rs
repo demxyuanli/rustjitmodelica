@@ -41,6 +41,10 @@ pub fn expr_substitute_all_array_indices(expr: &Expression, shift: usize) -> Exp
             Box::new(expr_substitute_all_array_indices(c, shift)),
             Box::new(expr_substitute_all_array_indices(n, shift)),
         ),
+        BackSample(c, n) => BackSample(
+            Box::new(expr_substitute_all_array_indices(c, shift)),
+            Box::new(expr_substitute_all_array_indices(n, shift)),
+        ),
         ArrayAccess(arr, idx) => ArrayAccess(
             Box::new(expr_substitute_all_array_indices(arr, shift)),
             Box::new(expr_substitute_all_array_indices(idx, shift)),
@@ -113,6 +117,10 @@ pub fn expr_substitute_array_shift(expr: &Expression, base: &str, shift: usize) 
             Box::new(expr_substitute_array_shift(n, base, shift)),
         ),
         ShiftSample(c, n) => ShiftSample(
+            Box::new(expr_substitute_array_shift(c, base, shift)),
+            Box::new(expr_substitute_array_shift(n, base, shift)),
+        ),
+        BackSample(c, n) => BackSample(
             Box::new(expr_substitute_array_shift(c, base, shift)),
             Box::new(expr_substitute_array_shift(n, base, shift)),
         ),

@@ -68,7 +68,8 @@ pub(crate) fn classify_variables(
             | Expression::Der(inner) => collect_previous_vars_expr(inner, out),
             Expression::SubSample(c, n)
             | Expression::SuperSample(c, n)
-            | Expression::ShiftSample(c, n) => {
+            | Expression::ShiftSample(c, n)
+            | Expression::BackSample(c, n) => {
                 collect_previous_vars_expr(c, out);
                 collect_previous_vars_expr(n, out);
             }

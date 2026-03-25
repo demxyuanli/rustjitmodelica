@@ -306,26 +306,50 @@ pub(super) fn parse_function_call_expr(pair: Pair<Rule>) -> Expression {
         }
     }
 
-    if func_name.eq_ignore_ascii_case("sample") && args.len() == 1 {
+    if (func_name.eq_ignore_ascii_case("sample") || func_name.to_ascii_lowercase().ends_with(".sample"))
+        && args.len() == 1
+    {
         Expression::Sample(Box::new(args.into_iter().next().unwrap()))
-    } else if func_name.eq_ignore_ascii_case("interval") && args.len() == 1 {
+    } else if (func_name.eq_ignore_ascii_case("interval")
+        || func_name.to_ascii_lowercase().ends_with(".interval"))
+        && args.len() == 1
+    {
         Expression::Interval(Box::new(args.into_iter().next().unwrap()))
-    } else if func_name.eq_ignore_ascii_case("hold") && args.len() == 1 {
+    } else if (func_name.eq_ignore_ascii_case("hold")
+        || func_name.to_ascii_lowercase().ends_with(".hold"))
+        && args.len() == 1
+    {
         Expression::Hold(Box::new(args.into_iter().next().unwrap()))
     } else if (func_name.eq_ignore_ascii_case("previous")
+        || func_name.to_ascii_lowercase().ends_with(".previous")
         || func_name.eq_ignore_ascii_case("pre"))
         && args.len() == 1
     {
         Expression::Previous(Box::new(args.into_iter().next().unwrap()))
-    } else if func_name.eq_ignore_ascii_case("subsample") && args.len() == 2 {
+    } else if (func_name.eq_ignore_ascii_case("subsample")
+        || func_name.to_ascii_lowercase().ends_with(".subsample"))
+        && args.len() == 2
+    {
         let mut a = args.into_iter();
         Expression::SubSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
-    } else if func_name.eq_ignore_ascii_case("supersample") && args.len() == 2 {
+    } else if (func_name.eq_ignore_ascii_case("supersample")
+        || func_name.to_ascii_lowercase().ends_with(".supersample"))
+        && args.len() == 2
+    {
         let mut a = args.into_iter();
         Expression::SuperSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
-    } else if func_name.eq_ignore_ascii_case("shiftsample") && args.len() == 2 {
+    } else if (func_name.eq_ignore_ascii_case("shiftsample")
+        || func_name.to_ascii_lowercase().ends_with(".shiftsample"))
+        && args.len() == 2
+    {
         let mut a = args.into_iter();
         Expression::ShiftSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
+    } else if (func_name.eq_ignore_ascii_case("backsample")
+        || func_name.to_ascii_lowercase().ends_with(".backsample"))
+        && args.len() == 2
+    {
+        let mut a = args.into_iter();
+        Expression::BackSample(Box::new(a.next().unwrap()), Box::new(a.next().unwrap()))
     } else {
         Expression::Call(func_name, args)
     }

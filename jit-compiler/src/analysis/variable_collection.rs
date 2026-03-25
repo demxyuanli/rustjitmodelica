@@ -116,7 +116,8 @@ pub(crate) fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
         Expression::Previous(inner) => collect_vars_expr(inner, vars),
         Expression::SubSample(c, n)
         | Expression::SuperSample(c, n)
-        | Expression::ShiftSample(c, n) => {
+        | Expression::ShiftSample(c, n)
+        | Expression::BackSample(c, n) => {
             collect_vars_expr(c, vars);
             collect_vars_expr(n, vars);
         }
@@ -175,7 +176,8 @@ pub fn contains_var(expr: &Expression, var_name: &str) -> bool {
             | Expression::Previous(inner) => stack.push(inner),
             Expression::SubSample(c, n)
             | Expression::SuperSample(c, n)
-            | Expression::ShiftSample(c, n) => {
+            | Expression::ShiftSample(c, n)
+            | Expression::BackSample(c, n) => {
                 stack.push(n);
                 stack.push(c);
             }

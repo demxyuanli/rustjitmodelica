@@ -149,6 +149,13 @@ fn write_expression(buf: &mut String, e: &Expression) {
             write_expression(buf, b);
             buf.push(')');
         }
+        Expression::BackSample(a, b) => {
+            buf.push_str("backSample(");
+            write_expression(buf, a);
+            buf.push_str(", ");
+            write_expression(buf, b);
+            buf.push(')');
+        }
     }
 }
 

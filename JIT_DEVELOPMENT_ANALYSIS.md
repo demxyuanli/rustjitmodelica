@@ -749,7 +749,7 @@ cargo run -p rustmodlica --features sundials -- event-scan `
 | 优先级 | 方向 | 关键任务 |
 |--------|------|---------|
 | 高 | 稀疏 Jacobian 性能深化 | 在已可用链路上优化默认策略与门禁阈值，完成 OMC 性能对标 |
-| 高 | 同步语义二阶段增强 | 完善 super/shift/backSample 的分区语义与调度一致性 |
+| 高 | 同步语义二阶段增强 | `backSample(sample(T),n)` 已接 JIT；继续完善分区调度与 MSL 全量边界 |
 | 中 | 字符串驻留迁移 | 将 `Expression::Variable(String)` 全局替换为 `Expression::Variable(VarId)` |
 | 中 | 外部函数 ABI | 实现数组 ptr+size 和字符串参数传递 |
 | 中 | 连接器类型解析 | 改进展平器对深层嵌套连接器的类型推断 |

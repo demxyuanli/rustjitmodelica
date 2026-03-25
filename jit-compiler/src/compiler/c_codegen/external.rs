@@ -33,7 +33,8 @@ fn collect_calls_in_expr(expr: &Expression, out: &mut HashMap<String, usize>) {
         | Expression::Previous(inner) => collect_calls_in_expr(inner, out),
         Expression::SubSample(c, n)
         | Expression::SuperSample(c, n)
-        | Expression::ShiftSample(c, n) => {
+        | Expression::ShiftSample(c, n)
+        | Expression::BackSample(c, n) => {
             collect_calls_in_expr(c, out);
             collect_calls_in_expr(n, out);
         }
@@ -86,7 +87,7 @@ pub(super) fn collect_external_calls_with_signature(
                 walk(a, ctx, out);
                 walk(i, ctx, out);
             }
-            SubSample(c, n) | SuperSample(c, n) | ShiftSample(c, n) => {
+            SubSample(c, n) | SuperSample(c, n) | ShiftSample(c, n) | BackSample(c, n) => {
                 walk(c, ctx, out);
                 walk(n, ctx, out);
             }

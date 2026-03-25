@@ -42,7 +42,7 @@ pub fn emit_model_description(
     .map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "  <CoSimulation modelIdentifier=\"{}\"/>",
+        "  <CoSimulation modelIdentifier=\"{}\" canHandleVariableCommunicationStepSize=\"true\" canInterpolateInputs=\"true\"/>",
         escape_xml(model_name)
     )
     .map_err(|e| e.to_string())?;

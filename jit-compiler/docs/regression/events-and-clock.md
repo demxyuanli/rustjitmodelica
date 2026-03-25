@@ -15,7 +15,7 @@ Covers event semantics and clocked behavior.
 - 事件触发正确性与过零处理 / event trigger correctness and crossing handling
 - 时钟分区执行可观测性 / clocked partition execution visibility
 - 时钟用例重复执行确定性 / deterministic repeated outputs for clocked cases
-- 子采样/超采样/移相采样稳定性 / sub/super/shift sample stability
+- 子采样/超采样/移相/反向采样稳定性 / sub/super/shift/back sample stability
 
 ## 代表用例 / Representative Cases
 
@@ -30,6 +30,16 @@ Covers event semantics and clocked behavior.
 | `TestLib/HoldPreviousTest` | pass | Hold/previous semantics |
 | `TestLib/IntervalClockTest` | pass | Interval-driven clock |
 | `TestLib/SubSuperShiftSampleTest` | pass | Derived clock operators |
+| `TestLib/ClockedStartAndShiftTest` | pass | start+shift derived clock |
+| `TestLib/ClockedNestedSubSuperTest` | pass | nested sub/super derived clock |
+| `TestLib/ClockedStartAndSubSampleTest` | pass | start+subSample derived clock |
+| `TestLib/ClockedStartAndBackSampleTest` | pass | start+backSample derived clock |
+| `TestLib/ClockedStartShiftThenBackSampleTest` | pass | shift then backSample derived clock |
+| `TestLib/ClockedStartShiftThenSuperSampleTest` | pass | shift then superSample derived clock |
+| `TestLib/ClockedStartAndSuperSampleTest` | pass | start+superSample derived clock |
+| `TestLib/ClockedStartShiftThenSubSampleTest` | pass | shift then subSample derived clock |
+| `TestLib/BackSampleClockTest` | pass | `backSample(sample(T), n)` JIT path |
+| `TestLib/ClockedInvalidFactorClampTest` | pass | invalid factor clamp (n<=0 => 1) |
 | `ModelicaTest.JitStress.SyncOmCompare` | pass | Sync compare stress |
 
 ## 执行命令 / Execution Command
@@ -61,4 +71,4 @@ Determinism check follows script logic: run same model twice and compare output 
 - 事件抖动导致触发计数不稳定 / event jitter causing unstable trigger counts
 - 时钟分区调度不一致 / clock partition scheduling inconsistency
 - 时钟模型重复运行非确定性 / non-deterministic repeated runs in clocked models
-- sub/super/shift sample 行为缺失或退化 / missing or degraded behavior in sub/super/shift sample handling
+- sub/super/shift/back sample 行为缺失或退化 / missing or degraded behavior in sub/super/shift/back sample handling

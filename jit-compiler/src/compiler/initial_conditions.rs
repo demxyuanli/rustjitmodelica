@@ -423,6 +423,26 @@ pub fn substitute_initial_values(
                 params,
             )),
         ),
+        BackSample(c, n) => BackSample(
+            Box::new(substitute_initial_values(
+                c,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
+            Box::new(substitute_initial_values(
+                n,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                states,
+                discrete_vals,
+                params,
+            )),
+        ),
         Sample(inner) => Sample(Box::new(substitute_initial_values(
             inner,
             state_var_index,
@@ -517,6 +537,10 @@ pub fn substitute_params(
             Box::new(substitute_params(n, param_var_index, params)),
         ),
         ShiftSample(c, n) => ShiftSample(
+            Box::new(substitute_params(c, param_var_index, params)),
+            Box::new(substitute_params(n, param_var_index, params)),
+        ),
+        BackSample(c, n) => BackSample(
             Box::new(substitute_params(c, param_var_index, params)),
             Box::new(substitute_params(n, param_var_index, params)),
         ),

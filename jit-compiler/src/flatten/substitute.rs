@@ -222,6 +222,10 @@ impl super::Flattener {
                 Box::new(self.substitute_stack_inner(c, context_stack, visiting)),
                 Box::new(self.substitute_stack_inner(n, context_stack, visiting)),
             ),
+            Expression::BackSample(c, n) => Expression::BackSample(
+                Box::new(self.substitute_stack_inner(c, context_stack, visiting)),
+                Box::new(self.substitute_stack_inner(n, context_stack, visiting)),
+            ),
             Expression::StringLiteral(s) => Expression::StringLiteral(s.clone()),
         };
         match substituted {
@@ -422,6 +426,10 @@ impl super::Flattener {
                     Box::new(inner(fl, n, context, visiting)),
                 ),
                 Expression::ShiftSample(c, n) => Expression::ShiftSample(
+                    Box::new(inner(fl, c, context, visiting)),
+                    Box::new(inner(fl, n, context, visiting)),
+                ),
+                Expression::BackSample(c, n) => Expression::BackSample(
                     Box::new(inner(fl, c, context, visiting)),
                     Box::new(inner(fl, n, context, visiting)),
                 ),

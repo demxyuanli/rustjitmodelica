@@ -248,6 +248,8 @@ pub enum Expression {
     SuperSample(Box<Expression>, Box<Expression>),
     /// SYNC-5: shiftSample(clock, n) - clock shifted by n ticks.
     ShiftSample(Box<Expression>, Box<Expression>),
+    /// SYNC-5: backSample(clock, factor) - factor-times slower clock, first tick shifted vs subSample.
+    BackSample(Box<Expression>, Box<Expression>),
     ArrayAccess(Box<Expression>, Box<Expression>), // expr[i]
     Dot(Box<Expression>, String),                  // expr.name
     If(Box<Expression>, Box<Expression>, Box<Expression>), // if cond then true_expr else false_expr

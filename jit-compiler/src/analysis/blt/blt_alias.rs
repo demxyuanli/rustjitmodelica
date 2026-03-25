@@ -135,6 +135,7 @@ fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expressio
         BuildSubSample,
         BuildSuperSample,
         BuildShiftSample,
+        BuildBackSample,
     }
 
     let mut frames: Vec<Frame<'_>> = vec![Frame::Enter(expr)];
@@ -220,6 +221,11 @@ fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expressio
                     frames.push(Frame::Enter(n));
                     frames.push(Frame::Enter(c));
                 }
+                Expression::BackSample(c, n) => {
+                    frames.push(Frame::BuildBackSample);
+                    frames.push(Frame::Enter(n));
+                    frames.push(Frame::Enter(c));
+                }
                 _ => values.push(e.clone()),
             },
             Frame::BuildBinary(op) => {
@@ -302,6 +308,11 @@ fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expressio
                 let n = values.pop().unwrap_or(Expression::Number(1.0));
                 let c = values.pop().unwrap_or(Expression::Number(0.0));
                 values.push(Expression::ShiftSample(Box::new(c), Box::new(n)));
+            }
+            Frame::BuildBackSample => {
+                let n = values.pop().unwrap_or(Expression::Number(1.0));
+                let c = values.pop().unwrap_or(Expression::Number(0.0));
+                values.push(Expression::BackSample(Box::new(c), Box::new(n)));
             }
         }
     }

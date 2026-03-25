@@ -25,7 +25,8 @@ fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
         }
         Expression::SubSample(c, n)
         | Expression::SuperSample(c, n)
-        | Expression::ShiftSample(c, n) => {
+        | Expression::ShiftSample(c, n)
+        | Expression::BackSample(c, n) => {
             collect_vars_expr(c, vars);
             collect_vars_expr(n, vars);
         }
