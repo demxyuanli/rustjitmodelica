@@ -21,6 +21,10 @@ pub fn parse(input: &str) -> Result<crate::ast::ClassItem, pest::error::Error<Ru
     entry::parse(input)
 }
 
+pub fn parse_all(input: &str) -> Result<Vec<crate::ast::ClassItem>, pest::error::Error<Rule>> {
+    entry::parse_all(input)
+}
+
 pub fn parse_expression_from_str(
     input: &str,
 ) -> Result<crate::ast::Expression, pest::error::Error<Rule>> {

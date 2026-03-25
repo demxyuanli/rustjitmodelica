@@ -501,6 +501,69 @@ $outPath = Join-Path $repoRoot $OutDir
 if (-not (Test-Path -LiteralPath $outPath)) { New-Item -ItemType Directory -Path $outPath | Out-Null }
 $logDir = Join-Path $outPath "logs"
 if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
+$runStamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$runLogNdjson = Join-Path $outPath ("runlog_{0}.ndjson" -f $runStamp)
+$runLogCsv = Join-Path $outPath ("runlog_{0}.csv" -f $runStamp)
+"timestamp,case_type,case_name,duration_ms,expect_target_ok,actual_ok,exit_code,status,reason,detail" | Set-Content -LiteralPath $runLogCsv -Encoding UTF8
+function Escape-Csv([string]$s) {
+    if ($null -eq $s) { return "" }
+    $q = $s.Replace('"', '""')
+    return '"' + $q + '"'
+}
+function Write-RunLog {
+    param(
+        [string]$CaseType,
+        [string]$CaseName,
+        [long]$DurationMs,
+        [bool]$ExpectTargetOk,
+        [bool]$ActualOk,
+        [int]$ExitCode,
+        [string]$Status,
+        [string]$Reason,
+        [string]$Detail
+    )
+    $ts = (Get-Date).ToString("o")
+    $obj = [pscustomobject]@{
+        timestamp = $ts
+        case_type = $CaseType
+        case_name = $CaseName
+        duration_ms = $DurationMs
+        expect_target_ok = $ExpectTargetOk
+        actual_ok = $ActualOk
+        exit_code = $ExitCode
+        status = $Status
+        reason = $Reason
+        detail = $Detail
+    }
+    ($obj | ConvertTo-Json -Compress) | Add-Content -LiteralPath $runLogNdjson -Encoding UTF8
+    $csvLine = @(
+        Escape-Csv $ts
+        Escape-Csv $CaseType
+        Escape-Csv $CaseName
+        $DurationMs
+        $ExpectTargetOk
+        $ActualOk
+        $ExitCode
+        Escape-Csv $Status
+        Escape-Csv $Reason
+        Escape-Csv $Detail
+    ) -join ","
+    $written = $false
+    for ($retry = 0; $retry -lt 3 -and -not $written; $retry++) {
+        try {
+            Add-Content -LiteralPath $runLogCsv -Value $csvLine -Encoding UTF8 -ErrorAction Stop
+            $written = $true
+        } catch {
+            Start-Sleep -Milliseconds (80 * ($retry + 1))
+            try {
+                $csvLine | Out-File -LiteralPath $runLogCsv -Encoding utf8 -Append -ErrorAction Stop
+                $written = $true
+            } catch {
+                # Logging failure must not interrupt long regression runs.
+            }
+        }
+    }
+}
 
 $models = New-Object System.Collections.Generic.List[string]
 
@@ -638,6 +701,7 @@ $modelIndex = 0
 foreach ($m in $models) {
     $modelIndex++
     Write-Host "[$modelIndex/$modelTotal] $m"
+    $caseStartedAt = Get-Date
     $safeName = ($m -replace '[^A-Za-z0-9_.-]', '_')
     $csv = Join-Path $outPath "$safeName.csv"
     $logPath = Join-Path $logDir "$safeName.log"
@@ -715,20 +779,24 @@ foreach ($m in $models) {
         if ($modelNotFoundSelf) {
             $bad++
             $results += "!! $m  exit=$exit  reason=config_model_not_found_self"
+            Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "config_model_not_found_self" -Detail ""
             continue
         }
         if ($modelNotFoundDependency) {
             $bad++
             $results += "!! $m  exit=$exit  reason=config_model_dependency_missing"
+            Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "config_model_dependency_missing" -Detail ""
             continue
         }
         if ($newtonFailed) {
             if ($strictNewtonGate) {
                 $bad++
                 $results += "!! $m  exit=$exit  reason=newton_nonconverged"
+                Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "newton_nonconverged" -Detail ""
             } else {
                 $skipped++
                 $results += "-- $m  exit=$exit  reason=newton_nonconverged_skip"
+                Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "SKIPPED" -Reason "newton_nonconverged_skip" -Detail ""
             }
             continue
         }
@@ -736,6 +804,7 @@ foreach ($m in $models) {
         if ($constrainedbyFailed -and $isConstrainedByNegative) {
             $ok++
             $results += "OK $m  exit=$exit  reason=expected_constrainedby_failure"
+            Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $true -ExitCode $exit -Status "OK" -Reason "expected_constrainedby_failure" -Detail ""
             continue
         }
         $bad++
@@ -745,6 +814,7 @@ foreach ($m in $models) {
         }
         if ($err -ne "") { $results += "!! $m  exit=$exit  reason=sim_failed  detail=$err" }
         else { $results += "!! $m  exit=$exit  reason=sim_failed" }
+        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "sim_failed" -Detail $err
         continue
     }
 
@@ -759,8 +829,9 @@ foreach ($m in $models) {
             if ($simDone) {
                 foreach ($ln in $outLines) {
                     if ($ln.ToString() -match 'terminate\s*\(\)') {
-                        $good++
+                        $ok++
                         $results += "OK $m  exit=$exit  reason=ok"
+                        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $true -ExitCode $exit -Status "OK" -Reason "ok_terminate_no_rows" -Detail ""
                         $handledCsv = $true
                         break
                     }
@@ -770,6 +841,7 @@ foreach ($m in $models) {
         if ($handledCsv) { continue }
         $bad++
         $results += "!! $m  exit=$exit  reason=$($generic.reason)"
+        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason $generic.reason -Detail ""
         continue
     }
 
@@ -777,14 +849,17 @@ foreach ($m in $models) {
     if (-not $spec.ok) {
         $bad++
         $results += "!! $m  exit=$exit  reason=$($spec.reason)"
+        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason $spec.reason -Detail ""
         continue
     }
 
     $ok++
     if ($usedImplicitRetry) {
         $results += "OK $m  exit=$exit  reason=ok_retry_implicit"
+        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $true -ExitCode $exit -Status "OK" -Reason "ok_retry_implicit" -Detail ""
     } else {
         $results += "OK $m  exit=$exit  reason=$($spec.reason)"
+        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $true -ExitCode $exit -Status "OK" -Reason $spec.reason -Detail ""
     }
 }
 
@@ -799,6 +874,7 @@ Write-Host ""
 Write-Host "Summary: $ok passed, $bad failed, $skipped skipped"
 Write-Host "Non-OK total: $($bad + $skipped) (strict Newton gate default ON; use -NewtonNonConvergedAsSkip to downgrade locally)"
 Write-Host "Details: $summaryPath"
+Write-Host "Run logs: $runLogNdjson ; $runLogCsv"
 
 if ($skipped -gt 0) {
     $skipBreakdown = @{}

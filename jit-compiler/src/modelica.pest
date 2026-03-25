@@ -13,7 +13,7 @@ visibility_clause = { "protected" | "public" }
 model_file = {
     SOI
     ~ within_clause?
-    ~ (model_definition | short_class_definition | type_definition | connector_alias_definition)
+    ~ (model_definition | short_class_definition | type_definition | connector_alias_definition)+
     ~ EOI
 }
 

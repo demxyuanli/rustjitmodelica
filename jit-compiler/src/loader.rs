@@ -33,6 +33,19 @@ pub struct ModelLoader {
 }
 
 impl ModelLoader {
+    fn item_name(item: &crate::ast::ClassItem) -> &str {
+        match item {
+            crate::ast::ClassItem::Model(m) => &m.name,
+            crate::ast::ClassItem::Function(f) => &f.name,
+        }
+    }
+
+    fn item_to_model(item: crate::ast::ClassItem) -> crate::ast::Model {
+        match item {
+            crate::ast::ClassItem::Model(m) => m,
+            crate::ast::ClassItem::Function(f) => crate::ast::Model::from(f),
+        }
+    }
     fn clone_model_without_inner_classes(m: &Model) -> Model {
         let leaf_aliases: Vec<Model> = m
             .inner_classes
@@ -230,12 +243,21 @@ impl ModelLoader {
                     }
                     let content = fs::read_to_string(&full_path)
                         .map_err(|e| LoadError::Io(name.to_string(), e))?;
-                    match parser::parse(&content) {
-                        Ok(item) => {
-                            let mut model = match item {
-                                crate::ast::ClassItem::Model(m) => m,
-                                crate::ast::ClassItem::Function(f) => crate::ast::Model::from(f),
-                            };
+                    match parser::parse_all(&content) {
+                        Ok(items) => {
+                            if items.is_empty() {
+                                return Err(LoadError::NotFound(name.to_string()));
+                            }
+                            let mut selected_idx = 0usize;
+                            let short_name = name.rsplit('.').next().unwrap_or(name);
+                            if let Some((idx, _)) = items
+                                .iter()
+                                .enumerate()
+                                .find(|(_, it)| Self::item_name(it) == short_name)
+                            {
+                                selected_idx = idx;
+                            }
+                            let mut model = Self::item_to_model(items[selected_idx].clone());
                             // Inherit imports from parent package if available.
                             if let Some((prefix, _)) = name.rsplit_once('.') {
                                 if let Ok(parent) = self.load_model_impl(prefix, true) {
@@ -254,6 +276,42 @@ impl ModelLoader {
                             self.loaded_paths
                                 .insert(name.to_string(), full_path.clone());
                             self.register_inner_classes(name, arc.as_ref());
+                            // Also register sibling top-level definitions from same file.
+                            if let Some((prefix, _)) = name.rsplit_once('.') {
+                                for item in items {
+                                    let sibling_name = Self::item_name(&item).to_string();
+                                    if sibling_name == short_name {
+                                        continue;
+                                    }
+                                    let sibling_model = Self::item_to_model(item);
+                                    let fq = format!("{}.{}", prefix, sibling_name);
+                                    self.loaded_models
+                                        .entry(fq.clone())
+                                        .or_insert_with(|| Arc::new(sibling_model.clone()));
+                                    self.loaded_paths
+                                        .entry(fq)
+                                        .or_insert_with(|| full_path.clone());
+                                    self.loaded_models
+                                        .entry(sibling_name.clone())
+                                        .or_insert_with(|| Arc::new(sibling_model));
+                                    self.loaded_paths
+                                        .entry(sibling_name)
+                                        .or_insert_with(|| full_path.clone());
+                                }
+                            } else {
+                                for item in items {
+                                    let sibling_name = Self::item_name(&item).to_string();
+                                    if sibling_name == short_name {
+                                        continue;
+                                    }
+                                    self.loaded_models
+                                        .entry(sibling_name.clone())
+                                        .or_insert_with(|| Arc::new(Self::item_to_model(item)));
+                                    self.loaded_paths
+                                        .entry(sibling_name)
+                                        .or_insert_with(|| full_path.clone());
+                                }
+                            }
                             return Ok(arc);
                         }
                         Err(e) => {
@@ -317,6 +375,32 @@ impl ModelLoader {
             }
         }
 
+        // Multi-top-level file fallback:
+        // If requested class/function is not found by path, scan already-loaded source files
+        // for a sibling top-level definition with matching short name.
+        {
+            let mut seen = std::collections::HashSet::new();
+            let paths: Vec<PathBuf> = self.loaded_paths.values().cloned().collect();
+            for p in paths {
+                if !p.exists() || !seen.insert(p.clone()) {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&p) {
+                    if let Ok(items) = parser::parse_all(&content) {
+                        if let Some(item) = items.into_iter().find(|it| Self::item_name(it) == name)
+                        {
+                            let arc = Arc::new(Self::item_to_model(item));
+                            self.loaded_models
+                                .insert(name.to_string(), Arc::clone(&arc));
+                            self.loaded_paths.insert(name.to_string(), p.clone());
+                            self.register_inner_classes(name, arc.as_ref());
+                            return Ok(arc);
+                        }
+                    }
+                }
+            }
+        }
+
         match late_compat(name) {
             LateCompat::None => {}
             LateCompat::Soft(targets) => {
@@ -352,7 +436,7 @@ impl ModelLoader {
         if let Some(arc) = self.loaded_models.get(model_name) {
             return Ok(Arc::clone(arc));
         }
-        let item = parser::parse(code).map_err(|e| {
+        let items = parser::parse_all(code).map_err(|e| {
             let (line, column) = crate::diag::line_col_from_pest(&e.line_col);
             let message = crate::diag::short_message_from_pest_string(&e.to_string());
             LoadError::ParseFailedAt(ParseErrorInfo {
@@ -363,10 +447,19 @@ impl ModelLoader {
                 message,
             })
         })?;
-        let model = match item {
-            crate::ast::ClassItem::Model(m) => m,
-            crate::ast::ClassItem::Function(f) => crate::ast::Model::from(f),
-        };
+        if items.is_empty() {
+            return Err(LoadError::NotFound(model_name.to_string()));
+        }
+        let mut selected_idx = 0usize;
+        let short_name = model_name.rsplit('.').next().unwrap_or(model_name);
+        if let Some((idx, _)) = items
+            .iter()
+            .enumerate()
+            .find(|(_, it)| Self::item_name(it) == short_name)
+        {
+            selected_idx = idx;
+        }
+        let model = Self::item_to_model(items[selected_idx].clone());
         let arc = Arc::new(model);
         self.loaded_models
             .insert(model_name.to_string(), Arc::clone(&arc));
@@ -375,6 +468,41 @@ impl ModelLoader {
             PathBuf::from(format!("<{}>", model_name)),
         );
         self.register_inner_classes(model_name, arc.as_ref());
+        if let Some((prefix, _)) = model_name.rsplit_once('.') {
+            for item in items {
+                let sibling = Self::item_name(&item).to_string();
+                if sibling == short_name {
+                    continue;
+                }
+                let sibling_model = Self::item_to_model(item);
+                let fq = format!("{}.{}", prefix, sibling);
+                self.loaded_models
+                    .entry(fq.clone())
+                    .or_insert_with(|| Arc::new(sibling_model.clone()));
+                self.loaded_paths
+                    .entry(fq)
+                    .or_insert_with(|| PathBuf::from(format!("<{}>", model_name)));
+                self.loaded_models
+                    .entry(sibling.clone())
+                    .or_insert_with(|| Arc::new(sibling_model));
+                self.loaded_paths
+                    .entry(sibling)
+                    .or_insert_with(|| PathBuf::from(format!("<{}>", model_name)));
+            }
+        } else {
+            for item in items {
+                let sibling = Self::item_name(&item).to_string();
+                if sibling == short_name {
+                    continue;
+                }
+                self.loaded_models
+                    .entry(sibling.clone())
+                    .or_insert_with(|| Arc::new(Self::item_to_model(item)));
+                self.loaded_paths
+                    .entry(sibling)
+                    .or_insert_with(|| PathBuf::from(format!("<{}>", model_name)));
+            }
+        }
         Ok(arc)
     }
 

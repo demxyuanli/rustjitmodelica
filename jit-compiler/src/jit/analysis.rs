@@ -54,17 +54,26 @@ fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {
 }
 
 pub fn collect_modified(stmt: &AlgorithmStatement, vars: &mut HashSet<String>) {
-    match stmt {
-        AlgorithmStatement::Assignment(lhs, _) => {
-            if let Expression::Variable(id) = lhs {
+    fn collect_lhs_var(lhs: &Expression, vars: &mut HashSet<String>) {
+        match lhs {
+            Expression::Variable(id) => {
                 vars.insert(crate::string_intern::resolve_id(*id));
             }
+            Expression::ArrayAccess(base, _) => {
+                if let Expression::Variable(id) = &**base {
+                    vars.insert(crate::string_intern::resolve_id(*id));
+                }
+            }
+            _ => {}
+        }
+    }
+    match stmt {
+        AlgorithmStatement::Assignment(lhs, _) => {
+            collect_lhs_var(lhs, vars);
         }
         AlgorithmStatement::MultiAssign(lhss, _) => {
             for lhs in lhss {
-                if let Expression::Variable(id) = lhs {
-                    vars.insert(crate::string_intern::resolve_id(*id));
-                }
+                collect_lhs_var(lhs, vars);
             }
         }
         AlgorithmStatement::If(_, true_stmts, else_ifs, else_stmts) => {
@@ -112,18 +121,27 @@ pub fn collect_modified(stmt: &AlgorithmStatement, vars: &mut HashSet<String>) {
 }
 
 pub fn collect_modified_equations(equations: &[Equation], vars: &mut HashSet<String>) {
-    for eq in equations {
-        match eq {
-            Equation::Simple(lhs, _) => {
-                if let Expression::Variable(id) = lhs {
+    fn collect_lhs_var(lhs: &Expression, vars: &mut HashSet<String>) {
+        match lhs {
+            Expression::Variable(id) => {
+                vars.insert(crate::string_intern::resolve_id(*id));
+            }
+            Expression::ArrayAccess(base, _) => {
+                if let Expression::Variable(id) = &**base {
                     vars.insert(crate::string_intern::resolve_id(*id));
                 }
             }
+            _ => {}
+        }
+    }
+    for eq in equations {
+        match eq {
+            Equation::Simple(lhs, _) => {
+                collect_lhs_var(lhs, vars);
+            }
             Equation::MultiAssign(lhss, _) => {
                 for lhs in lhss {
-                    if let Expression::Variable(id) = lhs {
-                        vars.insert(crate::string_intern::resolve_id(*id));
-                    }
+                    collect_lhs_var(lhs, vars);
                 }
             }
             Equation::SolvableBlock { unknowns, tearing_var, .. } => {

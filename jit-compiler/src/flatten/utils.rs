@@ -1,9 +1,17 @@
-use crate::ast::{AlgorithmStatement, Equation, Expression, Model, Modification};
+use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression, Model, Modification};
 use crate::flatten::redeclare::{apply_modification_to_model, ModifyContext};
 use std::collections::{HashMap, HashSet};
 
-/// F3-3: Get function inputs and output (name, expr) list from model. Used for multi-output expand.
-pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, Expression)>)> {
+#[derive(Debug, Clone)]
+pub struct FunctionOutputSpec {
+    pub name: String,
+    pub expr: Expression,
+    pub decl: Declaration,
+    pub resolved_type_name: String,
+}
+
+/// F3-3: Get function inputs and output specs from model. Used for multi-output expand.
+pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<FunctionOutputSpec>)> {
     if !model.is_function {
         return None;
     }
@@ -16,13 +24,13 @@ pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, 
         .filter(|d| d.is_input)
         .map(|d| d.name.clone())
         .collect();
-    let output_names: Vec<String> = model
+    let output_decls: Vec<Declaration> = model
         .declarations
         .iter()
         .filter(|d| d.is_output)
-        .map(|d| d.name.clone())
+        .cloned()
         .collect();
-    if output_names.is_empty() {
+    if output_decls.is_empty() {
         return None;
     }
     let mut out_exprs: HashMap<String, Expression> = HashMap::new();
@@ -30,19 +38,27 @@ pub fn get_function_outputs(model: &Model) -> Option<(Vec<String>, Vec<(String, 
         if let AlgorithmStatement::Assignment(lhs, rhs) = stmt {
             if let Expression::Variable(id) = lhs {
                 let v = crate::string_intern::resolve_id(*id);
-                if output_names.contains(&v) {
+                if output_decls.iter().any(|d| d.name == v) {
                     out_exprs.insert(v, rhs.clone());
                 }
             }
         }
     }
-    let ordered: Vec<(String, Expression)> = output_names
+    let ordered: Vec<FunctionOutputSpec> = output_decls
         .into_iter()
-        .filter_map(|name| out_exprs.remove(&name).map(|e| (name, e)))
+        .map(|decl| {
+            let expr = out_exprs
+                .remove(&decl.name)
+                .unwrap_or_else(|| Expression::var(&decl.name));
+            let resolved_type_name = resolve_type_alias(&model.type_aliases, &decl.type_name);
+            FunctionOutputSpec {
+                name: decl.name.clone(),
+                expr,
+                decl,
+                resolved_type_name,
+            }
+        })
         .collect();
-    if ordered.is_empty() {
-        return None;
-    }
     Some((input_names, ordered))
 }
 

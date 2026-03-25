@@ -30,19 +30,19 @@ function Run-OneCompare {
     )
     Push-Location (Join-Path $PSScriptRoot "jit-compiler")
     Write-Host "Running rustmodlica: $M t_end=$TEnd dt=$Dt -> $OutCsv"
-    & $exe @RustArgs --solver=rk4 --dt=$Dt --t-end=$TEnd --result-file=$OutCsv $M
+    $runOut = & $exe @RustArgs --solver=rk4 --dt=$Dt --t-end=$TEnd --result-file=$OutCsv $M 2>&1
     $code = $LASTEXITCODE
     Pop-Location
     if ($code -ne 0) {
-        return @{ ok = $false; model = $M; exit = $code; maxDiff = $null }
+        return [pscustomobject]@{ ok = $false; model = $M; exit = $code; maxDiff = $null }
     }
     if ($OmcPath -eq "" -or -not (Test-Path $OmcPath)) {
-        return @{ ok = $true; model = $M; exit = 0; maxDiff = $null; note = "no OMC csv" }
+        return [pscustomobject]@{ ok = $true; model = $M; exit = 0; maxDiff = $null; note = "no OMC csv" }
     }
     $rustLines = Get-Content $OutCsv
     $omcLines = Get-Content $OmcPath
     if ($rustLines.Count -lt 2 -or $omcLines.Count -lt 2) {
-        return @{ ok = $true; model = $M; exit = 0; maxDiff = 0; note = "short csv" }
+        return [pscustomobject]@{ ok = $true; model = $M; exit = 0; maxDiff = 0; note = "short csv" }
     }
     $rustLast = ($rustLines[-1] -split ",").Trim()
     $omcLast = ($omcLines[-1] -split ",").Trim()
@@ -60,7 +60,7 @@ function Run-OneCompare {
         }
     }
     Write-Host "Comparison (last row): $M vs $OmcPath -> max abs diff = $maxDiff (col $maxIdx)"
-    return @{ ok = $true; model = $M; exit = 0; maxDiff = $maxDiff; maxCol = $maxIdx }
+    return [pscustomobject]@{ ok = $true; model = $M; exit = 0; maxDiff = $maxDiff; maxCol = $maxIdx }
 }
 
 $results = @()
@@ -89,6 +89,13 @@ if ($Models.Count -eq 0 -and ($OmcOut -eq "" -or -not (Test-Path $OmcOut))) {
     }
 }
 
-$bad = @($results | Where-Object { -not $_.ok })
+$bad = @(
+    $results | Where-Object {
+        if ($null -eq $_) { return $true }
+        $p = $_.PSObject.Properties["ok"]
+        if ($null -eq $p) { return $true }
+        return (-not [bool]$p.Value)
+    }
+)
 if ($bad.Count -gt 0) { exit 1 }
 exit 0

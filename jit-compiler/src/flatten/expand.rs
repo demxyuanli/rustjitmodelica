@@ -18,6 +18,106 @@ fn extract_der_array_base(expr: &Expression) -> Option<String> {
     }
 }
 
+fn is_scalar_lhs_target(expr: &Expression) -> bool {
+    matches!(expr, Expression::Variable(_) | Expression::ArrayAccess(_, _))
+}
+
+fn is_scalar_like_output(expr: &Expression) -> bool {
+    !matches!(expr, Expression::ArrayLiteral(_))
+}
+
+fn is_array_like_output(expr: &Expression) -> bool {
+    matches!(expr, Expression::ArrayLiteral(_))
+}
+
+fn array_literal_depth(expr: &Expression) -> usize {
+    match expr {
+        Expression::ArrayLiteral(items) => {
+            1 + items
+                .iter()
+                .map(array_literal_depth)
+                .max()
+                .unwrap_or(0)
+        }
+        Expression::BinaryOp(l, _, r) => array_literal_depth(l).max(array_literal_depth(r)),
+        Expression::Call(_, args) => args.iter().map(array_literal_depth).max().unwrap_or(0),
+        Expression::Der(inner)
+        | Expression::Sample(inner)
+        | Expression::Interval(inner)
+        | Expression::Hold(inner)
+        | Expression::Previous(inner) => array_literal_depth(inner),
+        Expression::SubSample(a, b)
+        | Expression::SuperSample(a, b)
+        | Expression::ShiftSample(a, b)
+        | Expression::ArrayAccess(a, b) => array_literal_depth(a).max(array_literal_depth(b)),
+        Expression::Dot(base, _) => array_literal_depth(base),
+        Expression::If(c, t, f) => array_literal_depth(c)
+            .max(array_literal_depth(t))
+            .max(array_literal_depth(f)),
+        Expression::Range(s, st, e) => array_literal_depth(s)
+            .max(array_literal_depth(st))
+            .max(array_literal_depth(e)),
+        Expression::ArrayComprehension { expr, iter_range, .. } => {
+            array_literal_depth(expr).max(array_literal_depth(iter_range))
+        }
+        Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => 0,
+    }
+}
+
+fn expr_contains_array_comprehension(expr: &Expression) -> bool {
+    match expr {
+        Expression::ArrayComprehension { .. } => true,
+        Expression::BinaryOp(l, _, r) => {
+            expr_contains_array_comprehension(l) || expr_contains_array_comprehension(r)
+        }
+        Expression::Call(_, args) => args.iter().any(expr_contains_array_comprehension),
+        Expression::Der(inner)
+        | Expression::Sample(inner)
+        | Expression::Interval(inner)
+        | Expression::Hold(inner)
+        | Expression::Previous(inner) => expr_contains_array_comprehension(inner),
+        Expression::SubSample(a, b)
+        | Expression::SuperSample(a, b)
+        | Expression::ShiftSample(a, b)
+        | Expression::ArrayAccess(a, b) => {
+            expr_contains_array_comprehension(a) || expr_contains_array_comprehension(b)
+        }
+        Expression::Dot(base, _) => expr_contains_array_comprehension(base),
+        Expression::If(c, t, f) => {
+            expr_contains_array_comprehension(c)
+                || expr_contains_array_comprehension(t)
+                || expr_contains_array_comprehension(f)
+        }
+        Expression::Range(s, st, e) => {
+            expr_contains_array_comprehension(s)
+                || expr_contains_array_comprehension(st)
+                || expr_contains_array_comprehension(e)
+        }
+        Expression::ArrayLiteral(items) => items.iter().any(expr_contains_array_comprehension),
+        Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => false,
+    }
+}
+
+fn is_record_like_output_type(type_name: &str) -> bool {
+    !crate::flatten::utils::is_primitive(type_name)
+}
+
+fn is_complex_lhs_target(expr: &Expression) -> bool {
+    match expr {
+        Expression::Dot(_, _) => true,
+        Expression::ArrayAccess(base, _) => is_complex_lhs_target(base),
+        _ => false,
+    }
+}
+
+fn collect_complex_lhs_targets(lhss: &[Expression]) -> Vec<String> {
+    lhss.iter()
+        .enumerate()
+        .filter(|(_, lhs)| is_complex_lhs_target(lhs))
+        .map(|(i, lhs)| format!("#{}={:?}", i + 1, lhs))
+        .collect()
+}
+
 impl super::Flattener {
     pub(crate) fn expand_equation_list(
         &mut self,
@@ -153,6 +253,7 @@ impl super::Flattener {
                         .iter()
                         .map(|e| self.substitute_stack(e, context_stack))
                         .collect();
+                    let complex_lhs_targets = collect_complex_lhs_targets(&lhss_sub);
                     let rhs_sub = self.substitute_stack(rhs, context_stack);
                     let lhss_pre: Vec<Expression> = lhss_sub
                         .iter()
@@ -171,14 +272,19 @@ impl super::Flattener {
                         }
                     }
                     if let Expression::Call(name, args_pre) = &rhs_pre {
-                        // Do not try to load builtin/placeholder functions as models.
-                        if is_builtin_function(name) {
+                        if !complex_lhs_targets.is_empty() {
                             eprintln!(
-                                "Warning: MultiAssign uses builtin-like function '{}'; not expanded.",
-                                name
+                                "Error: MultiAssign in '{}' uses complex LHS target(s) [{}] like arr[i].field, which require field-store semantics and are treated as hard error in backend.",
+                                name,
+                                complex_lhs_targets.join(", ")
                             );
+                            target
+                                .equations
+                                .push(Equation::MultiAssign(lhss_pre, rhs_pre));
                             continue;
                         }
+                        // Try user/function model expansion first, even for names that look builtin-like
+                        // (e.g. qualified project functions such as TestLib.TwoOutputs).
                         if let Ok(func_model) = self.loader.load_model(name) {
                             if let Some((input_names, outputs)) =
                                 get_function_outputs(func_model.as_ref())
@@ -186,28 +292,93 @@ impl super::Flattener {
                                 if input_names.len() == args_pre.len()
                                     && outputs.len() == lhss_pre.len()
                                 {
+                                    let mut expanded_pairs: Vec<(Expression, Expression)> =
+                                        Vec::with_capacity(lhss_pre.len());
+                                    let mut shape_mismatch = false;
                                     let mut subst = HashMap::new();
                                     for (i, in_name) in input_names.iter().enumerate() {
                                         if i < args_pre.len() {
                                             subst.insert(in_name.clone(), args_pre[i].clone());
                                         }
                                     }
-                                    for (i, (_, out_expr)) in outputs.iter().enumerate() {
+                                    for (i, out_spec) in outputs.iter().enumerate() {
                                         if i < lhss_pre.len() {
-                                            let sub = self.substitute(&out_expr, &subst);
+                                            let sub = self.substitute(&out_spec.expr, &subst);
+                                            let lhs = &lhss_pre[i];
+                                            let nested_depth = array_literal_depth(&sub);
+                                            let has_comp = expr_contains_array_comprehension(&sub);
+                                            let is_record_like =
+                                                is_record_like_output_type(&out_spec.resolved_type_name);
+                                            if is_complex_lhs_target(lhs) {
+                                                shape_mismatch = true;
+                                                eprintln!(
+                                                    "Error: MultiAssign output shape mismatch in '{}': complex LHS target {:?} requires field-store semantics (for example arr[i].field), which is unsupported in backend. This is treated as hard error.",
+                                                    name, lhs
+                                                );
+                                                break;
+                                            }
+                                            if is_scalar_lhs_target(lhs) && is_array_like_output(&sub)
+                                            {
+                                                shape_mismatch = true;
+                                                if nested_depth > 1 || has_comp {
+                                                    eprintln!(
+                                                        "Error: MultiAssign output shape mismatch in '{}': output '{}' is multidimensional/comprehension-like and cannot bind to scalar-like LHS {:?}. This is treated as hard error in backend.",
+                                                        name, out_spec.name, lhs
+                                                    );
+                                                } else {
+                                                    eprintln!(
+                                                        "Warning: MultiAssign output shape mismatch in '{}': scalar-like LHS {:?} cannot receive 1D array output {:?}. Keeping MultiAssign for backend handling.",
+                                                        name, lhs, sub
+                                                    );
+                                                }
+                                                break;
+                                            }
+                                            if !is_scalar_lhs_target(lhs) && is_scalar_like_output(&sub)
+                                            {
+                                                shape_mismatch = true;
+                                                eprintln!(
+                                                    "Warning: MultiAssign output shape mismatch in '{}': non-scalar-like LHS {:?} cannot receive scalar output {:?}",
+                                                    name, lhs, sub
+                                                );
+                                                break;
+                                            }
+                                            if is_scalar_lhs_target(lhs) && is_record_like {
+                                                shape_mismatch = true;
+                                                eprintln!(
+                                                    "Error: MultiAssign output shape mismatch in '{}': output '{}' has record-like type '{}' and cannot bind to scalar-like LHS {:?}. This is treated as hard error in backend.",
+                                                    name, out_spec.name, out_spec.resolved_type_name, lhs
+                                                );
+                                                break;
+                                            }
                                             let sub_pre = prefix_expression(&sub, prefix);
-                                            target.equations.push(Equation::Simple(
-                                                lhss_pre[i].clone(),
-                                                sub_pre,
-                                            ));
+                                            expanded_pairs.push((lhs.clone(), sub_pre));
                                         }
                                     }
-                                    continue;
+                                    if !shape_mismatch {
+                                        for (lhs_e, rhs_e) in expanded_pairs {
+                                            target.equations.push(Equation::Simple(lhs_e, rhs_e));
+                                        }
+                                        continue;
+                                    }
                                 }
                             }
                         }
+                        // Builtin/placeholder-like multi-assign that cannot be function-expanded.
+                        if is_builtin_function(name) {
+                            eprintln!(
+                                "Warning: MultiAssign uses builtin-like function '{}'; keeping MultiAssign for backend handling.",
+                                name
+                            );
+                            target
+                                .equations
+                                .push(Equation::MultiAssign(lhss_pre, rhs_pre));
+                            continue;
+                        }
                     }
-                    eprintln!("Warning: MultiAssign (a,b,...)=f(x) could not expand: RHS must be multi-output function call with matching output count.");
+                    eprintln!("Warning: MultiAssign (a,b,...)=f(x) could not expand: keeping statement for backend handling.");
+                    target
+                        .equations
+                        .push(Equation::MultiAssign(lhss_pre, rhs_pre));
                 }
                 Equation::Connect(a_expr, b_expr) => {
                     let a_sub = self.substitute_stack(a_expr, context_stack);
@@ -560,6 +731,7 @@ impl super::Flattener {
                         .iter()
                         .map(|e| self.substitute_stack(e, context_stack))
                         .collect();
+                    let complex_lhs_targets = collect_complex_lhs_targets(&lhss_sub);
                     let rhs_sub = self.substitute_stack(rhs, context_stack);
                     let lhss_pre: Vec<Expression> = lhss_sub
                         .iter()
@@ -578,31 +750,92 @@ impl super::Flattener {
                         }
                     }
                     if let Expression::Call(name, args_pre) = &rhs_pre {
-                        if !is_builtin_function(name) {
-                            if let Ok(func_model) = self.loader.load_model(name) {
-                                if let Some((input_names, outputs)) =
-                                    get_function_outputs(func_model.as_ref())
+                        if !complex_lhs_targets.is_empty() {
+                            eprintln!(
+                                "Error: Algorithm MultiAssign in '{}' uses complex LHS target(s) [{}] like arr[i].field, which require field-store semantics and are treated as hard error in backend.",
+                                name,
+                                complex_lhs_targets.join(", ")
+                            );
+                            target
+                                .algorithms
+                                .push(AlgorithmStatement::MultiAssign(lhss_pre, rhs_pre));
+                            continue;
+                        }
+                        // Try user/function model expansion first, even when the name resembles builtin.
+                        if let Ok(func_model) = self.loader.load_model(name) {
+                            if let Some((input_names, outputs)) =
+                                get_function_outputs(func_model.as_ref())
+                            {
+                                if input_names.len() == args_pre.len()
+                                    && outputs.len() == lhss_pre.len()
                                 {
-                                    if input_names.len() == args_pre.len()
-                                        && outputs.len() == lhss_pre.len()
-                                    {
-                                        let mut subst = HashMap::new();
-                                        for (i, in_name) in input_names.iter().enumerate() {
-                                            if i < args_pre.len() {
-                                                subst.insert(in_name.clone(), args_pre[i].clone());
-                                            }
+                                    let mut expanded_pairs: Vec<(Expression, Expression)> =
+                                        Vec::with_capacity(lhss_pre.len());
+                                    let mut shape_mismatch = false;
+                                    let mut subst = HashMap::new();
+                                    for (i, in_name) in input_names.iter().enumerate() {
+                                        if i < args_pre.len() {
+                                            subst.insert(in_name.clone(), args_pre[i].clone());
                                         }
-                                        for (i, (_, out_expr)) in outputs.iter().enumerate() {
-                                            if i < lhss_pre.len() {
-                                                let sub = self.substitute(&out_expr, &subst);
-                                                let sub_pre = prefix_expression(&sub, prefix);
-                                                target.algorithms.push(
-                                                    AlgorithmStatement::Assignment(
-                                                        lhss_pre[i].clone(),
-                                                        sub_pre,
-                                                    ),
+                                    }
+                                    for (i, out_spec) in outputs.iter().enumerate() {
+                                        if i < lhss_pre.len() {
+                                            let sub = self.substitute(&out_spec.expr, &subst);
+                                            let lhs = &lhss_pre[i];
+                                            let nested_depth = array_literal_depth(&sub);
+                                            let has_comp = expr_contains_array_comprehension(&sub);
+                                            let is_record_like =
+                                                is_record_like_output_type(&out_spec.resolved_type_name);
+                                            if is_complex_lhs_target(lhs) {
+                                                shape_mismatch = true;
+                                                eprintln!(
+                                                    "Error: Algorithm MultiAssign output shape mismatch in '{}': complex LHS target {:?} requires field-store semantics (for example arr[i].field), which is unsupported in backend. This is treated as hard error.",
+                                                    name, lhs
                                                 );
+                                                break;
                                             }
+                                            if is_scalar_lhs_target(lhs) && is_array_like_output(&sub)
+                                            {
+                                                shape_mismatch = true;
+                                                if nested_depth > 1 || has_comp {
+                                                    eprintln!(
+                                                        "Error: Algorithm MultiAssign output shape mismatch in '{}': output '{}' is multidimensional/comprehension-like and cannot bind to scalar-like LHS {:?}. This is treated as hard error in backend.",
+                                                        name, out_spec.name, lhs
+                                                    );
+                                                } else {
+                                                    eprintln!(
+                                                        "Warning: Algorithm MultiAssign output shape mismatch in '{}': scalar-like LHS {:?} cannot receive 1D array output {:?}. Keeping MultiAssign for backend handling.",
+                                                        name, lhs, sub
+                                                    );
+                                                }
+                                                break;
+                                            }
+                                            if !is_scalar_lhs_target(lhs) && is_scalar_like_output(&sub)
+                                            {
+                                                shape_mismatch = true;
+                                                eprintln!(
+                                                    "Warning: Algorithm MultiAssign output shape mismatch in '{}': non-scalar-like LHS {:?} cannot receive scalar output {:?}",
+                                                    name, lhs, sub
+                                                );
+                                                break;
+                                            }
+                                            if is_scalar_lhs_target(lhs) && is_record_like {
+                                                shape_mismatch = true;
+                                                eprintln!(
+                                                    "Error: Algorithm MultiAssign output shape mismatch in '{}': output '{}' has record-like type '{}' and cannot bind to scalar-like LHS {:?}. This is treated as hard error in backend.",
+                                                    name, out_spec.name, out_spec.resolved_type_name, lhs
+                                                );
+                                                break;
+                                            }
+                                            let sub_pre = prefix_expression(&sub, prefix);
+                                            expanded_pairs.push((lhs.clone(), sub_pre));
+                                        }
+                                    }
+                                    if !shape_mismatch {
+                                        for (lhs_e, rhs_e) in expanded_pairs {
+                                            target
+                                                .algorithms
+                                                .push(AlgorithmStatement::Assignment(lhs_e, rhs_e));
                                         }
                                         continue;
                                     }

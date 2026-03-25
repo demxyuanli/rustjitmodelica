@@ -304,6 +304,140 @@ fn scalar_f64_ptr_for_assign(
     ))
 }
 
+fn compile_store_to_lhs(
+    lhs: &Expression,
+    val: Value,
+    ctx: &mut TranslationContext,
+    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
+) -> Result<(), String> {
+    if matches!(lhs, Expression::Dot(_, _)) {
+        return Err(format!(
+            "LHS field-store target is unsupported in JIT backend for multi-assign: {:?}. Use scalar variable/array access target instead.",
+            lhs
+        ));
+    }
+    if let Expression::ArrayAccess(arr_expr, idx_expr) = lhs {
+        if let Expression::Variable(id) = &**arr_expr {
+            let name = crate::string_intern::resolve_id(*id);
+            if let Some(info) = ctx.array_info.get(&name) {
+                let idx_val = compile_expression(idx_expr, ctx, builder)?;
+                let one = builder.ins().f64const(1.0);
+                let idx_0 = builder.ins().fsub(idx_val, one);
+                let idx_int = builder.ins().fcvt_to_sint(cl_types::I64, idx_0);
+                let eight = builder.ins().iconst(cl_types::I64, 8);
+                let offset_bytes = builder.ins().imul(idx_int, eight);
+                let start_offset = (info.start_index * 8) as i64;
+                let start_const = builder.ins().iconst(cl_types::I64, start_offset);
+                let total_offset = builder.ins().iadd(start_const, offset_bytes);
+                let base_ptr = match info.array_type {
+                    ArrayType::State => ctx.states_ptr,
+                    ArrayType::Discrete => ctx.discrete_ptr,
+                    ArrayType::Parameter => ctx.params_ptr,
+                    ArrayType::Output => ctx.outputs_ptr,
+                    ArrayType::Derivative => ctx.derivs_ptr,
+                };
+                let addr = builder.ins().iadd(base_ptr, total_offset);
+                builder.ins().store(MemFlags::new(), val, addr, 0);
+                return Ok(());
+            }
+        }
+    } else if let Expression::Variable(id) = lhs {
+        let name = crate::string_intern::resolve_id(*id);
+        if let Some(slot) = ctx.stack_slots.get(&name) {
+            builder.ins().stack_store(val, *slot, 0);
+        } else {
+            ctx.var_map.insert(name.clone(), val);
+        }
+        if let Some(idx) = ctx.output_index(&name) {
+            let offset = (idx * 8) as i32;
+            builder
+                .ins()
+                .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
+        }
+        if let Some(idx) = ctx.discrete_index(&name) {
+            let offset = (idx * 8) as i32;
+            builder
+                .ins()
+                .store(MemFlags::new(), val, ctx.discrete_ptr, offset);
+        }
+        return Ok(());
+    }
+    Err(format!(
+        "LHS of assignment must be a variable or array access, got {:?}",
+        lhs
+    ))
+}
+
+fn expr_contains_array_literal(expr: &Expression) -> bool {
+    match expr {
+        Expression::ArrayLiteral(_) => true,
+        Expression::BinaryOp(l, _, r) => {
+            expr_contains_array_literal(l) || expr_contains_array_literal(r)
+        }
+        Expression::Call(_, args) => args.iter().any(expr_contains_array_literal),
+        Expression::Der(inner)
+        | Expression::Sample(inner)
+        | Expression::Interval(inner)
+        | Expression::Hold(inner)
+        | Expression::Previous(inner) => expr_contains_array_literal(inner),
+        Expression::SubSample(a, b)
+        | Expression::SuperSample(a, b)
+        | Expression::ShiftSample(a, b)
+        | Expression::ArrayAccess(a, b) => {
+            expr_contains_array_literal(a) || expr_contains_array_literal(b)
+        }
+        Expression::Dot(base, _) => expr_contains_array_literal(base),
+        Expression::If(c, t, f) => {
+            expr_contains_array_literal(c)
+                || expr_contains_array_literal(t)
+                || expr_contains_array_literal(f)
+        }
+        Expression::Range(s, st, e) => {
+            expr_contains_array_literal(s)
+                || expr_contains_array_literal(st)
+                || expr_contains_array_literal(e)
+        }
+        Expression::ArrayComprehension {
+            expr, iter_range, ..
+        } => expr_contains_array_literal(expr) || expr_contains_array_literal(iter_range),
+        Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => false,
+    }
+}
+
+fn expr_contains_array_comprehension(expr: &Expression) -> bool {
+    match expr {
+        Expression::ArrayComprehension { .. } => true,
+        Expression::BinaryOp(l, _, r) => {
+            expr_contains_array_comprehension(l) || expr_contains_array_comprehension(r)
+        }
+        Expression::Call(_, args) => args.iter().any(expr_contains_array_comprehension),
+        Expression::Der(inner)
+        | Expression::Sample(inner)
+        | Expression::Interval(inner)
+        | Expression::Hold(inner)
+        | Expression::Previous(inner) => expr_contains_array_comprehension(inner),
+        Expression::SubSample(a, b)
+        | Expression::SuperSample(a, b)
+        | Expression::ShiftSample(a, b)
+        | Expression::ArrayAccess(a, b) => {
+            expr_contains_array_comprehension(a) || expr_contains_array_comprehension(b)
+        }
+        Expression::Dot(base, _) => expr_contains_array_comprehension(base),
+        Expression::If(c, t, f) => {
+            expr_contains_array_comprehension(c)
+                || expr_contains_array_comprehension(t)
+                || expr_contains_array_comprehension(f)
+        }
+        Expression::Range(s, st, e) => {
+            expr_contains_array_comprehension(s)
+                || expr_contains_array_comprehension(st)
+                || expr_contains_array_comprehension(e)
+        }
+        Expression::ArrayLiteral(items) => items.iter().any(expr_contains_array_comprehension),
+        Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => false,
+    }
+}
+
 pub fn compile_algorithm_stmt(
     stmt: &AlgorithmStatement,
     ctx: &mut TranslationContext,
@@ -312,64 +446,7 @@ pub fn compile_algorithm_stmt(
     match stmt {
         AlgorithmStatement::Assignment(lhs, rhs) => {
             let val = compile_expression(rhs, ctx, builder)?;
-            if let Expression::ArrayAccess(arr_expr, idx_expr) = lhs {
-                if let Expression::Variable(id) = &**arr_expr {
-                    let name = crate::string_intern::resolve_id(*id);
-                    if let Some(info) = ctx.array_info.get(&name) {
-                        let idx_val = compile_expression(idx_expr, ctx, builder)?;
-                        let one = builder.ins().f64const(1.0);
-                        let idx_0 = builder.ins().fsub(idx_val, one);
-                        let idx_int = builder.ins().fcvt_to_sint(cl_types::I64, idx_0);
-                        let eight = builder.ins().iconst(cl_types::I64, 8);
-                        let offset_bytes = builder.ins().imul(idx_int, eight);
-                        let start_offset = (info.start_index * 8) as i64;
-                        let start_const = builder.ins().iconst(cl_types::I64, start_offset);
-                        let total_offset = builder.ins().iadd(start_const, offset_bytes);
-                        let base_ptr = match info.array_type {
-                            ArrayType::State => ctx.states_ptr,
-                            ArrayType::Discrete => ctx.discrete_ptr,
-                            ArrayType::Parameter => ctx.params_ptr,
-                            ArrayType::Output => ctx.outputs_ptr,
-                            ArrayType::Derivative => ctx.derivs_ptr,
-                        };
-                        let addr = builder.ins().iadd(base_ptr, total_offset);
-                        builder.ins().store(MemFlags::new(), val, addr, 0);
-                        return Ok(());
-                    }
-                }
-            } else if let Expression::Variable(id) = lhs {
-                let name = crate::string_intern::resolve_id(*id);
-                if let Some(slot) = ctx.stack_slots.get(&name) {
-                    builder.ins().stack_store(val, *slot, 0);
-                } else {
-                    ctx.var_map.insert(name.clone(), val);
-                }
-                if let Some(idx) = ctx.output_index(&name) {
-                    let offset = (idx * 8) as i32;
-                    builder
-                        .ins()
-                        .store(MemFlags::new(), val, ctx.outputs_ptr, offset);
-                }
-                if let Some(idx) = ctx.discrete_index(&name) {
-                    let offset = (idx * 8) as i32;
-                    builder
-                        .ins()
-                        .store(MemFlags::new(), val, ctx.discrete_ptr, offset);
-                }
-            } else if matches!(lhs, Expression::ArrayLiteral(_)) {
-                // Validation-only: ignore nonsensical array-literal LHS assignments that can
-                // appear after placeholder simplifications.
-                return Ok(());
-            } else if !matches!(lhs, Expression::Variable(_) | Expression::ArrayAccess(_, _)) {
-                // Validation-only: ignore nonsensical non-variable LHS assignments that can
-                // appear after placeholder simplifications (e.g. Call("zeros", ...)).
-                return Ok(());
-            } else {
-                return Err(format!(
-                    "LHS of assignment must be a variable, got {:?}",
-                    lhs
-                ));
-            }
+            compile_store_to_lhs(lhs, val, ctx, builder)?;
         }
         AlgorithmStatement::MultiAssign(lhss, rhs) => {
             if try_compile_real_fft_multiassign(lhss, rhs, ctx, builder)? {
@@ -378,10 +455,71 @@ pub fn compile_algorithm_stmt(
             if try_compile_msl_random_multiassign(lhss, rhs, ctx, builder)? {
                 return Ok(());
             }
-            return Err(
-                "Multi-assign (a,b,...):=f(x) is not supported in JIT except realFFT(u,nfi) and MSL Xorshift*.random(pre(state))"
-                    .to_string(),
-            );
+            if let Expression::ArrayLiteral(items) = rhs {
+                if items.len() != lhss.len() {
+                    return Err(format!(
+                        "Multi-assign arity mismatch: {} LHS targets but {} RHS items",
+                        lhss.len(),
+                        items.len()
+                    ));
+                }
+                for (i, (lhs, item)) in lhss.iter().zip(items.iter()).enumerate() {
+                    if expr_contains_array_comprehension(item) {
+                        return Err(format!(
+                            "Multi-assign output item {} contains array comprehension, which is unsupported for direct scalar store target {:?}",
+                            i + 1,
+                            lhs
+                        ));
+                    }
+                    if expr_contains_array_literal(item) {
+                        return Err(format!(
+                            "Multi-assign output item {} has array-valued shape, which is unsupported for scalar store target {:?}",
+                            i + 1,
+                            lhs
+                        ));
+                    }
+                    let v = compile_expression(item, ctx, builder)?;
+                    compile_store_to_lhs(lhs, v, ctx, builder)?;
+                }
+                return Ok(());
+            }
+            if let Expression::Variable(id) = rhs {
+                let arr_name = crate::string_intern::resolve_id(*id);
+                if let Some(n) = ctx.array_len(&arr_name) {
+                    if n == lhss.len() {
+                        for (i, lhs) in lhss.iter().enumerate() {
+                            let elem = Expression::ArrayAccess(
+                                Box::new(Expression::Variable(*id)),
+                                Box::new(Expression::Number((i + 1) as f64)),
+                            );
+                            let v = compile_expression(&elem, ctx, builder)?;
+                            compile_store_to_lhs(lhs, v, ctx, builder)?;
+                        }
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "Multi-assign array arity mismatch for '{}': {} LHS targets but array length is {}",
+                        arr_name,
+                        lhss.len(),
+                        n
+                    ));
+                }
+            }
+            if lhss.len() == 1 {
+                let v = compile_expression(rhs, ctx, builder)?;
+                compile_store_to_lhs(&lhss[0], v, ctx, builder)?;
+                return Ok(());
+            }
+            let rhs_hint = if let Expression::Call(name, args) = rhs {
+                format!("function call '{}({} args)'", name, args.len())
+            } else {
+                format!("{:?}", rhs)
+            };
+            return Err(format!(
+                "Multi-assign unsupported for {} with {} LHS targets; supported cases are realFFT(u,nfi), MSL Xorshift*.random(pre(state)), array literal RHS, fixed-size array variable RHS, or single-target assignment.",
+                rhs_hint,
+                lhss.len()
+            ));
         }
         AlgorithmStatement::CallStmt(expr) => {
             // Parse-only; compile as expression evaluation (side effects depend on called function).
