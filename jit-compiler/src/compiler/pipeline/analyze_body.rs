@@ -142,5 +142,8 @@ pub(crate) fn analyze_equations(
         numeric_ode_jacobian,
         symbolic_ode_jacobian_matrix,
         ode_jacobian_sparse,
+        blt_degrade_guard_triggered: sort_result.blt_degrade_guard_triggered,
+        blt_degrade_guard_limit: sort_result.blt_degrade_guard_limit,
+        blt_degrade_guard_equation_count: sort_result.blt_degrade_guard_equation_count,
     }
 }

@@ -1,0 +1,35 @@
+model SolvableBlock16Sparse
+  Real x1;
+  Real x2;
+  Real x3;
+  Real x4;
+  Real x5;
+  Real x6;
+  Real x7;
+  Real x8;
+  Real x9;
+  Real x10;
+  Real x11;
+  Real x12;
+  Real x13;
+  Real x14;
+  Real x15;
+  Real x16;
+equation
+  4*x1 - x2 = 1;
+  -x1 + 4*x2 - x3 = 2;
+  -x2 + 4*x3 - x4 = 3;
+  -x3 + 4*x4 - x5 = 4;
+  -x4 + 4*x5 - x6 = 5;
+  -x5 + 4*x6 - x7 = 6;
+  -x6 + 4*x7 - x8 = 7;
+  -x7 + 4*x8 - x9 = 8;
+  -x8 + 4*x9 - x10 = 9;
+  -x9 + 4*x10 - x11 = 10;
+  -x10 + 4*x11 - x12 = 11;
+  -x11 + 4*x12 - x13 = 12;
+  -x12 + 4*x13 - x14 = 13;
+  -x13 + 4*x14 - x15 = 14;
+  -x14 + 4*x15 - x16 = 15;
+  -x15 + 4*x16 = 16;
+end SolvableBlock16Sparse;

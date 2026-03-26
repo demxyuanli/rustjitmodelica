@@ -38,4 +38,7 @@ pub(crate) struct AnalysisStage {
     pub numeric_ode_jacobian: bool,
     pub symbolic_ode_jacobian_matrix: Option<Vec<Vec<Expression>>>,
     pub ode_jacobian_sparse: Option<jacobian::SparseOdeJacobian>,
+    pub blt_degrade_guard_triggered: bool,
+    pub blt_degrade_guard_limit: Option<usize>,
+    pub blt_degrade_guard_equation_count: Option<usize>,
 }

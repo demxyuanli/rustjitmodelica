@@ -472,6 +472,8 @@ cargo run -p rustmodlica --features sundials -- event-scan `
 | 变量可变性 | [x] | [x] |
 | 初始值 | [x] | [x] |
 
+补充（实现细节）：`fmiModelDescription` 的 `modelName` 为完整限定名；`modelIdentifier` 为净化后的 C 标识符（或由 `--fmi-model-id=` / `RUSTMODLICA_FMI_MODEL_ID` 覆盖，CLI 优先）。`guid` 可经 `--fmi-guid=` 或 `RUSTMODLICA_FMI_GUID` 固定。连续变量在 XML 中带 `<Real/>`；CS 声明可变步长通信与输入插值等能力属性。库侧提供 `FmiExportOptions` 与 `emit_fmu_*_with_options`。回归 `FMI/emit-fmu` 校验产物与关键 XML 片段（见 `jit-compiler/docs/regression/toolchain-fmi-emitc-script.md`）。
+
 ### 5.3 工具链特性
 
 | 特性 | 状态 | 详情 |

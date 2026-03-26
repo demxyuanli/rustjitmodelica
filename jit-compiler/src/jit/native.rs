@@ -326,21 +326,25 @@ extern "C" fn rustmodlica_solve_linear_csr(
 
     unsafe {
         for (idx, row) in row_ptr_vec.iter_mut().enumerate() {
-            let raw = *row_ptr.add(idx);
+            let raw = std::ptr::read_unaligned(row_ptr.add(idx));
             if raw < 0 {
                 return -1;
             }
             *row = raw as usize;
         }
         for (idx, col) in col_idx_vec.iter_mut().enumerate() {
-            let raw = *col_idx.add(idx);
+            let raw = std::ptr::read_unaligned(col_idx.add(idx));
             if raw < 0 {
                 return -1;
             }
             *col = raw as usize;
         }
-        std::ptr::copy_nonoverlapping(values, values_vec.as_mut_ptr(), nnz_usize);
-        std::ptr::copy_nonoverlapping(r, rhs.as_mut_ptr(), n_usize);
+        for (idx, dst) in values_vec.iter_mut().enumerate() {
+            *dst = std::ptr::read_unaligned(values.add(idx));
+        }
+        for (idx, dst) in rhs.iter_mut().enumerate() {
+            *dst = std::ptr::read_unaligned(r.add(idx));
+        }
     }
 
     for value in &mut rhs {

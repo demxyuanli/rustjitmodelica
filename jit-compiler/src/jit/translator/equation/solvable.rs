@@ -154,14 +154,26 @@ pub(super) fn compile_solvable_block_general_n(
         match &selected {
             NewtonLinearizedSystem::Dense(stats) => {
                 eprintln!(
-                    "[newton-path] dense n={} nnz={} pref={:?}",
-                    stats.residual_count, stats.nnz, preference
+                    "[newton-path] dense n={} nnz={} density={:.2}% pref={:?}",
+                    stats.residual_count,
+                    stats.nnz,
+                    100.0,
+                    preference
                 );
             }
             NewtonLinearizedSystem::Csr(stats) => {
+                let total = stats.residual_count.saturating_mul(stats.residual_count);
+                let density = if total == 0 {
+                    0.0
+                } else {
+                    stats.nnz as f64 * 100.0 / total as f64
+                };
                 eprintln!(
-                    "[newton-path] csr n={} nnz={} pref={:?}",
-                    stats.residual_count, stats.nnz, preference
+                    "[newton-path] csr n={} nnz={} density={:.2}% pref={:?}",
+                    stats.residual_count,
+                    stats.nnz,
+                    density,
+                    preference
                 );
             }
         }

@@ -12,6 +12,7 @@ pub mod error;
 pub mod expr_eval;
 pub mod flatten;
 pub mod fmi;
+pub use fmi::FmiExportOptions;
 pub mod i18n;
 pub mod instantiate;
 pub mod jit;

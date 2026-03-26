@@ -20,7 +20,7 @@ This documentation is for guidance and traceability only, without adding new tes
 - [事件与时钟 / Events And Clock](./events-and-clock.md)
 - [函数与多输出 / Functions And Multioutput](./functions-and-multioutput.md)
 - [展平连接与OOP / Flatten Connect OOP](./flatten-connect-oop.md)
-- [工具链FMI EmitC Script / Toolchain FMI EmitC Script](./toolchain-fmi-emitc-script.md)
+- [工具链FMI EmitC Script / Toolchain FMI EmitC Script](./toolchain-fmi-emitc-script.md)（含 `modelDescription` 字段、CLI/`RUSTMODLICA_FMI_*` 与 `run_regression.ps1` FMI 断言） / includes `modelDescription` fields, CLI and `RUSTMODLICA_FMI_*` env, and `run_regression.ps1` FMI checks
 - [MSL与ModelicaTest目录回归 / MSL And ModelicaTest Directory Regression](./msl-modelicatest-dir-regression.md)
 
 ## 统一判定规则 / Unified Verdict Rules

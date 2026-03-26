@@ -261,6 +261,9 @@ pub fn print_backend_dae_info(
     ode_jacobian_symbolic: Option<&Vec<Vec<Expression>>>,
     ode_jacobian_sparse: Option<&SparseOdeJacobian>,
     simulation_dae: Option<&SimulationDae>,
+    blt_degrade_guard_triggered: bool,
+    blt_degrade_guard_limit: Option<usize>,
+    blt_degrade_guard_equation_count: Option<usize>,
 ) {
     let mut _simple = 0usize;
     let mut _for_eq = 0usize;
@@ -424,6 +427,30 @@ pub fn print_backend_dae_info(
                 ]
             )
         );
+        let mut sparse_torn_blocks = 0usize;
+        let mut sparse_nnz_total = 0usize;
+        let mut sparse_dense_total = 0usize;
+        let mut sparse_density_sum = 0.0f64;
+        for b in &dae.dae.blocks {
+            if b.block_type == BlockType::Torn {
+                if let (Some(nnz), Some(d)) = (b.sparse_nnz, b.sparse_density) {
+                    sparse_torn_blocks += 1;
+                    sparse_nnz_total += nnz;
+                    sparse_dense_total += b.unknown_count.saturating_mul(b.unknown_count);
+                    sparse_density_sum += d;
+                }
+            }
+        }
+        if sparse_torn_blocks > 0 {
+            let avg_density = sparse_density_sum / sparse_torn_blocks as f64;
+            println!(
+                " * SolvableBlock sparse Jacobian: blocks {} nnz {} / {} total, avg density {:.2}%",
+                sparse_torn_blocks,
+                sparse_nnz_total,
+                sparse_dense_total,
+                avg_density * 100.0
+            );
+        }
     }
 
     println!("{}", i18n::msg0("notification_backend"));
@@ -492,6 +519,29 @@ pub fn print_backend_dae_info(
         "{}",
         i18n::msg("index_reduction_method", &[&opts.index_reduction_method])
     );
+    if blt_degrade_guard_triggered {
+        let limit = blt_degrade_guard_limit
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        let eq_count = blt_degrade_guard_equation_count
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            " * BLT sort degrade guard: triggered (equations {}, limit {})",
+            eq_count, limit
+        );
+    } else if blt_degrade_guard_limit.is_some() {
+        let limit = blt_degrade_guard_limit
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        let eq_count = blt_degrade_guard_equation_count
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            " * BLT sort degrade guard: not triggered (equations {}, limit {})",
+            eq_count, limit
+        );
+    }
     println!(
         "{}",
         i18n::msg("differential_index", &[&differential_index])

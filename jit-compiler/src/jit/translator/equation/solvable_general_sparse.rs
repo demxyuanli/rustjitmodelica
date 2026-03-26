@@ -1,4 +1,4 @@
-use crate::analysis::contains_var;
+use crate::analysis::build_solvable_block_sparse_pattern;
 use crate::ast::Expression;
 use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::types as cl_types;
@@ -25,6 +25,11 @@ fn sparse_debug_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn align_up(v: usize, align: usize) -> usize {
+    debug_assert!(align.is_power_of_two());
+    (v + (align - 1)) & !(align - 1)
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct SparseJacobianPattern {
     row_ptr: Vec<i32>,
@@ -33,8 +38,25 @@ pub(super) struct SparseJacobianPattern {
 }
 
 impl SparseJacobianPattern {
+    fn from_analysis_pattern(p: crate::analysis::SolvableBlockSparsePattern) -> Self {
+        Self {
+            row_ptr: p.row_ptr,
+            col_idx: p.col_idx,
+            entries: p.entries,
+        }
+    }
+
     pub(super) fn nnz(&self) -> usize {
         self.entries.len()
+    }
+
+    pub(super) fn density(&self, n: usize) -> f64 {
+        let total = n.saturating_mul(n);
+        if total == 0 {
+            0.0
+        } else {
+            self.entries.len() as f64 / total as f64
+        }
     }
 }
 
@@ -54,42 +76,24 @@ pub(super) fn build_sparse_jacobian_pattern(
     if n < 3 || unknowns.len() < n {
         return None;
     }
+    // Prefer shared analysis-stage sparsity metadata builder to keep backend/JIT aligned.
+    let pattern = build_solvable_block_sparse_pattern(unknowns, residuals)
+        .map(SparseJacobianPattern::from_analysis_pattern)?;
 
-    let mut row_ptr = Vec::with_capacity(n + 1);
-    let mut col_idx = Vec::new();
-    let mut entries = Vec::new();
-    row_ptr.push(0);
-
-    for residual in residuals {
-        let row_start = col_idx.len();
-        for (col, unknown) in unknowns.iter().take(n).enumerate() {
-            if contains_var(residual, unknown) {
-                col_idx.push(col as i32);
-                entries.push((row_ptr.len() - 1, col));
-            }
-        }
-        if col_idx.len() == row_start {
-            return None;
-        }
-        row_ptr.push(col_idx.len() as i32);
-    }
-
-    let nnz = col_idx.len();
+    let nnz = pattern.nnz();
     if !should_use_newton_sparse_path(policy, n, nnz, unknowns.len()) {
         return None;
     }
     if sparse_debug_enabled() {
         eprintln!(
-            "[newton-sparse] select pattern n={} nnz={} policy={:?}",
-            n, nnz, policy
+            "[newton-sparse] select pattern n={} nnz={} density={:.2}% policy={:?}",
+            n,
+            nnz,
+            pattern.density(n) * 100.0,
+            policy
         );
     }
-
-    Some(SparseJacobianPattern {
-        row_ptr,
-        col_idx,
-        entries,
-    })
+    Some(pattern)
 }
 
 pub(super) fn compile_solvable_block_general_sparse_n(
@@ -107,9 +111,10 @@ pub(super) fn compile_solvable_block_general_sparse_n(
     let ptr_type = ctx.module.target_config().pointer_type();
     let row_ptr_bytes = pattern.row_ptr.len() * 4;
     let col_idx_bytes = pattern.col_idx.len() * 4;
-    let values_offset = row_ptr_bytes + col_idx_bytes;
-    let r_offset = values_offset + nnz * 8;
-    let dx_offset = r_offset + n * 8;
+    // values/r/dx are f64 buffers and must stay 8-byte aligned.
+    let values_offset = align_up(row_ptr_bytes + col_idx_bytes, 8);
+    let r_offset = align_up(values_offset + nnz * 8, 8);
+    let dx_offset = align_up(r_offset + n * 8, 8);
     let buf_size = dx_offset + n * 8;
     let use_heap_workspace = buf_size > JIT_STACK_BUFFER_BYTES_MAX;
     let buf_slot_opt = if use_heap_workspace {

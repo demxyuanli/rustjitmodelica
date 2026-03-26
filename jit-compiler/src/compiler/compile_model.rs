@@ -366,6 +366,12 @@ pub(super) fn compile(
         let differential_index = analysis_stage.differential_index;
         let constraint_equation_count = analysis_stage.constraint_equation_count;
         let constant_conflict_count = analysis_stage.constant_conflict_count;
+        let blt_degrade_guard_triggered = analysis_stage.blt_degrade_guard_triggered;
+        let blt_degrade_guard_limit = analysis_stage.blt_degrade_guard_limit;
+        let blt_degrade_guard_equation_count = analysis_stage.blt_degrade_guard_equation_count;
+        perf_report.blt_degrade_guard_triggered = blt_degrade_guard_triggered;
+        perf_report.blt_degrade_guard_limit = blt_degrade_guard_limit;
+        perf_report.blt_degrade_guard_equation_count = blt_degrade_guard_equation_count;
         let numeric_ode_jacobian = analysis_stage.numeric_ode_jacobian;
         let ode_jacobian_sparse = analysis_stage.ode_jacobian_sparse;
         let symbolic_ode_jacobian_matrix = analysis_stage.symbolic_ode_jacobian_matrix;
@@ -607,6 +613,9 @@ pub(super) fn compile(
                 symbolic_ode_jacobian_matrix.as_ref(),
                 ode_jacobian_sparse.as_ref(),
                 Some(&simulation_dae),
+                blt_degrade_guard_triggered,
+                blt_degrade_guard_limit,
+                blt_degrade_guard_equation_count,
             );
             for (a, b) in &flat_model.clock_signal_connections {
                 println!(" * Clock connect (SYNC-6): {} <-> {}", a, b);

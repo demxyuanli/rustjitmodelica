@@ -887,6 +887,8 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut emit_c_dir: Option<String> = None;
     let mut emit_fmu_dir: Option<String> = None;
     let mut emit_fmu_me_dir: Option<String> = None;
+    let mut fmi_model_id: Option<String> = None;
+    let mut fmi_guid: Option<String> = None;
     let mut external_libs: Vec<String> = Vec::new();
     let mut lib_paths: Vec<String> = Vec::new();
     let mut repl = false;
@@ -981,6 +983,12 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if let Some(v) = a.strip_prefix("--emit-fmu-me=") {
             emit_fmu_me_dir = Some(v.to_string());
             i += 1;
+        } else if let Some(v) = a.strip_prefix("--fmi-model-id=") {
+            fmi_model_id = Some(v.to_string());
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--fmi-guid=") {
+            fmi_guid = Some(v.to_string());
+            i += 1;
         } else if let Some(v) = a.strip_prefix("--external-lib=") {
             external_libs.push(v.to_string());
             i += 1;
@@ -1056,7 +1064,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
+                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --fmi-model-id=<id>  override FMI modelIdentifier (sanitized; wins over env)\n  --fmi-guid=<uuid|token>  fixed guid attribute (UUID or ASCII alnum/-/_)\n  Env (FMI): RUSTMODLICA_FMI_MODEL_ID, RUSTMODLICA_FMI_MODEL_ID_PREFIX, RUSTMODLICA_FMI_GUID, RUSTMODLICA_FMI_GENERATION_TOOL\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
                 args[0]
             );
             return Err(msg.into());
@@ -1207,9 +1215,13 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 "{}",
                 i18n::msg("zero_crossings", &[&artifacts.crossings_count])
             );
+            let fmi_opts = fmi::FmiExportOptions {
+                model_identifier_override: fmi_model_id.clone(),
+                guid_override: fmi_guid.clone(),
+            };
             if let Some(ref dir) = emit_fmu_dir {
                 let path = std::path::Path::new(dir);
-                match fmi::emit_fmu_artifacts(
+                match fmi::emit_fmu_artifacts_with_options(
                     path,
                     &effective_model,
                     &artifacts.state_vars,
@@ -1218,6 +1230,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     0.0,
                     artifacts.t_end,
                     artifacts.dt,
+                    &fmi_opts,
                 ) {
                     Ok(files) => {
                         let paths: Vec<String> =
@@ -1229,7 +1242,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
             }
             if let Some(ref dir) = emit_fmu_me_dir {
                 let path = std::path::Path::new(dir);
-                match fmi::emit_fmu_me_artifacts(
+                match fmi::emit_fmu_me_artifacts_with_options(
                     path,
                     &effective_model,
                     &artifacts.state_vars,
@@ -1238,6 +1251,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     0.0,
                     artifacts.t_end,
                     artifacts.dt,
+                    &fmi_opts,
                 ) {
                     Ok(files) => {
                         let paths: Vec<String> =

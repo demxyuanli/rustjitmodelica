@@ -1,4 +1,12 @@
 # Full regression: run each model and compare exit code to expected (pass=0, fail=non-zero)
+param(
+    [switch]$SkipDir,
+    [switch]$SummarizeSparseDense,
+    [ValidateSet("all", "non_triggered", "triggered")]
+    [string]$SparseDenseBltGuardFilter = "non_triggered",
+    [string[]]$SparseDenseModelFilter = @()
+)
+
 $cases = @(
     @("TestLib/InitDummy", "pass"),
     @("TestLib/InitWithParam", "pass"),
@@ -702,7 +710,25 @@ foreach ($c in $traceAssertCases) {
 }
 # FMI emit: --emit-fmu produces modelDescription.xml and fmi2_cs.c
 if (-not (Test-Path build_regress_fmu)) { New-Item -ItemType Directory -Path build_regress_fmu | Out-Null }
-$r = Invoke-RustmodlicaCargoRun -RunArgs @("--emit-fmu=build_regress_fmu", "TestLib/SimpleTest")
+# Default modelIdentifier checks assume no FMI env overrides on the parent process.
+$fmiEnvKeys = @("RUSTMODLICA_FMI_MODEL_ID", "RUSTMODLICA_FMI_MODEL_ID_PREFIX", "RUSTMODLICA_FMI_GUID")
+$savedFmiEnv = @{}
+foreach ($k in $fmiEnvKeys) {
+    $savedFmiEnv[$k] = [Environment]::GetEnvironmentVariable($k, "Process")
+    Remove-Item ("Env:{0}" -f $k) -ErrorAction SilentlyContinue
+}
+try {
+    $r = Invoke-RustmodlicaCargoRun -RunArgs @("--emit-fmu=build_regress_fmu", "TestLib/SimpleTest")
+} finally {
+    foreach ($k in $fmiEnvKeys) {
+        $v = $savedFmiEnv[$k]
+        if ([string]::IsNullOrEmpty($v)) {
+            Remove-Item ("Env:{0}" -f $k) -ErrorAction SilentlyContinue
+        } else {
+            Set-Item -Path ("Env:{0}" -f $k) -Value $v
+        }
+    }
+}
 $null = $r.Out
 Write-Host "[FMI] emit-fmu"
 $fmiOk = ($r.ExitCode -eq 0) -and (Test-Path "build_regress_fmu\modelDescription.xml") -and (Test-Path "build_regress_fmu\fmi2_cs.c")
@@ -714,8 +740,10 @@ if ($fmiOk) {
     $hasFmi2 = ($mdText -match 'fmiVersion="2\.0"')
     $hasGuid = ($mdText -match '<fmiModelDescription[^>]*\bguid="[^"]+"')
     $hasCS = ($mdText -match '<CoSimulation\b')
-    $fmiOk = $fmiOk -and $hasFmi2 -and $hasGuid -and $hasCS
-    $fmiDetailExtra = (";md_fmi2=" + $hasFmi2 + ";md_guid=" + $hasGuid + ";md_cs=" + $hasCS)
+    $hasModelId = ($mdText -match 'modelIdentifier="SimpleTest"')
+    $hasReal = ($mdText -match '<Real\s*/>')
+    $fmiOk = $fmiOk -and $hasFmi2 -and $hasGuid -and $hasCS -and $hasModelId -and $hasReal
+    $fmiDetailExtra = (";md_fmi2=" + $hasFmi2 + ";md_guid=" + $hasGuid + ";md_cs=" + $hasCS + ";md_modelId=" + $hasModelId + ";md_real=" + $hasReal)
 }
 if ($fmiOk) { $ok++ } else { $bad++ }
 $sym = if ($fmiOk) { "OK" } else { "!!" }
@@ -726,7 +754,7 @@ if (-not $fmiOk -and $r.Locked) { $detail = ("release_binary_locked;" + $detail)
 Write-CaseLog -CaseType "FMI" -CaseName "FMI/emit-fmu" -DurationMs 0 -ExpectTargetOk $true -ActualOk $fmiOk -ExitCode $r.ExitCode -Status $(if ($fmiOk) { "OK" } else { "MISMATCH" }) -Reason $(if ($fmiOk) { "expectation_met" } else { "fmi_artifacts_missing_or_command_failed" }) -Detail $detail
 
 $modelicaDirScript = Join-Path $repoRoot "run_modelica_dir_regression.ps1"
-if (Test-Path $modelicaDirScript) {
+if (-not $SkipDir -and (Test-Path $modelicaDirScript)) {
     Write-Host "[DIR] run_modelica_dir_regression.ps1"
     $startedAt = Get-Date
     $dirExeRel = Join-Path "jit-compiler" (Join-Path $cargoTargetDir "release\rustmodlica.exe")
@@ -738,6 +766,8 @@ if (Test-Path $modelicaDirScript) {
     $sym = if ($modelicaDirOk) { "OK" } else { "!!" }
     $results += "$sym DIR-MSL+ModelicaTest  expect=self-consistency invariants  actual=$(if ($modelicaDirOk) { 'pass' } else { 'fail' }) (exit $exitModelicaDir)"
     Write-CaseLog -CaseType "DIR" -CaseName "DIR-MSL+ModelicaTest" -DurationMs $durationMs -ExpectTargetOk $true -ActualOk $modelicaDirOk -ExitCode $exitModelicaDir -Status $(if ($modelicaDirOk) { "OK" } else { "MISMATCH" }) -Reason $(if ($modelicaDirOk) { "expectation_met" } else { "directory_regression_failed" }) -Detail ""
+} elseif ($SkipDir) {
+    Write-Host "[DIR] skipped by -SkipDir"
 }
 
 $eventScanMatrixScript = Join-Path $repoRoot "jit-compiler\scripts\run_event_scan_matrix.ps1"
@@ -778,6 +808,32 @@ if (Test-Path $eventScanMatrixScript) {
     $sym = if ($eventOk) { "OK" } else { "!!" }
     $results += "$sym EVENT-SCAN-MATRIX  expect=nondeterministic=0 and config_error=0  actual=$(if ($eventOk) { 'pass' } else { 'fail' }) (nondeterministic=$eventNondet, config_error=$eventConfigErr, unsupported=$eventUnsupportedCount, csv=$eventCsv, unsupported_file=$eventUnsupported)"
     Write-CaseLog -CaseType "EVENT_SCAN" -CaseName "EVENT-SCAN-MATRIX" -DurationMs $durationMs -ExpectTargetOk $true -ActualOk $eventOk -ExitCode $eventExit -Status $(if ($eventOk) { "OK" } else { "MISMATCH" }) -Reason $(if ($eventOk) { "expectation_met" } else { "nondeterministic_or_config_error" }) -Detail ("nondeterministic=" + $eventNondet + ";config_error=" + $eventConfigErr + ";unsupported=" + $eventUnsupportedCount)
+}
+
+if ($SummarizeSparseDense) {
+    $summaryScript = Join-Path $repoRoot "scripts\summarize_sparse_dense.ps1"
+    if (Test-Path $summaryScript) {
+        Write-Host "[SPARSE-DENSE-SUMMARY] summarize_sparse_dense.ps1"
+        $startedAt = Get-Date
+        if ($SparseDenseModelFilter -and $SparseDenseModelFilter.Count -gt 0) {
+            $summaryOut = & $summaryScript -BltGuardFilter $SparseDenseBltGuardFilter -ModelFilter $SparseDenseModelFilter 2>&1
+        } else {
+            $summaryOut = & $summaryScript -BltGuardFilter $SparseDenseBltGuardFilter 2>&1
+        }
+        $summaryExit = $LASTEXITCODE
+        $durationMs = [long](((Get-Date) - $startedAt).TotalMilliseconds)
+        $summaryOk = ($summaryExit -eq 0)
+        if ($summaryOk) { $ok++ } else { $bad++ }
+        $sym = if ($summaryOk) { "OK" } else { "!!" }
+        $results += "$sym SPARSE-DENSE-SUMMARY  expect=summary artifacts generated  actual=$(if ($summaryOk) { 'pass' } else { 'fail' }) (filter=$SparseDenseBltGuardFilter)"
+        $detail = ("filter=" + $SparseDenseBltGuardFilter + ";models=" + (($SparseDenseModelFilter -join "|")))
+        Write-CaseLog -CaseType "SUMMARY" -CaseName "SPARSE-DENSE-SUMMARY" -DurationMs $durationMs -ExpectTargetOk $true -ActualOk $summaryOk -ExitCode $summaryExit -Status $(if ($summaryOk) { "OK" } else { "MISMATCH" }) -Reason $(if ($summaryOk) { "expectation_met" } else { "summary_script_failed" }) -Detail $detail
+        if ($summaryOut) {
+            $summaryOut | ForEach-Object { Write-Host $_ }
+        }
+    } else {
+        Write-Host "[SPARSE-DENSE-SUMMARY] skipped: script not found"
+    }
 }
 
 $results | ForEach-Object { Write-Host $_ }

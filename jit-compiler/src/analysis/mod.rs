@@ -2,6 +2,7 @@ mod blt;
 pub mod derivative;
 mod expression_utils;
 mod initial;
+mod solvable_sparsity;
 mod variable_collection;
 
 #[allow(unused_imports)]
@@ -20,6 +21,9 @@ pub use initial::{
 #[allow(unused_imports)]
 pub(crate) use variable_collection::collect_vars_expr;
 pub use variable_collection::{contains_var, extract_unknowns};
+pub use solvable_sparsity::{
+    build_solvable_block_sparse_pattern, SolvableBlockSparsePattern, SolvableBlockSparseStats,
+};
 
 #[derive(Clone, Default)]
 pub struct AnalysisOptions {

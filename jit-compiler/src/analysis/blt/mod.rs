@@ -1,6 +1,7 @@
 use crate::ast::{Equation, Expression, Operator};
 use crate::string_intern::{resolve_id, var_starts_with};
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use crate::analysis::derivative::collect_states_from_eq;
 use crate::analysis::expression_utils::{make_binary, time_derivative};
@@ -284,6 +285,9 @@ pub struct SortAlgebraicResult {
     pub dummy_derivative_equation_count: usize,
     pub tearing_block_count: usize,
     pub tearing_residual_equation_count: usize,
+    pub blt_degrade_guard_triggered: bool,
+    pub blt_degrade_guard_limit: Option<usize>,
+    pub blt_degrade_guard_equation_count: Option<usize>,
 }
 
 pub fn sort_algebraic_equations(
@@ -348,6 +352,11 @@ pub fn sort_algebraic_equations(
             v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false);
+    let sort_started_at = Instant::now();
+    let dense_share_max_n = std::env::var("RUSTMODLICA_BLT_SHARE_EDGE_MAX_N")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(48);
     if blt_trace {
         eprintln!("[blt] start");
     }
@@ -377,6 +386,52 @@ pub fn sort_algebraic_equations(
             "{}",
             crate::i18n::msg("remaining_equations", &[&n_eqs as &dyn std::fmt::Display])
         );
+    }
+
+    // Performance degradation guard: for larger algebraic systems, skip full BLT sorting
+    // and emit a single SolvableBlock to keep compilation bounded.
+    let max_eq_for_full_sort = std::env::var("RUSTMODLICA_BLT_MAX_EQ_FOR_SORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(63);
+    if equations.len() > max_eq_for_full_sort {
+        let mut unknown_set: HashSet<String> = HashSet::new();
+        for eq in &equations {
+            for u in extract_unknowns(eq, &current_known) {
+                unknown_set.insert(u);
+            }
+        }
+        let mut unknowns: Vec<String> = unknown_set.into_iter().collect();
+        unknowns.sort();
+        let tearing_var = unknowns.first().cloned();
+        if blt_trace {
+            eprintln!(
+                "[blt] degrade_guard full_sort_skipped eqs={} limit={} unknowns={} elapsed_ms={}",
+                equations.len(),
+                max_eq_for_full_sort,
+                unknowns.len(),
+                sort_started_at.elapsed().as_millis()
+            );
+        }
+        return SortAlgebraicResult {
+            sorted_equations: vec![Equation::SolvableBlock {
+                unknowns,
+                tearing_var,
+                equations: vec![],
+                residuals: equations.iter().map(make_residual).collect(),
+            }],
+            differential_index: 1,
+            constraint_equation_count: 0,
+            constant_conflict_count: 0,
+            alias_map,
+            index_reduction_rounds: 0,
+            dummy_derivative_equation_count: 0,
+            tearing_block_count: 1,
+            tearing_residual_equation_count: equations.len(),
+            blt_degrade_guard_triggered: true,
+            blt_degrade_guard_limit: Some(max_eq_for_full_sort),
+            blt_degrade_guard_equation_count: Some(equations.len()),
+        };
     }
 
     let mut equations = equations;
@@ -637,6 +692,9 @@ pub fn sort_algebraic_equations(
             dummy_derivative_equation_count,
             tearing_block_count: 1,
             tearing_residual_equation_count: equations.len(),
+            blt_degrade_guard_triggered: false,
+            blt_degrade_guard_limit: Some(max_eq_for_full_sort),
+            blt_degrade_guard_equation_count: Some(equations.len()),
         };
     }
 
@@ -662,25 +720,35 @@ pub fn sort_algebraic_equations(
             }
         }
     }
-    for i in 0..eq_infos.len() {
-        if assigned_var[i].is_some() {
-            continue;
-        }
-        for j in (i + 1)..eq_infos.len() {
-            if assigned_var[j].is_some() {
+    // Guard against O(n^2) dense-share edge construction on larger systems.
+    if eq_infos.len() <= dense_share_max_n {
+        for i in 0..eq_infos.len() {
+            if assigned_var[i].is_some() {
                 continue;
             }
-            let shared = eq_infos[i]
-                .unknowns
-                .iter()
-                .any(|u| eq_infos[j].unknowns.contains(u));
-            if shared {
-                adj[i].push(j);
-                radj[j].push(i);
-                adj[j].push(i);
-                radj[i].push(j);
+            for j in (i + 1)..eq_infos.len() {
+                if assigned_var[j].is_some() {
+                    continue;
+                }
+                let shared = eq_infos[i]
+                    .unknowns
+                    .iter()
+                    .any(|u| eq_infos[j].unknowns.contains(u));
+                if shared {
+                    adj[i].push(j);
+                    radj[j].push(i);
+                    adj[j].push(i);
+                    radj[i].push(j);
+                }
             }
         }
+    } else if blt_trace {
+        eprintln!(
+            "[blt] skip_dense_share_edges n_nodes={} limit={} elapsed_ms={}",
+            eq_infos.len(),
+            dense_share_max_n,
+            sort_started_at.elapsed().as_millis()
+        );
     }
 
     if blt_trace {
@@ -871,5 +939,8 @@ pub fn sort_algebraic_equations(
         dummy_derivative_equation_count,
         tearing_block_count,
         tearing_residual_equation_count,
+        blt_degrade_guard_triggered: false,
+        blt_degrade_guard_limit: Some(max_eq_for_full_sort),
+        blt_degrade_guard_equation_count: Some(equations.len()),
     }
 }

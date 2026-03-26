@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 
+use crate::analysis::build_solvable_block_sparse_pattern;
 use crate::ast::Equation;
 
 /// Block type for partitioning (IR1-3): explicit single eq, torn nonlinear system, or mixed.
@@ -27,6 +28,14 @@ pub struct BlockInfo {
     pub unknown_count: usize,
     /// For torn blocks: number of residual equations in Newton loop
     pub residual_count: Option<usize>,
+    /// For torn blocks: sparse Jacobian non-zeros.
+    pub sparse_nnz: Option<usize>,
+    /// For torn blocks: sparse Jacobian density in [0,1].
+    pub sparse_density: Option<f64>,
+    /// For torn blocks: CSR row pointer length.
+    pub sparse_row_ptr_len: Option<usize>,
+    /// For torn blocks: CSR column index length.
+    pub sparse_col_idx_len: Option<usize>,
 }
 
 /// Variable classification for explicit DAE: 0 = F(x, x', z, u, t)
@@ -234,6 +243,10 @@ pub fn build_simulation_dae(
                     equation_count: 1,
                     unknown_count: 1,
                     residual_count: None,
+                    sparse_nnz: None,
+                    sparse_density: None,
+                    sparse_row_ptr_len: None,
+                    sparse_col_idx_len: None,
                 });
             }
             Equation::SolvableBlock {
@@ -241,6 +254,8 @@ pub fn build_simulation_dae(
                 residuals,
                 ..
             } => {
+                let sparse = build_solvable_block_sparse_pattern(unknowns, residuals);
+                let sparse_stats = sparse.as_ref().map(|p| p.stats(residuals.len()));
                 torn_block_count += 1;
                 torn_unknowns_total += unknowns.len();
                 blocks.push(BlockInfo {
@@ -248,6 +263,10 @@ pub fn build_simulation_dae(
                     equation_count: unknowns.len(),
                     unknown_count: unknowns.len(),
                     residual_count: Some(residuals.len()),
+                    sparse_nnz: sparse_stats.as_ref().map(|s| s.nnz),
+                    sparse_density: sparse_stats.as_ref().map(|s| s.density),
+                    sparse_row_ptr_len: sparse_stats.as_ref().map(|s| s.row_ptr_len),
+                    sparse_col_idx_len: sparse_stats.as_ref().map(|s| s.col_idx_len),
                 });
             }
             _ => {}

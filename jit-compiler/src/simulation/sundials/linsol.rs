@@ -21,7 +21,14 @@ pub enum SundialsLinSolKind {
     Klu,
 }
 
-fn default_linsol_auto(n: usize) -> SundialsLinSolKind {
+#[derive(Clone, Copy, Debug)]
+struct AutoThresholds {
+    dense_max_n: usize,
+    klu_min_n: usize,
+    spgmr_max_n: usize,
+}
+
+fn read_auto_thresholds() -> AutoThresholds {
     let dense_max_n = std::env::var("RUSTMODLICA_SUNDIALS_DENSE_MAX_N")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -34,11 +41,20 @@ fn default_linsol_auto(n: usize) -> SundialsLinSolKind {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(klu_min_n.saturating_sub(1));
-    if n <= dense_max_n {
+    AutoThresholds {
+        dense_max_n,
+        klu_min_n,
+        spgmr_max_n,
+    }
+}
+
+fn default_linsol_auto(n: usize) -> SundialsLinSolKind {
+    let th = read_auto_thresholds();
+    if n <= th.dense_max_n {
         SundialsLinSolKind::Dense
-    } else if n <= spgmr_max_n {
+    } else if n <= th.spgmr_max_n {
         SundialsLinSolKind::Spgmr
-    } else if cfg!(feature = "sundials-klu") && n >= klu_min_n {
+    } else if cfg!(feature = "sundials-klu") && n >= th.klu_min_n {
         #[cfg(feature = "sundials-klu")]
         {
             SundialsLinSolKind::Klu
@@ -54,11 +70,23 @@ fn default_linsol_auto(n: usize) -> SundialsLinSolKind {
 
 pub fn parse_linsol_env(n: usize) -> SundialsLinSolKind {
     warn_if_unsupported_backend_requested();
+    let trace = std::env::var("RUSTMODLICA_SUNDIALS_LINSOL_TRACE")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false);
+    let th = read_auto_thresholds();
     let Ok(s) = std::env::var("RUSTMODLICA_SUNDIALS_LINSOL") else {
-        return default_linsol_auto(n);
+        let picked = default_linsol_auto(n);
+        if trace {
+            eprintln!(
+                "[sundials-linsol] env=<unset> n={} auto={:?} thresholds(dense<={},spgmr<={},klu>={})",
+                n, picked, th.dense_max_n, th.spgmr_max_n, th.klu_min_n
+            );
+        }
+        return picked;
     };
     let s = s.trim();
-    if s.eq_ignore_ascii_case("dense") {
+    let picked = if s.eq_ignore_ascii_case("dense") {
         SundialsLinSolKind::Dense
     } else if s.eq_ignore_ascii_case("spgmr") {
         SundialsLinSolKind::Spgmr
@@ -68,15 +96,31 @@ pub fn parse_linsol_env(n: usize) -> SundialsLinSolKind {
         #[cfg(feature = "sundials-klu")]
         {
             if s.eq_ignore_ascii_case("klu") {
-                return SundialsLinSolKind::Klu;
+                SundialsLinSolKind::Klu
+            } else {
+                eprintln!(
+                    "RUSTMODLICA_SUNDIALS_LINSOL='{}' is not recognized, falling back to auto policy.",
+                    s
+                );
+                default_linsol_auto(n)
             }
         }
+        #[cfg(not(feature = "sundials-klu"))]
+        {
+            eprintln!(
+                "RUSTMODLICA_SUNDIALS_LINSOL='{}' is not recognized, falling back to auto policy.",
+                s
+            );
+            default_linsol_auto(n)
+        }
+    };
+    if trace {
         eprintln!(
-            "RUSTMODLICA_SUNDIALS_LINSOL='{}' is not recognized, falling back to auto policy.",
-            s
+            "[sundials-linsol] env={} n={} picked={:?} thresholds(dense<={},spgmr<={},klu>={})",
+            s, n, picked, th.dense_max_n, th.spgmr_max_n, th.klu_min_n
         );
-        default_linsol_auto(n)
     }
+    picked
 }
 
 /// Linear solver + Jacobian matrix handles for CVODE/IDA; frees in `Drop`.
