@@ -912,150 +912,183 @@ export function RegressionWorkspacePanel({ theme: _theme = "dark" }: { theme?: "
       <aside className="col-span-4 min-w-0 border-r border-border bg-[var(--panel-bg)] p-3 overflow-auto">
         <div className="text-xs uppercase text-[var(--text-muted)] mb-2">{t("regressionPlan")}</div>
 
-        <label className="text-xs text-[var(--text-muted)]">{t("regressionStrategy")}</label>
-        <select
-          value={strategy}
-          onChange={(e) => setStrategy(e.target.value as RegressionPlanStrategy)}
-          className="w-full theme-input border px-2 py-1 text-xs rounded mb-2"
-        >
-          <option value="category">category</option>
-          <option value="feature">feature</option>
-          <option value="relation">relation</option>
-        </select>
-
-        <label className="text-xs text-[var(--text-muted)]">{t("regressionCategories")}</label>
-        <div className="flex flex-wrap gap-1 mb-2">
-          {CATEGORY_OPTIONS.map((c) => {
-            const active = categories.includes(c);
-            return (
-              <button
-                key={c}
-                type="button"
-                onClick={() =>
-                  setCategories((prev) =>
-                    active ? prev.filter((x) => x !== c) : [...prev, c]
-                  )
-                }
-                className={`px-2 py-0.5 text-[10px] rounded border ${
-                  active ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"
-                }`}
-              >
-                {c}
-              </button>
-            );
-          })}
-        </div>
-
-        <label className="text-xs text-[var(--text-muted)]">{t("regressionFeatureIds")}</label>
-        <textarea
-          value={featureIdsRaw}
-          onChange={(e) => setFeatureIdsRaw(e.target.value)}
-          rows={3}
-          className="w-full theme-input border px-2 py-1 text-xs rounded mb-2"
-        />
-
-        <label className="text-xs text-[var(--text-muted)]">{t("regressionChangedFiles")}</label>
-        <textarea
-          value={changedFilesRaw}
-          onChange={(e) => setChangedFilesRaw(e.target.value)}
-          rows={4}
-          className="w-full theme-input border px-2 py-1 text-xs rounded mb-2"
-        />
-
-        <div className="flex items-center gap-2 mb-2">
-          <input
-            id="reg-indirect"
-            type="checkbox"
-            checked={includeIndirect}
-            onChange={(e) => setIncludeIndirect(e.target.checked)}
-          />
-          <label htmlFor="reg-indirect" className="text-xs text-[var(--text-muted)]">
-            {t("regressionIncludeIndirect")}
-          </label>
-        </div>
-
-        <div className="flex items-center gap-2 mb-2">
-          <input
-            id="reg-msl-examples"
-            type="checkbox"
-            checked={includeModelicaExamples}
-            onChange={(e) => setIncludeModelicaExamples(e.target.checked)}
-          />
-          <label htmlFor="reg-msl-examples" className="text-xs text-[var(--text-muted)]">
-            {t("regressionIncludeModelicaExamples")}
-          </label>
-        </div>
-
-        <div className="flex items-center gap-2 mb-2">
-          <input
-            id="reg-modelica-test"
-            type="checkbox"
-            checked={includeModelicaTest}
-            onChange={(e) => setIncludeModelicaTest(e.target.checked)}
-          />
-          <label htmlFor="reg-modelica-test" className="text-xs text-[var(--text-muted)]">
-            {t("regressionIncludeModelicaTest")}
-          </label>
-        </div>
-
-        <label className="text-xs text-[var(--text-muted)]">{t("regressionMaxCases")}</label>
-        <input
-          value={maxCasesRaw}
-          onChange={(e) => setMaxCasesRaw(e.target.value)}
-          className="w-full theme-input border px-2 py-1 text-xs rounded mb-2"
-          placeholder={t("regressionMaxCasesPlaceholder")}
-        />
-
-        <label className="text-xs text-[var(--text-muted)]">{t("regressionWorkspaceMode")}</label>
-        <select
-          value={workspaceMode}
-          onChange={(e) => setWorkspaceMode(e.target.value as "persistent" | "ephemeral")}
-          className="w-full theme-input border px-2 py-1 text-xs rounded mb-3"
-        >
-          <option value="persistent">{t("regressionPersistent")}</option>
-          <option value="ephemeral">{t("regressionEphemeral")}</option>
-        </select>
-
-        <button
-          type="button"
-          onClick={createPlan}
-          disabled={loading}
-          className="w-full px-3 py-1.5 text-xs rounded bg-primary hover:bg-blue-600 disabled:opacity-50 mb-2"
-        >
-          {loading ? t("regressionCreating") : t("regressionCreatePlan")}
-        </button>
-
         {state && (
-          <div className="border border-border rounded p-2 mb-2">
-            <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionPlanDetails")}</div>
-            <div className="text-[10px] text-[var(--text-muted)] mb-1">
-              {tf("regressionPlanFilteredCount", { count: planCasesByCategory.length, total: state.plan.plannedCases.length })}
+          <div className="grid grid-cols-3 gap-1.5 mb-2">
+            <div className="border border-border rounded p-1.5">
+              <div className="text-[10px] text-[var(--text-muted)]">{t("regressionPlanCases")}</div>
+              <div className="text-xs">{state.plan.plannedCases.length}</div>
             </div>
-            <input
-              value={planCaseQuery}
-              onChange={(e) => setPlanCaseQuery(e.target.value)}
-              placeholder={t("regressionFilterCaseName")}
-              className="w-full theme-input border px-2 py-1 text-xs rounded mb-2"
-            />
-            <div className="max-h-40 overflow-auto border border-border/40 rounded bg-[var(--surface-muted)] p-1">
-              {planCasesByCategory.length === 0 ? (
-                <div className="text-xs text-[var(--text-muted)] px-1 py-1">{t("none")}</div>
-              ) : (
-                planCasesByCategory.slice(0, 300).map((x) => (
-                  <div key={`${x.name}-${x.category}`} className="text-xs py-1 px-1 border-b border-border/20 last:border-b-0">
-                    <div className="font-mono truncate" title={x.name}>{x.name}</div>
-                    <div className="text-[10px] text-[var(--text-muted)] truncate">{x.category} | {x.reason}</div>
-                  </div>
-                ))
-              )}
+            <div className="border border-border rounded p-1.5">
+              <div className="text-[10px] text-[var(--text-muted)]">{t("regressionChangedSources")}</div>
+              <div className="text-xs">{state.plan.changedSources.length}</div>
+            </div>
+            <div className="border border-border rounded p-1.5">
+              <div className="text-[10px] text-[var(--text-muted)]">{t("regressionAffectedFeatures")}</div>
+              <div className="text-xs">{state.plan.affectedFeatures.length}</div>
             </div>
           </div>
         )}
 
+        <details open className="border border-border rounded mb-2">
+          <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
+            {t("regressionPlan")}
+          </summary>
+          <div className="p-2 space-y-2">
+            <label className="text-xs text-[var(--text-muted)]">{t("regressionStrategy")}</label>
+            <select
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value as RegressionPlanStrategy)}
+              className="w-full theme-input border px-2 py-1 text-xs rounded"
+            >
+              <option value="category">category</option>
+              <option value="feature">feature</option>
+              <option value="relation">relation</option>
+            </select>
+
+            <label className="text-xs text-[var(--text-muted)]">{t("regressionCategories")}</label>
+            <div className="flex flex-wrap gap-1">
+              {CATEGORY_OPTIONS.map((c) => {
+                const active = categories.includes(c);
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() =>
+                      setCategories((prev) =>
+                        active ? prev.filter((x) => x !== c) : [...prev, c]
+                      )
+                    }
+                    className={`px-2 py-0.5 text-[10px] rounded border ${
+                      active ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"
+                    }`}
+                  >
+                    {c}
+                  </button>
+                );
+              })}
+            </div>
+
+            <details className="border border-border/60 rounded">
+              <summary className="px-2 py-1 text-[10px] cursor-pointer select-none text-[var(--text-muted)]">
+                {t("regressionFeatureIds")} / {t("regressionChangedFiles")}
+              </summary>
+              <div className="p-2 space-y-2">
+                <textarea
+                  value={featureIdsRaw}
+                  onChange={(e) => setFeatureIdsRaw(e.target.value)}
+                  rows={3}
+                  className="w-full theme-input border px-2 py-1 text-xs rounded"
+                />
+                <textarea
+                  value={changedFilesRaw}
+                  onChange={(e) => setChangedFilesRaw(e.target.value)}
+                  rows={4}
+                  className="w-full theme-input border px-2 py-1 text-xs rounded"
+                />
+              </div>
+            </details>
+
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                <input
+                  id="reg-indirect"
+                  type="checkbox"
+                  checked={includeIndirect}
+                  onChange={(e) => setIncludeIndirect(e.target.checked)}
+                />
+                {t("regressionIncludeIndirect")}
+              </label>
+              <label className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                <input
+                  id="reg-msl-examples"
+                  type="checkbox"
+                  checked={includeModelicaExamples}
+                  onChange={(e) => setIncludeModelicaExamples(e.target.checked)}
+                />
+                {t("regressionIncludeModelicaExamples")}
+              </label>
+              <label className="flex items-center gap-1 text-[10px] text-[var(--text-muted)] col-span-2">
+                <input
+                  id="reg-modelica-test"
+                  type="checkbox"
+                  checked={includeModelicaTest}
+                  onChange={(e) => setIncludeModelicaTest(e.target.checked)}
+                />
+                {t("regressionIncludeModelicaTest")}
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-[var(--text-muted)]">{t("regressionMaxCases")}</label>
+                <input
+                  value={maxCasesRaw}
+                  onChange={(e) => setMaxCasesRaw(e.target.value)}
+                  className="w-full theme-input border px-2 py-1 text-xs rounded"
+                  placeholder={t("regressionMaxCasesPlaceholder")}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--text-muted)]">{t("regressionWorkspaceMode")}</label>
+                <select
+                  value={workspaceMode}
+                  onChange={(e) => setWorkspaceMode(e.target.value as "persistent" | "ephemeral")}
+                  className="w-full theme-input border px-2 py-1 text-xs rounded"
+                >
+                  <option value="persistent">{t("regressionPersistent")}</option>
+                  <option value="ephemeral">{t("regressionEphemeral")}</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={createPlan}
+              disabled={loading}
+              className="w-full px-3 py-1.5 text-xs rounded bg-primary hover:bg-blue-600 disabled:opacity-50"
+            >
+              {loading ? t("regressionCreating") : t("regressionCreatePlan")}
+            </button>
+          </div>
+        </details>
+
         {state && (
-          <div className="border border-border rounded p-2 mb-2">
-            <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionChangedSources")}</div>
-            <div className="max-h-24 overflow-auto">
+          <details open className="border border-border rounded mb-2">
+            <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
+              {t("regressionPlanDetails")}
+            </summary>
+            <div className="p-2">
+              <div className="text-[10px] text-[var(--text-muted)] mb-1">
+                {tf("regressionPlanFilteredCount", { count: planCasesByCategory.length, total: state.plan.plannedCases.length })}
+              </div>
+              <input
+                value={planCaseQuery}
+                onChange={(e) => setPlanCaseQuery(e.target.value)}
+                placeholder={t("regressionFilterCaseName")}
+                className="w-full theme-input border px-2 py-1 text-xs rounded mb-2"
+              />
+              <div className="max-h-44 overflow-auto border border-border/40 rounded bg-[var(--surface-muted)] p-1">
+                {planCasesByCategory.length === 0 ? (
+                  <div className="text-xs text-[var(--text-muted)] px-1 py-1">{t("none")}</div>
+                ) : (
+                  planCasesByCategory.slice(0, 300).map((x) => (
+                    <div key={`${x.name}-${x.category}`} className="text-xs py-1 px-1 border-b border-border/20 last:border-b-0">
+                      <div className="font-mono truncate" title={x.name}>{x.name}</div>
+                      <div className="text-[10px] text-[var(--text-muted)] truncate">{x.category} | {x.reason}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </details>
+        )}
+
+        {state && (
+          <details className="border border-border rounded mb-2">
+            <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
+              {t("regressionChangedSources")}
+            </summary>
+            <div className="p-2 max-h-28 overflow-auto">
               {state.plan.changedSources.length === 0 ? (
                 <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
               ) : (
@@ -1064,13 +1097,15 @@ export function RegressionWorkspacePanel({ theme: _theme = "dark" }: { theme?: "
                 ))
               )}
             </div>
-          </div>
+          </details>
         )}
 
         {state && (
-          <div className="border border-border rounded p-2 mb-2">
-            <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionAffectedFeatures")}</div>
-            <div className="max-h-24 overflow-auto">
+          <details className="border border-border rounded mb-2">
+            <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
+              {t("regressionAffectedFeatures")}
+            </summary>
+            <div className="p-2 max-h-28 overflow-auto">
               {state.plan.affectedFeatures.length === 0 ? (
                 <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
               ) : (
@@ -1079,7 +1114,7 @@ export function RegressionWorkspacePanel({ theme: _theme = "dark" }: { theme?: "
                 ))
               )}
             </div>
-          </div>
+          </details>
         )}
 
         <div className="border-t border-border mt-3 pt-3 flex items-center justify-between gap-2">

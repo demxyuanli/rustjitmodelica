@@ -23,7 +23,9 @@ param(
     [Alias('NewtonCountsAsFailure')]
     [switch]$NewtonCountsAsFailed,
     # Optional override for local debugging: treat Newton non-convergence as skipped (--).
-    [switch]$NewtonNonConvergedAsSkip
+    [switch]$NewtonNonConvergedAsSkip,
+    # Parallel worker processes for model execution (1 = serial).
+    [int]$ParallelWorkers = 1
 )
 
 Set-StrictMode -Version Latest
@@ -462,7 +464,10 @@ $preflightArgs = @(
 )
 foreach ($lr in $resolvedLibRoots) { $preflightArgs = @("--lib-path=$lr") + $preflightArgs }
 Push-Location $jitRoot
+$oldEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $preflightOut = & $exe @preflightArgs 2>&1
+$ErrorActionPreference = $oldEap
 $preflightExit = $LASTEXITCODE
 Pop-Location
 if ($preflightExit -ne 0) {
@@ -504,6 +509,7 @@ if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path 
 $runStamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $runLogNdjson = Join-Path $outPath ("runlog_{0}.ndjson" -f $runStamp)
 $runLogCsv = Join-Path $outPath ("runlog_{0}.csv" -f $runStamp)
+$lockFilePath = Join-Path $outPath "libraries.lock.json"
 "timestamp,case_type,case_name,duration_ms,expect_target_ok,actual_ok,exit_code,status,reason,detail" | Set-Content -LiteralPath $runLogCsv -Encoding UTF8
 function Escape-Csv([string]$s) {
     if ($null -eq $s) { return "" }
@@ -564,6 +570,47 @@ function Write-RunLog {
         }
     }
 }
+
+function Write-ReproContextSnapshot {
+    param(
+        [string]$RepoRoot,
+        [string]$ExePath,
+        [string[]]$LibraryRoots,
+        [string]$OutputPath
+    )
+    $exeHash = ""
+    if (Test-Path -LiteralPath $ExePath) {
+        try { $exeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ExePath).Hash } catch {}
+    }
+    $gitCommit = ""
+    try {
+        Push-Location $RepoRoot
+        $gitCommit = (& git rev-parse HEAD 2>$null)
+        Pop-Location
+    } catch {
+        try { Pop-Location } catch {}
+    }
+    $snapshot = [pscustomobject]@{
+        schema_version = "libraries.lock.v1"
+        generated_at = (Get-Date).ToString("o")
+        repo_root = $RepoRoot
+        git_commit = [string]$gitCommit
+        executable = [pscustomobject]@{
+            path = $ExePath
+            sha256 = $exeHash
+        }
+        library_roots = @($LibraryRoots)
+        env = [pscustomobject]@{
+            RUSTMODLICA_EVENT_TRACE = [string]$env:RUSTMODLICA_EVENT_TRACE
+            RUSTMODLICA_PERF_TRACE = [string]$env:RUSTMODLICA_PERF_TRACE
+            RUSTMODLICA_AOT_CACHE_DIR = [string]$env:RUSTMODLICA_AOT_CACHE_DIR
+        }
+    }
+    $snapshot | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+}
+
+Write-ReproContextSnapshot -RepoRoot $repoRoot -ExePath $exe -LibraryRoots $resolvedLibRoots -OutputPath $lockFilePath
+Write-Host ("Library lock written: " + $lockFilePath)
 
 $models = New-Object System.Collections.Generic.List[string]
 
@@ -691,11 +738,99 @@ if ($OnlySkipsFromSummary -ne "") {
     Write-Host "Discovered models: $($models.Count)"
 }
 
+$modelTotal = $models.Count
+if ($ParallelWorkers -gt 1 -and $modelTotal -gt 1) {
+    $workerCount = [Math]::Min($ParallelWorkers, $modelTotal)
+    Write-Host ("Parallel DIR regression enabled: workers={0}, models={1}" -f $workerCount, $modelTotal)
+    $shardRoot = Join-Path $outPath "parallel_shards"
+    New-Item -ItemType Directory -Path $shardRoot -Force | Out-Null
+    $childProcesses = New-Object System.Collections.Generic.List[object]
+    for ($wi = 0; $wi -lt $workerCount; $wi++) {
+        $shardModels = New-Object System.Collections.Generic.List[string]
+        for ($mi = $wi; $mi -lt $modelTotal; $mi += $workerCount) {
+            $shardModels.Add($models[$mi])
+        }
+        if ($shardModels.Count -eq 0) { continue }
+        $shardInput = Join-Path $shardRoot ("shard_{0}_models.txt" -f $wi)
+        $shardModels | ForEach-Object { "-- $_" } | Set-Content -LiteralPath $shardInput -Encoding UTF8
+        $shardOutDir = Join-Path $OutDir ("parallel_shard_{0}" -f $wi)
+        $scriptSelf = $PSCommandPath
+        if ([string]::IsNullOrWhiteSpace($scriptSelf)) {
+            $scriptSelf = $MyInvocation.MyCommand.Path
+        }
+        if ([string]::IsNullOrWhiteSpace($scriptSelf)) {
+            Write-Error "Parallel mode requires script path, but it is unavailable."
+            exit 2
+        }
+        $argList = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", $scriptSelf,
+            "-Root", $repoRoot,
+            "-OutDir", $shardOutDir,
+            "-OnlySkipsFromSummary", $shardInput,
+            "-TEnd", "$TEnd",
+            "-Dt", "$Dt",
+            "-Solver", $Solver,
+            "-MaxCases", "0",
+            "-ParallelWorkers", "1"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($ExePath)) { $argList += @("-ExePath", $ExePath) }
+        if ($AllLibraryMo) { $argList += "-AllLibraryMo" }
+        if ($ImplicitRetryIdealTwoWaySwitches) { $argList += "-ImplicitRetryIdealTwoWaySwitches" }
+        if ($NewtonCountsAsFailed) { $argList += "-NewtonCountsAsFailed" }
+        if ($NewtonNonConvergedAsSkip) { $argList += "-NewtonNonConvergedAsSkip" }
+        foreach ($lp in $LibPath) { $argList += @("-LibPath", $lp) }
+        foreach ($ea in $ExtraArgs) { $argList += @("-ExtraArgs", $ea) }
+        $p = Start-Process -FilePath "powershell" -ArgumentList $argList -PassThru
+        $childProcesses.Add([pscustomobject]@{
+            Index = $wi
+            Process = $p
+            OutDir = (Join-Path $repoRoot $shardOutDir)
+        })
+    }
+
+    $ok = 0
+    $bad = 0
+    $skipped = 0
+    $results = @()
+    foreach ($cp in $childProcesses) {
+        $proc = $cp.Process
+        $proc.WaitForExit()
+        $summaryPath = Join-Path $cp.OutDir "summary.txt"
+        if (Test-Path -LiteralPath $summaryPath) {
+            $lines = (Get-FileLines $summaryPath 0).Lines
+            foreach ($ln in $lines) {
+                $results += $ln
+                if ($ln -match '^OK\s') { $ok++ }
+                elseif ($ln -match '^!!\s') { $bad++ }
+                elseif ($ln -match '^--\s') { $skipped++ }
+            }
+        } else {
+            $bad++
+            $results += "!! shard_$($cp.Index)  exit=1  reason=parallel_summary_missing"
+        }
+        if ($proc.ExitCode -ne 0) {
+            # Keep per-model details from summary; no extra increment here.
+            if (-not (Test-Path -LiteralPath $summaryPath)) {
+                $results += "!! shard_$($cp.Index)  exit=$($proc.ExitCode)  reason=parallel_worker_failed"
+            }
+        }
+    }
+    $summaryPath = Join-Path $outPath "summary.txt"
+    $results | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+    Write-Host ""
+    Write-Host "Summary: $ok passed, $bad failed, $skipped skipped"
+    Write-Host "Non-OK total: $($bad + $skipped) (parallel mode)"
+    Write-Host "Details: $summaryPath"
+    if ($bad -gt 0) { exit 1 }
+    exit 0
+}
+
 $ok = 0
 $bad = 0
 $skipped = 0
 $results = @()
-$modelTotal = $models.Count
 $modelIndex = 0
 
 foreach ($m in $models) {

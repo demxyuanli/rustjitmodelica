@@ -276,9 +276,28 @@ pub(super) fn parse_function_call_expr(pair: Pair<Rule>) -> Expression {
                             // No runtime support; accept parse tree only.
                         }
                                 Rule::redeclare_arg => {
-                                    // Parse-only (MSL): record constructor like
-                                    // Complex(redeclare SI.Current re "...", redeclare SI.Current im "...")
-                                    // Ignore these items for now.
+                                    let mut _ra_type = String::new();
+                                    let mut ra_name = String::new();
+                                    for ra_part in item.into_inner() {
+                                        match ra_part.as_rule() {
+                                            Rule::type_name => {
+                                                _ra_type = ra_part.as_str().trim().to_string();
+                                            }
+                                            Rule::identifier => {
+                                                ra_name = ra_part.as_str().trim().to_string();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    if !ra_name.is_empty() {
+                                        args.push(Expression::Call(
+                                            "named".to_string(),
+                                            vec![
+                                                Expression::StringLiteral(ra_name),
+                                                Expression::Number(0.0),
+                                            ],
+                                        ));
+                                    }
                                 }
                         Rule::named_arg => {
                             let mut ni = item.into_inner();

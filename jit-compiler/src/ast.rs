@@ -168,6 +168,8 @@ pub struct Modification {
     /// Visibility prefix on this modifier (e.g. `extends A(public x = 1)`).
     pub is_public: bool,
     pub is_protected: bool,
+    /// Set when the modification uses `operator function` prefix in a redeclare context.
+    pub is_operator_function: bool,
 }
 
 #[derive(Debug, Clone)]

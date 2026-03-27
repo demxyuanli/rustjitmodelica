@@ -1,4 +1,6 @@
 // Rust-style compile error reporting: file:line:col with snippet and caret.
+pub mod fallback_counter;
+pub mod fallback_registry;
 
 use std::fmt;
 

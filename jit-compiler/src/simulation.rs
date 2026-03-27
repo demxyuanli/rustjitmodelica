@@ -2,6 +2,7 @@
 // event detection and reinit when when/zero-crossing present. Event iteration at each time step.
 use crate::ast::Expression;
 use crate::compiler::ClockPartitionScheduleEntry;
+use crate::diag::fallback_counter;
 use crate::i18n;
 use crate::jit::{native, CalcDerivsFunc};
 use crate::solver::{AdaptiveRK45Solver, BackwardEulerSolver, RungeKutta4Solver, Solver, System};
@@ -667,9 +668,22 @@ pub fn run_simulation(
     }
     if perf_enabled() {
         let (event_iter_total, clock_dispatch_total) = perf_snapshot();
+        let fallback = fallback_counter::snapshot();
         eprintln!(
             "[perf] event_iter_total={} clock_dispatch_total={}",
             event_iter_total, clock_dispatch_total
+        );
+        eprintln!(
+            "[perf] fallback_total={} jit_builtin={} jit_variable={} jit_derivative={} jit_equation_skip={} jit_multi_assign={} newton_init_accept={} newton_event_accept={} clock_degrade={}",
+            fallback_counter::total(&fallback),
+            fallback.jit_builtin,
+            fallback.jit_variable,
+            fallback.jit_derivative,
+            fallback.jit_equation_skip,
+            fallback.jit_multi_assign,
+            fallback.newton_init_accept,
+            fallback.newton_event_accept,
+            fallback.clock_degrade
         );
     }
     flush_writer(w)?;

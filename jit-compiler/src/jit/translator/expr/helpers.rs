@@ -1,10 +1,11 @@
 use crate::ast::Expression;
 use cranelift::codegen::ir::Signature;
 use cranelift_module::{FuncId, Linkage, Module};
-use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 use crate::jit::context::TranslationContext;
+use crate::diag::fallback_counter;
 
 /// EXT-3: ABI tag per argument so Import func_id matches (e.g. f vs s for const char*).
 pub(super) fn import_call_abi_tag(args: &[Expression], ctx: &TranslationContext) -> String {
@@ -167,6 +168,45 @@ pub(super) fn jit_dot_fallback_zero_enabled() -> bool {
             })
             .unwrap_or(false)
     })
+}
+
+fn env_flag(var_name: &str, default_enabled: bool) -> bool {
+    std::env::var(var_name)
+        .ok()
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(default_enabled)
+}
+
+pub(super) fn jit_builtin_fallback_warn_once(func_name: &str, reason: &str) {
+    if !env_flag("RUSTMODLICA_JIT_BUILTIN_TRACE", true) {
+        return;
+    }
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let key = format!("{}::{}", func_name, reason);
+    let warned = WARNED.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut set) = warned.lock() {
+        if set.insert(key) {
+            fallback_counter::inc_jit_builtin();
+            eprintln!(
+                "[fallback:jit-builtin] func={} reason={} -> using placeholder result",
+                func_name, reason
+            );
+        }
+    }
+}
+
+pub(super) fn jit_var_fallback_trace(name: &str, reason: &str) {
+    if !env_flag("RUSTMODLICA_JIT_VAR_FALLBACK_TRACE", false) {
+        return;
+    }
+    fallback_counter::inc_jit_variable();
+    eprintln!(
+        "[fallback:jit-variable] name={} reason={} -> using 0.0",
+        name, reason
+    );
 }
 
 /// Cache hit avoids allocating `func_name` when ABI tag matches a prior declaration.

@@ -35,6 +35,10 @@ impl Flattener {
                         || lower.ends_with(".shiftsample")
                         || lower == "backsample"
                         || lower.ends_with(".backsample")
+                        || lower == "hold"
+                        || lower.ends_with(".hold")
+                        || lower == "previous"
+                        || lower.ends_with(".previous")
                     {
                         return true;
                     }
@@ -161,7 +165,9 @@ impl Flattener {
                 Expression::Variable(id) => {
                     out.insert(crate::string_intern::resolve_id(*id));
                 }
-                Expression::Der(inner) => collect_lhs_vars(inner, out),
+                Expression::Der(inner)
+                | Expression::Hold(inner)
+                | Expression::Previous(inner) => collect_lhs_vars(inner, out),
                 Expression::ArrayAccess(base, _) => collect_lhs_vars(base, out),
                 Expression::Dot(base, _) => collect_lhs_vars(base, out),
                 Expression::ArrayLiteral(items) => {
@@ -198,16 +204,18 @@ impl Flattener {
         ) {
             for stmt in stmts {
                 match stmt {
-                    AlgorithmStatement::Assignment(lhs, _) => {
-                        if in_clocked {
+                    AlgorithmStatement::Assignment(lhs, rhs) => {
+                        let rhs_clocked = expr_contains_clock(rhs);
+                        if in_clocked || rhs_clocked {
                             let mut vs = std::collections::HashSet::new();
                             collect_lhs_vars(lhs, &mut vs);
                             let pid = inherited_part.unwrap_or("default");
                             add_clocks(&mut vs, partmap, union, pid);
                         }
                     }
-                    AlgorithmStatement::MultiAssign(lhss, _) => {
-                        if in_clocked {
+                    AlgorithmStatement::MultiAssign(lhss, rhs) => {
+                        let rhs_clocked = expr_contains_clock(rhs);
+                        if in_clocked || rhs_clocked {
                             let mut vs = std::collections::HashSet::new();
                             for lhs in lhss {
                                 collect_lhs_vars(lhs, &mut vs);
@@ -284,13 +292,18 @@ impl Flattener {
                         }
                     }
                     Equation::MultiAssign(lhss, rhs) => {
-                        let is_clock = expr_contains_clock(rhs);
+                        let is_clock = expr_contains_clock(rhs)
+                            || lhss.iter().any(|e| expr_contains_clock(e));
                         if in_clocked || is_clock {
                             let mut vs = std::collections::HashSet::new();
                             for lhs in lhss {
                                 collect_lhs_vars(lhs, &mut vs);
                             }
-                            let pid = inherited_part.unwrap_or("default").to_string();
+                            let pid = if in_clocked {
+                                inherited_part.unwrap_or("default").to_string()
+                            } else {
+                                clock_partition_key_from_condition(rhs)
+                            };
                             add_clocks(&mut vs, partmap, union, &pid);
                         }
                     }

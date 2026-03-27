@@ -2,6 +2,7 @@
 
 use crate::i18n;
 use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
+use crate::diag::fallback_counter;
 use crate::jit::native;
 use crate::jit::CalcDerivsFunc;
 use std::sync::OnceLock;
@@ -234,8 +235,9 @@ pub(crate) fn run_event_iteration_at_time(
                     );
                     if recovered || !states.is_empty() {
                         if !recovered && !states.is_empty() {
+                            fallback_counter::inc_newton_init_accept();
                             eprintln!(
-                                "[newton-init] accepting t=0 Newton non-convergence (residual={:.6e}), continuing with current values",
+                                "[fallback:newton-init] accepting t=0 Newton non-convergence (residual={:.6e}), continuing with current values",
                                 *diag_residual
                             );
                         }
@@ -243,8 +245,9 @@ pub(crate) fn run_event_iteration_at_time(
                     }
                 }
                 if allow_algebraic_newton_fallback(status, states.len()) {
+                    fallback_counter::inc_newton_event_accept();
                     eprintln!(
-                        "[newton-diag] phase=event-iteration-fallback eval_calls={} last_eval_time={:.6} diag_residual={:.6e} diag_x={:.6e} (algebraic Newton fallback accepted)",
+                        "[fallback:newton-event] phase=event-iteration-fallback eval_calls={} last_eval_time={:.6} diag_residual={:.6e} diag_x={:.6e} (algebraic Newton fallback accepted)",
                         *diag_call_index, *diag_time, *diag_residual, *diag_x,
                     );
                     break;

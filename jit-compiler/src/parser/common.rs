@@ -59,6 +59,9 @@ pub fn parse_modification_from_pair(
             }
         }
     };
+    let is_operator_function = mod_redeclare
+        && mod_raw.contains("operator")
+        && mod_raw.contains("function");
     Some(Modification {
         name: mod_name,
         value: val,
@@ -69,6 +72,7 @@ pub fn parse_modification_from_pair(
         is_outer,
         is_public,
         is_protected,
+        is_operator_function,
     })
 }
 

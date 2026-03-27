@@ -12,6 +12,7 @@ static ASSERT_SUPPRESS: AtomicBool = AtomicBool::new(false);
 const ASSERT_PRINT_LIMIT: u64 = 32;
 static NEWTON_DUAL_VALIDATE_ENABLED: OnceLock<bool> = OnceLock::new();
 static NEWTON_SPARSE_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
+static ASSERT_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn env_flag(name: &str) -> bool {
     std::env::var(name)
@@ -31,6 +32,10 @@ fn sparse_debug_enabled() -> bool {
     *NEWTON_SPARSE_DEBUG_ENABLED.get_or_init(|| env_flag("RUSTMODLICA_NEWTON_SPARSE_DEBUG"))
 }
 
+fn assert_trace_enabled() -> bool {
+    *ASSERT_TRACE_ENABLED.get_or_init(|| env_flag("RUSTMODLICA_ASSERT_TRACE"))
+}
+
 #[allow(clippy::cast_possible_truncation)]
 extern "C" fn modelica_assert(cond: f64, msg: f64) {
     if cond == 0.0 {
@@ -39,7 +44,7 @@ extern "C" fn modelica_assert(cond: f64, msg: f64) {
         }
         let hit_idx = ASSERT_HIT_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
         let printed = ASSERT_PRINTED_COUNT.load(Ordering::SeqCst);
-        if printed < ASSERT_PRINT_LIMIT {
+        if assert_trace_enabled() && printed < ASSERT_PRINT_LIMIT {
             ASSERT_PRINTED_COUNT.fetch_add(1, Ordering::SeqCst);
             eprintln!("Assertion failed: {}", msg);
             if hit_idx == ASSERT_PRINT_LIMIT {
@@ -62,6 +67,19 @@ extern "C" fn rustmodlica_assert_suppress_end() {
 
 extern "C" fn modelica_terminate(_msg: f64) {
     TERMINATE_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// Diagnostic callback for residual consistency gate failures.
+/// Called by JIT-compiled code when the max absolute residual exceeds the configured tolerance.
+/// `max_abs`: largest |residual| after solving, `n_residuals`: total residual count,
+/// `tol`: configured tolerance threshold.
+#[allow(clippy::cast_possible_truncation)]
+extern "C" fn rustmodlica_residual_gate_fail(max_abs: f64, n_residuals: f64, tol: f64) {
+    let nr = n_residuals as i64;
+    eprintln!(
+        "SolvableBlock residual consistency gate FAILED: max|residual|={:.6e} > tol={:.1e}, residuals={}",
+        max_abs, tol, nr
+    );
 }
 
 pub fn terminate_requested() -> bool {
@@ -551,6 +569,10 @@ pub fn register_symbols(builder: &mut JITBuilder) {
 
     builder.symbol("assert", modelica_assert as *const u8);
     builder.symbol("terminate", modelica_terminate as *const u8);
+    builder.symbol(
+        "rustmodlica_residual_gate_fail",
+        rustmodlica_residual_gate_fail as *const u8,
+    );
     builder.symbol("Boolean", modelica_boolean as *const u8);
     builder.symbol("not", modelica_not as *const u8);
     builder.symbol("String", modelica_string as *const u8);
@@ -642,6 +664,7 @@ pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     set.insert("rustmodlica_real_fft_write_to_file");
     set.insert("assert");
     set.insert("terminate");
+    set.insert("rustmodlica_residual_gate_fail");
     set.insert("Boolean");
     set.insert("not");
     set.insert("String");

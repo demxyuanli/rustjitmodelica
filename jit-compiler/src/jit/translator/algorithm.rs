@@ -3,6 +3,7 @@ use super::super::types::ArrayType;
 use super::expr::helpers::lookup_or_insert_import;
 use super::expr::{compile_expression, compile_zero_crossing_store};
 use crate::ast::{AlgorithmStatement, Expression, Operator};
+use crate::diag::fallback_counter;
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
@@ -557,10 +558,11 @@ pub fn compile_algorithm_stmt(
                 format!("{:?}", rhs)
             };
             eprintln!(
-                "Warning: Multi-assign fallback writes zero to {} target(s) for unsupported RHS {}.",
+                "[fallback:jit-multi-assign] writes zero to {} target(s) for unsupported RHS {}.",
                 lhss.len(),
                 rhs_hint
             );
+            fallback_counter::inc_jit_multi_assign();
             let zero = builder.ins().f64const(0.0);
             for lhs in lhss {
                 compile_store_to_lhs(lhs, zero, ctx, builder)?;

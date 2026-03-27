@@ -16,13 +16,17 @@ use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_en
 use super::solvable::SymbolicJacobianPlan;
 
 fn sparse_debug_enabled() -> bool {
-    std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
-        .ok()
-        .map(|v| {
-            let t = v.trim().to_ascii_lowercase();
-            t == "1" || t == "true" || t == "on" || t == "yes"
-        })
-        .unwrap_or(false)
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
+            .ok()
+            .map(|v| {
+                let t = v.trim().to_ascii_lowercase();
+                t == "1" || t == "true" || t == "on" || t == "yes"
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn align_up(v: usize, align: usize) -> usize {

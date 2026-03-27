@@ -76,6 +76,15 @@ pub struct CompilePerfReport {
     pub aot_cache_status: String,
     pub jit_compile_ok: bool,
     pub jit_error: Option<String>,
+    pub fallback_total: u64,
+    pub fallback_jit_builtin: u64,
+    pub fallback_jit_variable: u64,
+    pub fallback_jit_derivative: u64,
+    pub fallback_jit_equation_skip: u64,
+    pub fallback_jit_multi_assign: u64,
+    pub fallback_newton_init_accept: u64,
+    pub fallback_newton_event_accept: u64,
+    pub fallback_clock_degrade: u64,
 }
 
 impl Default for CompilerOptions {

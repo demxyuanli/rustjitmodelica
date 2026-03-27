@@ -5,6 +5,21 @@ use crate::ast::{Equation, Expression, Operator};
 use crate::diag::SourceLocation;
 use crate::loader::ModelLoader;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+static CONNECT_WARN_ENABLED: OnceLock<bool> = OnceLock::new();
+
+fn connect_warn_enabled() -> bool {
+    *CONNECT_WARN_ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_CONNECT_WARN")
+            .ok()
+            .map(|v| {
+                let t = v.trim().to_ascii_lowercase();
+                t == "1" || t == "true" || t == "on" || t == "yes"
+            })
+            .unwrap_or(false)
+    })
+}
 
 fn has_connector_members(path: &str, flat: &FlattenedModel) -> bool {
     let prefix = format!("{}_", path);
@@ -193,7 +208,7 @@ pub fn resolve_connections(
                     .push((a_path.clone(), b_path.clone()));
             }
         } else {
-            if !loader.quiet {
+            if !loader.quiet && connect_warn_enabled() {
                 if type_a.is_none() {
                     let cands = connector_debug_candidates(a_path, flat);
                     eprintln!(
@@ -283,7 +298,7 @@ pub fn resolve_connections(
                 }
             }
             if !found {
-                if !loader.quiet {
+                if !loader.quiet && connect_warn_enabled() {
                     let cands = connector_debug_candidates(a_path, flat);
                     eprintln!("Warning: Connect involving unknown variable '{}'. Assuming potential equality.", a_path);
                     if !cands.is_empty() {

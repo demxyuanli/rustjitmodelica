@@ -10,8 +10,8 @@ use crate::jit::types::ArrayType;
 use super::builtin::try_compile_builtin_placeholder_constant;
 use super::helpers::{
     abi_params_short, import_call_abi_tag, jit_dot_trace_enabled, jit_import_debug_enabled,
-    lookup_or_insert_import, modelica_constants_dot_member, modelica_constants_flat_variable,
-    pre_scalar_name_bound,
+    jit_var_fallback_trace, lookup_or_insert_import, modelica_constants_dot_member,
+    modelica_constants_flat_variable, pre_scalar_name_bound,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 
@@ -67,6 +67,7 @@ pub(super) fn compile_pre_expression(
                     || name == "samplePeriod"
                     || name == "generateNoise"
                 {
+                    jit_var_fallback_trace(&name, "pre-known-runtime-placeholder");
                     Ok(builder.ins().f64const(0.0))
                 } else if name.ends_with("_sampleTrigger")
                     || name.ends_with("_firstTrigger")
@@ -75,8 +76,10 @@ pub(super) fn compile_pre_expression(
                     || name.ends_with("_f")
                     || name.contains("stateSpace_")
                 {
+                    jit_var_fallback_trace(&name, "pre-temporary-symbol-placeholder");
                     Ok(builder.ins().f64const(0.0))
                 } else if name.contains('_') {
+                    jit_var_fallback_trace(&name, "pre-generic-underscore-placeholder");
                     Ok(builder.ins().f64const(0.0))
                 } else {
                     Err(format!("Variable {} not found in pre() context", name))

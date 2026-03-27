@@ -158,6 +158,27 @@ pub(crate) fn early_compat(name: &str) -> EarlyCompat {
         _ if name.starts_with("Types.") => EarlyCompat::Soft(vec![
             format!("Modelica.Mechanics.MultiBody.{}", name),
         ]),
+        _ if name == "Frames" || name.starts_with("Frames.") => EarlyCompat::Soft(vec![
+            format!("Modelica.Mechanics.MultiBody.{name}"),
+        ]),
+        _ if name == "Parts" || name.starts_with("Parts.") => EarlyCompat::Soft(vec![
+            format!("Modelica.Mechanics.MultiBody.{name}"),
+        ]),
+        _ if name == "Joints" || name.starts_with("Joints.") => EarlyCompat::Soft(vec![
+            format!("Modelica.Mechanics.MultiBody.{name}"),
+        ]),
+        _ if name == "Forces" || name.starts_with("Forces.") => EarlyCompat::Soft(vec![
+            format!("Modelica.Mechanics.MultiBody.{name}"),
+        ]),
+        _ if name == "FlowModel" => EarlyCompat::Soft(vec![
+            "Modelica.Fluid.Pipes.BaseClasses.FlowModels.DetailedPipeFlow".to_string(),
+        ]),
+        _ if name.starts_with("FlowModel.") => EarlyCompat::Soft(vec![
+            format!(
+                "Modelica.Fluid.Pipes.BaseClasses.FlowModels.DetailedPipeFlow{}",
+                name.trim_start_matches("FlowModel")
+            ),
+        ]),
         _ if name == "oneTrue" => EarlyCompat::Soft(vec![
             "Modelica.Electrical.Batteries.Utilities.oneTrue".to_string(),
         ]),
@@ -212,6 +233,43 @@ pub(crate) fn early_compat(name: &str) -> EarlyCompat {
                 )
             };
             EarlyCompat::Soft(vec![alt])
+        }
+        _ if name == "Shapes" || name.starts_with("Shapes.") => {
+            let alt = if name == "Shapes" {
+                "Modelica.Magnetic.FluxTubes.Shapes".to_string()
+            } else {
+                format!(
+                    "Modelica.Magnetic.FluxTubes.Shapes.{}",
+                    name.trim_start_matches("Shapes.")
+                )
+            };
+            EarlyCompat::Soft(vec![alt])
+        }
+        _ if name == "HeatPort_a" || name == "HeatPort_b" => {
+            EarlyCompat::Soft(vec![format!("Modelica.Thermal.HeatTransfer.Interfaces.{name}")])
+        }
+        _ if name.starts_with("HeatPort_a.") || name.starts_with("HeatPort_b.") => {
+            EarlyCompat::Soft(vec![format!(
+                "Modelica.Thermal.HeatTransfer.Interfaces.{name}"
+            )])
+        }
+        _ if name == "Medium" || name.starts_with("Medium.") => {
+            let alt = if name == "Medium" {
+                "Modelica.Media.Interfaces.PartialMedium".to_string()
+            } else {
+                format!(
+                    "Modelica.Media.Interfaces.PartialMedium.{}",
+                    name.trim_start_matches("Medium.")
+                )
+            };
+            EarlyCompat::Soft(vec![alt])
+        }
+        _ if name == "Sampler" || name.starts_with("Sampler.") => {
+            EarlyCompat::Soft(vec![
+                format!("Modelica.Clocked.RealSignals.{name}"),
+                format!("Modelica.Clocked.BooleanSignals.{name}"),
+                format!("Modelica.Clocked.IntegerSignals.{name}"),
+            ])
         }
         _ => {
             let clocked_short_prefixes = [

@@ -1,10 +1,25 @@
 use crate::ast::{AlgorithmStatement, Equation, Expression};
 use crate::compiler::inline::is_builtin_function;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use super::expressions::{eval_const_expr, expr_to_path, index_expression, prefix_expression};
 use super::utils::{convert_eq_to_alg, get_function_outputs};
 use super::ExpandTarget;
+
+static CONNECT_PATH_WARN_ENABLED: OnceLock<bool> = OnceLock::new();
+
+fn connect_path_warn_enabled() -> bool {
+    *CONNECT_PATH_WARN_ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_CONNECT_WARN")
+            .ok()
+            .map(|v| {
+                let t = v.trim().to_ascii_lowercase();
+                t == "1" || t == "true" || t == "on" || t == "yes"
+            })
+            .unwrap_or(false)
+    })
+}
 
 fn extract_der_array_base(expr: &Expression) -> Option<String> {
     match expr {
@@ -397,7 +412,7 @@ impl super::Flattener {
                         } else {
                             target.connections.push((a_path, b_path));
                         }
-                    } else {
+                    } else if connect_path_warn_enabled() {
                         eprintln!(
                             "Warning: Could not resolve connection path: {:?} - {:?}",
                             a_pre, b_pre

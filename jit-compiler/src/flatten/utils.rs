@@ -376,6 +376,15 @@ pub fn apply_modification(model: &mut Model, modification: &Modification) {
 }
 
 pub fn merge_models(child: &mut Model, base: &Model) {
+    if base.is_function && !child.is_function {
+        child.is_function = true;
+    }
+    if base.is_operator_function && !child.is_operator_function {
+        child.is_operator_function = true;
+    }
+    if base.is_operator_record && !child.is_operator_record {
+        child.is_operator_record = true;
+    }
     let mut existing_vars = HashSet::new();
     for decl in &child.declarations {
         existing_vars.insert(decl.name.clone());
@@ -388,8 +397,6 @@ pub fn merge_models(child: &mut Model, base: &Model) {
     for eq in &base.equations {
         child.equations.push(eq.clone());
     }
-    // Inherit inner classes (e.g. replaceable model FlowModel) so that short names can be resolved
-    // relative to the derived class context.
     for inner in &base.inner_classes {
         if !child.inner_class_index.contains_key(&inner.name) {
             let idx = child.inner_classes.len();

@@ -10,6 +10,9 @@ use crate::backend_dae::{
     SimulationDae,
 };
 use crate::diag::WarningInfo;
+use crate::diag::fallback_counter;
+use crate::diag::fallback_counter::FallbackCounterSnapshot;
+use crate::diag::fallback_registry;
 use crate::i18n;
 use crate::jit::native::builtin_jit_symbol_names;
 use crate::jit::Jit;
@@ -262,6 +265,19 @@ pub(super) fn compile(
             model_name: model_name.to_string(),
             ..Default::default()
         };
+        let apply_fallback_snapshot = |report: &mut CompilePerfReport| {
+            let snap: FallbackCounterSnapshot = fallback_counter::snapshot();
+            report.fallback_jit_builtin = snap.jit_builtin;
+            report.fallback_jit_variable = snap.jit_variable;
+            report.fallback_jit_derivative = snap.jit_derivative;
+            report.fallback_jit_equation_skip = snap.jit_equation_skip;
+            report.fallback_jit_multi_assign = snap.jit_multi_assign;
+            report.fallback_newton_init_accept = snap.newton_init_accept;
+            report.fallback_newton_event_accept = snap.newton_event_accept;
+            report.fallback_clock_degrade = snap.clock_degrade;
+            report.fallback_total = fallback_counter::total(&snap);
+        };
+        fallback_registry::print_fallback_config();
         if !compiler.options.quiet {
             println!(
                 "{}",
@@ -287,6 +303,7 @@ pub(super) fn compile(
                 }
             }
             let value = compiler.run_function_once(model_name)?;
+            apply_fallback_snapshot(&mut perf_report);
             compiler.last_compile_perf = Some(perf_report);
             return Ok(CompileOutput::FunctionRun(value));
         }
@@ -318,6 +335,7 @@ pub(super) fn compile(
         }
         let flat_model = frontend.flat_model;
         if compiler.options.flat_snapshot_only {
+            apply_fallback_snapshot(&mut perf_report);
             compiler.last_compile_perf = Some(perf_report);
             return Ok(CompileOutput::FlatSnapshotDone);
         }
@@ -982,6 +1000,7 @@ pub(super) fn compile(
             Ok((calc_derivs, when_count, crossings_count)) => {
                 perf_report.jit_compile_ok = true;
                 perf_report.jit_error = None;
+                apply_fallback_snapshot(&mut perf_report);
                 compiler.last_compile_perf = Some(perf_report);
                 Ok(CompileOutput::Simulation(Artifacts {
                     calc_derivs,
@@ -1017,6 +1036,7 @@ pub(super) fn compile(
                 let err_text = e.to_string();
                 perf_report.jit_compile_ok = false;
                 perf_report.jit_error = Some(err_text.clone());
+                apply_fallback_snapshot(&mut perf_report);
                 compiler.last_compile_perf = Some(perf_report);
                 Err(format!(
                     "JIT compilation failed: {}{}",

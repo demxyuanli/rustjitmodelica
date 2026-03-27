@@ -8,10 +8,11 @@ use cranelift_module::{Linkage, Module};
 
 use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
+use crate::diag::fallback_counter;
 use super::builtin::try_compile_builtin_call;
 use super::helpers::{
     abi_params_short, import_call_abi_tag, jit_dot_fallback_zero_enabled, jit_dot_trace_enabled,
-    jit_import_debug_enabled, jit_scalar_name_bound, lookup_or_insert_import,
+    jit_import_debug_enabled, jit_scalar_name_bound, jit_var_fallback_trace, lookup_or_insert_import,
     modelica_constants_dot_member, modelica_constants_flat_variable,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
@@ -45,6 +46,13 @@ fn compile_base_sample_trigger(
                 Ok(Some((time_val, interval_val)))
             }
         }
+        Expression::Call(name, args)
+            if (name.eq_ignore_ascii_case("clock") || name.ends_with(".Clock"))
+                && !args.is_empty() =>
+        {
+            let interval_val = compile_expression_rec(args.last().unwrap(), ctx, builder)?;
+            Ok(Some((time_val, interval_val)))
+        }
         _ => Ok(None),
     }
 }
@@ -72,30 +80,50 @@ fn warn_clock_degrade_once(kind: &'static str) {
     static SUPER_WARNED: OnceLock<()> = OnceLock::new();
     static SHIFT_WARNED: OnceLock<()> = OnceLock::new();
     static SUB_WARNED: OnceLock<()> = OnceLock::new();
-    let enabled = std::env::var("RUSTMODLICA_SYNC_WARN")
-        .ok()
-        .map(|v| {
-            let t = v.trim();
-            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(true);
+    static BACK_WARNED: OnceLock<()> = OnceLock::new();
+    static INTERVAL_WARNED: OnceLock<()> = OnceLock::new();
+    static SYNC_WARN_ENABLED: OnceLock<bool> = OnceLock::new();
+    let enabled = *SYNC_WARN_ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_SYNC_WARN")
+            .ok()
+            .map(|v| {
+                let t = v.trim();
+                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(true)
+    });
     if !enabled {
         return;
     }
     match kind {
         "superSample" => {
             if SUPER_WARNED.set(()).is_ok() {
-                eprintln!("[SYNC_GUARD] superSample currently uses first-version passthrough semantics.");
+                fallback_counter::inc_clock_degrade();
+                eprintln!("[fallback:clock] superSample currently uses first-version passthrough semantics.");
             }
         }
         "shiftSample" => {
             if SHIFT_WARNED.set(()).is_ok() {
-                eprintln!("[SYNC_GUARD] shiftSample currently uses first-version passthrough semantics.");
+                fallback_counter::inc_clock_degrade();
+                eprintln!("[fallback:clock] shiftSample currently uses first-version passthrough semantics.");
             }
         }
         "subSample" => {
             if SUB_WARNED.set(()).is_ok() {
-                eprintln!("[SYNC_GUARD] subSample without sample(base) falls back to passthrough.");
+                fallback_counter::inc_clock_degrade();
+                eprintln!("[fallback:clock] subSample without sample(base) falls back to passthrough.");
+            }
+        }
+        "backSample" => {
+            if BACK_WARNED.set(()).is_ok() {
+                fallback_counter::inc_clock_degrade();
+                eprintln!("[fallback:clock] backSample without sample(base) falls back to passthrough.");
+            }
+        }
+        "interval" => {
+            if INTERVAL_WARNED.set(()).is_ok() {
+                fallback_counter::inc_clock_degrade();
+                eprintln!("[fallback:clock] interval() fallback currently returns 0.0 for non-numeric sample clock.");
             }
         }
         _ => {}
@@ -202,6 +230,7 @@ pub(super) fn compile_expression_rec(
                 }
                 if base == "a" || base == "b" {
                     let _ = idx0;
+                    jit_var_fallback_trace(&name, "array-scalar-placeholder-a-b");
                     return Ok(builder.ins().f64const(0.0));
                 }
             }
@@ -220,6 +249,7 @@ pub(super) fn compile_expression_rec(
                 || name.ends_with("Trigger")
                 || name.ends_with("_f")
             {
+                jit_var_fallback_trace(&name, "temporary-symbol-placeholder");
                 return Ok(builder.ins().f64const(0.0));
             }
 
@@ -227,12 +257,15 @@ pub(super) fn compile_expression_rec(
                 return Ok(builder.ins().f64const(v));
             }
             if name.contains("_Types_Init_") {
+                jit_var_fallback_trace(&name, "types-init-placeholder");
                 return Ok(builder.ins().f64const(0.0));
             }
             if name.contains("_Init_") {
+                jit_var_fallback_trace(&name, "init-placeholder");
                 return Ok(builder.ins().f64const(0.0));
             }
             if name.contains("_Types_") {
+                jit_var_fallback_trace(&name, "types-placeholder");
                 return Ok(builder.ins().f64const(0.0));
             }
             if name.contains("Machine_inf") || name.ends_with("_Machine_inf") {
@@ -240,21 +273,25 @@ pub(super) fn compile_expression_rec(
             }
             if name.contains("combiTimeTable") {
                 if name.contains("combiTimeTable_") {
+                    jit_var_fallback_trace(&name, "combitimetable-placeholder");
                     return Ok(builder.ins().f64const(0.0));
                 }
                 if let Some((_base, _idx0)) = name
                     .rsplit_once('_')
                     .and_then(|(b, i)| i.parse::<usize>().ok().map(|n| (b, n)))
                 {
+                    jit_var_fallback_trace(&name, "combitimetable-index-placeholder");
                     return Ok(builder.ins().f64const(0.0));
                 }
             }
 
             if name == "startTime" || name == "u" || name == "samplePeriod" || name == "generateNoise" {
+                jit_var_fallback_trace(&name, "known-runtime-placeholder");
                 return Ok(builder.ins().f64const(0.0));
             }
 
             if name.contains('_') {
+                jit_var_fallback_trace(&name, "generic-underscore-placeholder");
                 return Ok(builder.ins().f64const(0.0));
             }
             Err(format!("Variable {} not found", name))
@@ -564,6 +601,13 @@ pub(super) fn compile_expression_rec(
                     return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.derivs_ptr, offset));
                 }
             }
+            if jit_dot_trace_enabled() {
+                fallback_counter::inc_jit_derivative();
+                eprintln!(
+                    "[fallback:jit-derivative] der fallback to 0.0 for expression {:?}",
+                    inner
+                );
+            }
             Ok(builder.ins().f64const(0.0))
         }
         Expression::Range(_, _, _) => Ok(builder.ins().f64const(0.0)),
@@ -673,18 +717,24 @@ pub(super) fn compile_expression_rec(
             }
         }
         Expression::Interval(clock_expr) => {
-            // interval(clock): keep numeric period when directly available.
-            // For sampled-time variables (e.g. interval(simTime) with simTime = sample(time)),
-            // use a stable zero fallback to avoid algebraic loops on tolerance terms.
             match &**clock_expr {
                 Expression::Sample(inner) => {
                     if matches!(&**inner, Expression::Number(_)) {
                         compile_expression_rec(inner, ctx, builder)
                     } else {
+                        warn_clock_degrade_once("interval");
                         Ok(builder.ins().f64const(0.0))
                     }
                 }
+                Expression::Call(name, cargs)
+                    if (name.eq_ignore_ascii_case("clock") || name.ends_with(".clock")
+                        || name.eq_ignore_ascii_case("sample") || name.ends_with(".sample"))
+                        && !cargs.is_empty() =>
+                {
+                    compile_expression_rec(cargs.last().unwrap(), ctx, builder)
+                }
                 Expression::Variable(id) if crate::string_intern::resolve_id(*id).contains("simTime") => {
+                    warn_clock_degrade_once("interval");
                     Ok(builder.ins().f64const(0.0))
                 }
                 _ => compile_expression_rec(clock_expr, ctx, builder),

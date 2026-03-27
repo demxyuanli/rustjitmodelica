@@ -5,6 +5,7 @@ use cranelift_module::{Linkage, Module};
 
 use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
+use crate::jit::translator::expr::helpers::jit_builtin_fallback_warn_once;
 use std::sync::OnceLock;
 
 /// `sample(interval)` / `sample(start, interval)` and package-qualified `.sample` / `.interval`.
@@ -247,6 +248,9 @@ pub(super) fn try_compile_builtin_call(
         &mut cranelift::frontend::FunctionBuilder<'_>,
     ) -> Result<Value, String>,
 ) -> Option<Result<Value, String>> {
+    if args.is_empty() {
+        jit_builtin_fallback_warn_once(func_name, "empty-args");
+    }
     fn warn_stream_semantics_once(kind: &'static str) {
         static INSTREAM_WARNED: OnceLock<()> = OnceLock::new();
         static ACTUAL_WARNED: OnceLock<()> = OnceLock::new();
@@ -254,17 +258,17 @@ pub(super) fn try_compile_builtin_call(
         match kind {
             "inStream" => {
                 let _ = INSTREAM_WARNED.get_or_init(|| {
-                    eprintln!("[stream-semantics] inStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
+                    eprintln!("[fallback:stream-semantics] inStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
                 });
             }
             "actualStream" => {
                 let _ = ACTUAL_WARNED.get_or_init(|| {
-                    eprintln!("[stream-semantics] actualStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
+                    eprintln!("[fallback:stream-semantics] actualStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
                 });
             }
             "peerMissing" => {
                 let _ = PEER_WARNED.get_or_init(|| {
-                    eprintln!("[stream-semantics] stream peer/flow mapping not found, fallback to passthrough for this model path")
+                    eprintln!("[fallback:stream-semantics] stream peer/flow mapping not found, fallback to passthrough for this model path")
                 });
             }
             _ => {}
@@ -284,6 +288,7 @@ pub(super) fn try_compile_builtin_call(
             let c = head.chars().next().unwrap_or('\0');
             if c.is_ascii_uppercase() {
                 if args.is_empty() {
+                    jit_builtin_fallback_warn_once(func_name, "namespace-helper-empty-args");
                     return Some(Ok(builder.ins().f64const(0.0)));
                 }
                 return Some(compile_rec(&args[0], ctx, builder));
@@ -294,6 +299,7 @@ pub(super) fn try_compile_builtin_call(
         let c = func_name.chars().next().unwrap_or('\0');
         if c.is_ascii_uppercase() {
             if args.is_empty() {
+                jit_builtin_fallback_warn_once(func_name, "capitalized-helper-empty-args");
                 return Some(Ok(builder.ins().f64const(0.0)));
             }
             return Some(compile_rec(&args[0], ctx, builder));
@@ -320,14 +326,17 @@ pub(super) fn try_compile_builtin_call(
         return Some(compile_rec(&args[0], ctx, builder));
     }
     if func_name.ends_with("gravityAcceleration") || func_name.contains(".gravityAcceleration") {
+        jit_builtin_fallback_warn_once(func_name, "gravity-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     // Medium package calls are library-defined and not linked into the JIT. For validation we
     // treat them as placeholders to avoid unresolved symbols.
     if func_name.starts_with("Medium.") {
+        jit_builtin_fallback_warn_once(func_name, "medium-package-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name.starts_with("Internal.") || func_name.contains(".Internal.") {
+        jit_builtin_fallback_warn_once(func_name, "internal-package-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name.ends_with("massFlowRate_dp_and_Re") || func_name.contains(".massFlowRate_dp_and_Re") {
@@ -460,9 +469,11 @@ pub(super) fn try_compile_builtin_call(
         return Some(compile_rec(&args[0], ctx, builder));
     }
     if func_name.starts_with("Connections.") {
+        jit_builtin_fallback_warn_once(func_name, "connections-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "generateNoise" || func_name.ends_with(".generateNoise") {
+        jit_builtin_fallback_warn_once(func_name, "generate-noise-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "flowCharacteristic" || func_name.ends_with(".flowCharacteristic") {
@@ -510,6 +521,7 @@ pub(super) fn try_compile_builtin_call(
     if func_name.ends_with("getInterpolationCoefficients")
         || func_name.contains(".getInterpolationCoefficients")
     {
+        jit_builtin_fallback_warn_once(func_name, "interpolation-coeff-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "semiLinear" || func_name.ends_with(".semiLinear") {
@@ -547,9 +559,11 @@ pub(super) fn try_compile_builtin_call(
         || func_name == "skew"
         || func_name.ends_with(".skew")
     {
+        jit_builtin_fallback_warn_once(func_name, "matrix-helper-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name.starts_with("BaseClasses.") || func_name.contains(".BaseClasses.") {
+        jit_builtin_fallback_warn_once(func_name, "baseclasses-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name.starts_with("FCN") {
@@ -575,6 +589,7 @@ pub(super) fn try_compile_builtin_call(
         return Some(compile_rec(&args[0], ctx, builder));
     }
     if func_name.starts_with("Frames.") || func_name.contains(".Frames.") {
+        jit_builtin_fallback_warn_once(func_name, "frames-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "noEvent" {
@@ -705,9 +720,11 @@ pub(super) fn try_compile_builtin_call(
         return Some(compile_rec(&args[0], ctx, builder));
     }
     if func_name == "imag" || func_name.ends_with(".imag") {
+        jit_builtin_fallback_warn_once(func_name, "imag-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "cardinality" {
+        jit_builtin_fallback_warn_once(func_name, "cardinality-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "linearTemperatureDependency" {
@@ -737,6 +754,7 @@ pub(super) fn try_compile_builtin_call(
             return Some(Ok(builder.ins().select(is_initial, one, z)));
         }
         // User-function JIT stubs have no `time` SSA; treat as non-initial (simulation path).
+        jit_builtin_fallback_warn_once(func_name, "initial-without-time");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "terminal" {
@@ -752,6 +770,7 @@ pub(super) fn try_compile_builtin_call(
             let z = builder.ins().f64const(0.0);
             return Some(Ok(builder.ins().select(is_terminal, one, z)));
         }
+        jit_builtin_fallback_warn_once(func_name, "terminal-without-time");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "Boolean" {
@@ -890,6 +909,7 @@ pub(super) fn try_compile_builtin_call(
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "zeros" {
+        jit_builtin_fallback_warn_once(func_name, "zeros-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "ones" {
@@ -1120,8 +1140,24 @@ pub(super) fn try_compile_builtin_call(
         return Some(compile_clock_derived_call(op_name, args, ctx, builder, compile_rec));
     }
     if func_name == "Clock" || func_name.ends_with(".Clock") {
-        // Clock constructor-like calls are not numerically represented in current JIT.
-        // Keep the pipeline running by passing through the first numeric argument when present.
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "noClock" || func_name.ends_with(".noClock") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "hold" || func_name.ends_with(".hold") {
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "previous" || func_name.ends_with(".previous") {
         if args.is_empty() {
             return Some(Ok(builder.ins().f64const(0.0)));
         }
@@ -1202,9 +1238,11 @@ pub(super) fn try_compile_builtin_call(
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name.ends_with("ExternalCombiTimeTable") {
+        jit_builtin_fallback_warn_once(func_name, "external-combitimetable-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     if func_name == "loadResource" || func_name.ends_with(".loadResource") {
+        jit_builtin_fallback_warn_once(func_name, "loadresource-placeholder");
         return Some(Ok(builder.ins().f64const(0.0)));
     }
     None
@@ -1217,6 +1255,7 @@ pub(super) fn try_compile_builtin_placeholder_constant(
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Option<Value> {
     if func_name.starts_with("Internal.") || func_name.contains(".Internal.") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-constant");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name == "Modelica.Math.Vectors.interpolate" || func_name.ends_with(".interpolate") {

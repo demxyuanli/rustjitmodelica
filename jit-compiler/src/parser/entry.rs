@@ -25,8 +25,23 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
             Rule::short_class_definition | Rule::type_definition => {
                 let mut alias = String::new();
                 let mut base = String::new();
+                let mut is_function = false;
+                let mut is_operator_function = false;
+                let mut is_record = false;
                 for p in item_pair.into_inner() {
                     match p.as_rule() {
+                        Rule::class_prefixes => {
+                            let ptext = p.as_str();
+                            if ptext.contains("function") {
+                                is_function = true;
+                            }
+                            if ptext.contains("operator") && ptext.contains("function") {
+                                is_operator_function = true;
+                            }
+                            if ptext.contains("record") {
+                                is_record = true;
+                            }
+                        }
                         Rule::identifier => {
                             if alias.is_empty() {
                                 alias = p.as_str().trim().to_string();
@@ -58,7 +73,14 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                         _ => {}
                     }
                 }
-                make_alias_model(alias, base)
+                let mut m = match make_alias_model(alias, base) {
+                    ClassItem::Model(m) => m,
+                    other => { items.push(other); continue; }
+                };
+                m.is_function = is_function;
+                m.is_operator_function = is_operator_function;
+                m.is_record = is_record;
+                ClassItem::Model(m)
             }
             Rule::connector_alias_definition => {
                 let mut alias = String::new();

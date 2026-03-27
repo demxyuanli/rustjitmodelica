@@ -2,6 +2,7 @@
 param(
     [switch]$SkipDir,
     [switch]$SummarizeSparseDense,
+    [int]$DirParallelWorkers = 0,
     [ValidateSet("all", "non_triggered", "triggered")]
     [string]$SparseDenseBltGuardFilter = "non_triggered",
     [string[]]$SparseDenseModelFilter = @()
@@ -109,6 +110,9 @@ $cases = @(
     @("TestLib/PkgA.PkgB.Inner", "pass"),
     @("TestLib/TypeAliasTest", "pass"),
     @("TestLib/ReplaceableTest", "pass"),
+    @("TestLib/OperatorFunctionShortClassDecl", "pass"),
+    @("TestLib/RedeclareOperatorFunctionExtendsDecl", "pass"),
+    @("TestLib/ExpandableConnectorAliasUse", "pass"),
     @("TestLib/ClockedPartitionTest", "pass"),
     @("TestLib/ClockedTwoRates", "pass"),
     @("ModelicaTest.JitStress.SyncOmCompare", "pass"),
@@ -138,6 +142,8 @@ if (-not (Test-Path -LiteralPath $regressLogDir)) { New-Item -ItemType Directory
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $regressLogNdjson = Join-Path $regressLogDir ("run_regression_{0}.ndjson" -f $stamp)
 $regressLogCsv = Join-Path $regressLogDir ("run_regression_{0}.csv" -f $stamp)
+$lockFilePath = Join-Path $regressLogDir "libraries.lock.json"
+Write-ReproContextSnapshot -RepoRoot $repoRoot -JitRoot $jitRoot -OutputPath $lockFilePath
 "timestamp,case_type,case_name,duration_ms,expect_target_ok,actual_ok,exit_code,status,reason,detail" | Set-Content -LiteralPath $regressLogCsv -Encoding UTF8
 $reproDir = Join-Path $regressLogDir ("repro_{0}" -f $stamp)
 if (-not (Test-Path -LiteralPath $reproDir)) { New-Item -ItemType Directory -Path $reproDir | Out-Null }
@@ -207,6 +213,50 @@ function Write-ReproBundle {
         ("detail=" + $ExtraDetail)
     ) | Set-Content -LiteralPath $path -Encoding ASCII
     return $path
+}
+
+function Write-ReproContextSnapshot {
+    param(
+        [string]$RepoRoot,
+        [string]$JitRoot,
+        [string]$OutputPath
+    )
+    $exePath = Join-Path $JitRoot "target\release\rustmodlica.exe"
+    $exeHash = ""
+    if (Test-Path -LiteralPath $exePath) {
+        try { $exeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exePath).Hash } catch {}
+    }
+    $gitCommit = ""
+    try {
+        Push-Location $RepoRoot
+        $gitCommit = (& git rev-parse HEAD 2>$null)
+        Pop-Location
+    } catch {
+        try { Pop-Location } catch {}
+    }
+    $candidateLibs = @(
+        (Join-Path $JitRoot "StandardLib"),
+        (Join-Path $JitRoot "TestLib"),
+        (Join-Path $JitRoot "Modelica"),
+        (Join-Path $JitRoot "ModelicaTest")
+    ) | Where-Object { Test-Path -LiteralPath $_ }
+    $snapshot = [pscustomobject]@{
+        schema_version = "libraries.lock.v1"
+        generated_at = (Get-Date).ToString("o")
+        repo_root = $RepoRoot
+        git_commit = [string]$gitCommit
+        executable = [pscustomobject]@{
+            path = $exePath
+            sha256 = $exeHash
+        }
+        library_roots = @($candidateLibs)
+        env = [pscustomobject]@{
+            RUSTMODLICA_EVENT_TRACE = [string]$env:RUSTMODLICA_EVENT_TRACE
+            RUSTMODLICA_PERF_TRACE = [string]$env:RUSTMODLICA_PERF_TRACE
+            RUSTMODLICA_AOT_CACHE_DIR = [string]$env:RUSTMODLICA_AOT_CACHE_DIR
+        }
+    }
+    $snapshot | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
 }
 
 function Get-PerfEnvDouble {
@@ -758,7 +808,11 @@ if (-not $SkipDir -and (Test-Path $modelicaDirScript)) {
     Write-Host "[DIR] run_modelica_dir_regression.ps1"
     $startedAt = Get-Date
     $dirExeRel = Join-Path "jit-compiler" (Join-Path $cargoTargetDir "release\rustmodlica.exe")
-    $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $modelicaDirScript -Root $repoRoot -MaxCases 0 -AllLibraryMo -NewtonCountsAsFailed -ExePath $dirExeRel 2>&1
+    $dirWorkers = $DirParallelWorkers
+    if ($dirWorkers -le 0) {
+        $dirWorkers = [Math]::Max(1, [Environment]::ProcessorCount)
+    }
+    $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $modelicaDirScript -Root $repoRoot -MaxCases 0 -AllLibraryMo -NewtonCountsAsFailed -ExePath $dirExeRel -ParallelWorkers $dirWorkers 2>&1
     $exitModelicaDir = $LASTEXITCODE
     $durationMs = [long](((Get-Date) - $startedAt).TotalMilliseconds)
     $modelicaDirOk = ($exitModelicaDir -eq 0)
@@ -812,24 +866,32 @@ if (Test-Path $eventScanMatrixScript) {
 
 if ($SummarizeSparseDense) {
     $summaryScript = Join-Path $repoRoot "scripts\summarize_sparse_dense.ps1"
+    $summaryInputDir = Join-Path $repoRoot "jit-compiler\build_sparse_dense_bench"
     if (Test-Path $summaryScript) {
-        Write-Host "[SPARSE-DENSE-SUMMARY] summarize_sparse_dense.ps1"
-        $startedAt = Get-Date
-        if ($SparseDenseModelFilter -and $SparseDenseModelFilter.Count -gt 0) {
-            $summaryOut = & $summaryScript -BltGuardFilter $SparseDenseBltGuardFilter -ModelFilter $SparseDenseModelFilter 2>&1
+        if (-not (Test-Path $summaryInputDir)) {
+            Write-Host "[SPARSE-DENSE-SUMMARY] skipped: benchmark input dir not found ($summaryInputDir)"
+            $ok++
+            $results += "OK SPARSE-DENSE-SUMMARY  expect=summary artifacts generated  actual=skip (reason=missing_input_dir)"
+            Write-CaseLog -CaseType "SUMMARY" -CaseName "SPARSE-DENSE-SUMMARY" -DurationMs 0 -ExpectTargetOk $true -ActualOk $true -ExitCode 0 -Status "SKIP" -Reason "missing_benchmark_input_dir" -Detail ("input_dir=" + $summaryInputDir + ";filter=" + $SparseDenseBltGuardFilter + ";models=" + ($SparseDenseModelFilter -join "|"))
         } else {
-            $summaryOut = & $summaryScript -BltGuardFilter $SparseDenseBltGuardFilter 2>&1
-        }
-        $summaryExit = $LASTEXITCODE
-        $durationMs = [long](((Get-Date) - $startedAt).TotalMilliseconds)
-        $summaryOk = ($summaryExit -eq 0)
-        if ($summaryOk) { $ok++ } else { $bad++ }
-        $sym = if ($summaryOk) { "OK" } else { "!!" }
-        $results += "$sym SPARSE-DENSE-SUMMARY  expect=summary artifacts generated  actual=$(if ($summaryOk) { 'pass' } else { 'fail' }) (filter=$SparseDenseBltGuardFilter)"
-        $detail = ("filter=" + $SparseDenseBltGuardFilter + ";models=" + (($SparseDenseModelFilter -join "|")))
-        Write-CaseLog -CaseType "SUMMARY" -CaseName "SPARSE-DENSE-SUMMARY" -DurationMs $durationMs -ExpectTargetOk $true -ActualOk $summaryOk -ExitCode $summaryExit -Status $(if ($summaryOk) { "OK" } else { "MISMATCH" }) -Reason $(if ($summaryOk) { "expectation_met" } else { "summary_script_failed" }) -Detail $detail
-        if ($summaryOut) {
-            $summaryOut | ForEach-Object { Write-Host $_ }
+            Write-Host "[SPARSE-DENSE-SUMMARY] summarize_sparse_dense.ps1"
+            $startedAt = Get-Date
+            if ($SparseDenseModelFilter -and $SparseDenseModelFilter.Count -gt 0) {
+                $summaryOut = & $summaryScript -InputDir $summaryInputDir -BltGuardFilter $SparseDenseBltGuardFilter -ModelFilter $SparseDenseModelFilter 2>&1
+            } else {
+                $summaryOut = & $summaryScript -InputDir $summaryInputDir -BltGuardFilter $SparseDenseBltGuardFilter 2>&1
+            }
+            $summaryExit = $LASTEXITCODE
+            $durationMs = [long](((Get-Date) - $startedAt).TotalMilliseconds)
+            $summaryOk = ($summaryExit -eq 0)
+            if ($summaryOk) { $ok++ } else { $bad++ }
+            $sym = if ($summaryOk) { "OK" } else { "!!" }
+            $results += "$sym SPARSE-DENSE-SUMMARY  expect=summary artifacts generated  actual=$(if ($summaryOk) { 'pass' } else { 'fail' }) (filter=$SparseDenseBltGuardFilter)"
+            $detail = ("filter=" + $SparseDenseBltGuardFilter + ";models=" + (($SparseDenseModelFilter -join "|")))
+            Write-CaseLog -CaseType "SUMMARY" -CaseName "SPARSE-DENSE-SUMMARY" -DurationMs $durationMs -ExpectTargetOk $true -ActualOk $summaryOk -ExitCode $summaryExit -Status $(if ($summaryOk) { "OK" } else { "MISMATCH" }) -Reason $(if ($summaryOk) { "expectation_met" } else { "summary_script_failed" }) -Detail $detail
+            if ($summaryOut) {
+                $summaryOut | ForEach-Object { Write-Host $_ }
+            }
         }
     } else {
         Write-Host "[SPARSE-DENSE-SUMMARY] skipped: script not found"

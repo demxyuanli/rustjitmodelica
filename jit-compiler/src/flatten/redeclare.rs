@@ -126,6 +126,7 @@ pub fn apply_modification_to_model(
                     is_outer: modification.is_outer,
                     is_public: modification.is_public,
                     is_protected: modification.is_protected,
+                    is_operator_function: modification.is_operator_function,
                 });
                 matched = true;
                 break;

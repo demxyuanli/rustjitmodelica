@@ -96,29 +96,37 @@ pub(super) fn resolve_mechanics_clocked_thermal_domain(
                 return Some(format!("Modelica.Thermal.{}", name));
             }
         }
-        if in_clocked_clocksignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
-            if name == "Interfaces" {
-                return Some("Modelica.Clocked.ClockSignals.Interfaces".to_string());
+        if in_clocked_clocksignals {
+            let clocked_sub = ["Interfaces", "Clocks"];
+            for sub in clocked_sub {
+                if name == sub || name.starts_with(&format!("{sub}.")) {
+                    return Some(format!("Modelica.Clocked.ClockSignals.{name}"));
+                }
             }
-            return Some(format!("Modelica.Clocked.ClockSignals.{}", name));
         }
-        if in_clocked_realsignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
-            if name == "Interfaces" {
-                return Some("Modelica.Clocked.RealSignals.Interfaces".to_string());
+        if in_clocked_realsignals {
+            let clocked_sub = ["Interfaces", "Sampler", "Periodic", "NonPeriodic", "TickBasedSources", "TimeBasedSources"];
+            for sub in clocked_sub {
+                if name == sub || name.starts_with(&format!("{sub}.")) {
+                    return Some(format!("Modelica.Clocked.RealSignals.{name}"));
+                }
             }
-            return Some(format!("Modelica.Clocked.RealSignals.{}", name));
         }
-        if in_clocked_booleansignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
-            if name == "Interfaces" {
-                return Some("Modelica.Clocked.BooleanSignals.Interfaces".to_string());
+        if in_clocked_booleansignals {
+            let clocked_sub = ["Interfaces", "Sampler", "NonPeriodic", "TickBasedSources", "TimeBasedSources"];
+            for sub in clocked_sub {
+                if name == sub || name.starts_with(&format!("{sub}.")) {
+                    return Some(format!("Modelica.Clocked.BooleanSignals.{name}"));
+                }
             }
-            return Some(format!("Modelica.Clocked.BooleanSignals.{}", name));
         }
-        if in_clocked_integersignals && (name == "Interfaces" || name.starts_with("Interfaces.")) {
-            if name == "Interfaces" {
-                return Some("Modelica.Clocked.IntegerSignals.Interfaces".to_string());
+        if in_clocked_integersignals {
+            let clocked_sub = ["Interfaces", "Sampler", "NonPeriodic", "TickBasedSources", "TimeBasedSources"];
+            for sub in clocked_sub {
+                if name == sub || name.starts_with(&format!("{sub}.")) {
+                    return Some(format!("Modelica.Clocked.IntegerSignals.{name}"));
+                }
             }
-            return Some(format!("Modelica.Clocked.IntegerSignals.{}", name));
         }
         if in_clocked_examples {
             if current_qualified.starts_with("Modelica.Clocked.Examples.Systems") {
@@ -203,11 +211,14 @@ pub(super) fn resolve_mechanics_clocked_thermal_domain(
             if name == "World" {
                 return Some("Modelica.Mechanics.MultiBody.World".to_string());
             }
-            if name == "Joints" {
-                return Some("Modelica.Mechanics.MultiBody.Joints".to_string());
-            }
-            if name.starts_with("Joints.") {
-                return Some(format!("Modelica.Mechanics.MultiBody.{}", name));
+            let mb_sub = [
+                "Joints", "Parts", "Forces", "Frames", "Sensors",
+                "Visualizers", "Interfaces", "Types", "Icons",
+            ];
+            for sub in mb_sub {
+                if name == sub || name.starts_with(&format!("{sub}.")) {
+                    return Some(format!("Modelica.Mechanics.MultiBody.{name}"));
+                }
             }
         }
         if in_heattransfer {
@@ -453,6 +464,17 @@ pub(super) fn resolve_context_prechecks(name: &str, current_qualified: &str) -> 
             if let Some(rest) = name.strip_prefix("Material.") {
                 return Some(format!("Modelica.Magnetic.FluxTubes.Material.{rest}"));
             }
+            if name == "Shapes" || name.starts_with("Shapes.") {
+                return Some(format!("Modelica.Magnetic.FluxTubes.{name}"));
+            }
+        }
+        let in_magnetic_fw_nonqs = (cq.contains("Modelica.Magnetic.FundamentalWave")
+            || cq.contains("ModelicaTest.Magnetic.FundamentalWave"))
+            && !cq.contains("QuasiStatic");
+        if in_magnetic_fw_nonqs {
+            if name == "Losses" || name.starts_with("Losses.") {
+                return Some(format!("Modelica.Magnetic.FundamentalWave.{name}"));
+            }
         }
         if cq == "Modelica.Electrical.Digital" || cq.starts_with("Modelica.Electrical.Digital.") {
             if let Some(rest) = name.strip_prefix("D.") {
@@ -643,8 +665,33 @@ pub(super) fn resolve_global_namespace_aliases(name: &str) -> Option<String> {
         {
             return Some(format!("Modelica.Fluid.{}", name));
         }
+        if name == "Interfaces.HeatPort"
+            || name == "Interfaces.HeatPort_a"
+            || name == "Interfaces.HeatPort_b"
+        {
+            return Some(format!("Modelica.Thermal.HeatTransfer.{}", name));
+        }
+        if name == "Interfaces.HeatPorts_a" {
+            return Some("Modelica.Thermal.HeatTransfer.Interfaces.HeatPort_a".to_string());
+        }
+        if name == "Interfaces.HeatPorts_b" {
+            return Some("Modelica.Thermal.HeatTransfer.Interfaces.HeatPort_b".to_string());
+        }
         if let Some(rest) = name.strip_prefix("Interfaces.FluidPort.") {
             return Some(format!("Modelica.Fluid.Interfaces.FluidPort.{rest}"));
+        }
+        if let Some(rest) = name.strip_prefix("Interfaces.HeatPort.") {
+            return Some(format!("Modelica.Thermal.HeatTransfer.Interfaces.HeatPort.{rest}"));
+        }
+        if let Some(rest) = name.strip_prefix("Interfaces.HeatPorts_a.") {
+            return Some(format!(
+                "Modelica.Thermal.HeatTransfer.Interfaces.HeatPorts_a.{rest}"
+            ));
+        }
+        if let Some(rest) = name.strip_prefix("Interfaces.HeatPorts_b.") {
+            return Some(format!(
+                "Modelica.Thermal.HeatTransfer.Interfaces.HeatPorts_b.{rest}"
+            ));
         }
         if name == "Interfaces.Frame"
             || name == "Interfaces.Frame_a"
