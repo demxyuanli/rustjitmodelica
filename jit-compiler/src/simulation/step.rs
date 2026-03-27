@@ -52,6 +52,7 @@ pub fn maybe_print_numeric_jacobian(
         buf_when: Vec::new(),
         buf_crossings: Vec::new(),
         buf_outputs: Vec::new(),
+        buf_guess: Vec::new(),
     };
     let mut jac = vec![0.0_f64; n * n];
     if let Err(code) = system.compute_ode_jacobian_numeric(time, states, &mut jac, 1e-6) {

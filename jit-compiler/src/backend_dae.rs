@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use crate::analysis::build_solvable_block_sparse_pattern;
+use crate::analysis::{build_solvable_block_sparse_pattern, BlockCausalityInfo};
 use crate::ast::Equation;
 
 /// Block type for partitioning (IR1-3): explicit single eq, torn nonlinear system, or mixed.
@@ -36,6 +36,14 @@ pub struct BlockInfo {
     pub sparse_row_ptr_len: Option<usize>,
     /// For torn blocks: CSR column index length.
     pub sparse_col_idx_len: Option<usize>,
+    /// Causality hint: estimated differential index for this block.
+    pub causality_diff_index: Option<u32>,
+    /// Causality hint: selected tearing variables.
+    pub causality_tearing_vars: Option<Vec<String>>,
+    /// Causality hint: whether this block is strongly connected.
+    pub causality_strongly_connected: Option<bool>,
+    /// Causality hint: whether this block is nonlinear.
+    pub causality_is_nonlinear: Option<bool>,
 }
 
 /// Variable classification for explicit DAE: 0 = F(x, x', z, u, t)
@@ -195,6 +203,7 @@ pub fn build_simulation_dae(
     differential_index: u32,
     constraint_equation_count: usize,
     clock_partitions: &[ClockPartition],
+    block_causality: &[BlockCausalityInfo],
 ) -> SimulationDae {
     let state_set: HashSet<&str> = state_vars.iter().map(String::as_str).collect();
     let discrete_set: HashSet<&str> = discrete_vars.iter().map(String::as_str).collect();
@@ -229,7 +238,8 @@ pub fn build_simulation_dae(
     let mut torn_block_count = 0usize;
     let mut torn_unknowns_total = 0usize;
     let mut blocks: Vec<BlockInfo> = Vec::new();
-    for eq in sorted_algebraic_equations {
+    for (idx, eq) in sorted_algebraic_equations.iter().enumerate() {
+        let causality = block_causality.get(idx);
         match eq {
             Equation::Simple(_, _)
             | Equation::For(_, _, _, _)
@@ -247,6 +257,10 @@ pub fn build_simulation_dae(
                     sparse_density: None,
                     sparse_row_ptr_len: None,
                     sparse_col_idx_len: None,
+                    causality_diff_index: causality.map(|c| c.diff_index),
+                    causality_tearing_vars: causality.map(|c| c.tearing_vars.clone()),
+                    causality_strongly_connected: causality.map(|c| c.strongly_connected),
+                    causality_is_nonlinear: causality.map(|c| c.is_nonlinear),
                 });
             }
             Equation::SolvableBlock {
@@ -267,6 +281,10 @@ pub fn build_simulation_dae(
                     sparse_density: sparse_stats.as_ref().map(|s| s.density),
                     sparse_row_ptr_len: sparse_stats.as_ref().map(|s| s.row_ptr_len),
                     sparse_col_idx_len: sparse_stats.as_ref().map(|s| s.col_idx_len),
+                    causality_diff_index: causality.map(|c| c.diff_index),
+                    causality_tearing_vars: causality.map(|c| c.tearing_vars.clone()),
+                    causality_strongly_connected: causality.map(|c| c.strongly_connected),
+                    causality_is_nonlinear: causality.map(|c| c.is_nonlinear),
                 });
             }
             _ => {}

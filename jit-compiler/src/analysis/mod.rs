@@ -6,7 +6,7 @@ mod solvable_sparsity;
 mod variable_collection;
 
 #[allow(unused_imports)]
-pub use blt::{sort_algebraic_equations, SortAlgebraicResult};
+pub use blt::{sort_algebraic_equations, BlockCausalityInfo, SortAlgebraicResult};
 #[allow(unused_imports)]
 pub use derivative::{collect_states_from_eq, find_unsupported_der_in_eq, normalize_der};
 #[allow(unused_imports)]

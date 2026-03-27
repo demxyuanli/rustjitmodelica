@@ -250,6 +250,13 @@ pub fn apply_redeclare_extends_blocks(model: &mut Model) {
 }
 
 fn merge_redeclare_supplement(target: &mut Model, block: &RedeclareExtendsBlock) {
+    if block.is_function {
+        target.is_function = true;
+    }
+    if block.is_operator_function {
+        target.is_function = true;
+        target.is_operator_function = true;
+    }
     for d in &block.declarations {
         if let Some(pos) = target
             .declarations

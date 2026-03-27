@@ -37,6 +37,10 @@ use self::types::{EventQueue, QueuedEvent, QueuedEventKind, ResultCollector};
 
 const CSV_ROWS_PER_FLUSH: u32 = 64;
 
+pub fn runtime_perf_counters() -> (u64, u64) {
+    perf_snapshot()
+}
+
 pub fn run_simulation(
     calc_derivs: CalcDerivsFunc,
     when_count: usize,
@@ -400,6 +404,7 @@ pub fn run_simulation(
                 buf_when: Vec::new(),
                 buf_crossings: Vec::new(),
                 buf_outputs: Vec::new(),
+                buf_guess: Vec::new(),
             };
             let step_res = if use_adaptive {
                 let r = rk45_solver.step(&mut system, time, dt, &mut states);
@@ -585,6 +590,7 @@ pub fn run_simulation(
                     buf_when: Vec::new(),
                     buf_crossings: Vec::new(),
                     buf_outputs: Vec::new(),
+                    buf_guess: Vec::new(),
                 };
                 let step_res = if use_adaptive {
                     let r = rk45_solver.step(&mut system, time, dt_event, &mut states);

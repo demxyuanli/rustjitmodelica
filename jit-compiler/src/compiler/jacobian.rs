@@ -264,6 +264,8 @@ pub fn print_backend_dae_info(
     blt_degrade_guard_triggered: bool,
     blt_degrade_guard_limit: Option<usize>,
     blt_degrade_guard_equation_count: Option<usize>,
+    symbolic_index_signal_count: usize,
+    implicit_derivative_constraint_count: usize,
 ) {
     let mut _simple = 0usize;
     let mut _for_eq = 0usize;
@@ -451,6 +453,22 @@ pub fn print_backend_dae_info(
                 avg_density * 100.0
             );
         }
+        let causality_strong = dae
+            .dae
+            .blocks
+            .iter()
+            .filter(|b| b.causality_strongly_connected.unwrap_or(false))
+            .count();
+        let causality_nonlinear = dae
+            .dae
+            .blocks
+            .iter()
+            .filter(|b| b.causality_is_nonlinear.unwrap_or(false))
+            .count();
+        println!(
+            " * Block causality: strongly_connected {} nonlinear {}",
+            causality_strong, causality_nonlinear
+        );
     }
 
     println!("{}", i18n::msg0("notification_backend"));
@@ -545,6 +563,10 @@ pub fn print_backend_dae_info(
     println!(
         "{}",
         i18n::msg("differential_index", &[&differential_index])
+    );
+    println!(
+        " * Symbolic index analysis: signals {} implicit_constraints {}",
+        symbolic_index_signal_count, implicit_derivative_constraint_count
     );
     println!("{}", i18n::msg("tearing_method", &[&opts.tearing_method]));
     println!(

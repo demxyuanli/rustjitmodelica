@@ -86,6 +86,9 @@ fn emit_line_search_update(
     j_val: Value,
     header_block: Block,
     exit_block: Block,
+    init_alpha_f: f64,
+    max_steps_f: f64,
+    armijo_f: f64,
 ) -> Result<(), String> {
     let eps = builder.ins().f64const(1e-12);
     let j_abs = builder.ins().fabs(j_val);
@@ -127,7 +130,7 @@ fn emit_line_search_update(
     builder.ins().stack_store(step, step_slot, 0);
     builder.ins().stack_store(abs_res, abs_res_slot, 0);
     builder.ins().stack_store(x, x_save_slot, 0);
-    let ls_init_alpha = builder.ins().f64const(1.0);
+    let ls_init_alpha = builder.ins().f64const(init_alpha_f);
     builder.ins().stack_store(ls_init_alpha, alpha_slot, 0);
     let ls_init_count = builder.ins().f64const(0.0);
     builder.ins().stack_store(ls_init_count, ls_count_slot, 0);
@@ -140,7 +143,7 @@ fn emit_line_search_update(
     builder.switch_to_block(ls_header);
     let ls_alpha = builder.ins().stack_load(cl_types::F64, alpha_slot, 0);
     let ls_cnt = builder.ins().stack_load(cl_types::F64, ls_count_slot, 0);
-    let ls_max = builder.ins().f64const(8.0);
+    let ls_max = builder.ins().f64const(max_steps_f);
     let ls_continue = builder.ins().fcmp(FloatCC::LessThan, ls_cnt, ls_max);
     builder
         .ins()
@@ -155,7 +158,7 @@ fn emit_line_search_update(
     let r_ls = compile_expression(&residuals[0], ctx, builder)?;
     let abs_r_ls = builder.ins().fabs(r_ls);
     let old_abs = builder.ins().stack_load(cl_types::F64, abs_res_slot, 0);
-    let c_armijo = builder.ins().f64const(1e-4);
+    let c_armijo = builder.ins().f64const(armijo_f);
     let ca = builder.ins().fmul(c_armijo, ls_alpha);
     let descent = builder.ins().fmul(ca, old_abs);
     let threshold = builder.ins().fsub(old_abs, descent);
@@ -197,6 +200,12 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
     ctx: &mut TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
+    fn advanced_tearing_trace_enabled() -> bool {
+        std::env::var("RUSTMODLICA_ADVANCED_TEARING_TRACE")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+            .unwrap_or(false)
+    }
     let t_var = tearing_var
         .as_ref()
         .cloned()
@@ -219,6 +228,12 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
             "[newton-symbolic] tearing var={} symbolic={}",
             t_var,
             symbolic_derivative.is_some()
+        );
+    }
+    if advanced_tearing_trace_enabled() {
+        eprintln!(
+            "[advanced-tearing] enabled residual_threshold=10 iter_threshold=10 var={}",
+            t_var
         );
     }
     ctx.var_map.remove(&t_var);
@@ -305,6 +320,7 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
     let bad_jac = builder.ins().fcmp(FloatCC::LessThan, j_abs, j_min);
     let jac_error_block = builder.create_block();
     let update_block = builder.create_block();
+    let advanced_update_block = builder.create_block();
     builder
         .ins()
         .brif(bad_jac, jac_error_block, &[], update_block, &[]);
@@ -325,6 +341,24 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
     );
     builder.seal_block(jac_error_block);
     builder.switch_to_block(update_block);
+    let residual_threshold = builder.ins().f64const(10.0);
+    let iter_threshold = builder.ins().f64const(10.0);
+    let residual_high = builder
+        .ins()
+        .fcmp(FloatCC::GreaterThan, abs_res, residual_threshold);
+    let iter_high = builder
+        .ins()
+        .fcmp(FloatCC::GreaterThan, iter_val, iter_threshold);
+    let advanced_trigger = builder.ins().bor(residual_high, iter_high);
+    let default_update_block = builder.create_block();
+    builder.ins().brif(
+        advanced_trigger,
+        advanced_update_block,
+        &[],
+        default_update_block,
+        &[],
+    );
+    builder.switch_to_block(default_update_block);
     emit_line_search_update(
         ctx,
         builder,
@@ -339,7 +373,31 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
         j_val,
         header_block,
         exit_block,
+        1.0,
+        8.0,
+        1e-4,
     )?;
+    builder.seal_block(default_update_block);
+    builder.switch_to_block(advanced_update_block);
+    emit_line_search_update(
+        ctx,
+        builder,
+        inner_eqs,
+        residuals,
+        t_slot,
+        iter_slot,
+        iter_val,
+        x,
+        res_val,
+        abs_res,
+        j_val,
+        header_block,
+        exit_block,
+        0.25,
+        16.0,
+        5e-5,
+    )?;
+    builder.seal_block(advanced_update_block);
     builder.seal_block(update_block);
     builder.seal_block(header_block);
     builder.seal_block(body_block);

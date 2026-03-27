@@ -275,6 +275,14 @@ fn eval_const_expr(expr: &Expression) -> Option<f64> {
 }
 
 #[derive(Debug, Clone)]
+pub struct BlockCausalityInfo {
+    pub diff_index: u32,
+    pub tearing_vars: Vec<String>,
+    pub strongly_connected: bool,
+    pub is_nonlinear: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct SortAlgebraicResult {
     pub sorted_equations: Vec<Equation>,
     pub differential_index: u32,
@@ -285,6 +293,7 @@ pub struct SortAlgebraicResult {
     pub dummy_derivative_equation_count: usize,
     pub tearing_block_count: usize,
     pub tearing_residual_equation_count: usize,
+    pub block_causality: Vec<BlockCausalityInfo>,
     pub blt_degrade_guard_triggered: bool,
     pub blt_degrade_guard_limit: Option<usize>,
     pub blt_degrade_guard_equation_count: Option<usize>,
@@ -416,7 +425,7 @@ pub fn sort_algebraic_equations(
         return SortAlgebraicResult {
             sorted_equations: vec![Equation::SolvableBlock {
                 unknowns,
-                tearing_var,
+                tearing_var: tearing_var.clone(),
                 equations: vec![],
                 residuals: equations.iter().map(make_residual).collect(),
             }],
@@ -428,6 +437,12 @@ pub fn sort_algebraic_equations(
             dummy_derivative_equation_count: 0,
             tearing_block_count: 1,
             tearing_residual_equation_count: equations.len(),
+            block_causality: vec![BlockCausalityInfo {
+                diff_index: 1,
+                tearing_vars: tearing_var.clone().into_iter().collect(),
+                strongly_connected: true,
+                is_nonlinear: true,
+            }],
             blt_degrade_guard_triggered: true,
             blt_degrade_guard_limit: Some(max_eq_for_full_sort),
             blt_degrade_guard_equation_count: Some(equations.len()),
@@ -680,7 +695,7 @@ pub fn sort_algebraic_equations(
         return SortAlgebraicResult {
             sorted_equations: vec![Equation::SolvableBlock {
                 unknowns: unknown_list.clone(),
-                tearing_var,
+                tearing_var: tearing_var.clone(),
                 equations: vec![],
                 residuals: equations.iter().map(|eq| make_residual(eq)).collect(),
             }],
@@ -692,6 +707,12 @@ pub fn sort_algebraic_equations(
             dummy_derivative_equation_count,
             tearing_block_count: 1,
             tearing_residual_equation_count: equations.len(),
+            block_causality: vec![BlockCausalityInfo {
+                diff_index: 1,
+                tearing_vars: tearing_var.clone().into_iter().collect(),
+                strongly_connected: true,
+                is_nonlinear: true,
+            }],
             blt_degrade_guard_triggered: false,
             blt_degrade_guard_limit: Some(max_eq_for_full_sort),
             blt_degrade_guard_equation_count: Some(equations.len()),
@@ -803,6 +824,7 @@ pub fn sort_algebraic_equations(
     let mut sorted_equations = Vec::new();
     let mut tearing_block_count = 0usize;
     let mut tearing_residual_equation_count = 0usize;
+    let mut block_causality: Vec<BlockCausalityInfo> = Vec::new();
 
     if blt_trace {
         eprintln!("[blt] solve_blocks");
@@ -826,6 +848,12 @@ pub fn sort_algebraic_equations(
                         Expression::var(var_name),
                         expr,
                     ));
+                    block_causality.push(BlockCausalityInfo {
+                        diff_index: differential_index,
+                        tearing_vars: Vec::new(),
+                        strongly_connected: false,
+                        is_nonlinear: false,
+                    });
                 } else {
                     let tearing_var = select_tearing_variable(
                         &[var_name.clone()],
@@ -835,12 +863,18 @@ pub fn sort_algebraic_equations(
                     );
                     sorted_equations.push(Equation::SolvableBlock {
                         unknowns: vec![var_name.clone()],
-                        tearing_var,
+                        tearing_var: tearing_var.clone(),
                         equations: vec![],
                         residuals: vec![make_residual(eq)],
                     });
                     tearing_block_count += 1;
                     tearing_residual_equation_count += 1;
+                    block_causality.push(BlockCausalityInfo {
+                        diff_index: differential_index,
+                        tearing_vars: tearing_var.clone().into_iter().collect(),
+                        strongly_connected: false,
+                        is_nonlinear: true,
+                    });
                     current_known.insert(var_name.clone());
                 }
             } else {
@@ -854,12 +888,18 @@ pub fn sort_algebraic_equations(
                     );
                     sorted_equations.push(Equation::SolvableBlock {
                         unknowns: vec![unk],
-                        tearing_var,
+                        tearing_var: tearing_var.clone(),
                         equations: vec![],
                         residuals: vec![make_residual(eq)],
                     });
                     tearing_block_count += 1;
                     tearing_residual_equation_count += 1;
+                    block_causality.push(BlockCausalityInfo {
+                        diff_index: differential_index,
+                        tearing_vars: tearing_var.clone().into_iter().collect(),
+                        strongly_connected: false,
+                        is_nonlinear: true,
+                    });
                 } else {
                     // Keep residual equation without introducing synthetic "__dummy" unknowns.
                     // Pick a real variable from the residual as tearing variable so JIT can
@@ -877,12 +917,18 @@ pub fn sort_algebraic_equations(
                     let unknowns_block = tearing_var.clone().into_iter().collect::<Vec<_>>();
                     sorted_equations.push(Equation::SolvableBlock {
                         unknowns: unknowns_block,
-                        tearing_var,
+                        tearing_var: tearing_var.clone(),
                         equations: vec![],
                         residuals: vec![residual],
                     });
                     tearing_block_count += 1;
                     tearing_residual_equation_count += 1;
+                    block_causality.push(BlockCausalityInfo {
+                        diff_index: differential_index,
+                        tearing_vars: tearing_var.clone().into_iter().collect(),
+                        strongly_connected: false,
+                        is_nonlinear: true,
+                    });
                 }
             }
         } else {
@@ -914,12 +960,18 @@ pub fn sort_algebraic_equations(
 
             sorted_equations.push(Equation::SolvableBlock {
                 unknowns: block_unknowns.clone(),
-                tearing_var,
+                tearing_var: tearing_var.clone(),
                 equations: vec![],
                 residuals: block_eqs.iter().map(|eq| make_residual(eq)).collect(),
             });
             tearing_block_count += 1;
             tearing_residual_equation_count += block_eqs.len();
+            block_causality.push(BlockCausalityInfo {
+                diff_index: differential_index,
+                tearing_vars: tearing_var.clone().into_iter().collect(),
+                strongly_connected: true,
+                is_nonlinear: true,
+            });
 
             for u in block_unknowns {
                 current_known.insert(u);
@@ -939,6 +991,7 @@ pub fn sort_algebraic_equations(
         dummy_derivative_equation_count,
         tearing_block_count,
         tearing_residual_equation_count,
+        block_causality,
         blt_degrade_guard_triggered: false,
         blt_degrade_guard_limit: Some(max_eq_for_full_sort),
         blt_degrade_guard_equation_count: Some(equations.len()),

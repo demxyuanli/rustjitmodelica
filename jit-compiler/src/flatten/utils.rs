@@ -109,7 +109,35 @@ pub fn is_primitive(type_name: &str) -> bool {
 /// Connector compatibility matrix: same physical domain can connect.
 /// Rules grouped by domain (Blocks, Electrical, Rotational, HeatTransfer, Fluid, MultiBody).
 pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
+    let t1 = t1.trim();
+    let t2 = t2.trim();
+    let t1 = if t1 == "AxisControlBus" {
+        "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisControlBus"
+    } else if t1 == "ControlBus" {
+        "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.ControlBus"
+    } else {
+        t1
+    };
+    let t2 = if t2 == "AxisControlBus" {
+        "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisControlBus"
+    } else if t2 == "ControlBus" {
+        "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.ControlBus"
+    } else {
+        t2
+    };
     if t1 == t2 {
+        return true;
+    }
+    let short1 = t1.rsplit('.').next().unwrap_or(t1);
+    let short2 = t2.rsplit('.').next().unwrap_or(t2);
+    if short1 == short2
+        && (short1.ends_with("Bus")
+            || short1.ends_with("Connector")
+            || short1.ends_with("Port")
+            || short1.ends_with("Pin")
+            || short1.ends_with("Frame")
+            || short1.ends_with("Flange"))
+    {
         return true;
     }
     let is_likely_connector_type = |s: &str| {
@@ -413,6 +441,6 @@ pub fn convert_eq_to_alg(eq: Equation) -> AlgorithmStatement {
         }
         Equation::Connect(_, _) => panic!("F4-2: connect() inside when/algorithm is not supported; use equation section for connections"),
         Equation::SolvableBlock { .. } => panic!("F4-2: SolvableBlock (algebraic loop) inside when/algorithm is not supported; put equations in the equation section instead"),
-        Equation::MultiAssign(_, _) => panic!("F3-3: (a,b,...)=f(x) in when/algorithm is not supported; use equation section"),
+        Equation::MultiAssign(lhss, rhs) => AlgorithmStatement::MultiAssign(lhss, rhs),
     }
 }

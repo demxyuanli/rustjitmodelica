@@ -29,6 +29,7 @@ export const PREFS_KEYS = {
   leftSidebarTab: "modai-layout-left-sidebar-tab",
   rightPanelTab: "modai-layout-right-panel-tab",
   graphExpanded: "modai-layout-graph-expanded",
+  regressionAutoLoadOnOpen: "modai-regression-auto-load-on-open",
 } as const;
 
 export type DefaultWorkspace = "modelica" | "component-library" | "compiler-iterate" | "regression";

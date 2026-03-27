@@ -167,6 +167,12 @@ pub(super) fn resolve_mechanics_clocked_thermal_domain(
             if current_qualified
                 .starts_with("Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3")
             {
+                if name == "AxisControlBus" {
+                    return Some(
+                        "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisControlBus"
+                            .to_string(),
+                    );
+                }
                 if name == "Utilities" {
                     return Some(
                         "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities".to_string(),
@@ -483,6 +489,57 @@ pub(super) fn resolve_context_prechecks(name: &str, current_qualified: &str) -> 
             }
             return Some(format!("{base}{rest}"));
         }
+        if current_qualified.starts_with("Modelica.Fluid")
+            || current_qualified.starts_with("ModelicaTest.Fluid")
+        {
+            if name == "Interfaces" || name.starts_with("Interfaces.") {
+                if name == "Interfaces" {
+                    return Some("Modelica.Fluid.Interfaces".to_string());
+                }
+                return Some(format!("Modelica.Fluid.{name}"));
+            }
+            if matches!(
+                name,
+                "regRoot" | "regRoot2" | "regSquare2" | "regFun3" | "regStep" | "spliceFunction"
+            ) {
+                return Some(format!("Modelica.Fluid.Utilities.{name}"));
+            }
+            if name == "valveCharacteristic" {
+                return Some("Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string());
+            }
+            if name.starts_with("Utilities.") {
+                let rest = name.trim_start_matches("Utilities.");
+                return Some(format!("Modelica.Fluid.Utilities.{rest}"));
+            }
+        }
+        if current_qualified.starts_with("Modelica.Mechanics.MultiBody")
+            || current_qualified.starts_with("ModelicaTest.MultiBody")
+        {
+            if name == "Types" || name.starts_with("Types.") {
+                if name == "Types" {
+                    return Some("Modelica.Mechanics.MultiBody.Types".to_string());
+                }
+                return Some(format!("Modelica.Mechanics.MultiBody.{}", name));
+            }
+            if name == "Interfaces" || name.starts_with("Interfaces.") {
+                if name == "Interfaces" {
+                    return Some("Modelica.Mechanics.MultiBody.Interfaces".to_string());
+                }
+                return Some(format!("Modelica.Mechanics.MultiBody.{name}"));
+            }
+            if name == "Sensors" || name.starts_with("Sensors.") {
+                if name == "Sensors" {
+                    return Some("Modelica.Mechanics.MultiBody.Sensors".to_string());
+                }
+                return Some(format!("Modelica.Mechanics.MultiBody.{name}"));
+            }
+            if name == "Visualizers" || name.starts_with("Visualizers.") {
+                if name == "Visualizers" {
+                    return Some("Modelica.Mechanics.MultiBody.Visualizers".to_string());
+                }
+                return Some(format!("Modelica.Mechanics.MultiBody.{name}"));
+            }
+        }
         if current_qualified.starts_with("Modelica.Electrical.Polyphase")
             && (name == "Basic" || name.starts_with("Basic."))
         {
@@ -541,11 +598,62 @@ pub(super) fn resolve_global_namespace_aliases(name: &str) -> Option<String> {
         if name == "Blocks" {
             return Some("Modelica.Blocks".to_string());
         }
+        if name == "Translational" {
+            return Some("Modelica.Mechanics.Translational".to_string());
+        }
+        if name.starts_with("Translational.") {
+            return Some(format!("Modelica.Mechanics.{}", name));
+        }
+        if name == "Rotational" {
+            return Some("Modelica.Mechanics.Rotational".to_string());
+        }
+        if name.starts_with("Rotational.") {
+            return Some(format!("Modelica.Mechanics.{}", name));
+        }
+        if name == "Sensors.RelativePosition" {
+            return Some("Modelica.Mechanics.MultiBody.Sensors.RelativePosition".to_string());
+        }
         if name == "Clocked" {
             return Some("Modelica.Clocked".to_string());
         }
         if name.starts_with("Clocked.") {
             return Some(format!("Modelica.{}", name));
+        }
+        if name == "Visualizers" || name.starts_with("Visualizers.") {
+            return Some(format!("Modelica.Mechanics.MultiBody.{}", name));
+        }
+        if name == "Interfaces.PartialTwoFramesDoubleSize"
+            || name == "Interfaces.PartialTwoFrames"
+        {
+            return Some(format!("Modelica.Mechanics.MultiBody.{}", name));
+        }
+        if let Some(rest) = name.strip_prefix("Interfaces.PartialTwoFramesDoubleSize.") {
+            return Some(format!(
+                "Modelica.Mechanics.MultiBody.Interfaces.PartialTwoFramesDoubleSize.{rest}"
+            ));
+        }
+        if let Some(rest) = name.strip_prefix("Interfaces.PartialTwoFrames.") {
+            return Some(format!(
+                "Modelica.Mechanics.MultiBody.Interfaces.PartialTwoFrames.{rest}"
+            ));
+        }
+        if name == "Interfaces.FluidPort"
+            || name == "Interfaces.FluidPort_a"
+            || name == "Interfaces.FluidPort_b"
+        {
+            return Some(format!("Modelica.Fluid.{}", name));
+        }
+        if let Some(rest) = name.strip_prefix("Interfaces.FluidPort.") {
+            return Some(format!("Modelica.Fluid.Interfaces.FluidPort.{rest}"));
+        }
+        if name == "Interfaces.Frame"
+            || name == "Interfaces.Frame_a"
+            || name == "Interfaces.Frame_b"
+        {
+            return Some(format!("Modelica.Mechanics.MultiBody.{}", name));
+        }
+        if let Some(rest) = name.strip_prefix("Interfaces.Frame.") {
+            return Some(format!("Modelica.Mechanics.MultiBody.Interfaces.Frame.{rest}"));
         }
         if name == "MultiBody" {
             return Some("Modelica.Mechanics.MultiBody".to_string());
@@ -570,6 +678,30 @@ pub(super) fn resolve_global_namespace_aliases(name: &str) -> Option<String> {
             || name == "IntegerOutput"
         {
             return Some(format!("Modelica.Blocks.Interfaces.{}", name));
+        }
+        if name == "arg" {
+            return Some("Modelica.ComplexMath.arg".to_string());
+        }
+        if name == "distribution" {
+            return Some("Modelica.Blocks.Noise.Interfaces.distribution".to_string());
+        }
+        if name == "oneTrue" {
+            return Some("Modelica.Electrical.Batteries.Utilities.oneTrue".to_string());
+        }
+        if name == "isPowerOf2" {
+            return Some("Modelica.Electrical.Polyphase.Functions.isPowerOf2".to_string());
+        }
+        if name == "numberOfSymmetricBaseSystems" {
+            return Some("Modelica.Electrical.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string());
+        }
+        if name == "factorY2DC" {
+            return Some("Modelica.Electrical.Polyphase.Functions.factorY2DC".to_string());
+        }
+        if name == "exlin" {
+            return Some("Modelica.Electrical.Analog.Semiconductors.exlin".to_string());
+        }
+        if name == "exlin2" {
+            return Some("Modelica.Electrical.Analog.Semiconductors.exlin2".to_string());
         }
         None
     }

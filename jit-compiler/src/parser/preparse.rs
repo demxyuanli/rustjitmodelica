@@ -6,10 +6,14 @@ pub fn try_parse_connector_alias_file(input: &str) -> Option<(String, String)> {
         if line.is_empty() || line.starts_with("within ") || line.starts_with("//") {
             continue;
         }
-        if !line.starts_with("connector ") {
+        if !(line.starts_with("connector ") || line.starts_with("expandable connector ")) {
             return None;
         }
-        let rest = line.strip_prefix("connector ")?.trim();
+        let rest = if let Some(x) = line.strip_prefix("expandable connector ") {
+            x.trim()
+        } else {
+            line.strip_prefix("connector ")?.trim()
+        };
         let (name_part, rhs_part) = rest.split_once('=')?;
         let alias = name_part.trim().to_string();
         if alias.is_empty() {
@@ -45,6 +49,7 @@ pub fn make_alias_model(alias: String, base: String) -> ClassItem {
         name: alias,
         is_connector: false,
         is_function: false,
+        is_operator_function: false,
         is_record: false,
         is_block: false,
         extends: Vec::new(),

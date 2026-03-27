@@ -137,6 +137,71 @@ pub(crate) fn early_compat(name: &str) -> EarlyCompat {
             "Modelica.Utilities.Math.semiLinear".to_string(),
             "Modelica.Fluid.Utilities.semiLinear".to_string(),
         ]),
+        _ if name == "arg" => EarlyCompat::Soft(vec![
+            "Modelica.ComplexMath.arg".to_string(),
+        ]),
+        _ if name == "distribution" => EarlyCompat::Soft(vec![
+            "Modelica.Blocks.Noise.Interfaces.distribution".to_string(),
+            "Modelica.Math.Distributions.distribution".to_string(),
+        ]),
+        _ if name == "AxisControlBus" => EarlyCompat::Soft(vec![
+            "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisControlBus"
+                .to_string(),
+        ]),
+        _ if name == "ControlBus" => EarlyCompat::Soft(vec![
+            "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.ControlBus"
+                .to_string(),
+        ]),
+        _ if name == "Types" => EarlyCompat::Soft(vec![
+            "Modelica.Mechanics.MultiBody.Types".to_string(),
+        ]),
+        _ if name.starts_with("Types.") => EarlyCompat::Soft(vec![
+            format!("Modelica.Mechanics.MultiBody.{}", name),
+        ]),
+        _ if name == "oneTrue" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Batteries.Utilities.oneTrue".to_string(),
+        ]),
+        _ if name == "isPowerOf2" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Polyphase.Functions.isPowerOf2".to_string(),
+            "Modelica.Electrical.QuasiStatic.Polyphase.Functions.isPowerOf2".to_string(),
+        ]),
+        _ if name == "numberOfSymmetricBaseSystems" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string(),
+            "Modelica.Electrical.QuasiStatic.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string(),
+        ]),
+        _ if name == "factorY2DC" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Polyphase.Functions.factorY2DC".to_string(),
+            "Modelica.Electrical.QuasiStatic.Polyphase.Functions.factorY2DC".to_string(),
+        ]),
+        _ if name == "exlin" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Analog.Semiconductors.exlin".to_string(),
+        ]),
+        _ if name == "exlin2" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Analog.Semiconductors.exlin2".to_string(),
+        ]),
+        _ if name == "valveCharacteristic" => EarlyCompat::Soft(vec![
+            "Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string(),
+        ]),
+        _ if matches!(name, "regRoot" | "regRoot2" | "regSquare2" | "regFun3" | "regStep") => {
+            EarlyCompat::Soft(vec![
+                format!("Modelica.Fluid.Utilities.{name}"),
+                format!("Modelica.Utilities.Math.{name}"),
+            ])
+        }
+        _ if name.starts_with("from_") => {
+            let rest = name.trim_start_matches("from_");
+            EarlyCompat::Soft(vec![format!(
+                "Modelica.Blocks.Math.UnitConversions.From_{}",
+                rest
+            )])
+        }
+        _ if name.starts_with("to_") => {
+            let rest = name.trim_start_matches("to_");
+            EarlyCompat::Soft(vec![format!(
+                "Modelica.Blocks.Math.UnitConversions.To_{}",
+                rest
+            )])
+        }
         _ if name == "Material" || name.starts_with("Material.") => {
             let alt = if name == "Material" {
                 "Modelica.Magnetic.FluxTubes.Material".to_string()
@@ -242,6 +307,67 @@ pub(crate) fn late_compat(name: &str) -> LateCompat {
             "Modelica.Utilities.Math.semiLinear".to_string(),
             "Modelica.Fluid.Utilities.semiLinear".to_string(),
         ]);
+    }
+    if name == "arg" {
+        return LateCompat::Soft(vec!["Modelica.ComplexMath.arg".to_string()]);
+    }
+    if name == "distribution" {
+        return LateCompat::Soft(vec![
+            "Modelica.Blocks.Noise.Interfaces.distribution".to_string(),
+            "Modelica.Math.Distributions.distribution".to_string(),
+        ]);
+    }
+    if name == "oneTrue" {
+        return LateCompat::Soft(vec!["Modelica.Electrical.Batteries.Utilities.oneTrue".to_string()]);
+    }
+    if name == "isPowerOf2" {
+        return LateCompat::Soft(vec![
+            "Modelica.Electrical.Polyphase.Functions.isPowerOf2".to_string(),
+            "Modelica.Electrical.QuasiStatic.Polyphase.Functions.isPowerOf2".to_string(),
+        ]);
+    }
+    if name == "numberOfSymmetricBaseSystems" {
+        return LateCompat::Soft(vec![
+            "Modelica.Electrical.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string(),
+            "Modelica.Electrical.QuasiStatic.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string(),
+        ]);
+    }
+    if name == "factorY2DC" {
+        return LateCompat::Soft(vec![
+            "Modelica.Electrical.Polyphase.Functions.factorY2DC".to_string(),
+            "Modelica.Electrical.QuasiStatic.Polyphase.Functions.factorY2DC".to_string(),
+        ]);
+    }
+    if name == "exlin" {
+        return LateCompat::Soft(vec!["Modelica.Electrical.Analog.Semiconductors.exlin".to_string()]);
+    }
+    if name == "exlin2" {
+        return LateCompat::Soft(vec!["Modelica.Electrical.Analog.Semiconductors.exlin2".to_string()]);
+    }
+    if name == "valveCharacteristic" {
+        return LateCompat::Soft(vec![
+            "Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string(),
+        ]);
+    }
+    if matches!(name, "regRoot" | "regRoot2" | "regSquare2" | "regFun3" | "regStep") {
+        return LateCompat::Soft(vec![
+            format!("Modelica.Fluid.Utilities.{name}"),
+            format!("Modelica.Utilities.Math.{name}"),
+        ]);
+    }
+    if name.starts_with("from_") {
+        let rest = name.trim_start_matches("from_");
+        return LateCompat::Soft(vec![format!(
+            "Modelica.Blocks.Math.UnitConversions.From_{}",
+            rest
+        )]);
+    }
+    if name.starts_with("to_") {
+        let rest = name.trim_start_matches("to_");
+        return LateCompat::Soft(vec![format!(
+            "Modelica.Blocks.Math.UnitConversions.To_{}",
+            rest
+        )]);
     }
     if name == "Material" || name.starts_with("Material.") {
         let alt = if name == "Material" {

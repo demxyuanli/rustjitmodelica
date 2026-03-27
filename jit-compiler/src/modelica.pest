@@ -40,7 +40,8 @@ external_section = { "external" ~ (string_literal ~ WHITESPACE?)? ~ external_bin
 impure_kw = { "impure" }
 pure_kw = { "pure" }
 function_prefix = { "function" }
-class_prefixes = { (replaceable_kw ~ WHITESPACE?)? ~ "encapsulated"? ~ "partial"? ~ "expandable"? ~ ((impure_kw | pure_kw) ~ WHITESPACE?)? ~ ("operator"? ~ "record" | "model" | "connector" | "class" | "record" | "block" | "package" | "type" | function_prefix) }
+operator_function_prefix = { "operator" ~ WHITESPACE? ~ function_prefix }
+class_prefixes = { (replaceable_kw ~ WHITESPACE?)? ~ "encapsulated"? ~ "partial"? ~ "expandable"? ~ ((impure_kw | pure_kw) ~ WHITESPACE?)? ~ (operator_function_prefix | "operator"? ~ "record" | "model" | "connector" | "class" | "record" | "block" | "package" | "type" | function_prefix) }
 
 quoted_identifier = @{ "'" ~ (!"'" ~ ANY)+ ~ "'" }
 identifier = @{ quoted_identifier | (!keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*) }
@@ -49,10 +50,12 @@ annotation_clause = { annotation ~ ";" }
 short_class_definition_rhs = { function_call | component_ref | ((input_kw | output_kw)? ~ type_name) }
 constrainedby_clause = { "constrainedby" ~ WHITESPACE? ~ type_name ~ string_comment? }
 short_class_definition = { class_prefixes ~ identifier ~ "=" ~ short_class_definition_rhs ~ array_subscript? ~ modification_part? ~ constrainedby_clause? ~ string_comment? ~ annotation? ~ ";"? }
-connector_alias_definition = { "connector" ~ identifier ~ "=" ~ (input_kw | output_kw)? ~ type_name ~ string_comment? ~ annotation? ~ ";"? }
+connector_alias_definition = { "expandable"? ~ "connector" ~ identifier ~ "=" ~ (input_kw | output_kw)? ~ type_name ~ string_comment? ~ annotation? ~ ";"? }
 declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | redeclare_model_extends | model_definition | type_definition | declaration | annotation_clause)* }
 redeclare_function_extends = {
     "redeclare"
+    ~ WHITESPACE?
+    ~ "operator"?
     ~ WHITESPACE?
     ~ "function"
     ~ WHITESPACE?
@@ -114,7 +117,7 @@ modification = {
     ~ ("replaceable" ~ WHITESPACE?)?
     ~ ("each" ~ WHITESPACE?)?
     ~ (final_kw ~ WHITESPACE?)?
-    ~ (("package" | "model" | "record" | "block" | "type" | "function" | "connector") ~ WHITESPACE?)?
+    ~ (("operator" ~ WHITESPACE?)? ~ ("package" | "model" | "record" | "block" | "type" | "function" | "connector") ~ WHITESPACE?)?
     ~ component_ref
     ~ modification_part?
     ~ ("=" ~ expression)?
@@ -249,7 +252,7 @@ unary_plus = { "+" }
 
 der_call = { "der" ~ "(" ~ expression ~ ")" }
 named_arg = { final_kw? ~ identifier ~ "=" ~ expression }
-redeclare_arg = { "redeclare" ~ WHITESPACE? ~ type_name ~ WHITESPACE? ~ identifier ~ string_comment? }
+redeclare_arg = { "redeclare" ~ WHITESPACE? ~ ("operator" ~ WHITESPACE? ~ "function" ~ WHITESPACE?)? ~ type_name ~ WHITESPACE? ~ identifier ~ string_comment? }
 function_constructor_arg = { "function" ~ WHITESPACE? ~ dotted_identifier ~ "(" ~ arg_list? ~ ")" }
 arg_item = { function_constructor_arg | redeclare_arg | named_arg | expression }
 arg_list = { arg_item ~ ("," ~ arg_item)* }

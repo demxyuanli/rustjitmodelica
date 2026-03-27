@@ -30,6 +30,7 @@ pub struct System<'a> {
     pub buf_when: Vec<f64>,
     pub buf_crossings: Vec<f64>,
     pub buf_outputs: Vec<f64>,
+    pub buf_guess: Vec<f64>,
 }
 
 impl<'a> System<'a> {
@@ -134,7 +135,8 @@ impl<'a> System<'a> {
         let mut last_status = 0_i32;
 
         if let Some(scratch) = self.scratch_outputs.as_mut() {
-            let base_guess = scratch.to_vec();
+            self.buf_guess.resize(scratch.len(), 0.0);
+            self.buf_guess.copy_from_slice(scratch);
             // Newton init fallback chain at t=0/stiff algebraic loops:
             // keep guess -> damped guess -> zero guess.
             let scales = [1.0_f64, 0.5_f64, 0.0_f64];
@@ -144,7 +146,7 @@ impl<'a> System<'a> {
                         *self.eval_call_index += 1;
                     }
                 }
-                for (dst, src) in scratch.iter_mut().zip(base_guess.iter()) {
+                for (dst, src) in scratch.iter_mut().zip(self.buf_guess.iter()) {
                     *dst = *src * scale;
                 }
                 self.buf_discrete.copy_from_slice(self.discrete);
@@ -267,6 +269,7 @@ impl Solver for EulerSolver {
 pub struct BackwardEulerSolver {
     derivs: Vec<f64>,
     tmp: Vec<f64>,
+    y_n: Vec<f64>,
     max_iter: usize,
     tol: f64,
 }
@@ -276,6 +279,7 @@ impl BackwardEulerSolver {
         Self {
             derivs: vec![0.0; state_len],
             tmp: vec![0.0; state_len],
+            y_n: vec![0.0; state_len],
             max_iter: 20,
             tol: 1e-10,
         }
@@ -303,14 +307,14 @@ impl Solver for BackwardEulerSolver {
                 *system.eval_call_index = 0;
             }
         }
-        let y_n: Vec<f64> = states.to_vec();
-        self.tmp.copy_from_slice(&y_n);
+        self.y_n.copy_from_slice(states);
+        self.tmp.copy_from_slice(&self.y_n);
         for _ in 0..self.max_iter {
             system.record_eval(time + dt, &self.tmp);
             system.evaluate(time + dt, &mut self.tmp, &mut self.derivs)?;
             let mut max_change = 0.0_f64;
             for i in 0..n {
-                let y_new = y_n[i] + dt * self.derivs[i];
+                let y_new = self.y_n[i] + dt * self.derivs[i];
                 let change = (y_new - self.tmp[i]).abs();
                 if change > max_change {
                     max_change = change;
@@ -408,6 +412,7 @@ pub struct AdaptiveRK45Solver {
     k5: Vec<f64>,
     k6: Vec<f64>,
     tmp: Vec<f64>,
+    y: Vec<f64>,
     y4: Vec<f64>,
     y5: Vec<f64>,
     abs_tol: f64,
@@ -424,6 +429,7 @@ impl AdaptiveRK45Solver {
             k5: vec![0.0; state_len],
             k6: vec![0.0; state_len],
             tmp: vec![0.0; state_len],
+            y: vec![0.0; state_len],
             y4: vec![0.0; state_len],
             y5: vec![0.0; state_len],
             abs_tol,
@@ -457,26 +463,26 @@ impl Solver for AdaptiveRK45Solver {
                     *system.eval_call_index = 0;
                 }
             }
-            let y = states.to_vec();
+            self.y.copy_from_slice(states);
 
-            self.tmp.copy_from_slice(&y);
+            self.tmp.copy_from_slice(&self.y);
             system.record_eval(t, &self.tmp);
             system.evaluate_scratch(t, &mut self.tmp, &mut self.k1)?;
 
             for i in 0..n {
-                self.tmp[i] = y[i] + dt * (1.0 / 5.0) * self.k1[i];
+                self.tmp[i] = self.y[i] + dt * (1.0 / 5.0) * self.k1[i];
             }
             system.record_eval(t + dt * (1.0 / 5.0), &self.tmp);
             system.evaluate_scratch(t + dt * (1.0 / 5.0), &mut self.tmp, &mut self.k2)?;
 
             for i in 0..n {
-                self.tmp[i] = y[i] + dt * (3.0 / 40.0 * self.k1[i] + 9.0 / 40.0 * self.k2[i]);
+                self.tmp[i] = self.y[i] + dt * (3.0 / 40.0 * self.k1[i] + 9.0 / 40.0 * self.k2[i]);
             }
             system.record_eval(t + dt * (3.0 / 10.0), &self.tmp);
             system.evaluate_scratch(t + dt * (3.0 / 10.0), &mut self.tmp, &mut self.k3)?;
 
             for i in 0..n {
-                self.tmp[i] = y[i]
+                self.tmp[i] = self.y[i]
                     + dt * (44.0 / 45.0 * self.k1[i] - 56.0 / 15.0 * self.k2[i]
                         + 32.0 / 9.0 * self.k3[i]);
             }
@@ -484,7 +490,7 @@ impl Solver for AdaptiveRK45Solver {
             system.evaluate_scratch(t + dt * (4.0 / 5.0), &mut self.tmp, &mut self.k4)?;
 
             for i in 0..n {
-                self.tmp[i] = y[i]
+                self.tmp[i] = self.y[i]
                     + dt * (19372.0 / 6561.0 * self.k1[i] - 25360.0 / 2187.0 * self.k2[i]
                         + 64448.0 / 6561.0 * self.k3[i]
                         - 212.0 / 729.0 * self.k4[i]);
@@ -493,7 +499,7 @@ impl Solver for AdaptiveRK45Solver {
             system.evaluate_scratch(t + dt * (8.0 / 9.0), &mut self.tmp, &mut self.k5)?;
 
             for i in 0..n {
-                self.tmp[i] = y[i]
+                self.tmp[i] = self.y[i]
                     + dt * (9017.0 / 3168.0 * self.k1[i] - 355.0 / 33.0 * self.k2[i]
                         + 46732.0 / 5247.0 * self.k3[i]
                         + 49.0 / 176.0 * self.k4[i]
@@ -503,14 +509,14 @@ impl Solver for AdaptiveRK45Solver {
             system.evaluate_scratch(t + dt, &mut self.tmp, &mut self.k6)?;
 
             for i in 0..n {
-                self.y5[i] = y[i]
+                self.y5[i] = self.y[i]
                     + dt * (35.0 / 384.0 * self.k1[i]
                         + 500.0 / 1113.0 * self.k3[i]
                         + 125.0 / 192.0 * self.k4[i]
                         - 2187.0 / 6784.0 * self.k5[i]
                         + 11.0 / 84.0 * self.k6[i]);
 
-                self.y4[i] = y[i]
+                self.y4[i] = self.y[i]
                     + dt * (5179.0 / 57600.0 * self.k1[i]
                         + 7571.0 / 16695.0 * self.k3[i]
                         + 393.0 / 640.0 * self.k4[i]

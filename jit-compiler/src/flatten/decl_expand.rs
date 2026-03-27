@@ -4,7 +4,7 @@ use crate::diag::SourceLocation;
 use crate::loader::LoadError;
 use crate::flatten::utils::{is_primitive, resolve_inner_class_alias, resolve_type_alias};
 use crate::flatten::{apply_modification_to_model, ModifyContext};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 impl Flattener {
@@ -36,6 +36,7 @@ impl Flattener {
             current_model_name: current_model_name.map(|s| s.to_string()),
             msl_import_context: msl_ctx,
         }];
+        let mut array_size_warned_names: HashSet<String> = HashSet::new();
 
         while let Some(task) = stack.pop() {
             match task {
@@ -110,7 +111,9 @@ impl Flattener {
                             ) {
                                 Some(val as usize)
                             } else {
-                                eprintln!("Warning: Could not evaluate array size for '{}'", decl.name);
+                                if array_size_warned_names.insert(decl.name.clone()) {
+                                    eprintln!("Warning: Could not evaluate array size for '{}'", decl.name);
+                                }
                                 None
                             }
                         } else {

@@ -4,6 +4,7 @@ use crate::ast::{Equation, Expression};
 use crate::compiler::jacobian;
 use crate::flatten::FlattenedModel;
 use crate::jit::ArrayInfo;
+use crate::analysis::BlockCausalityInfo;
 
 pub(crate) type CompilerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -38,6 +39,9 @@ pub(crate) struct AnalysisStage {
     pub numeric_ode_jacobian: bool,
     pub symbolic_ode_jacobian_matrix: Option<Vec<Vec<Expression>>>,
     pub ode_jacobian_sparse: Option<jacobian::SparseOdeJacobian>,
+    pub block_causality: Vec<BlockCausalityInfo>,
+    pub symbolic_index_signal_count: usize,
+    pub implicit_derivative_constraint_count: usize,
     pub blt_degrade_guard_triggered: bool,
     pub blt_degrade_guard_limit: Option<usize>,
     pub blt_degrade_guard_equation_count: Option<usize>,

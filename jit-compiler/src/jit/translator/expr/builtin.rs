@@ -352,6 +352,113 @@ pub(super) fn try_compile_builtin_call(
         }
         return Some(compile_rec(&args[0], ctx, builder));
     }
+    if func_name == "Modelica.Fluid.Utilities.regStep"
+        || func_name.ends_with(".regStep")
+        || func_name == "Utilities.regStep"
+        || func_name.ends_with(".Utilities.regStep")
+    {
+        // regStep(x, y1, y2, x_small): smooth approximation around x=0.
+        // Keep JIT path robust with a continuous blend.
+        if args.len() >= 4 {
+            let x = match compile_rec(&args[0], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let y1 = match compile_rec(&args[1], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let y2 = match compile_rec(&args[2], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let x_small = match compile_rec(&args[3], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let half = builder.ins().f64const(0.5);
+            let eps = builder.ins().f64const(1e-12);
+            let abs_small = builder.ins().fabs(x_small);
+            let safe_small = {
+                let too_small = builder.ins().fcmp(FloatCC::LessThan, abs_small, eps);
+                builder.ins().select(too_small, eps, abs_small)
+            };
+            let scaled = builder.ins().fdiv(x, safe_small);
+            let one = builder.ins().f64const(1.0);
+            let one_plus_scaled = builder.ins().fadd(one, scaled);
+            let t = builder.ins().fmul(half, one_plus_scaled);
+            let zero = builder.ins().f64const(0.0);
+            let t_clamped_low = {
+                let lt0 = builder.ins().fcmp(FloatCC::LessThan, t, zero);
+                builder.ins().select(lt0, zero, t)
+            };
+            let t_clamped = {
+                let gt1 = builder.ins().fcmp(FloatCC::GreaterThan, t_clamped_low, one);
+                builder.ins().select(gt1, one, t_clamped_low)
+            };
+            let omt = builder.ins().fsub(one, t_clamped);
+            let blend1 = builder.ins().fmul(t_clamped, y1);
+            let blend2 = builder.ins().fmul(omt, y2);
+            return Some(Ok(builder.ins().fadd(blend1, blend2)));
+        }
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
+    if func_name == "Modelica.Fluid.Utilities.spliceFunction"
+        || func_name.ends_with(".spliceFunction")
+        || func_name == "Utilities.spliceFunction"
+        || func_name.ends_with(".Utilities.spliceFunction")
+    {
+        // spliceFunction(pos, neg, x, deltax): smooth transition near x=0.
+        if args.len() >= 4 {
+            let pos = match compile_rec(&args[0], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let neg = match compile_rec(&args[1], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let x = match compile_rec(&args[2], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let dx = match compile_rec(&args[3], ctx, builder) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let half = builder.ins().f64const(0.5);
+            let eps = builder.ins().f64const(1e-12);
+            let abs_dx = builder.ins().fabs(dx);
+            let safe_dx = {
+                let too_small = builder.ins().fcmp(FloatCC::LessThan, abs_dx, eps);
+                builder.ins().select(too_small, eps, abs_dx)
+            };
+            let scaled = builder.ins().fdiv(x, safe_dx);
+            let one = builder.ins().f64const(1.0);
+            let one_plus_scaled = builder.ins().fadd(one, scaled);
+            let t = builder.ins().fmul(half, one_plus_scaled);
+            let zero = builder.ins().f64const(0.0);
+            let t_clamped_low = {
+                let lt0 = builder.ins().fcmp(FloatCC::LessThan, t, zero);
+                builder.ins().select(lt0, zero, t)
+            };
+            let t_clamped = {
+                let gt1 = builder.ins().fcmp(FloatCC::GreaterThan, t_clamped_low, one);
+                builder.ins().select(gt1, one, t_clamped_low)
+            };
+            let omt = builder.ins().fsub(one, t_clamped);
+            let blend_pos = builder.ins().fmul(t_clamped, pos);
+            let blend_neg = builder.ins().fmul(omt, neg);
+            return Some(Ok(builder.ins().fadd(blend_pos, blend_neg)));
+        }
+        if args.is_empty() {
+            return Some(Ok(builder.ins().f64const(0.0)));
+        }
+        return Some(compile_rec(&args[0], ctx, builder));
+    }
     if func_name.starts_with("Connections.") {
         return Some(Ok(builder.ins().f64const(0.0)));
     }

@@ -358,6 +358,7 @@ pub(super) fn compile(
         let params = variable_layout.params;
         let alg_equations = analysis_stage.alg_equations;
         let diff_equations = analysis_stage.diff_equations;
+        let block_causality = analysis_stage.block_causality;
         perf_report.state_count = state_vars_sorted.len();
         perf_report.discrete_count = discrete_vars_sorted.len();
         perf_report.param_count = param_vars.len();
@@ -369,9 +370,14 @@ pub(super) fn compile(
         let blt_degrade_guard_triggered = analysis_stage.blt_degrade_guard_triggered;
         let blt_degrade_guard_limit = analysis_stage.blt_degrade_guard_limit;
         let blt_degrade_guard_equation_count = analysis_stage.blt_degrade_guard_equation_count;
+        let symbolic_index_signal_count = analysis_stage.symbolic_index_signal_count;
+        let implicit_derivative_constraint_count =
+            analysis_stage.implicit_derivative_constraint_count;
         perf_report.blt_degrade_guard_triggered = blt_degrade_guard_triggered;
         perf_report.blt_degrade_guard_limit = blt_degrade_guard_limit;
         perf_report.blt_degrade_guard_equation_count = blt_degrade_guard_equation_count;
+        perf_report.symbolic_index_signal_count = symbolic_index_signal_count;
+        perf_report.implicit_derivative_constraint_count = implicit_derivative_constraint_count;
         let numeric_ode_jacobian = analysis_stage.numeric_ode_jacobian;
         let ode_jacobian_sparse = analysis_stage.ode_jacobian_sparse;
         let symbolic_ode_jacobian_matrix = analysis_stage.symbolic_ode_jacobian_matrix;
@@ -504,6 +510,7 @@ pub(super) fn compile(
             differential_index,
             constraint_equation_count,
             &backend_clock_partitions,
+            &block_causality,
         );
         let ida_component_id = ida_component_id_for_states(&simulation_dae, states.len());
         let dae_differential_index = simulation_dae.dae.differential_index;
@@ -532,6 +539,88 @@ pub(super) fn compile(
         let mut user_stub_ptrs: HashMap<String, *const u8> = HashMap::with_capacity(stub_cap);
         let mut user_function_bodies: HashMap<String, (Vec<String>, Expression)> =
             HashMap::with_capacity(stub_cap);
+        fn candidate_load_names(name: &str) -> Vec<String> {
+            let mut cands: Vec<String> = Vec::new();
+            if name == "valveCharacteristic" {
+                cands.push("Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string());
+            }
+            if name.starts_with("world.") {
+                cands.push(format!(
+                    "Modelica.Mechanics.MultiBody.World.{}",
+                    name.trim_start_matches("world.")
+                ));
+            }
+            if name.starts_with("BaseClasses.") {
+                let rest = name.trim_start_matches("BaseClasses.");
+                cands.push(format!("Modelica.Fluid.Valves.BaseClasses.{}", rest));
+                cands.push(format!("Modelica.Fluid.Pipes.BaseClasses.{}", rest));
+                cands.push(format!("Modelica.Fluid.Machines.BaseClasses.{}", rest));
+                cands.push(format!("Modelica.Fluid.Utilities.{}", name));
+            }
+            if name.starts_with("Utilities.") {
+                cands.push(format!("Modelica.Fluid.{}", name));
+                cands.push(format!("Modelica.{}", name));
+            }
+            if let Some(rest) = name.strip_prefix("from_") {
+                cands.push(format!(
+                    "Modelica.Blocks.Math.UnitConversions.From_{}",
+                    rest
+                ));
+            }
+            if let Some(rest) = name.strip_prefix("to_") {
+                cands.push(format!(
+                    "Modelica.Blocks.Math.UnitConversions.To_{}",
+                    rest
+                ));
+            }
+            if name == "arg" {
+                cands.push("Modelica.ComplexMath.arg".to_string());
+            }
+            if name == "distribution" {
+                cands.push("Modelica.Blocks.Noise.Interfaces.distribution".to_string());
+                cands.push("Modelica.Math.Distributions.distribution".to_string());
+            }
+            if name == "oneTrue" {
+                cands.push("Modelica.Electrical.Batteries.Utilities.oneTrue".to_string());
+            }
+            if name == "isPowerOf2" {
+                cands.push("Modelica.Electrical.Polyphase.Functions.isPowerOf2".to_string());
+                cands.push("Modelica.Electrical.QuasiStatic.Polyphase.Functions.isPowerOf2".to_string());
+            }
+            if name == "numberOfSymmetricBaseSystems" {
+                cands.push("Modelica.Electrical.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string());
+                cands.push("Modelica.Electrical.QuasiStatic.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string());
+            }
+            if name == "factorY2DC" {
+                cands.push("Modelica.Electrical.Polyphase.Functions.factorY2DC".to_string());
+                cands.push("Modelica.Electrical.QuasiStatic.Polyphase.Functions.factorY2DC".to_string());
+            }
+            if name == "exlin" {
+                cands.push("Modelica.Electrical.Analog.Semiconductors.exlin".to_string());
+            }
+            if name == "exlin2" {
+                cands.push("Modelica.Electrical.Analog.Semiconductors.exlin2".to_string());
+            }
+            if name.starts_with("Machines.") {
+                cands.push(format!("Modelica.Electrical.{}", name));
+            }
+            if name.starts_with("Mechanics.") {
+                cands.push(format!("Modelica.{}", name));
+            }
+            if name == "Cv" {
+                cands.push("Modelica.Units.Conversions".to_string());
+            } else if let Some(rest) = name.strip_prefix("Cv.") {
+                cands.push(format!("Modelica.Units.Conversions.{}", rest));
+            }
+            cands.push(name.to_string());
+            // Deduplicate while preserving order.
+            let mut dedup = HashSet::new();
+            cands
+                .into_iter()
+                .filter(|n| dedup.insert(n.clone()))
+                .collect()
+        }
+
         for name in &all_called {
             if inline::is_builtin_function(name) || external_names.contains(name) {
                 continue;
@@ -540,30 +629,17 @@ pub(super) fn compile(
             // bound to BaseClasses.ValveCharacteristics.linear/one/...; our current
             // frontend does not track the specific binding here, so we fall back to
             // the default linear characteristic for JIT stubs.
-            let load_name = if name == "valveCharacteristic" {
-                "Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string()
-            } else if name.starts_with("world.") {
-                format!("Modelica.Mechanics.MultiBody.World.{}", name.trim_start_matches("world."))
-            } else if name.starts_with("BaseClasses.") {
-                format!("Modelica.Fluid.Utilities.{}", name)
-            } else if name.starts_with("Machines.") {
-                format!("Modelica.Electrical.{}", name)
-            } else if name.starts_with("Mechanics.") {
-                format!("Modelica.{}", name)
-            } else if name == "Cv" {
-                "Modelica.Units.Conversions".to_string()
-            } else if let Some(rest) = name.strip_prefix("Cv.") {
-                format!("Modelica.Units.Conversions.{}", rest)
-            } else {
-                name.to_string()
-            };
-            let func_model = match compiler.loader.load_model(&load_name) {
-                Ok(m) => m,
-                Err(_) => {
-                    // Some collected call-like identifiers are not real Modelica
-                    // functions in current frontend coverage; skip hard failure.
-                    continue;
+            let mut func_model = None;
+            for cand in candidate_load_names(name) {
+                if let Ok(m) = compiler.loader.load_model(&cand) {
+                    func_model = Some(m);
+                    break;
                 }
+            }
+            let Some(func_model) = func_model else {
+                // Some collected call-like identifiers are not real Modelica
+                // functions in current frontend coverage; skip hard failure.
+                continue;
             };
             if func_model.external_info.is_some() {
                 continue;
@@ -616,6 +692,8 @@ pub(super) fn compile(
                 blt_degrade_guard_triggered,
                 blt_degrade_guard_limit,
                 blt_degrade_guard_equation_count,
+                symbolic_index_signal_count,
+                implicit_derivative_constraint_count,
             );
             for (a, b) in &flat_model.clock_signal_connections {
                 println!(" * Clock connect (SYNC-6): {} <-> {}", a, b);

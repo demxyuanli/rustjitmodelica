@@ -16,6 +16,7 @@ import {
 import { AppIcon } from "./Icon";
 import type { AppIconName } from "./Icon";
 import { BUILTIN_AI_MODELS, filterEnabledModels } from "../constants/aiModels";
+import { PREFS_KEYS, readPref, writePref } from "../utils/prefsConstants";
 
 const SETTINGS_GROUPS: { id: string; labelKey: string; icon: AppIconName; dividerAfter?: boolean }[] = [
   { id: "general", labelKey: "settingsSectionGeneral", icon: "explorer" },
@@ -275,6 +276,9 @@ export function SettingsContent({
   };
   const [localFontUi, setLocalFontUi] = useState<"chinese" | "code">(readFontUiFromStorage);
   const [localFontSizePercent, setLocalFontSizePercent] = useState<90 | 100 | 110 | 120>(readFontSizePercentFromStorage);
+  const [regressionAutoLoadOnOpen, setRegressionAutoLoadOnOpen] = useState<boolean>(() =>
+    readPref(PREFS_KEYS.regressionAutoLoadOnOpen, (s) => s !== "false", true)
+  );
   const fontUi = fontUiProp ?? localFontUi;
   const fontSizePercent = fontSizePercentProp ?? localFontSizePercent;
 
@@ -472,6 +476,16 @@ export function SettingsContent({
         </SettingsRow>
         <SettingsRow title={t("settingsRestoreLayout")} description={t("settingsRestoreLayoutDesc")}>
           <SettingsSwitch checked={restoreLayout} onChange={(v) => onRestoreLayoutChange?.(v)} ariaLabel={t("settingsRestoreLayout")} />
+        </SettingsRow>
+        <SettingsRow title={t("settingsRegressionAutoLoad")} description={t("settingsRegressionAutoLoadDesc")}>
+          <SettingsSwitch
+            checked={regressionAutoLoadOnOpen}
+            onChange={(v) => {
+              setRegressionAutoLoadOnOpen(v);
+              writePref(PREFS_KEYS.regressionAutoLoadOnOpen, v ? "true" : "false");
+            }}
+            ariaLabel={t("settingsRegressionAutoLoad")}
+          />
         </SettingsRow>
         <SettingsRow title={t("settingsLanguage")} description={t("settingsLanguageDesc")}>
           <div className="flex rounded-md overflow-hidden border border-border">

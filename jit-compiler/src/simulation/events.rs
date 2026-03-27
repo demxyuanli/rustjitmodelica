@@ -22,10 +22,23 @@ pub(crate) enum EventIterationOutcome {
 static PERF_EVENT_ITER_TOTAL: AtomicU64 = AtomicU64::new(0);
 static PERF_CLOCK_DISPATCH_TOTAL: AtomicU64 = AtomicU64::new(0);
 static PERF_ENABLED: OnceLock<bool> = OnceLock::new();
+static EVENT_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 
 pub(crate) fn perf_enabled() -> bool {
     *PERF_ENABLED.get_or_init(|| {
         std::env::var("RUSTMODLICA_PERF_TRACE")
+            .ok()
+            .map(|v| {
+                let t = v.trim();
+                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn event_trace_enabled() -> bool {
+    *EVENT_TRACE_ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_EVENT_TRACE")
             .ok()
             .map(|v| {
                 let t = v.trim();
@@ -139,13 +152,7 @@ pub(crate) fn run_event_iteration_at_time(
         }
     }
 
-    let trace_events = std::env::var("RUSTMODLICA_EVENT_TRACE")
-        .ok()
-        .map(|v| {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false);
+    let trace_events = event_trace_enabled();
     let mut event_iter_count = 0;
     const ALG_FIXED_POINT_MAX: u32 = 15;
     let do_alg_iter =

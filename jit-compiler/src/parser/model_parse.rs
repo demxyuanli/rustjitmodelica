@@ -8,12 +8,16 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
     let prefix_pair = inner.next().unwrap();
     let mut is_connector = false;
     let mut is_function = false;
+    let mut is_operator_function = false;
     let mut is_record = false;
     let mut is_block = false;
     let mut is_operator_record = false;
     for p in prefix_pair.into_inner() {
         if p.as_rule() == Rule::function_prefix {
             is_function = true;
+        } else if p.as_rule() == Rule::operator_function_prefix {
+            is_function = true;
+            is_operator_function = true;
         } else if p.as_str().trim() == "operator" {
             is_operator_record = true;
         } else if p.as_str().trim() == "connector" {
@@ -103,6 +107,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
     if is_function {
         Ok(ClassItem::Function(Function {
             name,
+            is_operator_function,
             extends,
             declarations,
             algorithms,
@@ -114,6 +119,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             name,
             is_connector,
             is_function: false,
+            is_operator_function: false,
             is_record,
             is_block,
             extends,

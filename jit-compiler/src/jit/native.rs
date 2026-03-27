@@ -1,5 +1,6 @@
 use cranelift_jit::JITBuilder;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use crate::sparse_solve::CsrMatrix;
 
@@ -9,6 +10,26 @@ static ASSERT_HIT_COUNT: AtomicU64 = AtomicU64::new(0);
 static ASSERT_PRINTED_COUNT: AtomicU64 = AtomicU64::new(0);
 static ASSERT_SUPPRESS: AtomicBool = AtomicBool::new(false);
 const ASSERT_PRINT_LIMIT: u64 = 32;
+static NEWTON_DUAL_VALIDATE_ENABLED: OnceLock<bool> = OnceLock::new();
+static NEWTON_SPARSE_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|v| {
+            let t = v.trim().to_ascii_lowercase();
+            t == "1" || t == "true" || t == "on" || t == "yes"
+        })
+        .unwrap_or(false)
+}
+
+fn dual_validate_enabled() -> bool {
+    *NEWTON_DUAL_VALIDATE_ENABLED.get_or_init(|| env_flag("RUSTMODLICA_NEWTON_DUAL_VALIDATE"))
+}
+
+fn sparse_debug_enabled() -> bool {
+    *NEWTON_SPARSE_DEBUG_ENABLED.get_or_init(|| env_flag("RUSTMODLICA_NEWTON_SPARSE_DEBUG"))
+}
 
 #[allow(clippy::cast_possible_truncation)]
 extern "C" fn modelica_assert(cond: f64, msg: f64) {
@@ -292,20 +313,8 @@ extern "C" fn rustmodlica_solve_linear_csr(
     r: *const f64,
     dx: *mut f64,
 ) -> i32 {
-    let dual_validate = std::env::var("RUSTMODLICA_NEWTON_DUAL_VALIDATE")
-        .ok()
-        .map(|v| {
-            let t = v.trim().to_ascii_lowercase();
-            t == "1" || t == "true" || t == "on" || t == "yes"
-        })
-        .unwrap_or(false);
-    let sparse_debug = std::env::var("RUSTMODLICA_NEWTON_SPARSE_DEBUG")
-        .ok()
-        .map(|v| {
-            let t = v.trim().to_ascii_lowercase();
-            t == "1" || t == "true" || t == "on" || t == "yes"
-        })
-        .unwrap_or(false);
+    let dual_validate = dual_validate_enabled();
+    let sparse_debug = sparse_debug_enabled();
     if n <= 0
         || nnz < 0
         || row_ptr.is_null()
@@ -351,37 +360,38 @@ extern "C" fn rustmodlica_solve_linear_csr(
         *value = -*value;
     }
 
+    let mut matrix = CsrMatrix {
+        n: n_usize,
+        row_ptr: row_ptr_vec,
+        col_idx: col_idx_vec,
+        values: values_vec.clone(),
+    };
+    let mut solution = vec![0.0; n_usize];
     let mut lambda = 0.0_f64;
     let max_lm_retries = 10_u32;
     for _retry in 0..=max_lm_retries {
-        let mut vals = values_vec.clone();
+        matrix.values.copy_from_slice(&values_vec);
         if lambda > 0.0 {
             for i in 0..n_usize {
-                let start = row_ptr_vec[i];
-                let end = row_ptr_vec[i + 1];
+                let start = matrix.row_ptr[i];
+                let end = matrix.row_ptr[i + 1];
                 for k in start..end {
-                    if col_idx_vec[k] == i {
-                        vals[k] += lambda;
+                    if matrix.col_idx[k] == i {
+                        matrix.values[k] += lambda;
                     }
                 }
             }
         }
 
-        let matrix = CsrMatrix {
-            n: n_usize,
-            row_ptr: row_ptr_vec.clone(),
-            col_idx: col_idx_vec.clone(),
-            values: vals,
-        };
-        let mut solution = vec![0.0; n_usize];
+        solution.fill(0.0);
         if matrix.solve_in_place(&rhs, &mut solution).is_ok() {
             if dual_validate {
                 let mut dense = vec![0.0_f64; n_usize * n_usize];
                 for row in 0..n_usize {
-                    let start = row_ptr_vec[row];
-                    let end = row_ptr_vec[row + 1];
+                    let start = matrix.row_ptr[row];
+                    let end = matrix.row_ptr[row + 1];
                     for k in start..end {
-                        let col = col_idx_vec[k];
+                        let col = matrix.col_idx[k];
                         if col < n_usize {
                             dense[row * n_usize + col] = matrix.values[k];
                         }

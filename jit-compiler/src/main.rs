@@ -1,6 +1,7 @@
 use rustmodlica::{
     Artifacts, CompileOutput, Compiler, WarningInfo, run_simulation, run_simulation_collect,
 };
+use rustmodlica::runtime_perf_counters;
 use rustmodlica::error;
 use rustmodlica::fmi;
 use rustmodlica::i18n;
@@ -17,9 +18,10 @@ type RunError = error::AppError;
 
 fn maybe_write_perf_json(
     perf_json_path: &Option<String>,
-    compiler: &mut Compiler,
     model_name: &str,
     warnings_count: usize,
+    compile_perf: Option<serde_json::Value>,
+    sim_perf: Option<serde_json::Value>,
 ) -> Result<(), RunError> {
     let Some(path) = perf_json_path.as_ref() else {
         return Ok(());
@@ -27,7 +29,8 @@ fn maybe_write_perf_json(
     let payload = serde_json::json!({
         "model": model_name,
         "warnings_count": warnings_count,
-        "compile_perf": compiler.take_compile_perf_report()
+        "compile_perf": compile_perf,
+        "sim_perf": sim_perf
     });
     let text = serde_json::to_string_pretty(&payload)
         .map_err(|e| RunError::Message(format!("serialize perf json failed: {}", e)))?;
@@ -1155,14 +1158,29 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         eprintln!("[perf] compile_ms={}", t0.elapsed().as_millis());
     }
     let warnings = compiler.take_warnings();
-    maybe_write_perf_json(&perf_json_path, &mut compiler, &effective_model, warnings.len())?;
+    let compile_perf = serde_json::to_value(compiler.take_compile_perf_report())
+        .map_err(|e| RunError::Message(format!("serialize compile perf failed: {}", e)))?;
     let warn_level = compiler.options.warnings_level.as_str();
     if validate_only {
         match &out {
             CompileOutput::FunctionRun(_) => {
+                maybe_write_perf_json(
+                    &perf_json_path,
+                    &effective_model,
+                    warnings.len(),
+                    Some(compile_perf.clone()),
+                    None,
+                )?;
                 emit_validate_json(true, &warnings, &[], &[], &[]);
             }
             CompileOutput::Simulation(artifacts) => {
+                maybe_write_perf_json(
+                    &perf_json_path,
+                    &effective_model,
+                    warnings.len(),
+                    Some(compile_perf.clone()),
+                    None,
+                )?;
                 emit_validate_json(
                     true,
                     &warnings,
@@ -1172,6 +1190,13 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 );
             }
             CompileOutput::FlatSnapshotDone => {
+                maybe_write_perf_json(
+                    &perf_json_path,
+                    &effective_model,
+                    warnings.len(),
+                    Some(compile_perf.clone()),
+                    None,
+                )?;
                 emit_validate_json(true, &warnings, &[], &[], &[]);
             }
         }
@@ -1190,12 +1215,26 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     }
     match out {
         CompileOutput::FlatSnapshotDone => {
+            maybe_write_perf_json(
+                &perf_json_path,
+                &effective_model,
+                warnings.len(),
+                Some(compile_perf.clone()),
+                None,
+            )?;
             if !json_mode {
                 println!("Tier S flat snapshot written.");
             }
             return Ok(());
         }
         CompileOutput::FunctionRun(value) => {
+            maybe_write_perf_json(
+                &perf_json_path,
+                &effective_model,
+                warnings.len(),
+                Some(compile_perf.clone()),
+                None,
+            )?;
             if !json_mode {
                 println!("{}", i18n::msg("result", &[&value]));
             }
@@ -1295,9 +1334,25 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     artifacts.output_interval,
                     &artifacts.clock_partition_schedule,
                 )?;
-                if let Some(t0) = sim_t0 {
-                    eprintln!("[perf] sim_ms={}", t0.elapsed().as_millis());
+                let sim_ms = sim_t0
+                    .as_ref()
+                    .map(|t0| t0.elapsed().as_millis() as u64)
+                    .unwrap_or(0);
+                if sim_ms > 0 {
+                    eprintln!("[perf] sim_ms={}", sim_ms);
                 }
+                let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
+                maybe_write_perf_json(
+                    &perf_json_path,
+                    &effective_model,
+                    warnings.len(),
+                    Some(compile_perf.clone()),
+                    Some(serde_json::json!({
+                        "sim_ms": sim_ms,
+                        "event_iter_total": event_iter_total,
+                        "clock_dispatch_total": clock_dispatch_total
+                    })),
+                )?;
                 println!("{}", serde_json::to_string(&result).unwrap_or_default());
                 return Ok(());
             }
@@ -1332,9 +1387,25 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                 &artifacts.clock_partition_schedule,
                 None,
             )?;
-            if let Some(t0) = sim_t0 {
-                eprintln!("[perf] sim_ms={}", t0.elapsed().as_millis());
+            let sim_ms = sim_t0
+                .as_ref()
+                .map(|t0| t0.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            if sim_ms > 0 {
+                eprintln!("[perf] sim_ms={}", sim_ms);
             }
+            let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
+            maybe_write_perf_json(
+                &perf_json_path,
+                &effective_model,
+                warnings.len(),
+                Some(compile_perf),
+                Some(serde_json::json!({
+                    "sim_ms": sim_ms,
+                    "event_iter_total": event_iter_total,
+                    "clock_dispatch_total": clock_dispatch_total
+                })),
+            )?;
             if !json_mode {
                 println!("{}", i18n::msg0("simulation_completed"));
             }

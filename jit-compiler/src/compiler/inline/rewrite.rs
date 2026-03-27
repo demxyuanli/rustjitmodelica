@@ -24,6 +24,20 @@ pub(super) fn subst_merge_params_and_locals(
 
 pub(super) fn function_resolution_candidates(name: &str) -> Vec<String> {
     let mut out = vec![name.to_string()];
+    if name == "valveCharacteristic" {
+        out.push("Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string());
+    }
+    if matches!(name, "regRoot" | "regRoot2" | "regSquare2" | "regFun3" | "regStep" | "spliceFunction")
+    {
+        out.push(format!("Modelica.Fluid.Utilities.{name}"));
+        out.push(format!("Modelica.Utilities.Math.{name}"));
+    }
+    if let Some(suffix) = name.strip_prefix("Utilities.") {
+        if !suffix.is_empty() {
+            out.push(format!("Modelica.Fluid.Utilities.{suffix}"));
+            out.push(format!("Modelica.Utilities.{suffix}"));
+        }
+    }
     if let Some(suffix) = name.strip_prefix("Frames.") {
         if !suffix.is_empty() {
             out.push(format!("Modelica.Mechanics.MultiBody.Frames.{suffix}"));
@@ -34,7 +48,8 @@ pub(super) fn function_resolution_candidates(name: &str) -> Vec<String> {
             out.push(format!("Modelica.Magnetic.FluxTubes.{suffix}"));
         }
     }
-    out
+    let mut seen = std::collections::HashSet::new();
+    out.into_iter().filter(|n| seen.insert(n.clone())).collect()
 }
 
 pub(super) fn resolve_modelica_uri(uri: &str, library_paths: &[PathBuf]) -> String {

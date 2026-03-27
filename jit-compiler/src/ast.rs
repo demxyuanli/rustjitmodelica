@@ -14,6 +14,7 @@ pub enum ClassItem {
 #[allow(dead_code)]
 pub struct Function {
     pub name: String,
+    pub is_operator_function: bool,
     pub extends: Vec<ExtendsClause>,
     pub declarations: Vec<Declaration>,
     pub algorithms: Vec<AlgorithmStatement>,
@@ -35,6 +36,7 @@ impl From<Function> for Model {
             name: f.name,
             is_connector: false,
             is_function: true,
+            is_operator_function: f.is_operator_function,
             is_record: false,
             is_block: false,
             extends: f.extends,
@@ -61,6 +63,7 @@ pub struct Model {
     pub name: String,
     pub is_connector: bool,
     pub is_function: bool,
+    pub is_operator_function: bool,
     pub is_record: bool,
     pub is_block: bool,
     pub extends: Vec<ExtendsClause>,
@@ -133,6 +136,8 @@ pub struct ExtendsClause {
 #[derive(Debug, Clone, Default)]
 pub struct RedeclareExtendsBlock {
     pub extends_target: String,
+    pub is_function: bool,
+    pub is_operator_function: bool,
     pub clause_modifications: Vec<Modification>,
     pub declarations: Vec<Declaration>,
     pub equations: Vec<Equation>,

@@ -71,6 +71,8 @@ pub struct CompilePerfReport {
     pub blt_degrade_guard_triggered: bool,
     pub blt_degrade_guard_limit: Option<usize>,
     pub blt_degrade_guard_equation_count: Option<usize>,
+    pub symbolic_index_signal_count: usize,
+    pub implicit_derivative_constraint_count: usize,
     pub aot_cache_status: String,
     pub jit_compile_ok: bool,
     pub jit_error: Option<String>,
@@ -152,10 +154,34 @@ pub(super) fn collect_all_called_names(
     algorithms: &[AlgorithmStatement],
 ) -> HashSet<String> {
     let mut names = HashSet::new();
+    fn normalize_called_name(name: &str) -> Option<String> {
+        match name {
+            "valveCharacteristic" => {
+                Some("Modelica.Fluid.Valves.BaseClasses.ValveCharacteristics.linear".to_string())
+            }
+            "regRoot" | "regRoot2" | "regSquare2" | "regFun3" | "regStep" | "spliceFunction" => {
+                Some(format!("Modelica.Fluid.Utilities.{name}"))
+            }
+            "arg" => Some("Modelica.ComplexMath.arg".to_string()),
+            "distribution" => Some("Modelica.Blocks.Noise.Interfaces.distribution".to_string()),
+            "oneTrue" => Some("Modelica.Electrical.Batteries.Utilities.oneTrue".to_string()),
+            "isPowerOf2" => Some("Modelica.Electrical.Polyphase.Functions.isPowerOf2".to_string()),
+            "numberOfSymmetricBaseSystems" => {
+                Some("Modelica.Electrical.Polyphase.Functions.numberOfSymmetricBaseSystems".to_string())
+            }
+            "factorY2DC" => Some("Modelica.Electrical.Polyphase.Functions.factorY2DC".to_string()),
+            "exlin" => Some("Modelica.Electrical.Analog.Semiconductors.exlin".to_string()),
+            "exlin2" => Some("Modelica.Electrical.Analog.Semiconductors.exlin2".to_string()),
+            _ => None,
+        }
+    }
     fn collect_calls_expr(expr: &Expression, out: &mut HashSet<String>) {
         match expr {
             Expression::Call(name, _) => {
                 out.insert(name.clone());
+                if let Some(normalized) = normalize_called_name(name) {
+                    out.insert(normalized);
+                }
             }
             Expression::BinaryOp(l, _, r) => {
                 collect_calls_expr(l, out);

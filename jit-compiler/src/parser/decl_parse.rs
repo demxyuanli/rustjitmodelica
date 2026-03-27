@@ -225,6 +225,8 @@ fn parse_redeclare_extends_block(
     ) -> Result<ClassItem, pest::error::Error<Rule>>,
 ) -> Result<(), pest::error::Error<Rule>> {
     let mut extends_target = String::new();
+    let mut is_function = false;
+    let mut is_operator_function = false;
     let mut clause_modifications = Vec::new();
     let mut declarations = Vec::new();
     let mut inner_extends = Vec::new();
@@ -238,11 +240,15 @@ fn parse_redeclare_extends_block(
     let mut initial_algorithms = Vec::new();
 
     for p in decl_pair.into_inner() {
+        let p_text = p.as_str().trim().to_string();
         match p.as_rule() {
             Rule::identifier => {
                 if extends_target.is_empty() {
                     extends_target = normalize_identifier(p.as_str().trim());
                 }
+            }
+            Rule::function_prefix => {
+                is_function = true;
             }
             Rule::modification_part => {
                 let (m, _) = parse_modifications_from_modification_part(p);
@@ -273,6 +279,10 @@ fn parse_redeclare_extends_block(
             Rule::external_section | Rule::annotation_clause | Rule::end_part | Rule::string_comment => {}
             _ => {}
         }
+        if p_text == "operator" {
+            is_operator_function = true;
+            is_function = true;
+        }
     }
 
     if extends_target.is_empty() {
@@ -281,6 +291,8 @@ fn parse_redeclare_extends_block(
 
     redeclare_extends.push(RedeclareExtendsBlock {
         extends_target,
+        is_function,
+        is_operator_function,
         clause_modifications,
         declarations,
         equations,
@@ -484,6 +496,7 @@ pub fn parse_declaration_section(
                     }
 
                     let is_function = prefixes.contains("function");
+                    let is_operator_function = prefixes.contains("operator") && prefixes.contains("function");
                     let is_record = prefixes.contains("record");
                     let is_block = prefixes.contains("block");
                     let is_connector = prefixes.contains("connector");
@@ -492,6 +505,7 @@ pub fn parse_declaration_section(
                         name: alias,
                         is_connector,
                         is_function,
+                        is_operator_function,
                         is_record,
                         is_block,
                         extends: vec![ExtendsClause {
