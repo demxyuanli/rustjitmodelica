@@ -599,6 +599,23 @@ pub struct GitImpactResult {
     pub unregistered_changed_sources: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedCase {
+    pub name: String,
+    pub reason: String,
+    pub priority: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegressionExecutionPlan {
+    pub changed_sources: Vec<String>,
+    pub affected_features: Vec<String>,
+    pub planned_cases: Vec<PlannedCase>,
+    pub skipped_cases: Vec<String>,
+}
+
 pub fn git_changed_impact(repo_root: &Path) -> Result<GitImpactResult, String> {
     use std::process::Command;
 
@@ -649,5 +666,51 @@ pub fn git_changed_impact(repo_root: &Path) -> Result<GitImpactResult, String> {
         impact,
         suggested_cases: suggested,
         unregistered_changed_sources: unregistered,
+    })
+}
+
+pub fn build_regression_execution_plan(repo_root: &Path) -> Result<RegressionExecutionPlan, String> {
+    let impact = git_changed_impact(repo_root)?;
+    let matrix = get_traceability_matrix(repo_root)?;
+    let mut planned: Vec<PlannedCase> = Vec::new();
+    let mut seen = HashSet::new();
+
+    for case_name in &impact.suggested_cases {
+        if seen.insert(case_name.clone()) {
+            planned.push(PlannedCase {
+                name: case_name.clone(),
+                reason: "direct-impact".to_string(),
+                priority: 100,
+            });
+        }
+    }
+
+    for feature_id in &impact.impact.indirectly_affected_features {
+        if let Some(cases) = matrix.feature_to_cases.get(feature_id) {
+            for case_name in cases {
+                if seen.insert(case_name.clone()) {
+                    planned.push(PlannedCase {
+                        name: case_name.clone(),
+                        reason: format!("indirect-feature:{feature_id}"),
+                        priority: 70,
+                    });
+                }
+            }
+        }
+    }
+
+    planned.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
+    let skipped_cases = matrix
+        .cases
+        .iter()
+        .map(|c| c.name.clone())
+        .filter(|c| !seen.contains(c))
+        .collect::<Vec<_>>();
+
+    Ok(RegressionExecutionPlan {
+        changed_sources: impact.impact.changed_files,
+        affected_features: impact.impact.affected_features,
+        planned_cases: planned,
+        skipped_cases,
     })
 }

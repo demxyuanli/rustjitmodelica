@@ -10,6 +10,15 @@ pub struct JitValidateOptions {
     pub rtol: Option<f64>,
     pub solver: Option<String>,
     pub output_interval: Option<f64>,
+    pub coarse_constrainedby_only: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolverContext {
+    pub library_paths: Vec<String>,
+    pub project_dir: Option<String>,
+    pub coarse_constrainedby_only: bool,
 }
 
 pub fn repo_root() -> Result<PathBuf, String> {

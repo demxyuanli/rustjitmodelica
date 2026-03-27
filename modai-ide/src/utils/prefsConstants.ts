@@ -31,7 +31,7 @@ export const PREFS_KEYS = {
   graphExpanded: "modai-layout-graph-expanded",
 } as const;
 
-export type DefaultWorkspace = "modelica" | "component-library" | "compiler-iterate";
+export type DefaultWorkspace = "modelica" | "component-library" | "compiler-iterate" | "regression";
 
 export function readPref<T>(key: string, parse: (s: string | null) => T, defaultValue: T): T {
   if (typeof localStorage === "undefined") return defaultValue;

@@ -9,7 +9,7 @@ import { IconButton } from "./IconButton";
 
 const RECENT_MENU_MAX = 10;
 
-export type WorkspaceMode = "modelica" | "component-library" | "compiler-iterate";
+export type WorkspaceMode = "modelica" | "component-library" | "compiler-iterate" | "regression";
 
 interface TitlebarProps {
   workspaceMode: WorkspaceMode;
@@ -100,6 +100,15 @@ export function Titlebar({
             onClick={() => onWorkspaceModeChange("component-library")}
             title={t("workspaceComponentLibrary")}
             aria-label={t("workspaceComponentLibrary")}
+          />
+          <IconButton
+            icon={<AppIcon name="tests" aria-hidden="true" />}
+            variant="ghost"
+            active={workspaceMode === "regression"}
+            className="titlebar-btn h-7 w-9"
+            onClick={() => onWorkspaceModeChange("regression")}
+            title={t("workspaceRegression")}
+            aria-label={t("workspaceRegression")}
           />
         </div>
         <div className="relative">

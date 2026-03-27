@@ -16,6 +16,15 @@ interface SymbolResult {
   filePath: string;
 }
 
+interface ReferenceResult {
+  id: number;
+  fromFileId: number;
+  toName: string;
+  kind: string;
+  line?: number | null;
+  fromFilePath: string;
+}
+
 type SearchMode = "text" | "symbol";
 
 const SYMBOL_KINDS = [
@@ -44,6 +53,9 @@ export function SearchPanel({ projectDir, onOpenFile }: SearchPanelProps) {
   const [symbolResults, setSymbolResults] = useState<SymbolResult[]>([]);
   const [symbolLoading, setSymbolLoading] = useState(false);
   const [symbolSearched, setSymbolSearched] = useState(false);
+  const [referenceLoading, setReferenceLoading] = useState(false);
+  const [referenceSymbol, setReferenceSymbol] = useState<string>("");
+  const [referenceResults, setReferenceResults] = useState<ReferenceResult[]>([]);
   const symbolDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -112,6 +124,26 @@ export function SearchPanel({ projectDir, onOpenFile }: SearchPanelProps) {
       return next;
     });
   }, []);
+
+  const findReferences = useCallback(
+    async (symbolName: string) => {
+      if (!projectDir || !symbolName.trim()) return;
+      setReferenceLoading(true);
+      setReferenceSymbol(symbolName);
+      try {
+        const refs = (await invoke("index_find_references", {
+          projectDir,
+          symbolName: symbolName.trim(),
+        })) as ReferenceResult[];
+        setReferenceResults(refs);
+      } catch {
+        setReferenceResults([]);
+      } finally {
+        setReferenceLoading(false);
+      }
+    },
+    [projectDir]
+  );
 
   if (!projectDir) {
     return (
@@ -293,6 +325,36 @@ export function SearchPanel({ projectDir, onOpenFile }: SearchPanelProps) {
             </div>
           )}
 
+          {(referenceLoading || referenceSymbol) && (
+            <div className="px-2 py-1 text-xs text-[var(--text-muted)] border-b border-border">
+              {referenceLoading
+                ? `Searching references: ${referenceSymbol}`
+                : `References for ${referenceSymbol}: ${referenceResults.length}`}
+            </div>
+          )}
+          {!referenceLoading && referenceResults.length > 0 && (
+            <div className="border-b border-border/50">
+              {referenceResults.map((ref, idx) => (
+                <button
+                  key={`${ref.id}-${idx}`}
+                  type="button"
+                  className="flex items-start gap-2 w-full px-2 py-0.5 text-left hover:bg-white/10 text-xs"
+                  onClick={() => onOpenFile(ref.fromFilePath)}
+                >
+                  <span className="text-[var(--text-muted)] shrink-0 w-8 text-right font-mono">
+                    {ref.line ?? 0}
+                  </span>
+                  <span className="text-[var(--accent)] shrink-0 w-16 truncate">
+                    {ref.kind}
+                  </span>
+                  <span className="text-[var(--text)] truncate">
+                    {ref.fromFilePath}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {symbolSearched && !symbolLoading && symbolResults.length === 0 && (
             <div className="p-3 text-xs text-[var(--text-muted)]">
               {t("noSearchResults")}
@@ -344,6 +406,15 @@ export function SearchPanel({ projectDir, onOpenFile }: SearchPanelProps) {
                           </span>
                           <span className="text-[var(--text)] truncate">
                             {s.name}
+                          </span>
+                          <span
+                            className="ml-auto text-[10px] px-1.5 py-0.5 rounded border border-border text-[var(--text-muted)]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              findReferences(s.name);
+                            }}
+                          >
+                            refs
                           </span>
                         </button>
                       ))}

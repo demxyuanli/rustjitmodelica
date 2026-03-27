@@ -15,11 +15,41 @@ export interface WarningItem {
 }
 
 export interface JitValidateResult {
+  schema_version?: string;
   success: boolean;
   warnings: WarningItem[];
   errors: string[];
+  diagnostics?: DiagnosticErrorItem[];
   state_vars: string[];
   output_vars: string[];
+}
+
+export interface DiagnosticErrorItem {
+  code: string;
+  message: string;
+  path?: string | null;
+  line?: number | null;
+  column?: number | null;
+}
+
+export interface JitApiMeta {
+  schemaVersion: string;
+  operation: string;
+}
+
+export interface JitApiError {
+  code: string;
+  message: string;
+  path?: string | null;
+  line?: number | null;
+  column?: number | null;
+}
+
+export interface JitApiEnvelope<T> {
+  ok: boolean;
+  meta: JitApiMeta;
+  data?: T | null;
+  errors: JitApiError[];
 }
 
 export interface SimulationResult {
@@ -197,4 +227,79 @@ export interface GraphicalDocumentModel<TAnnotation = unknown, TComponent = unkn
   components: TComponent[];
   connections: TConnection[];
   graphical: GraphicModelState<TAnnotation>;
+}
+
+export type RegressionPlanStrategy = "category" | "feature" | "relation";
+export type RegressionWorkspaceMode = "persistent" | "ephemeral";
+export type RegressionWorkspaceStatus = "planned" | "running" | "completed" | "failed" | "cancelled";
+
+export interface RegressionPlanRequest {
+  strategy: RegressionPlanStrategy;
+  categories: string[];
+  featureIds: string[];
+  changedFiles: string[];
+  includeIndirect: boolean;
+  maxCases?: number | null;
+  workspaceMode: RegressionWorkspaceMode;
+  includeModelicaExamples: boolean;
+  includeModelicaTest: boolean;
+}
+
+export interface RegressionPlannedCase {
+  name: string;
+  reason: string;
+  priority: number;
+  category: string;
+}
+
+export interface RegressionExecutionPlanState {
+  strategy: RegressionPlanStrategy;
+  changedSources: string[];
+  affectedFeatures: string[];
+  plannedCases: RegressionPlannedCase[];
+  skippedCases: string[];
+}
+
+export interface RegressionRunRecord {
+  timestamp: string;
+  caseType: string;
+  caseName: string;
+  durationMs: number;
+  expectTargetOk: boolean;
+  actualOk: boolean;
+  exitCode: number;
+  status: string;
+  reason:
+    | "expectationMet"
+    | "modelNotFound"
+    | "dependencyMissing"
+    | "newtonNonconverged"
+    | "parseError"
+    | "runtimeError"
+    | "timeout"
+    | "processError"
+    | "cancelled";
+  detail: string;
+}
+
+export interface RegressionWorkspaceInfo {
+  workspaceId: string;
+  workspacePath: string;
+  strategy: RegressionPlanStrategy;
+  status: RegressionWorkspaceStatus;
+  createdAt: string;
+}
+
+export interface RegressionWorkspaceRunResult {
+  total: number;
+  passed: number;
+  failed: number;
+  durationMs: number;
+}
+
+export interface RegressionWorkspaceState {
+  info: RegressionWorkspaceInfo;
+  plan: RegressionExecutionPlanState;
+  result?: RegressionWorkspaceRunResult | null;
+  records: RegressionRunRecord[];
 }

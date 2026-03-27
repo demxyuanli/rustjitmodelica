@@ -9,9 +9,13 @@ import type {
   GraphicalDocumentModel,
   InstantiableClass,
   JitValidateOptions,
+  JitApiEnvelope,
   JitValidateResult,
   LibrarySuggestion,
   SimulationResult,
+  RegressionPlanRequest,
+  RegressionWorkspaceInfo,
+  RegressionWorkspaceState,
 } from "../types";
 
 // --- JIT / simulation ---
@@ -34,8 +38,20 @@ export async function jitValidate(request: JitValidateRequest): Promise<JitValid
   return invoke<JitValidateResult>("jit_validate", { request });
 }
 
+export async function jitValidateV2(
+  request: JitValidateRequest
+): Promise<JitApiEnvelope<JitValidateResult>> {
+  return invoke<JitApiEnvelope<JitValidateResult>>("jit_validate_v2", { request });
+}
+
 export async function runSimulation(request: RunSimulationRequest): Promise<SimulationResult> {
   return invoke<SimulationResult>("run_simulation_cmd", { request });
+}
+
+export async function runSimulationV2(
+  request: RunSimulationRequest
+): Promise<JitApiEnvelope<SimulationResult>> {
+  return invoke<JitApiEnvelope<SimulationResult>>("run_simulation_cmd_v2", { request });
 }
 
 export async function getEquationGraph(
@@ -44,6 +60,18 @@ export async function getEquationGraph(
   projectDir?: string | null
 ): Promise<EquationGraph> {
   return invoke<EquationGraph>("get_equation_graph", {
+    code,
+    modelName,
+    projectDir: projectDir ?? undefined,
+  });
+}
+
+export async function getEquationGraphV2(
+  code: string,
+  modelName: string,
+  projectDir?: string | null
+): Promise<JitApiEnvelope<EquationGraph>> {
+  return invoke<JitApiEnvelope<EquationGraph>>("get_equation_graph_v2", {
     code,
     modelName,
     projectDir: projectDir ?? undefined,
@@ -590,6 +618,29 @@ export interface IterationRunResult {
   quick_run?: boolean;
 }
 
+export interface LibraryRegressionOptions {
+  includeModelicaExamples?: boolean;
+  includeModelicaTest?: boolean;
+  maxCases?: number;
+  solver?: string;
+  tEnd?: number;
+  dt?: number;
+  extraArgs?: string[];
+}
+
+export interface PlannedRegressionCase {
+  name: string;
+  reason: string;
+  priority: number;
+}
+
+export interface RegressionExecutionPlan {
+  changedSources: string[];
+  affectedFeatures: string[];
+  plannedCases: PlannedRegressionCase[];
+  skippedCases: string[];
+}
+
 export interface IterationRecord {
   id: number;
   target: string;
@@ -714,5 +765,46 @@ export async function simulationCommand(
 
 export async function getSimulationState(sessionId: string): Promise<StepState | null> {
   return invoke<StepState | null>("get_simulation_state", { sessionId });
+}
+
+export async function traceabilityBuildExecutionPlan(): Promise<RegressionExecutionPlan> {
+  return invoke<RegressionExecutionPlan>("traceability_build_execution_plan");
+}
+
+export async function runLibraryRegression(
+  options?: LibraryRegressionOptions
+): Promise<{ total: number; passed: number; failed: number; results: Array<{
+  name: string;
+  passed: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  failureKind?: string | null;
+  retries: number;
+}>; durationMs: number }> {
+  return invoke("run_library_regression", { options });
+}
+
+export async function regressionCreateWorkspace(
+  request: RegressionPlanRequest
+): Promise<RegressionWorkspaceState> {
+  return invoke<RegressionWorkspaceState>("regression_create_workspace", { request });
+}
+
+export async function regressionRunWorkspace(workspaceId: string): Promise<RegressionWorkspaceState> {
+  return invoke<RegressionWorkspaceState>("regression_run_workspace", { workspaceId });
+}
+
+export async function regressionGetWorkspaceState(workspaceId: string): Promise<RegressionWorkspaceState> {
+  return invoke<RegressionWorkspaceState>("regression_get_workspace_state", { workspaceId });
+}
+
+export async function regressionListWorkspaces(): Promise<RegressionWorkspaceInfo[]> {
+  return invoke<RegressionWorkspaceInfo[]>("regression_list_workspaces");
+}
+
+export async function regressionCancelWorkspace(workspaceId: string): Promise<RegressionWorkspaceState> {
+  return invoke<RegressionWorkspaceState>("regression_cancel_workspace", { workspaceId });
 }
 

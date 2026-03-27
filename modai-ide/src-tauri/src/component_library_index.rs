@@ -16,7 +16,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             source_path TEXT NOT NULL,
             display_name TEXT NOT NULL,
             scope TEXT NOT NULL,
-            last_scanned_mtime INTEGER NOT NULL
+            last_scanned_mtime INTEGER NOT NULL,
+            fingerprint TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS component_types (
@@ -43,6 +44,10 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_ct_search ON component_types(search_text);",
     )
     .map_err(|e| e.to_string())?;
+    let _ = conn.execute(
+        "ALTER TABLE lib_meta ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''",
+        [],
+    );
     Ok(())
 }
 
@@ -75,16 +80,18 @@ pub fn upsert_library_meta(
     display_name: &str,
     scope: &str,
     mtime: i64,
+    fingerprint: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO lib_meta (library_id, source_path, display_name, scope, last_scanned_mtime)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO lib_meta (library_id, source_path, display_name, scope, last_scanned_mtime, fingerprint)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(library_id) DO UPDATE SET
             source_path = excluded.source_path,
             display_name = excluded.display_name,
             scope = excluded.scope,
-            last_scanned_mtime = excluded.last_scanned_mtime",
-        params![library_id, source_path, display_name, scope, mtime],
+            last_scanned_mtime = excluded.last_scanned_mtime,
+            fingerprint = excluded.fingerprint",
+        params![library_id, source_path, display_name, scope, mtime, fingerprint],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -266,6 +273,19 @@ pub fn get_library_mtime(conn: &Connection, library_id: &str) -> Result<Option<i
         "SELECT last_scanned_mtime FROM lib_meta WHERE library_id = ?1",
         params![library_id],
         |row| row.get::<_, i64>(0),
+    );
+    match res {
+        Ok(m) => Ok(Some(m)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+pub fn get_library_fingerprint(conn: &Connection, library_id: &str) -> Result<Option<String>, String> {
+    let res = conn.query_row(
+        "SELECT fingerprint FROM lib_meta WHERE library_id = ?1",
+        params![library_id],
+        |row| row.get::<_, String>(0),
     );
     match res {
         Ok(m) => Ok(Some(m)),

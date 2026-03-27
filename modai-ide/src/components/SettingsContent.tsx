@@ -48,7 +48,7 @@ export interface IndexActionState {
   total: number;
 }
 
-export type DefaultWorkspace = "modelica" | "component-library" | "compiler-iterate";
+export type DefaultWorkspace = "modelica" | "component-library" | "compiler-iterate" | "regression";
 
 export interface IndexCacheSettingsForm {
   componentLibraryIndexEnabled?: boolean;
@@ -467,6 +467,7 @@ export function SettingsContent({
             <button type="button" className={`px-3 py-1.5 text-xs ${defaultWorkspace === "modelica" ? "bg-primary text-white" : "bg-[var(--surface)] text-[var(--text-muted)] hover:bg-white/5"}`} onClick={() => onDefaultWorkspaceChange?.("modelica")}>{t("workspaceModelica")}</button>
             <button type="button" className={`px-3 py-1.5 text-xs ${defaultWorkspace === "component-library" ? "bg-primary text-white" : "bg-[var(--surface)] text-[var(--text-muted)] hover:bg-white/5"}`} onClick={() => onDefaultWorkspaceChange?.("component-library")}>{t("workspaceComponentLibrary")}</button>
             <button type="button" className={`px-3 py-1.5 text-xs ${defaultWorkspace === "compiler-iterate" ? "bg-primary text-white" : "bg-[var(--surface)] text-[var(--text-muted)] hover:bg-white/5"}`} onClick={() => onDefaultWorkspaceChange?.("compiler-iterate")}>{t("workspaceCompilerIterate")}</button>
+            <button type="button" className={`px-3 py-1.5 text-xs ${defaultWorkspace === "regression" ? "bg-primary text-white" : "bg-[var(--surface)] text-[var(--text-muted)] hover:bg-white/5"}`} onClick={() => onDefaultWorkspaceChange?.("regression")}>{t("workspaceRegression")}</button>
           </div>
         </SettingsRow>
         <SettingsRow title={t("settingsRestoreLayout")} description={t("settingsRestoreLayoutDesc")}>

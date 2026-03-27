@@ -39,3 +39,10 @@ pub fn run_test_suite(
 pub fn run_full_regression() -> Result<test_manager::TestSuiteResult, String> {
     test_manager::run_full_regression(&jit_compiler_root()?)
 }
+
+#[tauri::command]
+pub fn run_library_regression(
+    options: Option<test_manager::LibraryRegressionOptions>,
+) -> Result<test_manager::TestSuiteResult, String> {
+    test_manager::run_library_regression(&jit_compiler_root()?, options)
+}

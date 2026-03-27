@@ -1,9 +1,9 @@
 // Test library management: list, CRUD, execute, regression suite.
 
 use crate::compiler_config;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
@@ -26,6 +26,8 @@ pub struct TestRunResult {
     pub stdout: String,
     pub stderr: String,
     pub duration_ms: u64,
+    pub failure_kind: Option<String>,
+    pub retries: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,6 +38,35 @@ pub struct TestSuiteResult {
     pub failed: usize,
     pub results: Vec<TestRunResult>,
     pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryRegressionOptions {
+    pub include_modelica_examples: Option<bool>,
+    pub include_modelica_test: Option<bool>,
+    pub max_cases: Option<usize>,
+    pub solver: Option<String>,
+    pub t_end: Option<f64>,
+    pub dt: Option<f64>,
+    pub extra_args: Option<Vec<String>>,
+}
+
+fn classify_failure(stdout: &str, stderr: &str, exit_code: i32) -> String {
+    let text = format!("{stdout}\n{stderr}").to_lowercase();
+    if text.contains("model not found") {
+        "model_not_found".to_string()
+    } else if text.contains("newton") {
+        "newton_nonconverged".to_string()
+    } else if text.contains("parse") {
+        "parse_error".to_string()
+    } else if text.contains("timeout") {
+        "timeout".to_string()
+    } else if exit_code == -1 {
+        "process_error".to_string()
+    } else {
+        "runtime_error".to_string()
+    }
 }
 
 fn categorize_test(name: &str) -> String {
@@ -204,6 +235,16 @@ pub fn run_single_test(repo_root: &Path, name: &str) -> Result<TestRunResult, St
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         duration_ms: duration.as_millis() as u64,
+        failure_kind: if output.status.success() {
+            None
+        } else {
+            Some(classify_failure(
+                &String::from_utf8_lossy(&output.stdout),
+                &String::from_utf8_lossy(&output.stderr),
+                exit_code,
+            ))
+        },
+        retries: 0,
     })
 }
 
@@ -217,38 +258,74 @@ pub fn run_test_suite(
     let mut results = Vec::new();
     let mut passed = 0usize;
     let mut failed = 0usize;
+    let max_retries = 1u32;
     for name in names {
-        let t_start = Instant::now();
-        let output = Command::new(&exe)
-            .args(&extra_args)
-            .args(["--t-end=1", name.as_str()])
-            .current_dir(repo_root)
-            .output();
-        let t_dur = t_start.elapsed();
-        match output {
-            Ok(out) => {
-                let ok = out.status.success();
-                if ok { passed += 1; } else { failed += 1; }
-                results.push(TestRunResult {
-                    name: name.clone(),
-                    passed: ok,
-                    exit_code: out.status.code().unwrap_or(-1),
-                    stdout: String::from_utf8_lossy(&out.stdout).to_string(),
-                    stderr: String::from_utf8_lossy(&out.stderr).to_string(),
-                    duration_ms: t_dur.as_millis() as u64,
-                });
+        let mut retries = 0u32;
+        let mut last_result: Option<TestRunResult> = None;
+        loop {
+            let t_start = Instant::now();
+            let output = Command::new(&exe)
+                .args(&extra_args)
+                .args(["--t-end=1", name.as_str()])
+                .current_dir(repo_root)
+                .output();
+            let t_dur = t_start.elapsed();
+            match output {
+                Ok(out) => {
+                    let ok = out.status.success();
+                    let exit_code = out.status.code().unwrap_or(-1);
+                    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                    let failure_kind = if ok {
+                        None
+                    } else {
+                        Some(classify_failure(&stdout, &stderr, exit_code))
+                    };
+                    let current = TestRunResult {
+                        name: name.clone(),
+                        passed: ok,
+                        exit_code,
+                        stdout,
+                        stderr,
+                        duration_ms: t_dur.as_millis() as u64,
+                        failure_kind,
+                        retries,
+                    };
+                    let should_retry = !ok && retries < max_retries;
+                    last_result = Some(current);
+                    if should_retry {
+                        retries += 1;
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    let current = TestRunResult {
+                        name: name.clone(),
+                        passed: false,
+                        exit_code: -1,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                        duration_ms: t_dur.as_millis() as u64,
+                        failure_kind: Some("process_error".to_string()),
+                        retries,
+                    };
+                    let should_retry = retries < max_retries;
+                    last_result = Some(current);
+                    if should_retry {
+                        retries += 1;
+                        continue;
+                    }
+                }
             }
-            Err(e) => {
+            break;
+        }
+        if let Some(result) = last_result {
+            if result.passed {
+                passed += 1;
+            } else {
                 failed += 1;
-                results.push(TestRunResult {
-                    name: name.clone(),
-                    passed: false,
-                    exit_code: -1,
-                    stdout: String::new(),
-                    stderr: e.to_string(),
-                    duration_ms: t_dur.as_millis() as u64,
-                });
             }
+            results.push(result);
         }
     }
     Ok(TestSuiteResult {
@@ -268,4 +345,160 @@ pub fn run_full_regression(repo_root: &Path) -> Result<TestSuiteResult, String> 
     let cases = list_test_library(repo_root)?;
     let names: Vec<String> = cases.iter().map(|c| c.name.clone()).collect();
     run_test_suite(repo_root, &names, Some("full"))
+}
+
+fn collect_mo_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_mo_files(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "mo") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn model_name_from_path(root_name: &str, root: &Path, file: &Path) -> Option<String> {
+    if file.file_name().and_then(|n| n.to_str()) == Some("package.mo") {
+        return None;
+    }
+    let rel = file.strip_prefix(root).ok()?.to_string_lossy().replace('\\', "/");
+    let stem = rel.strip_suffix(".mo")?;
+    if stem.is_empty() {
+        return None;
+    }
+    Some(format!("{root_name}.{}", stem.replace('/', ".")))
+}
+
+pub fn run_library_regression(
+    repo_root: &Path,
+    options: Option<LibraryRegressionOptions>,
+) -> Result<TestSuiteResult, String> {
+    let opts = options.unwrap_or(LibraryRegressionOptions {
+        include_modelica_examples: Some(true),
+        include_modelica_test: Some(true),
+        max_cases: Some(0),
+        solver: Some("rk4".to_string()),
+        t_end: Some(2.0),
+        dt: Some(0.01),
+        extra_args: Some(Vec::new()),
+    });
+    let include_examples = opts.include_modelica_examples.unwrap_or(true);
+    let include_modelica_test = opts.include_modelica_test.unwrap_or(true);
+    let mut models: Vec<String> = Vec::new();
+
+    if include_examples {
+        let modelica_root = repo_root.join("Modelica");
+        if modelica_root.is_dir() {
+            let mut files = Vec::new();
+            collect_mo_files(&modelica_root, &mut files)?;
+            for f in files {
+                let rel = f
+                    .strip_prefix(&modelica_root)
+                    .ok()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                if rel.contains("/Examples/") {
+                    if let Some(name) = model_name_from_path("Modelica", &modelica_root, &f) {
+                        models.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    if include_modelica_test {
+        let modelica_test_root = repo_root.join("ModelicaTest");
+        if modelica_test_root.is_dir() {
+            let mut files = Vec::new();
+            collect_mo_files(&modelica_test_root, &mut files)?;
+            for f in files {
+                if let Some(name) = model_name_from_path("ModelicaTest", &modelica_test_root, &f) {
+                    models.push(name);
+                }
+            }
+        }
+    }
+
+    models.sort();
+    models.dedup();
+    let max_cases = opts.max_cases.unwrap_or(0);
+    if max_cases > 0 && models.len() > max_cases {
+        models.truncate(max_cases);
+    }
+
+    let (exe, mut base_args) = compiler_config::resolve_compiler_exe(repo_root)?;
+    let start = Instant::now();
+    let mut results = Vec::with_capacity(models.len());
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let solver = opts.solver.unwrap_or_else(|| "rk4".to_string());
+    let t_end = opts.t_end.unwrap_or(2.0);
+    let dt = opts.dt.unwrap_or(0.01);
+    base_args.push(format!("--solver={solver}"));
+    base_args.push(format!("--t-end={t_end}"));
+    base_args.push(format!("--dt={dt}"));
+    if let Some(extra) = opts.extra_args {
+        base_args.extend(extra);
+    }
+
+    for model in models {
+        let single_start = Instant::now();
+        let output = Command::new(&exe)
+            .args(&base_args)
+            .arg(&model)
+            .current_dir(repo_root)
+            .output();
+        let duration_ms = single_start.elapsed().as_millis() as u64;
+        match output {
+            Ok(out) => {
+                let ok = out.status.success();
+                let exit_code = out.status.code().unwrap_or(-1);
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                if ok {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+                results.push(TestRunResult {
+                    name: model,
+                    passed: ok,
+                    exit_code,
+                    stdout: stdout.clone(),
+                    stderr: stderr.clone(),
+                    duration_ms,
+                    failure_kind: if ok {
+                        None
+                    } else {
+                        Some(classify_failure(&stdout, &stderr, exit_code))
+                    },
+                    retries: 0,
+                });
+            }
+            Err(e) => {
+                failed += 1;
+                results.push(TestRunResult {
+                    name: model,
+                    passed: false,
+                    exit_code: -1,
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                    duration_ms,
+                    failure_kind: Some("process_error".to_string()),
+                    retries: 0,
+                });
+            }
+        }
+    }
+
+    Ok(TestSuiteResult {
+        total: results.len(),
+        passed,
+        failed,
+        results,
+        duration_ms: start.elapsed().as_millis() as u64,
+    })
 }

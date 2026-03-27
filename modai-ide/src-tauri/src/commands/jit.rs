@@ -2,6 +2,7 @@ use rustmodlica::ast::ClassItem;
 use rustmodlica::parser;
 use rustmodlica::SimulationResult;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -9,7 +10,7 @@ use crate::component_library;
 use crate::app_settings;
 use crate::profiler::ScopedTimer;
 
-use super::common::JitValidateOptions;
+use super::common::{JitValidateOptions, ResolverContext};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WarningItem {
@@ -20,12 +21,50 @@ pub struct WarningItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticErrorItem {
+    pub code: String,
+    pub message: String,
+    pub path: Option<String>,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JitValidateResult {
+    pub schema_version: String,
     pub success: bool,
     pub warnings: Vec<WarningItem>,
     pub errors: Vec<String>,
+    pub diagnostics: Vec<DiagnosticErrorItem>,
     pub state_vars: Vec<String>,
     pub output_vars: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JitApiMeta {
+    pub schema_version: String,
+    pub operation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JitApiError {
+    pub code: String,
+    pub message: String,
+    pub path: Option<String>,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JitApiEnvelope<T> {
+    pub ok: bool,
+    pub meta: JitApiMeta,
+    pub data: Option<T>,
+    pub errors: Vec<JitApiError>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +74,7 @@ pub struct JitValidateRequest {
     model_name: Option<String>,
     project_dir: Option<String>,
     options: Option<JitValidateOptions>,
+    resolver_context: Option<ResolverContext>,
 }
 
 #[allow(dead_code)]
@@ -63,6 +103,93 @@ pub struct RunSimulationRequest {
     model_name: Option<String>,
     project_dir: Option<String>,
     options: Option<JitValidateOptions>,
+    resolver_context: Option<ResolverContext>,
+}
+
+const JIT_API_SCHEMA_VERSION: &str = "jit.api.v1";
+
+fn classify_error_code(message: &str) -> Cow<'static, str> {
+    let m = message.to_lowercase();
+    if m.contains("parse") {
+        Cow::Borrowed("PARSE_ERROR")
+    } else if m.contains("model not found") || m.contains("could not find model") {
+        Cow::Borrowed("MODEL_NOT_FOUND")
+    } else if m.contains("constrainedby") {
+        Cow::Borrowed("FLATTEN_CONSTRAINEDBY")
+    } else if m.contains("newton") {
+        Cow::Borrowed("SIM_NEWTON_FAILURE")
+    } else if m.contains("simulation") {
+        Cow::Borrowed("SIMULATION_ERROR")
+    } else {
+        Cow::Borrowed("JIT_ERROR")
+    }
+}
+
+fn parse_location_from_error(message: &str) -> (Option<String>, Option<usize>, Option<usize>) {
+    for line in message.lines() {
+        let text = line.trim();
+        if let Some(rest) = text.strip_prefix("-->") {
+            let loc = rest.trim();
+            let mut parts = loc.rsplitn(3, ':').collect::<Vec<_>>();
+            if parts.len() == 3 {
+                parts.reverse();
+                let path = parts[0].trim().to_string();
+                let line_no = parts[1].trim().parse::<usize>().ok();
+                let col_no = parts[2].trim().parse::<usize>().ok();
+                return (Some(path), line_no, col_no);
+            }
+            return (Some(loc.to_string()), None, None);
+        }
+    }
+    (None, None, None)
+}
+
+fn diagnostics_from_error_message(message: &str) -> DiagnosticErrorItem {
+    let (path, line, column) = parse_location_from_error(message);
+    DiagnosticErrorItem {
+        code: classify_error_code(message).into_owned(),
+        message: message.to_string(),
+        path,
+        line,
+        column,
+    }
+}
+
+fn to_api_errors(items: &[DiagnosticErrorItem]) -> Vec<JitApiError> {
+    items
+        .iter()
+        .map(|item| JitApiError {
+            code: item.code.clone(),
+            message: item.message.clone(),
+            path: item.path.clone(),
+            line: item.line,
+            column: item.column,
+        })
+        .collect()
+}
+
+fn envelope_ok<T>(operation: &str, data: T) -> JitApiEnvelope<T> {
+    JitApiEnvelope {
+        ok: true,
+        meta: JitApiMeta {
+            schema_version: JIT_API_SCHEMA_VERSION.to_string(),
+            operation: operation.to_string(),
+        },
+        data: Some(data),
+        errors: Vec::new(),
+    }
+}
+
+fn envelope_err<T>(operation: &str, errors: Vec<JitApiError>) -> JitApiEnvelope<T> {
+    JitApiEnvelope {
+        ok: false,
+        meta: JitApiMeta {
+            schema_version: JIT_API_SCHEMA_VERSION.to_string(),
+            operation: operation.to_string(),
+        },
+        data: None,
+        errors,
+    }
 }
 
 fn build_compiler_options(opts: Option<JitValidateOptions>) -> rustmodlica::CompilerOptions {
@@ -86,6 +213,9 @@ fn build_compiler_options(opts: Option<JitValidateOptions>) -> rustmodlica::Comp
         if let Some(v) = opts.output_interval {
             out.output_interval = v;
         }
+        if let Some(v) = opts.coarse_constrainedby_only {
+            out.coarse_constrainedby_only = v;
+        }
     }
     out
 }
@@ -101,7 +231,17 @@ fn resolve_model_name(source: &str, requested: Option<&String>) -> Result<String
     })
 }
 
-fn with_loader_paths(compiler: &mut rustmodlica::Compiler, project_dir: Option<&String>) {
+fn with_loader_paths(
+    compiler: &mut rustmodlica::Compiler,
+    project_dir: Option<&String>,
+    resolver_context: Option<&ResolverContext>,
+) {
+    if let Some(ctx) = resolver_context {
+        for p in &ctx.library_paths {
+            compiler.loader.add_path(PathBuf::from(p));
+        }
+        return;
+    }
     if let Ok(paths) = component_library::compiler_loader_paths(project_dir.map(Path::new)) {
         for path in paths {
             compiler.loader.add_path(path);
@@ -157,11 +297,16 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
-    with_loader_paths(&mut compiler, request.project_dir.as_ref());
+    with_loader_paths(
+        &mut compiler,
+        request.project_dir.as_ref(),
+        request.resolver_context.as_ref(),
+    );
     let result = compiler.compile_from_source(&model_name, &request.code);
     let warnings = compiler.take_warnings();
     match result {
         Ok(rustmodlica::CompileOutput::FunctionRun(_)) => Ok(JitValidateResult {
+            schema_version: JIT_API_SCHEMA_VERSION.to_string(),
             success: true,
             warnings: warnings
                 .into_iter()
@@ -173,10 +318,12 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
                 })
                 .collect(),
             errors: vec![],
+            diagnostics: vec![],
             state_vars: vec![],
             output_vars: vec![],
         }),
         Ok(rustmodlica::CompileOutput::Simulation(artifacts)) => Ok(JitValidateResult {
+            schema_version: JIT_API_SCHEMA_VERSION.to_string(),
             success: true,
             warnings: warnings
                 .into_iter()
@@ -188,10 +335,12 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
                 })
                 .collect(),
             errors: vec![],
+            diagnostics: vec![],
             state_vars: artifacts.state_vars,
             output_vars: artifacts.output_vars,
         }),
         Ok(rustmodlica::CompileOutput::FlatSnapshotDone) => Ok(JitValidateResult {
+            schema_version: JIT_API_SCHEMA_VERSION.to_string(),
             success: true,
             warnings: warnings
                 .into_iter()
@@ -203,10 +352,15 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
                 })
                 .collect(),
             errors: vec![],
+            diagnostics: vec![],
             state_vars: vec![],
             output_vars: vec![],
         }),
-        Err(err) => Ok(JitValidateResult {
+        Err(err) => {
+            let message = err.to_string();
+            let diagnostics = vec![diagnostics_from_error_message(&message)];
+            Ok(JitValidateResult {
+            schema_version: JIT_API_SCHEMA_VERSION.to_string(),
             success: false,
             warnings: warnings
                 .into_iter()
@@ -217,10 +371,39 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
                     message: w.message,
                 })
                 .collect(),
-            errors: vec![err.to_string()],
+            errors: vec![message],
+            diagnostics,
             state_vars: vec![],
             output_vars: vec![],
-        }),
+        })}
+    }
+}
+
+#[tauri::command]
+pub fn jit_validate_v2(request: JitValidateRequest) -> Result<JitApiEnvelope<JitValidateResult>, String> {
+    let result = jit_validate(request)?;
+    if result.success {
+        Ok(envelope_ok("validate", result))
+    } else {
+        let errors = if !result.diagnostics.is_empty() {
+            to_api_errors(&result.diagnostics)
+        } else {
+            result
+                .errors
+                .iter()
+                .map(|message| {
+                    let d = diagnostics_from_error_message(message);
+                    JitApiError {
+                        code: d.code,
+                        message: d.message,
+                        path: d.path,
+                        line: d.line,
+                        column: d.column,
+                    }
+                })
+                .collect()
+        };
+        Ok(envelope_err("validate", errors))
     }
 }
 
@@ -230,7 +413,11 @@ pub fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationRes
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
-    with_loader_paths(&mut compiler, request.project_dir.as_ref());
+    with_loader_paths(
+        &mut compiler,
+        request.project_dir.as_ref(),
+        request.resolver_context.as_ref(),
+    );
     let out = compiler
         .compile_from_source(&model_name, &request.code)
         .map_err(|e| e.to_string())?;
@@ -266,8 +453,31 @@ pub fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationRes
         artifacts.ida_component_id.as_slice(),
         &artifacts.solver,
         artifacts.output_interval,
+        &artifacts.clock_partition_schedule,
     )
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn run_simulation_cmd_v2(
+    request: RunSimulationRequest,
+) -> Result<JitApiEnvelope<SimulationResult>, String> {
+    match run_simulation_cmd(request) {
+        Ok(data) => Ok(envelope_ok("simulate", data)),
+        Err(message) => {
+            let d = diagnostics_from_error_message(&message);
+            Ok(envelope_err(
+                "simulate",
+                vec![JitApiError {
+                    code: d.code,
+                    message: d.message,
+                    path: d.path,
+                    line: d.line,
+                    column: d.column,
+                }],
+            ))
+        }
+    }
 }
 
 #[tauri::command]
@@ -285,6 +495,30 @@ pub fn get_equation_graph(
     compiler
         .get_equation_graph_from_source(&model_name, &code)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_equation_graph_v2(
+    code: String,
+    model_name: String,
+    project_dir: Option<String>,
+) -> Result<JitApiEnvelope<rustmodlica::EquationGraph>, String> {
+    match get_equation_graph(code, model_name, project_dir) {
+        Ok(data) => Ok(envelope_ok("equationGraph", data)),
+        Err(message) => {
+            let d = diagnostics_from_error_message(&message);
+            Ok(envelope_err(
+                "equationGraph",
+                vec![JitApiError {
+                    code: d.code,
+                    message: d.message,
+                    path: d.path,
+                    line: d.line,
+                    column: d.column,
+                }],
+            ))
+        }
+    }
 }
 
 // --- Simulation session support for step-by-step debugging ---
@@ -324,6 +558,7 @@ pub struct StartSessionRequest {
     model_name: Option<String>,
     project_dir: Option<String>,
     options: Option<JitValidateOptions>,
+    resolver_context: Option<ResolverContext>,
 }
 
 #[tauri::command]
@@ -332,7 +567,11 @@ pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, 
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
-    with_loader_paths(&mut compiler, request.project_dir.as_ref());
+    with_loader_paths(
+        &mut compiler,
+        request.project_dir.as_ref(),
+        request.resolver_context.as_ref(),
+    );
     let out = compiler
         .compile_from_source(&model_name, &request.code)
         .map_err(|e| e.to_string())?;
@@ -372,6 +611,7 @@ pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, 
         artifacts.ida_component_id.as_slice(),
         &artifacts.solver,
         artifacts.output_interval,
+        &artifacts.clock_partition_schedule,
     )
     .map_err(|e| e.to_string())?;
 

@@ -13,7 +13,7 @@ export interface LayoutState {
   graphExpanded: boolean;
   showProjectMenu: boolean;
   showSettings: boolean;
-  workspaceMode: "modelica" | "component-library" | "compiler-iterate";
+  workspaceMode: "modelica" | "component-library" | "compiler-iterate" | "regression";
 }
 
 const parseLayoutNum = (s: string | null, defaultVal: number) => {
@@ -63,17 +63,17 @@ export function useLayout() {
     readPref(
       PREFS_KEYS.defaultWorkspace,
       (s) =>
-        s === "component-library" || s === "compiler-iterate" ? s : "modelica",
+        s === "component-library" || s === "compiler-iterate" || s === "regression" ? s : "modelica",
       "modelica"
     )
   );
   const [restoreLayout, setRestoreLayoutState] = useState(readRestoreLayout);
-  const [workspaceMode, setWorkspaceMode] = useState<"modelica" | "component-library" | "compiler-iterate">(
+  const [workspaceMode, setWorkspaceMode] = useState<"modelica" | "component-library" | "compiler-iterate" | "regression">(
     () =>
       readPref(
         PREFS_KEYS.defaultWorkspace,
         (s) =>
-          s === "component-library" || s === "compiler-iterate" ? s : "modelica",
+          s === "component-library" || s === "compiler-iterate" || s === "regression" ? s : "modelica",
         "modelica"
       )
   );

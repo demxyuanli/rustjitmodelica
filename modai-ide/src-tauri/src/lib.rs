@@ -43,7 +43,8 @@ use commands::index_commands::{
 };
 use commands::iterate_commands::{apply_patch_to_project, apply_patch_to_workspace, commit_patch, self_iterate};
 use commands::jit::{
-    get_equation_graph, get_simulation_state, jit_validate, run_simulation_cmd,
+    get_equation_graph, get_equation_graph_v2, get_simulation_state, jit_validate, jit_validate_v2,
+    run_simulation_cmd, run_simulation_cmd_v2,
     simulation_command, simulation_step, start_simulation_session,
 };
 use commands::project::{
@@ -58,6 +59,10 @@ use commands::project::{
     set_component_library_enabled, suggest_library_for_missing_type,
     sync_all_third_party_libraries, sync_third_party_library, write_project_file,
 };
+use commands::regression_commands::{
+    regression_cancel_workspace, regression_create_workspace, regression_get_workspace_state,
+    regression_list_workspaces, regression_run_workspace,
+};
 use commands::source_commands::{
     compiler_file_git_diff, compiler_file_git_log, create_iteration_branch,
     list_compiler_source_tree, list_iteration_branches, merge_iteration_branch,
@@ -65,10 +70,11 @@ use commands::source_commands::{
 };
 use commands::test_commands::{
     delete_test_file, list_test_library, read_test_file, run_full_regression, run_single_test,
-    run_test_suite, write_test_file,
+    run_library_regression, run_test_suite, write_test_file,
 };
 use commands::traceability_commands::{
     get_traceability_matrix, load_traceability_config, save_traceability_config,
+    traceability_build_execution_plan,
     traceability_apply_sync, traceability_coverage_analysis, traceability_git_impact,
     traceability_impact_analysis, traceability_sync_check, traceability_validate,
     update_traceability_link,
@@ -82,7 +88,9 @@ pub fn run() {
             greet,
             open_devtools,
             jit_validate,
+            jit_validate_v2,
             run_simulation_cmd,
+            run_simulation_cmd_v2,
             get_api_key,
             set_api_key,
             get_grok_api_key,
@@ -103,6 +111,7 @@ pub fn run() {
             write_project_file,
             search_in_project,
             get_equation_graph,
+            get_equation_graph_v2,
             start_simulation_session,
             simulation_step,
             simulation_command,
@@ -128,6 +137,11 @@ pub fn run() {
             get_component_type_details,
             get_component_type_relation_graph,
             read_component_type_source,
+            regression_create_workspace,
+            regression_run_workspace,
+            regression_get_workspace_state,
+            regression_list_workspaces,
+            regression_cancel_workspace,
             ai_generate_compiler_patch,
             ai_generate_compiler_patch_with_context,
             list_iteration_history,
@@ -156,6 +170,7 @@ pub fn run() {
             traceability_validate,
             traceability_apply_sync,
             traceability_git_impact,
+            traceability_build_execution_plan,
             list_compiler_source_tree,
             read_compiler_file,
             write_compiler_file,
@@ -172,6 +187,7 @@ pub fn run() {
             run_single_test,
             run_test_suite,
             run_full_regression,
+            run_library_regression,
             get_compiler_config,
             set_compiler_config,
             get_app_data_root,

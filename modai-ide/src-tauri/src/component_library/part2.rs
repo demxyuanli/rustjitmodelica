@@ -1,4 +1,4 @@
-﻿fn add_component_library_by_id(
+fn add_component_library_by_id(
     project_dir: Option<&Path>,
     scope: &str,
     id: &str,
@@ -370,16 +370,26 @@ fn scan_modelica_file(
     library: &ResolvedComponentLibrary,
 ) -> Result<Vec<DiscoveredComponentType>, String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let item = match parser::parse(&content) {
+    let items = match parser::parse_all(&content) {
         Ok(value) => value,
         Err(_) => return Ok(Vec::new()),
     };
     let mut out = Vec::new();
-    if let ClassItem::Model(model) = item {
-        let top_qualified = if library.record.kind == KIND_FILE {
+    let package_prefix = if library.record.kind == KIND_FILE {
+        String::new()
+    } else if let Some((prefix, _)) = qualified_name_hint.rsplit_once('.') {
+        prefix.to_string()
+    } else {
+        String::new()
+    };
+    for item in items {
+        let ClassItem::Model(model) = item else {
+            continue;
+        };
+        let top_qualified = if library.record.kind == KIND_FILE || package_prefix.is_empty() {
             model.name.clone()
         } else {
-            qualified_name_hint
+            format!("{}.{}", package_prefix, model.name)
         };
         collect_instantiable_from_model(
             &model,
@@ -450,7 +460,18 @@ pub fn query_component_types(
         && match component_library_index::open_connection() {
             Ok(conn) => library_ids
                 .iter()
-                .all(|id| component_library_index::get_library_mtime(&conn, id).ok().flatten().is_some()),
+                .all(|id| {
+                    let Some(existing) = component_library_index::get_library_fingerprint(&conn, id)
+                        .ok()
+                        .flatten()
+                    else {
+                        return false;
+                    };
+                    let Some(lib) = libraries.iter().find(|l| &l.record.id == id) else {
+                        return false;
+                    };
+                    existing == library_path_fingerprint(&lib.absolute_path)
+                }),
             Err(_) => false,
         };
     if use_index {

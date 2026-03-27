@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import type { JitValidateOptions, JitValidateResult, SimulationResult } from "../types";
-import { jitValidate, runSimulation as runSimulationApi, readProjectFile } from "../api/tauri";
+import { jitValidateV2, runSimulationV2, readProjectFile } from "../api/tauri";
 import { t } from "../i18n";
 import {
   buildSimulationChartMeta,
@@ -69,22 +69,37 @@ export function useSimulation(log: (msg: string) => void) {
 
   const validate = useCallback(async (code: string, modelName: string, projectDir: string | null) => {
     try {
-      const result = await jitValidate({
+      const result = await jitValidateV2({
         code,
         modelName,
         options: buildOptions(),
         projectDir: projectDir ?? undefined,
       });
-      setJitResult(result);
-      if (result.success) {
+      const resolved = result.data ?? {
+        schema_version: result.meta.schemaVersion,
+        success: false,
+        warnings: [],
+        errors: result.errors.map((e) => e.message),
+        diagnostics: result.errors.map((e) => ({
+          code: e.code,
+          message: e.message,
+          path: e.path ?? undefined,
+          line: e.line ?? undefined,
+          column: e.column ?? undefined,
+        })),
+        state_vars: [],
+        output_vars: [],
+      };
+      setJitResult(resolved);
+      if (resolved.success) {
         log("JIT validation OK");
         setSelectedPlotVars((prev) =>
-          prev.length ? prev : [...new Set([...(result.state_vars ?? []), ...(result.output_vars ?? [])])]
+          prev.length ? prev : [...new Set([...(resolved.state_vars ?? []), ...(resolved.output_vars ?? [])])]
         );
       } else {
-        log("JIT validation failed: " + result.errors.join("; "));
+        log("JIT validation failed: " + resolved.errors.join("; "));
       }
-      return result;
+      return resolved;
     } catch (e) {
       log("Error: " + String(e));
       setJitResult(null);
@@ -97,15 +112,20 @@ export function useSimulation(log: (msg: string) => void) {
     setSimResult(null);
     log("Running simulation...");
     try {
-      const result = await runSimulationApi({
+      const result = await runSimulationV2({
         code,
         modelName,
         options: buildOptions(),
         projectDir: projectDir ?? undefined,
       });
-      setSimResult(result);
-      setSelectedPlotVars(Object.keys(result.series).filter((k) => k !== "time"));
-      log("Simulation done. Points: " + (result.time?.length ?? 0));
+      if (!result.ok || !result.data) {
+        const errorText = result.errors.map((e) => `${e.code}: ${e.message}`).join("; ");
+        throw new Error(errorText || "Simulation failed");
+      }
+      const sim = result.data;
+      setSimResult(sim);
+      setSelectedPlotVars(Object.keys(sim.series).filter((k) => k !== "time"));
+      log("Simulation done. Points: " + (sim.time?.length ?? 0));
     } catch (e) {
       log("Simulation error: " + String(e));
     } finally {
@@ -127,13 +147,22 @@ export function useSimulation(log: (msg: string) => void) {
       try {
         const content = await readProjectFile(projectDir, path);
         const mn = pathToModelName(path);
-        const result = await jitValidate({
+        const envelope = await jitValidateV2({
           code: content,
           modelName: mn,
           options: opts,
           projectDir,
         });
-        results.push({ path, success: result.success, errors: result.errors ?? [] });
+        const result = envelope.data;
+        if (result) {
+          results.push({ path, success: result.success, errors: result.errors ?? [] });
+        } else {
+          results.push({
+            path,
+            success: false,
+            errors: envelope.errors.map((e) => `${e.code}: ${e.message}`),
+          });
+        }
       } catch (e) {
         results.push({ path, success: false, errors: [String(e)] });
       }

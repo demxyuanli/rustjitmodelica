@@ -28,6 +28,7 @@ import { emit } from "@tauri-apps/api/event";
 const DiffView = lazy(() => import("./components/DiffView").then((m) => ({ default: m.DiffView })));
 const GitGraphView = lazy(() => import("./components/GitGraphView").then((m) => ({ default: m.GitGraphView })));
 const SimulationPanel = lazy(() => import("./components/SimulationPanel").then((m) => ({ default: m.SimulationPanel })));
+const RegressionWorkspacePanel = lazy(() => import("./components/RegressionWorkspacePanel").then((m) => ({ default: m.RegressionWorkspacePanel })));
 import { NewModelDialog } from "./components/diagram/NewModelDialog";
 import { JitIdeWorkspace } from "./components/JitIdeWorkspace";
 import { GlobalSettingsPanel } from "./components/GlobalSettingsPanel";
@@ -73,7 +74,7 @@ type WorkbenchBottomTab = "problems" | "output" | "results" | "deps";
 let lastProjectRestoreAttempted = false;
 
 function scheduleRestoreLastProjectOnce(
-  setWorkspaceMode: (mode: "modelica" | "component-library" | "compiler-iterate") => void,
+  setWorkspaceMode: (mode: "modelica" | "component-library" | "compiler-iterate" | "regression") => void,
   setProjectDirFromPath: (path: string) => Promise<void>
 ) {
   requestAnimationFrame(() => {
@@ -1115,6 +1116,13 @@ function App() {
           enabledModelIds={appSettings?.ai?.modelIdsEnabled ?? undefined}
         />
       </div>
+      <div className={layout.workspaceMode === "regression" ? "flex flex-1 min-h-0 min-w-0" : "hidden"}>
+        <div className="flex flex-1 min-h-0 min-w-0 bg-surface">
+          <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
+            <RegressionWorkspacePanel theme={layout.theme} />
+          </Suspense>
+        </div>
+      </div>
       </>
       </div>
       <GlobalSettingsPanel
@@ -1170,7 +1178,7 @@ function App() {
       <StatusBar
         gitBranch={project.gitBranch}
         openFilePath={layout.workspaceMode === "modelica" ? openFilePath : null}
-        language={layout.workspaceMode === "compiler-iterate" ? t("languageRust") : t("languageModelica")}
+        language={layout.workspaceMode === "compiler-iterate" ? t("languageRust") : (layout.workspaceMode === "regression" ? t("testManagerTitle") : t("languageModelica"))}
         position={layout.workspaceMode === "modelica" ? cursorPosition : null}
         errorCount={layout.workspaceMode === "modelica" ? (sim.jitResult?.errors?.length ?? 0) : 0}
         warningCount={layout.workspaceMode === "modelica" ? (sim.jitResult?.warnings?.length ?? 0) : 0}

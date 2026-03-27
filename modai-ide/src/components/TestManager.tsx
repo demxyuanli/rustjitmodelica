@@ -3,6 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import Editor from "@monaco-editor/react";
 import { t, tf } from "../i18n";
 import { getCaseToFeatures, getCaseToSourceFiles } from "../data/jit_regression_metadata";
+import {
+  regressionCreateWorkspace,
+  regressionRunWorkspace,
+} from "../api/tauri";
+import type { RegressionWorkspaceState } from "../types";
 
 interface TestCaseInfo {
   name: string;
@@ -46,6 +51,8 @@ export function TestManager({ theme = "dark" }: { theme?: "dark" | "light" }) {
   const [suiteRunning, setSuiteRunning] = useState(false);
   const [banner, setBanner] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [outputTab, setOutputTab] = useState<"stdout" | "stderr">("stdout");
+  const [workspaceState, setWorkspaceState] = useState<RegressionWorkspaceState | null>(null);
+  const [workspaceRunning, setWorkspaceRunning] = useState(false);
 
   useEffect(() => {
     invoke<TestCaseInfo[]>("list_test_library")
@@ -132,6 +139,37 @@ export function TestManager({ theme = "dark" }: { theme?: "dark" | "light" }) {
     }
   }, [filteredCases]);
 
+  const linkedFeatures = selectedTest ? (getCaseToFeatures()[selectedTest] ?? []) : [];
+
+  const handleRunRegressionWorkspace = useCallback(async (strategy: "category" | "feature" | "relation") => {
+    setWorkspaceRunning(true);
+    try {
+      const categories = strategy === "category" && categoryFilter !== "all" ? [categoryFilter] : [];
+      const featureIds = strategy === "feature" && linkedFeatures.length > 0 ? linkedFeatures : [];
+      const state = await regressionCreateWorkspace({
+        strategy,
+        categories,
+        featureIds,
+        changedFiles: [],
+        includeIndirect: true,
+        maxCases: null,
+        workspaceMode: "persistent",
+        includeModelicaExamples: true,
+        includeModelicaTest: true,
+      });
+      const ran = await regressionRunWorkspace(state.info.workspaceId);
+      setWorkspaceState(ran);
+      setBanner({
+        msg: `workspace ${ran.info.workspaceId}: ${ran.result?.passed ?? 0}/${ran.result?.total ?? 0}`,
+        type: ran.info.status === "completed" ? "success" : "error",
+      });
+    } catch (e) {
+      setBanner({ msg: String(e), type: "error" });
+    } finally {
+      setWorkspaceRunning(false);
+    }
+  }, [categoryFilter, linkedFeatures]);
+
   const handleDelete = useCallback(async () => {
     if (!selectedTest) return;
     if (!confirm(tf("deleteTestConfirm", { name: selectedTest }))) return;
@@ -162,8 +200,6 @@ export function TestManager({ theme = "dark" }: { theme?: "dark" | "light" }) {
       setBanner({ msg: String(e), type: "error" });
     }
   }, [loadTest]);
-
-  const linkedFeatures = selectedTest ? (getCaseToFeatures()[selectedTest] ?? []) : [];
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
@@ -205,6 +241,15 @@ export function TestManager({ theme = "dark" }: { theme?: "dark" | "light" }) {
               className="px-2 py-0.5 text-[10px] rounded border theme-button-secondary disabled:opacity-50"
             >
               {suiteRunning ? "..." : t("runSuite")}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRunRegressionWorkspace("relation")}
+              disabled={workspaceRunning}
+              className="px-2 py-0.5 text-[10px] rounded border theme-button-secondary disabled:opacity-50"
+              title="Run workspace by relation"
+            >
+              {workspaceRunning ? "..." : "WS"}
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-auto">
@@ -335,6 +380,18 @@ export function TestManager({ theme = "dark" }: { theme?: "dark" | "light" }) {
                   <div className="text-xs text-[var(--success-text)]">{suiteResult.passed} {t("pass").toLowerCase()}</div>
                   <div className="text-xs text-[var(--danger-text)]">{suiteResult.failed} {t("fail").toLowerCase()}</div>
                   <div className="text-xs text-[var(--text-muted)]">{suiteResult.durationMs}ms</div>
+                </div>
+              )}
+              {workspaceState && (
+                <div className="px-3 py-2 border-b border-border">
+                  <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">workspace</div>
+                  <div className="text-xs text-[var(--text)]">{workspaceState.info.workspaceId}</div>
+                  <div className="text-xs text-[var(--success-text)]">
+                    {(workspaceState.result?.passed ?? 0)} {t("pass").toLowerCase()}
+                  </div>
+                  <div className="text-xs text-[var(--danger-text)]">
+                    {(workspaceState.result?.failed ?? 0)} {t("fail").toLowerCase()}
+                  </div>
                 </div>
               )}
             </>

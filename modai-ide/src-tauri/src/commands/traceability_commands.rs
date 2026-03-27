@@ -60,3 +60,8 @@ pub fn traceability_apply_sync(request: traceability::ApplySyncRequest) -> Resul
 pub fn traceability_git_impact() -> Result<traceability::GitImpactResult, String> {
     traceability::git_changed_impact(&jit_compiler_root()?)
 }
+
+#[tauri::command]
+pub fn traceability_build_execution_plan() -> Result<traceability::RegressionExecutionPlan, String> {
+    traceability::build_regression_execution_plan(&jit_compiler_root()?)
+}

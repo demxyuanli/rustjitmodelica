@@ -606,7 +606,12 @@ pub fn get_diagram_data_from_source(
                 pdir,
                 rpath,
                 &DiagramPersistentState {
-                    layout: diagram.layout.clone().unwrap_or_default(),
+                    layout: diagram
+                        .layout
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect::<BTreeMap<_, _>>(),
                     connection_lines: diagram
                         .connections
                         .iter()
@@ -656,6 +661,7 @@ fn declaration_from_component(c: &ComponentInstance) -> Declaration {
         constrainedby_type: None,
         is_parameter: false,
         is_flow: false,
+        is_stream: false,
         is_discrete: false,
         is_input: c.is_input,
         is_output: c.is_output,
@@ -986,6 +992,7 @@ pub fn apply_equation_edits(
             constrainedby_type: None,
             is_parameter: var.variability == "parameter",
             is_flow: false,
+            is_stream: false,
             is_discrete: false,
             is_input: false,
             is_output: false,

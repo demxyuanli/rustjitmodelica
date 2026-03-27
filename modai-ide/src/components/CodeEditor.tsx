@@ -59,14 +59,28 @@ export function CodeEditor({
       });
     }
     if (jitResult.errors.length > 0) {
-      markers.push({
-        severity: monacoInstance.MarkerSeverity.Error,
-        message: jitResult.errors.join(" "),
-        startLineNumber: 1,
-        startColumn: 1,
-        endLineNumber: 1,
-        endColumn: 2,
-      });
+      const diagnostics = jitResult.diagnostics ?? [];
+      if (diagnostics.length > 0) {
+        for (const d of diagnostics) {
+          markers.push({
+            severity: monacoInstance.MarkerSeverity.Error,
+            message: `[${d.code}] ${d.message}`,
+            startLineNumber: d.line || 1,
+            startColumn: d.column || 1,
+            endLineNumber: d.line || 1,
+            endColumn: Math.max((d.column || 1) + 1, 2),
+          });
+        }
+      } else {
+        markers.push({
+          severity: monacoInstance.MarkerSeverity.Error,
+          message: jitResult.errors.join(" "),
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 2,
+        });
+      }
     }
     monacoInstance.editor.setModelMarkers(model, "rustmodlica", markers);
     return () => {

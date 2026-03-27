@@ -479,6 +479,49 @@ fn library_path_mtime(path: &Path) -> i64 {
         .unwrap_or(0)
 }
 
+fn library_path_fingerprint(path: &Path) -> String {
+    let mut hasher = Sha256::new();
+    if path.is_file() {
+        if let Ok(meta) = fs::metadata(path) {
+            hasher.update(path.to_string_lossy().as_bytes());
+            hasher.update(meta.len().to_le_bytes());
+            if let Ok(modified) = meta.modified() {
+                if let Ok(dur) = modified.duration_since(UNIX_EPOCH) {
+                    hasher.update(dur.as_secs().to_le_bytes());
+                }
+            }
+        }
+    } else if path.is_dir() {
+        let mut stack = vec![path.to_path_buf()];
+        while let Some(current) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&current) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if !p.extension().is_some_and(|e| e == "mo") {
+                    continue;
+                }
+                if let Ok(meta) = entry.metadata() {
+                    hasher.update(p.to_string_lossy().as_bytes());
+                    hasher.update(meta.len().to_le_bytes());
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(dur) = modified.duration_since(UNIX_EPOCH) {
+                            hasher.update(dur.as_secs().to_le_bytes());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let digest = hasher.finalize();
+    digest.iter().map(|value| format!("{value:02x}")).collect::<String>()
+}
+
 fn discovered_to_component_row(d: &DiscoveredComponentType) -> ComponentRow {
     ComponentRow {
         library_id: d.library_id.clone(),
@@ -501,6 +544,7 @@ fn populate_component_index(
 ) -> Result<(), String> {
     for lib in libraries {
         let mtime = library_path_mtime(&lib.absolute_path);
+        let fingerprint = library_path_fingerprint(&lib.absolute_path);
         let source_path = lib
             .record
             .source_path
@@ -514,6 +558,7 @@ fn populate_component_index(
             &lib.record.display_name,
             &lib.record.scope,
             mtime,
+            &fingerprint,
         )?;
         let rows: Vec<ComponentRow> = discovered
             .iter()
@@ -580,12 +625,22 @@ pub fn list_component_libraries(
 ) -> Result<Vec<ComponentLibraryRecord>, String> {
     let _timer = ScopedTimer::new("component_library::list_component_libraries");
     let mut records = list_component_library_records(project_dir)?;
+    let libraries = resolved_component_libraries_from_records(records.clone(), false);
     let library_ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
     let use_index = use_index
         && match component_library_index::open_connection() {
-            Ok(conn) => library_ids
-                .iter()
-                .all(|id| component_library_index::get_library_mtime(&conn, id).ok().flatten().is_some()),
+            Ok(conn) => library_ids.iter().all(|id| {
+                let Some(existing) = component_library_index::get_library_fingerprint(&conn, id)
+                    .ok()
+                    .flatten()
+                else {
+                    return false;
+                };
+                let Some(lib) = libraries.iter().find(|l| &l.record.id == id) else {
+                    return false;
+                };
+                existing == library_path_fingerprint(&lib.absolute_path)
+            }),
             Err(_) => false,
         };
     let counts: HashMap<String, usize> = if use_index {
@@ -595,7 +650,6 @@ pub fn list_component_libraries(
             HashMap::new()
         }
     } else {
-        let libraries = resolved_component_libraries_from_records(records.clone(), false);
         let discovered = discover_instantiable_components_from_libraries(&libraries)?;
         let mut counts = HashMap::<String, usize>::new();
         for item in &discovered {
