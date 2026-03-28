@@ -11,6 +11,7 @@ This documentation is for guidance and traceability only, without adding new tes
 ## 入口脚本 / Entry Scripts
 
 - 主回归脚本 / Main regression script: `d:/source/repos/rustmodlica/run_regression.ps1`
+- TestLib 全量 `--validate` 门禁 / TestLib batch validate gate: `d:/source/repos/rustmodlica/jit-compiler/scripts/run_testlib_validate.ps1`（根目录 `.mo` 须通过；`TestLib/negative/*.mo` 须失败）
 - 目录回归脚本 / Directory regression script: `d:/source/repos/rustmodlica/run_modelica_dir_regression.ps1`
 - OMC 对比脚本 / OMC compare script: `d:/source/repos/rustmodlica/compare_omc.ps1`
 

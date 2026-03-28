@@ -8,13 +8,14 @@ mod compile_model;
 mod solvable_scale_warn;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-use crate::ast::{AlgorithmStatement, Equation, Expression};
+use crate::ast::{AlgorithmStatement, Equation, Expression, Model};
 use crate::backend_dae::ClockPartition as BackendClockPartition;
 use crate::diag::WarningInfo;
 use crate::equation_graph;
 use crate::expr_eval;
-use crate::flatten::Flattener;
+use crate::flatten::{ArraySizePolicy, Flattener};
 use crate::jit::{CalcDerivsFunc, Jit};
 use crate::loader::ModelLoader;
 use pipeline::{flatten_and_inline, stage_trace_enabled};
@@ -46,12 +47,20 @@ pub struct CompilerOptions {
     pub external_libs: Vec<String>,
     /// When true, suppress progress messages so only JSON (e.g. validate) is on stdout.
     pub quiet: bool,
+    /// CLI `--validate`: relax function-as-root entry when scalar `expr_eval` cannot run the body.
+    pub validate_only: bool,
     /// Tier S: write canonical flat JSON after flatten (before inline) to this path.
     pub emit_flat_snapshot: Option<String>,
     /// Stop compilation after writing `emit_flat_snapshot` (no JIT/simulation).
     pub flat_snapshot_only: bool,
     /// Use legacy string `constrainedby` check instead of extends-closure (see `instantiate` module).
     pub coarse_constrainedby_only: bool,
+    /// `legacy` (default): unevaluated array dims fall back to scalar with optional warning. `strict`: error unless overridden.
+    pub array_size_policy: String,
+    /// Optional JSON file: `{"array_sizes":{"<flat_base_name>": N, ...}}` merged during flatten.
+    pub array_sizes_json: Option<String>,
+    /// When set and `RUSTMODLICA_JIT_POLICY_JSON` is unset, JIT loads this policy overlay path before the first JIT compile in the process.
+    pub jit_policy_json: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -106,9 +115,13 @@ impl Default for CompilerOptions {
             emit_c_dir: None,
             external_libs: Vec::new(),
             quiet: false,
+            validate_only: false,
             emit_flat_snapshot: None,
             flat_snapshot_only: false,
             coarse_constrainedby_only: false,
+            array_size_policy: "legacy".to_string(),
+            array_sizes_json: None,
+            jit_policy_json: None,
         }
     }
 }
@@ -439,18 +452,36 @@ pub(super) fn collect_external_calls(
         collect_calls_alg(stmt, &mut names);
     }
     let mut out = Vec::new();
-    for name in names {
-        if inline::is_builtin_function(&name) {
-            continue;
+    for call_site in names {
+        // Do not skip on `is_builtin_function` here: that helper treats any
+        // package-qualified name with an uppercase first segment (e.g. TestLib.*)
+        // as a "builtin", which would drop real external declarations from EXT
+        // collection and let JIT fall through to namespace passthrough (wrong).
+        let mut resolved: Option<Arc<Model>> = None;
+        if let Ok(m) = loader.load_model_silent(&call_site, true) {
+            if m.is_function && m.external_info.is_some() {
+                resolved = Some(m);
+            }
         }
-        if let Ok(model) = loader.load_model_silent(&name, true) {
-            if model.is_function {
-                if let Some(ref ext) = model.external_info {
-                    let c_name = ext.c_name.as_deref().unwrap_or(&name).to_string();
-                    let lib_hint = parse_annotation_library(model.annotation.as_ref());
-                    out.push((name, c_name, lib_hint));
+        if resolved.is_none() && !call_site.contains('.') {
+            let q = format!("TestLib.{call_site}");
+            if let Ok(m) = loader.load_model_silent(&q, true) {
+                if m.is_function && m.external_info.is_some() {
+                    resolved = Some(m);
                 }
             }
+        }
+        let Some(model) = resolved else {
+            continue;
+        };
+        if let Some(ref ext) = model.external_info {
+            let default_c = call_site
+                .rsplit_once('.')
+                .map(|(_, t)| t)
+                .unwrap_or(call_site.as_str());
+            let c_name = ext.c_name.as_deref().unwrap_or(default_c).to_string();
+            let lib_hint = parse_annotation_library(model.annotation.as_ref());
+            out.push((call_site, c_name, lib_hint));
         }
     }
     out
@@ -596,6 +627,12 @@ impl Compiler {
             .emit_flat_snapshot
             .as_deref()
             .map(std::path::Path::new);
+        let array_sizes_path = self
+            .options
+            .array_sizes_json
+            .as_deref()
+            .map(std::path::Path::new);
+        let array_size_policy = ArraySizePolicy::parse(self.options.array_size_policy.as_str());
         let flat_model = flatten_and_inline(
             &mut root_model,
             model_name,
@@ -604,6 +641,9 @@ impl Compiler {
             stage_trace,
             snap_path,
             self.options.coarse_constrainedby_only,
+            array_size_policy,
+            array_sizes_path,
+            self.options.warnings_level.as_str(),
         )?
         .flat_model;
         Ok(equation_graph::build_equation_graph(&flat_model))

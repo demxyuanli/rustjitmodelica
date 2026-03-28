@@ -7,15 +7,36 @@ use std::sync::{Mutex, OnceLock};
 use crate::jit::context::TranslationContext;
 use crate::diag::fallback_counter;
 
-/// EXT-3: ABI tag per argument so Import func_id matches (e.g. f vs s for const char*).
+/// EXT-3: ABI tag per argument so Import func_id matches (e.g. f vs s for const char*, a for array).
+/// Tags: 'f' = f64 scalar, 's' = string (const char*), 'a' = array (ptr + size dual param).
 pub(super) fn import_call_abi_tag(args: &[Expression], ctx: &TranslationContext) -> String {
-    args.iter()
-        .map(|a| match a {
-            Expression::StringLiteral(_) => 's',
-            Expression::Variable(id) if ctx.array_info.contains_key(&crate::string_intern::resolve_id(*id)) => 'a',
-            _ => 'f',
-        })
-        .collect()
+    let mut tag = String::new();
+    for a in args {
+        match a {
+            Expression::ArrayLiteral(items) => {
+                if items
+                    .iter()
+                    .all(|e| matches!(e, Expression::Number(_)))
+                {
+                    tag.push('a');
+                } else {
+                    tag.push('f');
+                }
+            }
+            Expression::StringLiteral(_) => tag.push('s'),
+            Expression::Variable(id) => {
+                let name = crate::string_intern::resolve_id(*id);
+                if ctx.array_info.contains_key(&name) {
+                    // Array: dual param (ptr + size), tag as 'a'
+                    tag.push('a');
+                } else {
+                    tag.push('f');
+                }
+            }
+            _ => tag.push('f'),
+        }
+    }
+    tag
 }
 
 pub(super) fn jit_import_debug_enabled() -> bool {

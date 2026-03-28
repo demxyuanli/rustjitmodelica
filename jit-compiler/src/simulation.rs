@@ -166,9 +166,9 @@ pub fn run_simulation(
     let mut rk4_solver = RungeKutta4Solver::new(states.len());
     let mut rk45_solver = AdaptiveRK45Solver::new(states.len(), atol, rtol);
     let mut backward_euler_solver = BackwardEulerSolver::new(states.len());
-    // Newton tearing uses scratch_outputs for stage-wise algebraic guesses; without tearing,
-    // evaluate_scratch's zero-output fallback can accept a wrong solution and zero derivatives.
-    let use_scratch_outputs_for_solver = !newton_tearing_var_names.is_empty();
+    // Scratch warm-start helps large output vectors (e.g. EngineV6) where Newton metadata may be empty.
+    let use_scratch_outputs_for_solver =
+        !newton_tearing_var_names.is_empty() || output_vars.len() >= 4096;
 
     let mut out: Box<dyn Write> = if result_collector.is_some() {
         Box::new(io::sink())
@@ -225,11 +225,8 @@ pub fn run_simulation(
         pre_discrete_vals.copy_from_slice(&discrete_vals);
 
         let (mut diag_residual, mut diag_x) = (0.0_f64, 0.0_f64);
-        let (diag_res_ptr, diag_x_ptr) = if newton_tearing_var_names.is_empty() {
-            (std::ptr::null_mut(), std::ptr::null_mut())
-        } else {
-            (&mut diag_residual as *mut f64, &mut diag_x as *mut f64)
-        };
+        let diag_res_ptr = &mut diag_residual as *mut f64;
+        let diag_x_ptr = &mut diag_x as *mut f64;
         let mut diag_call_index = 0u32;
         let mut diag_time = 0.0_f64;
         diag_state.fill(0.0);

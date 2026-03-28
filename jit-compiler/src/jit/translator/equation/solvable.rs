@@ -16,6 +16,37 @@ use super::linearized::{
     NewtonPathPreference,
 };
 
+/// SPARSE-2: Sparsity detection heuristic - returns true if Jacobian is sparse enough.
+/// Uses density threshold (default 0.3) and minimum size (default 4).
+fn is_sparse_heuristic(nnz: usize, n: usize) -> bool {
+    if n < sparse_min_size() {
+        return false;
+    }
+    let total = n.saturating_mul(n);
+    if total == 0 {
+        return false;
+    }
+    let density = nnz as f64 / total as f64;
+    density < sparse_density_threshold()
+}
+
+/// SPARSE-2: Minimum size for sparse heuristic to apply.
+fn sparse_min_size() -> usize {
+    std::env::var("RUSTMODLICA_SPARSE_MIN_SIZE")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(4)
+}
+
+/// SPARSE-2: Density threshold for sparse heuristic (default 0.3 = 30% non-zeros).
+fn sparse_density_threshold() -> f64 {
+    std::env::var("RUSTMODLICA_SPARSE_DENSITY_THRESHOLD")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0 && *v < 1.0)
+        .unwrap_or(0.3)
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct SymbolicJacobianPlan {
     n: usize,
@@ -127,17 +158,28 @@ pub(super) fn compile_solvable_block_general_n(
             builder.ins().stack_store(fallback, *slot, 0);
         }
     }
+    
     let preference = parse_newton_path_preference();
+    
+    // SPARSE-2: Build sparse pattern if not dense-only preference
     let sparse_pattern: Option<SparseJacobianPattern> = if preference == NewtonPathPreference::DenseOnly {
         None
     } else {
         build_sparse_jacobian_pattern(&unknowns[..n], residuals)
     };
+    
+    // SPARSE-2: Use sparsity detection heuristic to select path
+    let use_sparse = if let Some(ref pattern) = sparse_pattern {
+        let nnz = pattern.nnz();
+        is_sparse_heuristic(nnz, n)
+    } else {
+        false
+    };
 
-    let selected = if let Some(ref pattern) = sparse_pattern {
+    let selected = if use_sparse {
         NewtonLinearizedSystem::Csr(NewtonLinearizationStats {
             residual_count: n,
-            nnz: pattern.nnz(),
+            nnz: sparse_pattern.as_ref().map(|p| p.nnz()).unwrap_or(n * n),
         })
     } else {
         NewtonLinearizedSystem::Dense(NewtonLinearizationStats {
@@ -146,6 +188,7 @@ pub(super) fn compile_solvable_block_general_n(
         })
     };
 
+    // SPARSE-2: Path selection trace logging
     let path_trace = std::env::var("RUSTMODLICA_NEWTON_PATH_TRACE")
         .ok()
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
@@ -154,11 +197,11 @@ pub(super) fn compile_solvable_block_general_n(
         match &selected {
             NewtonLinearizedSystem::Dense(stats) => {
                 eprintln!(
-                    "[newton-path] dense n={} nnz={} density={:.2}% pref={:?}",
+                    "[newton-path] dense n={} nnz={} density={:.2}% heuristic={}",
                     stats.residual_count,
                     stats.nnz,
                     100.0,
-                    preference
+                    if use_sparse { "sparse" } else { "dense" }
                 );
             }
             NewtonLinearizedSystem::Csr(stats) => {
@@ -169,11 +212,10 @@ pub(super) fn compile_solvable_block_general_n(
                     stats.nnz as f64 * 100.0 / total as f64
                 };
                 eprintln!(
-                    "[newton-path] csr n={} nnz={} density={:.2}% pref={:?}",
+                    "[newton-path] csr n={} nnz={} density={:.2}% heuristic=sparse",
                     stats.residual_count,
                     stats.nnz,
-                    density,
-                    preference
+                    density
                 );
             }
         }

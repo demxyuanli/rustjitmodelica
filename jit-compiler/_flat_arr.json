@@ -1,0 +1,20 @@
+{
+  "schema": "rustmodlica_flat_snapshot_v1",
+  "declarations": [
+    {
+      "name": "total",
+      "type_name": "Real",
+      "is_flow": false,
+      "is_parameter": false,
+      "is_input": false,
+      "is_output": false,
+      "replaceable": false,
+      "constrainedby_type": null
+    }
+  ],
+  "instances": {},
+  "array_sizes": {},
+  "equations": [],
+  "initial_equations": [],
+  "connections": []
+}

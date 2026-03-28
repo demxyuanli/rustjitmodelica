@@ -53,6 +53,89 @@ pub struct CoordinateSystem {
     pub initial_scale: Option<f64>,
 }
 
+/// Arrow type for line endpoints
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ArrowType {
+    None,
+    Arrow,
+    Filled,
+    Open,
+    TShape,
+    Circle,
+}
+
+/// Fill pattern for shapes
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum FillPattern {
+    Solid,
+    Horizontal,
+    Vertical,
+    Cross,
+    DiagCross,
+    Forward,
+    Backward,
+    None,
+}
+
+/// Border pattern for rectangles
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum BorderPattern {
+    Solid,
+    Dashed,
+    Dotted,
+    DotDashed,
+}
+
+/// Line pattern for strokes
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum LinePattern {
+    Solid,
+    Dashed,
+    Dotted,
+    DotDashed,
+}
+
+/// Gradient stop for gradient fills
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GradientStop {
+    pub offset: f64,
+    pub color: Color,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f64>,
+}
+
+/// Linear gradient specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinearGradient {
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+    pub stops: Vec<GradientStop>,
+}
+
+/// Radial gradient specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RadialGradient {
+    pub cx: f64,
+    pub cy: f64,
+    pub r: f64,
+    pub stops: Vec<GradientStop>,
+}
+
+/// Fill definition - solid color or gradient
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum FillDefinition {
+    Solid(Color),
+    LinearGradient(LinearGradient),
+    RadialGradient(RadialGradient),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum GraphicItem {
@@ -62,6 +145,7 @@ pub enum GraphicItem {
     Polygon(GraphicPolygon),
     Text(GraphicText),
     Bitmap(GraphicBitmap),
+    BSpline(GraphicBSpline),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +266,28 @@ pub struct GraphicBitmap {
     pub file_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Point>,
+}
+
+/// Bezier spline curve for smooth connections
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphicBSpline {
+    pub points: Vec<Point>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smooth: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arrow: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arrow_size: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -707,6 +813,20 @@ fn extract_graphic_item(v: &AVal) -> Option<GraphicItem> {
             image_source: v
                 .field("imageSource")
                 .and_then(|v| v.as_str().map(|s| s.to_string())),
+            rotation: v.field("rotation").and_then(|v| v.as_num()),
+            origin: v.field("origin").and_then(extract_point),
+        })),
+        "BSpline" => Some(GraphicItem::BSpline(GraphicBSpline {
+            points: v
+                .field("points")
+                .map(|v| extract_points(v))
+                .unwrap_or_default(),
+            color: v.field("color").and_then(extract_color),
+            thickness: v.field("thickness").and_then(|v| v.as_num()),
+            pattern: v.field("pattern").and_then(ident_or_str),
+            smooth: v.field("smooth").and_then(ident_or_str),
+            arrow: v.field("arrow").and_then(extract_string_array),
+            arrow_size: v.field("arrowSize").and_then(|v| v.as_num()),
             rotation: v.field("rotation").and_then(|v| v.as_num()),
             origin: v.field("origin").and_then(extract_point),
         })),

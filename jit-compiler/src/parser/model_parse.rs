@@ -2,6 +2,60 @@ use crate::ast::*;
 use crate::parser::common::parse_annotation_to_string;
 use crate::parser::{alg_parse, decl_parse, eq_parse, Rule};
 
+fn function_call_callee_name(call: pest::iterators::Pair<Rule>) -> Option<String> {
+    debug_assert_eq!(call.as_rule(), Rule::function_call);
+    let mut it = call.into_inner();
+    let name_pair = it.next()?;
+    Some(if name_pair.as_rule() == Rule::dotted_identifier {
+        name_pair
+            .as_str()
+            .trim()
+            .trim_start_matches('.')
+            .to_string()
+    } else {
+        name_pair.as_str().trim().to_string()
+    })
+}
+
+fn first_function_call_under(pair: pest::iterators::Pair<Rule>) -> Option<String> {
+    if pair.as_rule() == Rule::function_call {
+        return function_call_callee_name(pair);
+    }
+    for c in pair.into_inner() {
+        if let Some(n) = first_function_call_under(c) {
+            return Some(n);
+        }
+    }
+    None
+}
+
+/// `external "C" y = foo(x)` stores the **C** callee `foo`, not the Modelica output `y`.
+fn external_c_name_from_binding(binding: pest::iterators::Pair<Rule>) -> Option<String> {
+    let parts: Vec<_> = binding.into_inner().collect();
+    if parts.len() == 1 {
+        let p = parts.into_iter().next().unwrap();
+        if p.as_rule() == Rule::function_call {
+            return function_call_callee_name(p);
+        }
+        return None;
+    }
+    let mut fallback: Option<String> = None;
+    for p in parts {
+        match p.as_rule() {
+            Rule::expression => {
+                if let Some(n) = first_function_call_under(p) {
+                    return Some(n);
+                }
+            }
+            Rule::function_call => {
+                fallback = function_call_callee_name(p);
+            }
+            _ => {}
+        }
+    }
+    fallback
+}
+
 pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
 
@@ -78,12 +132,12 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
                 let ext_inner: Vec<_> = pair.into_inner().collect();
                 let mut lang = None;
                 let mut c_name = None;
-                for p in &ext_inner {
-                    if p.as_rule() == Rule::string_comment {
+                for p in ext_inner {
+                    if matches!(p.as_rule(), Rule::string_comment | Rule::string_literal) {
                         let s = p.as_str().trim();
                         lang = Some(s.trim_matches('"').to_string());
-                    } else if p.as_rule() == Rule::identifier && c_name.is_none() {
-                        c_name = Some(p.as_str().trim().to_string());
+                    } else if p.as_rule() == Rule::external_binding {
+                        c_name = external_c_name_from_binding(p);
                     }
                 }
                 external_info = Some(crate::ast::ExternalDecl {

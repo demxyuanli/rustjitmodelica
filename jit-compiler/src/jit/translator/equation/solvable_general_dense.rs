@@ -8,6 +8,7 @@ use crate::jit::context::TranslationContext;
 use crate::jit::translator::expr::compile_expression;
 use crate::solvable_limits::{validate_solvable_residual_count, JIT_DENSE_STACK_MAX_N};
 
+use super::helpers::store_diag_residual_and_x;
 use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
 use super::solvable::SymbolicJacobianPlan;
 
@@ -78,6 +79,18 @@ pub(super) fn compile_solvable_block_general_dense_n(
         .brif(iter_cond, body_block, &[], iter_error_block, &[]);
     builder.switch_to_block(iter_error_block);
     emit_assert_suppress_end(ctx, builder)?;
+    let mut max_abs_err = builder.ins().f64const(0.0);
+    for i in 0..n {
+        let rv = compile_expression(&residuals[i], ctx, builder)?;
+        let ar = builder.ins().fabs(rv);
+        max_abs_err = builder.ins().fmax(max_abs_err, ar);
+    }
+    let x0 = if let Some(s0) = slots.first() {
+        builder.ins().stack_load(cl_types::F64, *s0, 0)
+    } else {
+        builder.ins().f64const(0.0)
+    };
+    store_diag_residual_and_x(ctx, builder, max_abs_err, x0);
     let err_code = builder.ins().iconst(cl_types::I32, 2);
     builder.ins().return_(&[err_code]);
     builder.seal_block(iter_error_block);

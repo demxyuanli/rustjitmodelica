@@ -90,6 +90,46 @@ impl Flattener {
                         }
                     }
 
+                    const MAX_ARRAY_DIM_PASSES: usize = 64;
+                    for _ in 0..MAX_ARRAY_DIM_PASSES {
+                        let mut dim_changed = false;
+                        for decl in &model.declarations {
+                            if let Some(ref cond_expr) = decl.condition {
+                                let cond_sub = self.substitute(cond_expr, &context);
+                                if let Some(v) = eval_const_expr_with_param_exprs(
+                                    &cond_sub,
+                                    &context,
+                                    &local_array_sizes,
+                                ) {
+                                    if v == 0.0 {
+                                        continue;
+                                    }
+                                }
+                            }
+                            let Some(size_expr) = decl.array_size.as_ref() else {
+                                continue;
+                            };
+                            if local_array_sizes.contains_key(&decl.name) {
+                                continue;
+                            }
+                            let sub_expr = self.substitute(size_expr, &context);
+                            if let Some(val) = eval_const_expr_with_param_exprs(
+                                &sub_expr,
+                                &context,
+                                &local_array_sizes,
+                            ) {
+                                let n = val as usize;
+                                if n > 0 {
+                                    local_array_sizes.insert(decl.name.clone(), n);
+                                    dim_changed = true;
+                                }
+                            }
+                        }
+                        if !dim_changed {
+                            break;
+                        }
+                    }
+
                     for decl in &model.declarations {
                         if let Some(ref cond_expr) = decl.condition {
                             let cond_sub = self.substitute(cond_expr, &context);
@@ -102,6 +142,12 @@ impl Flattener {
                             }
                         }
 
+                        let base_name = if prefix.is_empty() {
+                            decl.name.clone()
+                        } else {
+                            format!("{}_{}", prefix, decl.name)
+                        };
+
                         let array_len = if let Some(size_expr) = &decl.array_size {
                             let sub_expr = self.substitute(size_expr, &context);
                             if let Some(val) = eval_const_expr_with_param_exprs(
@@ -110,9 +156,28 @@ impl Flattener {
                                 &local_array_sizes,
                             ) {
                                 Some(val as usize)
+                            } else if let Some(&n) = self.external_array_sizes.get(&base_name) {
+                                Some(n)
                             } else {
-                                if array_size_warned_names.insert(decl.name.clone()) {
-                                    eprintln!("Warning: Could not evaluate array size for '{}'", decl.name);
+                                let fail_flatten = matches!(
+                                    self.array_size_policy,
+                                    super::ArraySizePolicy::Strict
+                                ) || self.warnings_level == "error";
+                                if fail_flatten {
+                                    return Err(FlattenError::UnevaluatedArraySize {
+                                        flat_base_name: base_name.clone(),
+                                    });
+                                }
+                                if self.warnings_level != "none"
+                                    && array_size_warned_names.insert(decl.name.clone())
+                                {
+                                    eprintln!(
+                                        "{}",
+                                        crate::i18n::msg(
+                                            "warning_array_size",
+                                            &[&base_name as &dyn std::fmt::Display],
+                                        )
+                                    );
                                 }
                                 None
                             }
@@ -129,12 +194,6 @@ impl Flattener {
                                 each_start = m.value.clone();
                             }
                         }
-
-                        let base_name = if prefix.is_empty() {
-                            decl.name.clone()
-                        } else {
-                            format!("{}_{}", prefix, decl.name)
-                        };
 
                         if is_array {
                             flat.array_sizes.insert(base_name.clone(), count);

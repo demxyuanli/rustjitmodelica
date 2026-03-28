@@ -14,25 +14,7 @@ use super::helpers::{
     modelica_constants_flat_variable, pre_scalar_name_bound,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
-
-fn fold_dot_hysteresis_record(func_name: &str, member: &str) -> Option<f64> {
-    if !func_name.ends_with("HysteresisEverettParameter.M330_50A") {
-        return None;
-    }
-    match member {
-        "Hsat" => Some(650.0),
-        "M" => Some(0.967),
-        "r" => Some(0.50256),
-        "q" => Some(0.039964),
-        "p1" => Some(0.18807),
-        "p2" => Some(0.000781),
-        "Hc" => Some(42.2283),
-        "K" => Some(50.0),
-        "sigma" => Some(2.2e6),
-        _ => None,
-    }
-}
-
+use crate::jit::jit_policy::{hysteresis_record_value, lookup_pre_variable_fallback};
 
 pub(super) fn compile_pre_expression(
     expr: &Expression,
@@ -62,25 +44,11 @@ pub(super) fn compile_pre_expression(
                     Ok(v)
                 } else if let Some(v) = modelica_constants_flat_variable(&name) {
                     Ok(builder.ins().f64const(v))
-                } else if name == "startTime"
-                    || name == "u"
-                    || name == "samplePeriod"
-                    || name == "generateNoise"
-                {
-                    jit_var_fallback_trace(&name, "pre-known-runtime-placeholder");
-                    Ok(builder.ins().f64const(0.0))
-                } else if name.ends_with("_sampleTrigger")
-                    || name.ends_with("_firstTrigger")
-                    || name.ends_with("_samplePeriod")
-                    || name.ends_with("Trigger")
-                    || name.ends_with("_f")
-                    || name.contains("stateSpace_")
-                {
-                    jit_var_fallback_trace(&name, "pre-temporary-symbol-placeholder");
-                    Ok(builder.ins().f64const(0.0))
-                } else if name.contains('_') {
-                    jit_var_fallback_trace(&name, "pre-generic-underscore-placeholder");
-                    Ok(builder.ins().f64const(0.0))
+                } else if let Some((v, trace_tag)) = lookup_pre_variable_fallback(&name) {
+                    if !trace_tag.is_empty() {
+                        jit_var_fallback_trace(&name, trace_tag.as_str());
+                    }
+                    Ok(builder.ins().f64const(v))
                 } else {
                     Err(format!("Variable {} not found in pre() context", name))
                 }
@@ -109,8 +77,8 @@ pub(super) fn compile_pre_expression(
                         ArrayType::State => ctx.pre_states_ptr,
                         ArrayType::Discrete => ctx.pre_discrete_ptr,
                         ArrayType::Parameter => ctx.params_ptr,
-                        ArrayType::Output => return Err("Output array in pre() not supported".to_string()),
-                        ArrayType::Derivative => return Err("Derivative array in pre() not supported".to_string()),
+                        ArrayType::Output => ctx.outputs_ptr,
+                        ArrayType::Derivative => ctx.derivs_ptr,
                     };
                     let addr = builder.ins().iadd(base_ptr, total_offset);
                     Ok(builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0))
@@ -242,22 +210,65 @@ pub(super) fn compile_pre_expression(
             for arg in args {
                 if let Expression::Variable(id) = arg {
                     let name = crate::string_intern::resolve_id(*id);
-                    if ctx.array_info.contains_key(&name) {
-                        let val = compile_pre_expression(
-                            &Expression::var(&format!("{}_1", name)),
-                            ctx,
-                            builder,
-                        )?;
+                    // FUNC-1: Array argument ABI in pre() context - pass ptr + size as dual parameters
+                    if let Some(info) = ctx.array_info.get(&name) {
+                        // Get base pointer for the array (use pre_* buffers for state/discrete)
+                        let base_ptr = match info.array_type {
+                            crate::jit::types::ArrayType::State => ctx.pre_states_ptr,
+                            crate::jit::types::ArrayType::Discrete => ctx.pre_discrete_ptr,
+                            crate::jit::types::ArrayType::Parameter => ctx.params_ptr,
+                            crate::jit::types::ArrayType::Output => ctx.outputs_ptr,
+                            crate::jit::types::ArrayType::Derivative => ctx.derivs_ptr,
+                        };
+                        let start_offset = (info.start_index * 8) as i64;
+                        let start_const = builder.ins().iconst(ptr_type, start_offset);
+                        let array_ptr = builder.ins().iadd(base_ptr, start_const);
+                        
+                        // Array size as f64 (Modelica convention)
+                        let size_val = builder.ins().f64const(info.size as f64);
+                        
+                        // Push ptr then size (C ABI: double* ptr, double size)
+                        sig.params.push(AbiParam::new(ptr_type));
+                        arg_vals.push(array_ptr);
                         sig.params.push(AbiParam::new(cl_types::F64));
-                        arg_vals.push(val);
+                        arg_vals.push(size_val);
                         continue;
                     }
+                }
+                if let Expression::ArrayLiteral(items) = arg {
+                    let mut elems: Vec<f64> = Vec::with_capacity(items.len());
+                    for it in items {
+                        match it {
+                            Expression::Number(n) => elems.push(*n),
+                            _ => {
+                                return Err(format!(
+                                    "pre() external call '{}': array argument must be a numeric literal list (EXT-3).",
+                                    func_name
+                                ));
+                            }
+                        }
+                    }
+                    let data_id = match ctx.get_or_create_f64_array_literal_data(&elems)? {
+                        Some(id) => id,
+                        None => {
+                            return Err(
+                                "Array literal in pre() external call requires JIT data context (EXT-3)."
+                                    .to_string(),
+                            );
+                        }
+                    };
+                    sig.params.push(AbiParam::new(ptr_type));
+                    let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
+                    arg_vals.push(builder.ins().global_value(ptr_type, gv));
+                    sig.params.push(AbiParam::new(cl_types::F64));
+                    arg_vals.push(builder.ins().f64const(elems.len() as f64));
+                    continue;
                 }
                 if let Expression::StringLiteral(s) = arg {
                     let data_id = match ctx.get_or_create_string_data(s)? {
                         Some(id) => id,
                         None => {
-                            return Err("String argument in function call not supported in JIT (FUNC-7).".to_string());
+                            return Err("String argument in pre() function call requires string data context (FUNC-7).".to_string());
                         }
                     };
                     sig.params.push(AbiParam::new(ptr_type));
@@ -310,7 +321,7 @@ pub(super) fn compile_pre_expression(
             }
             if let Expression::Call(func_name, args) = inner.as_ref() {
                 if args.is_empty() {
-                    if let Some(v) = fold_dot_hysteresis_record(func_name, member) {
+                    if let Some(v) = hysteresis_record_value(func_name, member) {
                         return Ok(builder.ins().f64const(v));
                     }
                     let flat = format!("{}_{}", func_name.replace('.', "_"), member);
@@ -368,7 +379,53 @@ pub(super) fn compile_pre_expression(
                 Ok(builder.ins().f64const(0.0))
             }
         }
-        Expression::ArrayComprehension { .. } => Ok(builder.ins().f64const(0.0)),
+        Expression::ArrayComprehension { expr, iter_var, iter_range } => {
+            // pre() context expects a scalar value. For array comprehension,
+            // use the first iterator point when the range is non-empty.
+            let (start_val, step_val, end_val) = match iter_range.as_ref() {
+                Expression::Range(start, step, end) => {
+                    let s = match compile_pre_expression(start.as_ref(), ctx, builder) {
+                        Ok(v) => v,
+                        Err(_) => return Ok(builder.ins().f64const(0.0)),
+                    };
+                    let st = match compile_pre_expression(step.as_ref(), ctx, builder) {
+                        Ok(v) => v,
+                        Err(_) => return Ok(builder.ins().f64const(0.0)),
+                    };
+                    let e = match compile_pre_expression(end.as_ref(), ctx, builder) {
+                        Ok(v) => v,
+                        Err(_) => return Ok(builder.ins().f64const(0.0)),
+                    };
+                    (s, st, e)
+                }
+                Expression::Number(n) => {
+                    let one = builder.ins().f64const(1.0);
+                    let end = builder.ins().f64const(*n);
+                    (one, one, end)
+                }
+                _ => return Ok(builder.ins().f64const(0.0)),
+            };
+
+            let old_val = ctx.var_map.get(iter_var).copied();
+            ctx.var_map.insert(iter_var.clone(), start_val);
+            let result = compile_pre_expression(expr, ctx, builder);
+            match old_val {
+                Some(v) => {
+                    ctx.var_map.insert(iter_var.clone(), v);
+                }
+                None => {
+                    ctx.var_map.remove(iter_var);
+                }
+            }
+
+            let zero = builder.ins().f64const(0.0);
+            let step_pos = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, step_val, zero);
+            let ge_cond = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, end_val, start_val);
+            let le_cond = builder.ins().fcmp(FloatCC::LessThanOrEqual, end_val, start_val);
+            let non_empty = builder.ins().select(step_pos, ge_cond, le_cond);
+            let result_val = result.unwrap_or(zero);
+            Ok(builder.ins().select(non_empty, result_val, zero))
+        }
         Expression::StringLiteral(_) => Ok(builder.ins().f64const(0.0)),
         Expression::Sample(_) => Err("sample() not supported in pre() (SYNC-1)".to_string()),
         Expression::Interval(_) => Err("interval() not supported in pre() (SYNC-1)".to_string()),

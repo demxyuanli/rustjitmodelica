@@ -7,6 +7,8 @@ use crate::loader::ModelLoader;
 use std::collections::HashMap;
 use std::sync::Arc;
 mod error;
+mod array_size_policy;
+pub(crate) mod flatten_cache;
 mod decl_expand;
 mod real_fft_sample_points;
 mod param_expr_eval;
@@ -15,6 +17,7 @@ mod inheritance;
 mod record;
 mod redeclare;
 pub use self::error::FlattenError;
+pub use self::array_size_policy::{load_array_sizes_json, load_array_sizes_json_optional, ArraySizePolicy};
 pub use self::redeclare::{apply_modification_to_model, ModifyContext};
 
 pub mod connections;
@@ -47,6 +50,12 @@ pub struct Flattener {
     pub name_cache: crate::string_intern::StringInterner,
     /// When true, `constrainedby` uses legacy string matching when a loader is available.
     pub coarse_constrainedby_only: bool,
+    /// When array dimension expression is not a compile-time constant, fail instead of scalar fallback.
+    pub array_size_policy: ArraySizePolicy,
+    /// Flat-base-name -> dimension; merged before legacy/scalar fallback (see `load_array_sizes_json`).
+    pub external_array_sizes: HashMap<String, usize>,
+    /// Mirrors compiler `warnings_level`: "all" | "none" | "error" (affects array-size warnings in legacy mode).
+    pub warnings_level: String,
 }
 
 impl Flattener {
@@ -56,6 +65,9 @@ impl Flattener {
             loader: ModelLoader::new(),
             name_cache: crate::string_intern::StringInterner::new(),
             coarse_constrainedby_only: false,
+            array_size_policy: ArraySizePolicy::default(),
+            external_array_sizes: HashMap::new(),
+            warnings_level: "all".to_string(),
         }
     }
 

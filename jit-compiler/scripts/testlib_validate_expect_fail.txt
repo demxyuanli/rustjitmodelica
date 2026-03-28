@@ -1,0 +1,3 @@
+# Deprecated: negative tests now live under TestLib/negative/*.mo and run_testlib_validate.ps1
+# requires them to fail --validate (success:false). This file is kept only so old docs/scripts
+# that mention it still find a pointer; the list below is intentionally empty.

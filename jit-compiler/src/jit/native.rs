@@ -69,6 +69,54 @@ extern "C" fn modelica_terminate(_msg: f64) {
     TERMINATE_REQUESTED.store(true, Ordering::SeqCst);
 }
 
+/// FUNC-7 / EXT-3: Host symbol for `external "C"` functions whose C name is `extLog`
+/// (`input String` -> `const char*`, `output Real` -> `double`). TestLib uses this pattern.
+/// Returns 0.0; `--external-lib` / extra JIT symbols can supply a real implementation.
+extern "C" fn rustmodlica_builtin_ext_log(_msg: *const std::ffi::c_char) -> f64 {
+    0.0
+}
+
+/// TestLib `printStringExternal`: C name `rustmodlica_print_string` (see TestLib/Resources).
+/// Registered under the Modelica call-site name via `jit_stub_for_external_c_name` + compile_model.
+extern "C" fn rustmodlica_print_string_jit_stub(_msg: *const std::ffi::c_char) -> f64 {
+    0.0
+}
+
+/// TestLib `sumArrayExternal`: `double rustmodlica_sum_array(const double*, double n)`.
+#[allow(clippy::cast_precision_loss)]
+extern "C" fn rustmodlica_sum_array_jit_stub(arr: *const f64, n: f64) -> f64 {
+    if arr.is_null() || n <= 0.0 {
+        return 0.0;
+    }
+    let len = n as usize;
+    let s = unsafe { std::slice::from_raw_parts(arr, len) };
+    let sum: f64 = s.iter().sum();
+    if std::env::var("RUSTMODLICA_JIT_SUM_ARRAY_TRACE")
+        .ok()
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
+    {
+        eprintln!(
+            "[jit-sum-array-stub] n={} len={} sum={} first={:?}",
+            n,
+            len,
+            sum,
+            s.first().copied()
+        );
+    }
+    sum
+}
+
+/// When no `--external-lib` provides a symbol, map known C entry points to in-process stubs.
+/// The JIT still links imports under the **Modelica** function name from the call site.
+pub fn jit_stub_for_external_c_name(c_name: &str) -> Option<*const u8> {
+    match c_name {
+        "rustmodlica_print_string" => Some(rustmodlica_print_string_jit_stub as *const u8),
+        "rustmodlica_sum_array" => Some(rustmodlica_sum_array_jit_stub as *const u8),
+        _ => None,
+    }
+}
+
 /// Diagnostic callback for residual consistency gate failures.
 /// Called by JIT-compiled code when the max absolute residual exceeds the configured tolerance.
 /// `max_abs`: largest |residual| after solving, `n_residuals`: total residual count,
@@ -569,6 +617,7 @@ pub fn register_symbols(builder: &mut JITBuilder) {
 
     builder.symbol("assert", modelica_assert as *const u8);
     builder.symbol("terminate", modelica_terminate as *const u8);
+    builder.symbol("extLog", rustmodlica_builtin_ext_log as *const u8);
     builder.symbol(
         "rustmodlica_residual_gate_fail",
         rustmodlica_residual_gate_fail as *const u8,
@@ -664,6 +713,7 @@ pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     set.insert("rustmodlica_real_fft_write_to_file");
     set.insert("assert");
     set.insert("terminate");
+    set.insert("extLog");
     set.insert("rustmodlica_residual_gate_fail");
     set.insert("Boolean");
     set.insert("not");

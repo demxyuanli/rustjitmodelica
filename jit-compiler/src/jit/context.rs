@@ -4,7 +4,7 @@ use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct TranslationContext<'a> {
     pub module: &'a mut JITModule,
@@ -54,6 +54,10 @@ pub struct TranslationContext<'a> {
     pub string_literal_data_ctx: Option<&'a mut DataDescription>,
     pub string_data_counter: Option<&'a mut usize>,
 
+    /// Modelica call-site names for `external` functions (from collect_external_calls). Used to
+    /// skip package-qualified builtin passthrough in `try_compile_builtin_call`.
+    pub external_modelica_names: Option<&'a HashSet<String>>,
+
     /// VarId-based fast lookup caches (populated lazily from string maps).
     pub varid_state_index: HashMap<VarId, usize>,
     pub varid_discrete_index: HashMap<VarId, usize>,
@@ -91,6 +95,36 @@ impl<'a> TranslationContext<'a> {
         cache.insert(s.to_string(), id);
         Ok(Some(id))
     }
+
+    /// EXT-3: `f64` array rodata (little-endian, host order) for `const double*` external args.
+    pub fn get_or_create_f64_array_literal_data(
+        &mut self,
+        elems: &[f64],
+    ) -> Result<Option<DataId>, String> {
+        let (data_ctx, ctr) = match (
+            self.string_literal_data_ctx.as_deref_mut(),
+            self.string_data_counter.as_deref_mut(),
+        ) {
+            (Some(d), Some(n)) => (d, n),
+            _ => return Ok(None),
+        };
+        let mut bytes = Vec::with_capacity(elems.len().saturating_mul(8));
+        for x in elems {
+            bytes.extend_from_slice(&x.to_le_bytes());
+        }
+        data_ctx.define(bytes.into_boxed_slice());
+        *ctr += 1;
+        let name = format!("jit_f64arr_{}", *ctr);
+        let id = self
+            .module
+            .declare_data(&name, Linkage::Local, false, false)
+            .map_err(|e| e.to_string())?;
+        self.module
+            .define_data(id, data_ctx)
+            .map_err(|e| e.to_string())?;
+        data_ctx.clear();
+        Ok(Some(id))
+    }
 }
 
 impl<'a> TranslationContext<'a> {
@@ -124,6 +158,7 @@ impl<'a> TranslationContext<'a> {
         string_literal_cache: Option<&'a mut HashMap<String, DataId>>,
         string_literal_data_ctx: Option<&'a mut DataDescription>,
         string_data_counter: Option<&'a mut usize>,
+        external_modelica_names: Option<&'a HashSet<String>>,
     ) -> Self {
         Self {
             module,
@@ -155,6 +190,7 @@ impl<'a> TranslationContext<'a> {
             string_literal_cache,
             string_literal_data_ctx,
             string_data_counter,
+            external_modelica_names,
             varid_state_index: HashMap::new(),
             varid_discrete_index: HashMap::new(),
             varid_param_index: HashMap::new(),

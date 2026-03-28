@@ -49,16 +49,20 @@ pub fn parse_modification_from_pair(
         _ => return None,
     };
     let mod_name = helpers::expr_to_string(name_expr);
-    let val = match mod_inner.iter().find(|p| p.as_rule() == Rule::expression) {
-        Some(p) => Some(expression::parse_expression(p.clone())),
-        None => {
-            if mod_redeclare {
-                None
-            } else {
-                return None;
-            }
-        }
+    let nested_mod_part = mod_inner
+        .iter()
+        .find(|p| p.as_rule() == Rule::modification_part)
+        .cloned();
+    let val = if let Some(p) = mod_inner.iter().find(|e| e.as_rule() == Rule::expression) {
+        Some(expression::parse_expression(p.clone()))
+    } else if let Some(ref part) = nested_mod_part {
+        parse_modifications_from_modification_part(part.clone()).1
+    } else {
+        None
     };
+    if !mod_redeclare && val.is_none() && nested_mod_part.is_none() {
+        return None;
+    }
     let is_operator_function = mod_redeclare
         && mod_raw.contains("operator")
         && mod_raw.contains("function");

@@ -22,6 +22,8 @@ pub enum FlattenError {
     ConflictingInnerOuter { target: String },
     /// Modifier lists both `public` and `protected` for the same element (MLS 7.3).
     ConflictingPublicProtected { target: String },
+    /// Array dimension expression could not be evaluated as a constant and no external override applied.
+    UnevaluatedArraySize { flat_base_name: String },
 }
 
 impl From<LoadError> for FlattenError {
@@ -79,6 +81,11 @@ impl fmt::Display for FlattenError {
                 f,
                 "[FLATTEN_VISIBILITY] '{}' cannot be both public and protected in the same modifier",
                 target
+            ),
+            FlattenError::UnevaluatedArraySize { flat_base_name } => write!(
+                f,
+                "[FLATTEN_ARRAY_SIZE] Could not evaluate array size for '{}'. Use --array-sizes-json with matching \"array_sizes\" keys, or --array-size-policy=legacy.",
+                flat_base_name
             ),
         }
     }

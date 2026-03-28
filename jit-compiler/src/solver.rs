@@ -1,4 +1,14 @@
 use crate::jit::CalcDerivsFunc;
+use crate::newton_policy::allow_zero_residual_newton;
+
+#[inline]
+fn read_diag_residual(ptr: *mut f64) -> f64 {
+    if ptr.is_null() {
+        f64::NAN
+    } else {
+        unsafe { *ptr }
+    }
+}
 
 /// Wrapper for the system dynamics function
 pub struct System<'a> {
@@ -109,6 +119,9 @@ impl<'a> System<'a> {
                 self.homotopy_lambda_ptr,
             );
             if status != 0 {
+                if status == 2 && allow_zero_residual_newton(2, read_diag_residual(self.diag_residual)) {
+                    return Ok(());
+                }
                 return Err(status);
             }
         }
@@ -176,7 +189,16 @@ impl<'a> System<'a> {
                     if status != 2 {
                         return Err(status);
                     }
+                    let dr = read_diag_residual(self.diag_residual);
+                    if allow_zero_residual_newton(2, dr) {
+                        return Ok(());
+                    }
                 }
+            }
+            if last_status == 2
+                && allow_zero_residual_newton(2, read_diag_residual(self.diag_residual))
+            {
+                return Ok(());
             }
             return Err(last_status);
         }
@@ -199,6 +221,9 @@ impl<'a> System<'a> {
                 self.homotopy_lambda_ptr,
             );
             if status != 0 {
+                if status == 2 && allow_zero_residual_newton(2, read_diag_residual(self.diag_residual)) {
+                    return Ok(());
+                }
                 return Err(status);
             }
         }

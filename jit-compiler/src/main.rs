@@ -67,6 +67,155 @@ fn emit_validate_json(
     println!("{}", serde_json::to_string(&out).unwrap_or_default());
 }
 
+fn parse_numeric_prefix(s: &str) -> Option<f64> {
+    let v = s.trim_start();
+    let mut end = 0usize;
+    for (i, ch) in v.char_indices() {
+        if ch.is_ascii_digit() || matches!(ch, '.' | '+' | '-' | 'e' | 'E') {
+            end = i + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end == 0 {
+        return None;
+    }
+    v[..end]
+        .parse::<f64>()
+        .ok()
+        .filter(|x| x.is_finite() && *x > 0.0)
+}
+
+fn find_call_args<'a>(text: &'a str, call_name: &str) -> Option<&'a str> {
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let mut i = 0usize;
+    while i < n {
+        let b = bytes[i];
+        if b == b'"' {
+            i += 1;
+            while i < n {
+                if bytes[i] == b'\\' {
+                    i = i.saturating_add(2);
+                } else if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        if i + call_name.len() <= n && &text[i..i + call_name.len()] == call_name {
+            let prev_ok = if i == 0 {
+                true
+            } else {
+                let c = bytes[i - 1] as char;
+                !(c.is_ascii_alphanumeric() || c == '_')
+            };
+            if !prev_ok {
+                i += 1;
+                continue;
+            }
+            let mut j = i + call_name.len();
+            while j < n && (bytes[j] as char).is_ascii_whitespace() {
+                j += 1;
+            }
+            if j >= n || bytes[j] != b'(' {
+                i += 1;
+                continue;
+            }
+            let args_start = j + 1;
+            let mut depth = 1i32;
+            let mut k = args_start;
+            while k < n {
+                let ch = bytes[k];
+                if ch == b'"' {
+                    k += 1;
+                    while k < n {
+                        if bytes[k] == b'\\' {
+                            k = k.saturating_add(2);
+                        } else if bytes[k] == b'"' {
+                            k += 1;
+                            break;
+                        } else {
+                            k += 1;
+                        }
+                    }
+                    continue;
+                }
+                if ch == b'(' {
+                    depth += 1;
+                } else if ch == b')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&text[args_start..k]);
+                    }
+                }
+                k += 1;
+            }
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_top_level_args(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    let mut depth = 0i32;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        if ch == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i = i.saturating_add(2);
+                } else if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        match ch {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b',' if depth == 0 => {
+                parts.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if start <= s.len() {
+        parts.push(s[start..].trim());
+    }
+    parts
+}
+
+fn parse_rustmodlica_overdet_tol(annotation: &str) -> Option<f64> {
+    let args = find_call_args(annotation, "__RustModlica")?;
+    for item in split_top_level_args(args) {
+        let Some(eq_idx) = item.find('=') else {
+            continue;
+        };
+        let key = item[..eq_idx].trim();
+        if key != "overdetTol" {
+            continue;
+        }
+        let value = item[eq_idx + 1..].trim();
+        return parse_numeric_prefix(value);
+    }
+    None
+}
+
 /// INT-1: REPL loop. Commands: <var_name> (print value), simulate, list, quit/exit.
 fn run_repl_loop(artifacts: Artifacts) -> Result<(), RunError> {
     use std::io::{self, BufRead, Write};
@@ -903,6 +1052,11 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut emit_flat_snapshot: Option<String> = None;
     let mut flat_snapshot_only = false;
     let mut coarse_constrainedby_only = false;
+    let mut array_size_policy = "legacy".to_string();
+    let mut array_sizes_json: Option<String> = None;
+    // P8-1: CLI parameters for overdet check configuration
+    let mut overdet_check: Option<bool> = None;
+    let mut overdet_tol: Option<f64> = None;
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
@@ -968,6 +1122,19 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if a == "--coarse-constrainedby" {
             coarse_constrainedby_only = true;
             i += 1;
+        } else if let Some(v) = a.strip_prefix("--array-size-policy=") {
+            array_size_policy = v.to_string();
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--array-sizes-json=") {
+            array_sizes_json = Some(v.to_string());
+            i += 1;
+        // P8-1: CLI parameters for overdet check configuration
+        } else if let Some(v) = a.strip_prefix("--overdet-check=") {
+            overdet_check = Some(v == "true" || v == "1" || v == "on");
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--overdet-tol=") {
+            overdet_tol = v.parse::<f64>().ok().filter(|x| x.is_finite() && *x > 0.0);
+            i += 1;
         } else if let Some(v) = a.strip_prefix("--warnings=") {
             warnings_level = v.to_string();
             i += 1;
@@ -1029,6 +1196,15 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     if i < args.len() {
         return Err("Unknown or extra arguments after model name.".into());
     }
+    
+    // P8-1: Set environment variables for overdet check configuration
+    if let Some(v) = overdet_check {
+        std::env::set_var("RUSTMODLICA_OVERDET_CHECK", if v { "1" } else { "0" });
+    }
+    if let Some(v) = overdet_tol {
+        std::env::set_var("RUSTMODLICA_OVERDET_RESIDUAL_TOL", v.to_string());
+    }
+    
     if let Some(ref path) = script_path {
         let mut compiler = Compiler::new();
         compiler.options.backend_dae_info = backend_dae_info;
@@ -1044,6 +1220,8 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         compiler.options.output_interval = output_interval;
         compiler.options.result_file = result_file;
         compiler.options.warnings_level = warnings_level;
+        compiler.options.array_size_policy = array_size_policy.clone();
+        compiler.options.array_sizes_json = array_sizes_json.clone();
         compiler.options.emit_c_dir = emit_c_dir.clone();
         compiler.options.external_libs = external_libs;
         for p in &lib_paths {
@@ -1067,7 +1245,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --fmi-model-id=<id>  override FMI modelIdentifier (sanitized; wins over env)\n  --fmi-guid=<uuid|token>  fixed guid attribute (UUID or ASCII alnum/-/_)\n  Env (FMI): RUSTMODLICA_FMI_MODEL_ID, RUSTMODLICA_FMI_MODEL_ID_PREFIX, RUSTMODLICA_FMI_GUID, RUSTMODLICA_FMI_GENERATION_TOOL\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
+                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --array-size-policy=legacy|strict  flatten: unevaluated array dims (default legacy: warn+scalar fallback; strict: error unless --array-sizes-json)\n  --array-sizes-json=<path>  JSON object with \"array_sizes\" map: flat base names to positive integer sizes\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --fmi-model-id=<id>  override FMI modelIdentifier (sanitized; wins over env)\n  --fmi-guid=<uuid|token>  fixed guid attribute (UUID or ASCII alnum/-/_)\n  Env (FMI): RUSTMODLICA_FMI_MODEL_ID, RUSTMODLICA_FMI_MODEL_ID_PREFIX, RUSTMODLICA_FMI_GUID, RUSTMODLICA_FMI_GENERATION_TOOL\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
                 args[0]
             );
             return Err(msg.into());
@@ -1090,6 +1268,8 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     compiler.options.emit_flat_snapshot = emit_flat_snapshot.clone();
     compiler.options.flat_snapshot_only = flat_snapshot_only;
     compiler.options.coarse_constrainedby_only = coarse_constrainedby_only;
+    compiler.options.array_size_policy = array_size_policy;
+    compiler.options.array_sizes_json = array_sizes_json;
     if emit_fmu_dir.is_some() && emit_c_dir.is_none() {
         emit_c_dir = emit_fmu_dir.clone();
     }
@@ -1102,6 +1282,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let json_mode = validate_only || output_format.as_deref() == Some("json");
     if validate_only {
         compiler.options.quiet = true;
+        compiler.options.validate_only = true;
     }
     for p in &lib_paths {
         compiler.loader.add_path(p.into());
@@ -1124,6 +1305,16 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     } else {
         model_name.clone()
     };
+
+    if overdet_tol.is_none() && model_name != "-" {
+        if let Ok(model) = compiler.loader.load_model_silent(&effective_model, true) {
+            if let Some(ann) = model.annotation.as_ref() {
+                if let Some(v) = parse_rustmodlica_overdet_tol(ann) {
+                    std::env::set_var("RUSTMODLICA_OVERDET_RESIDUAL_TOL", v.to_string());
+                }
+            }
+        }
+    }
 
     if flat_snapshot_only && emit_flat_snapshot.is_none() {
         return Err("--flat-snapshot-only requires --emit-flat-snapshot=<path>".into());

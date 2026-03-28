@@ -49,6 +49,21 @@ Covers function pipeline and multi-output assignment behavior.
 | `TestLib/CrossModuleRecordCompositeMismatch` | fail | Cross-module record mismatch |
 | `TestLib/AliasChainTypeMismatch` | fail | Alias chain mismatch |
 
+## `--validate` 与函数入口 / Function root and `--validate`
+
+当以 **function** 为 CLI 根且使用 `--validate` 时：若标量入口求值器无法执行其主体（例如首段输出依赖数组字面量、矩阵字面量、`for` 推导式或多输出依赖局部变量），校验仍返回 `success:true`，并在 JSON `warnings` 中给出说明（含 `validate: function root accepted without scalar entry eval`）。非 `--validate` 的函数入口运行仍会按原逻辑失败或受限。
+
+代表模型（均位于 `jit-compiler/TestLib` 根目录，由 `run_testlib_validate.ps1` 覆盖） / Representative models:
+
+| Model | Note |
+|---|---|
+| `ArrayAndScalarOutputs` | array literal output |
+| `ComprehensionAndScalarOutputs` | comprehension output |
+| `CrossLayerComprehensionOutputs` | locals + comprehension |
+| `CrossModuleComprehensionOutputs` | cross-module call in comprehension |
+| `MatrixAndScalarOutputs` | matrix literal output |
+| `MixedScalarOutputs` | multi-output + locals |
+
 ## 执行命令 / Execution Command
 
 ```powershell

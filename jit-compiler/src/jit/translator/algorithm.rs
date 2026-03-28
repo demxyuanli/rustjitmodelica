@@ -190,7 +190,9 @@ fn try_compile_msl_random_multiassign(
     if !fname.contains("random") {
         return Ok(false);
     }
-    let kind: i32 = if fname.contains("Xorshift64star") {
+    let kind: i32 = if let Some(k) = crate::jit::jit_policy::algorithm_random_kind(fname) {
+        k
+    } else if fname.contains("Xorshift64star") {
         0
     } else if fname.contains("Xorshift128plus") {
         1
@@ -435,39 +437,86 @@ fn expr_contains_array_literal(expr: &Expression) -> bool {
     }
 }
 
-fn expr_contains_array_comprehension(expr: &Expression) -> bool {
-    match expr {
-        Expression::ArrayComprehension { .. } => true,
-        Expression::BinaryOp(l, _, r) => {
-            expr_contains_array_comprehension(l) || expr_contains_array_comprehension(r)
-        }
-        Expression::Call(_, args) => args.iter().any(expr_contains_array_comprehension),
-        Expression::Der(inner)
-        | Expression::Sample(inner)
-        | Expression::Interval(inner)
-        | Expression::Hold(inner)
-        | Expression::Previous(inner) => expr_contains_array_comprehension(inner),
-        Expression::SubSample(a, b)
-        | Expression::SuperSample(a, b)
-        | Expression::ShiftSample(a, b)
-        | Expression::BackSample(a, b)
-        | Expression::ArrayAccess(a, b) => {
-            expr_contains_array_comprehension(a) || expr_contains_array_comprehension(b)
-        }
-        Expression::Dot(base, _) => expr_contains_array_comprehension(base),
-        Expression::If(c, t, f) => {
-            expr_contains_array_comprehension(c)
-                || expr_contains_array_comprehension(t)
-                || expr_contains_array_comprehension(f)
-        }
-        Expression::Range(s, st, e) => {
-            expr_contains_array_comprehension(s)
-                || expr_contains_array_comprehension(st)
-                || expr_contains_array_comprehension(e)
-        }
-        Expression::ArrayLiteral(items) => items.iter().any(expr_contains_array_comprehension),
-        Expression::Variable(_) | Expression::Number(_) | Expression::StringLiteral(_) => false,
+fn is_record_constructor_call_name(name: &str) -> bool {
+    if name.contains('.') {
+        return false;
     }
+    name.chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase())
+        .unwrap_or(false)
+}
+
+fn expand_array_comprehension_values(
+    rhs: &Expression,
+    expected_len: usize,
+    ctx: &mut TranslationContext,
+    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
+) -> Result<Option<Vec<Value>>, String> {
+    let Expression::ArrayComprehension {
+        expr,
+        iter_var,
+        iter_range,
+    } = rhs
+    else {
+        return Ok(None);
+    };
+    let (start_val, step_val, literal_triplet) = match iter_range.as_ref() {
+        Expression::Range(s, st, e) => {
+            let sv = compile_expression(s.as_ref(), ctx, builder)?;
+            let stv = compile_expression(st.as_ref(), ctx, builder)?;
+            let lit = match (s.as_ref(), st.as_ref(), e.as_ref()) {
+                (Expression::Number(a), Expression::Number(b), Expression::Number(c)) => Some((*a, *b, *c)),
+                _ => None,
+            };
+            (sv, stv, lit)
+        }
+        Expression::Number(n) => (
+            builder.ins().f64const(1.0),
+            builder.ins().f64const(1.0),
+            Some((1.0, 1.0, *n)),
+        ),
+        _ => return Ok(None),
+    };
+
+    if let Some((start, step, end)) = literal_triplet {
+        if !start.is_finite() || !step.is_finite() || !end.is_finite() || step == 0.0 {
+            return Ok(None);
+        }
+        let mut lit_len = 0usize;
+        let mut i = start;
+        let forward = step > 0.0;
+        while (forward && i <= end) || (!forward && i >= end) {
+            lit_len += 1;
+            if lit_len > expected_len.saturating_mul(4).max(4096) {
+                break;
+            }
+            i += step;
+        }
+        if lit_len != expected_len {
+            return Err(format!(
+                "Multi-assign array comprehension arity mismatch: {} LHS targets but {} generated items",
+                expected_len,
+                lit_len
+            ));
+        }
+    }
+
+    let mut values = Vec::new();
+    for idx in 0..expected_len {
+        let idx_val = builder.ins().f64const(idx as f64);
+        let step_mul_idx = builder.ins().fmul(step_val, idx_val);
+        let iter_val = builder.ins().fadd(start_val, step_mul_idx);
+        let old = ctx.var_map.insert(iter_var.clone(), iter_val);
+        let compiled = compile_expression(expr, ctx, builder);
+        if let Some(prev) = old {
+            ctx.var_map.insert(iter_var.clone(), prev);
+        } else {
+            ctx.var_map.remove(iter_var);
+        }
+        values.push(compiled?);
+    }
+    Ok(Some(values))
 }
 
 pub fn compile_algorithm_stmt(
@@ -497,30 +546,58 @@ pub fn compile_algorithm_stmt(
             if try_compile_msl_random_multiassign(lhss, rhs, ctx, builder)? {
                 return Ok(());
             }
-            if let Expression::ArrayLiteral(items) = rhs {
-                if items.len() != lhss.len() {
-                    return Err(format!(
-                        "Multi-assign arity mismatch: {} LHS targets but {} RHS items",
-                        lhss.len(),
-                        items.len()
-                    ));
-                }
-                for (i, (lhs, item)) in lhss.iter().zip(items.iter()).enumerate() {
-                    if expr_contains_array_comprehension(item) {
+            if let Expression::Call(name, args) = rhs {
+                if is_record_constructor_call_name(name) {
+                    if args.len() != lhss.len() {
                         return Err(format!(
-                            "Multi-assign output item {} contains array comprehension, which is unsupported for direct scalar store target {:?}",
-                            i + 1,
-                            lhs
+                            "Record constructor multi-assign arity mismatch for '{}': {} LHS targets but {} constructor args",
+                            name,
+                            lhss.len(),
+                            args.len()
                         ));
+                    }
+                    for (lhs, arg) in lhss.iter().zip(args.iter()) {
+                        let v = compile_expression(arg, ctx, builder)?;
+                        compile_store_to_lhs(lhs, v, ctx, builder)?;
+                    }
+                    return Ok(());
+                }
+            }
+            if let Some(values) = expand_array_comprehension_values(rhs, lhss.len(), ctx, builder)? {
+                for (lhs, v) in lhss.iter().zip(values.into_iter()) {
+                    compile_store_to_lhs(lhs, v, ctx, builder)?;
+                }
+                return Ok(());
+            }
+            if let Expression::ArrayLiteral(items) = rhs {
+                let mut expanded_values: Vec<Value> = Vec::new();
+                for item in items.iter() {
+                    if let Some(mut values) = expand_array_comprehension_values(
+                        item,
+                        lhss.len().saturating_sub(expanded_values.len()),
+                        ctx,
+                        builder,
+                    )? {
+                        expanded_values.append(&mut values);
+                        continue;
                     }
                     if expr_contains_array_literal(item) {
                         return Err(format!(
-                            "Multi-assign output item {} has array-valued shape, which is unsupported for scalar store target {:?}",
-                            i + 1,
-                            lhs
+                            "Multi-assign output item has array-valued shape, which is unsupported for scalar targets: {:?}",
+                            item
                         ));
                     }
                     let v = compile_expression(item, ctx, builder)?;
+                    expanded_values.push(v);
+                }
+                if expanded_values.len() != lhss.len() {
+                    return Err(format!(
+                        "Multi-assign arity mismatch after literal/comprehension expansion: {} LHS targets but {} RHS items",
+                        lhss.len(),
+                        expanded_values.len()
+                    ));
+                }
+                for (lhs, v) in lhss.iter().zip(expanded_values.into_iter()) {
                     compile_store_to_lhs(lhs, v, ctx, builder)?;
                 }
                 return Ok(());
@@ -552,16 +629,41 @@ pub fn compile_algorithm_stmt(
                 compile_store_to_lhs(&lhss[0], v, ctx, builder)?;
                 return Ok(());
             }
+            
+            // P3-3: Enhanced diagnostic output for multi-assign fallback
             let rhs_hint = if let Expression::Call(name, args) = rhs {
                 format!("function call '{}({} args)'", name, args.len())
             } else {
-                format!("{:?}", rhs)
+                match rhs {
+                    Expression::ArrayLiteral(items) => format!("array literal ({} items)", items.len()),
+                    Expression::Variable(id) => format!("variable '{}'", crate::string_intern::resolve_id(*id)),
+                    Expression::ArrayComprehension { .. } => format!("array comprehension (not supported in multi-assign)"),
+                    Expression::Dot(base, member) => {
+                        let base_name = match base.as_ref() {
+                            Expression::Variable(id) => crate::string_intern::resolve_id(*id),
+                            _ => "unknown".to_string(),
+                        };
+                        format!("record field access '{}.{}' (record should be flattened)", base_name, member)
+                    },
+                    _ => format!("{:?}", rhs),
+                }
             };
+            
+            // P3-3: Output indexed LHS targets for debugging
+            let lhs_targets: Vec<String> = lhss.iter().enumerate().map(|(i, lhs)| {
+                format!("#{}={:?}", i + 1, lhs)
+            }).collect();
+            
             eprintln!(
                 "[fallback:jit-multi-assign] writes zero to {} target(s) for unsupported RHS {}.",
                 lhss.len(),
                 rhs_hint
             );
+            eprintln!(
+                "[fallback:jit-multi-assign] LHS targets: {}",
+                lhs_targets.join(", ")
+            );
+            
             fallback_counter::inc_jit_multi_assign();
             let zero = builder.ins().f64const(0.0);
             for lhs in lhss {

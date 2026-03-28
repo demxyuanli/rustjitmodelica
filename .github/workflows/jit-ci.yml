@@ -14,7 +14,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
-      - name: Build jit-compiler
-        run: cargo build -p jit-compiler --all-features
-      - name: Run jit-compiler tests
-        run: cargo test -p jit-compiler --all-features -- --nocapture
+      - name: Build rustmodlica (jit-compiler)
+        run: cargo build -p rustmodlica
+      - name: Run rustmodlica tests
+        run: cargo test -p rustmodlica -- --nocapture
+      - name: TestLib batch JIT validate
+        shell: pwsh
+        run: ./jit-compiler/scripts/run_testlib_validate.ps1
+      - name: MOS regression (14 scripts)
+        shell: pwsh
+        working-directory: jit-compiler
+        run: ./scripts/run_mos_regression.ps1

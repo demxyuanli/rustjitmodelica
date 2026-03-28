@@ -12,6 +12,8 @@ pub mod context;
 pub mod native;
 pub mod translator;
 pub mod types;
+mod jit_policy;
+mod var_fallback_policy;
 
 use self::analysis::{collect_modified, collect_modified_equations};
 use self::context::TranslationContext;
@@ -171,7 +173,8 @@ impl Jit {
         algorithms: &[AlgorithmStatement],
         clock_partition_schedule: &[ClockPartitionScheduleEntry],
         _t_end: f64,
-        newton_tearing_var_names: &[String],
+        _newton_tearing_var_names: &[String],
+        external_modelica_names: &HashSet<String>,
     ) -> Result<(CalcDerivsFunc, usize, usize), String> {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(cl_types::F64)); // time
@@ -235,11 +238,9 @@ impl Jit {
             let diag_x_ptr = builder.block_params(entry_block)[12];
             let homotopy_lambda_ptr = builder.block_params(entry_block)[13];
 
-            let (diag_res, diag_x) = if newton_tearing_var_names.is_empty() {
-                (None, None)
-            } else {
-                (Some(diag_residual_ptr), Some(diag_x_ptr))
-            };
+            // Always wire diag pointers so dense/sparse Newton can report |r| to the host; enables
+            // allow_zero_residual_newton when tearing metadata is empty but algebraic loops remain.
+            let (diag_res, diag_x) = (Some(diag_residual_ptr), Some(diag_x_ptr));
 
             let mut var_map = HashMap::new();
             var_map.insert("time".to_string(), time_val);
@@ -347,6 +348,7 @@ impl Jit {
                 Some(&mut string_literal_cache),
                 Some(&mut self.data_ctx),
                 Some(&mut string_data_counter),
+                Some(external_modelica_names),
             );
 
             let mut covered_algorithms = HashSet::new();
@@ -533,6 +535,7 @@ impl Jit {
                 Some(&mut string_literal_cache),
                 Some(&mut self.data_ctx),
                 Some(&mut string_data_counter),
+                None,
             );
 
             let result = compile_expression(output_expr, &mut t_ctx, &mut builder)?;

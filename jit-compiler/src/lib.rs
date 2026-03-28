@@ -19,6 +19,7 @@ pub mod jit;
 mod loader_compat;
 mod math_fft;
 mod modelica_random;
+pub mod newton_policy;
 pub mod loader;
 pub mod parser;
 pub mod script;

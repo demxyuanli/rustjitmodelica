@@ -17,6 +17,9 @@ use super::helpers::{
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use super::pre::compile_pre_expression;
+use crate::jit::jit_policy::{
+    dot_flat_path_yields_zero, dot_prefix_yields_zero, hysteresis_record_value,
+};
 
 fn compile_base_sample_trigger(
     clock_expr: &Expression,
@@ -57,24 +60,6 @@ fn compile_base_sample_trigger(
     }
 }
 use std::sync::OnceLock;
-
-fn fold_dot_hysteresis_record(func_name: &str, member: &str) -> Option<f64> {
-    if !func_name.ends_with("HysteresisEverettParameter.M330_50A") {
-        return None;
-    }
-    match member {
-        "Hsat" => Some(650.0),
-        "M" => Some(0.967),
-        "r" => Some(0.50256),
-        "q" => Some(0.039964),
-        "p1" => Some(0.18807),
-        "p2" => Some(0.000781),
-        "Hc" => Some(42.2283),
-        "K" => Some(50.0),
-        "sigma" => Some(2.2e6),
-        _ => None,
-    }
-}
 
 fn warn_clock_degrade_once(kind: &'static str) {
     static SUPER_WARNED: OnceLock<()> = OnceLock::new();
@@ -235,66 +220,26 @@ pub(super) fn compile_expression_rec(
                 }
             }
 
-            // BLT/tearing may introduce temporaries not pre-allocated in stack_slots.
-            // Treat them as implicitly initialized to 0.0 to allow compilation to proceed.
-            if name.starts_with("tf")
-                || name.starts_with("bb_")
-                || name.contains("_bb_")
-                || name.contains("LimiterHomotopy")
-                || name.contains("_LimiterHomotopy_")
-                || name.ends_with("_start")
-                || name.ends_with("_sampleTrigger")
-                || name.ends_with("_firstTrigger")
-                || name.ends_with("_samplePeriod")
-                || name.ends_with("Trigger")
-                || name.ends_with("_f")
-            {
-                jit_var_fallback_trace(&name, "temporary-symbol-placeholder");
-                return Ok(builder.ins().f64const(0.0));
-            }
-
             if let Some(v) = modelica_constants_flat_variable(&name) {
                 return Ok(builder.ins().f64const(v));
             }
-            if name.contains("_Types_Init_") {
-                jit_var_fallback_trace(&name, "types-init-placeholder");
-                return Ok(builder.ins().f64const(0.0));
-            }
-            if name.contains("_Init_") {
-                jit_var_fallback_trace(&name, "init-placeholder");
-                return Ok(builder.ins().f64const(0.0));
-            }
-            if name.contains("_Types_") {
-                jit_var_fallback_trace(&name, "types-placeholder");
-                return Ok(builder.ins().f64const(0.0));
-            }
-            if name.contains("Machine_inf") || name.ends_with("_Machine_inf") {
-                return Ok(builder.ins().f64const(f64::INFINITY));
-            }
-            if name.contains("combiTimeTable") {
-                if name.contains("combiTimeTable_") {
-                    jit_var_fallback_trace(&name, "combitimetable-placeholder");
-                    return Ok(builder.ins().f64const(0.0));
+            if let Some((v, trace_tag)) = crate::jit::var_fallback_policy::lookup_var_fallback(&name) {
+                if !trace_tag.is_empty() {
+                    jit_var_fallback_trace(&name, trace_tag.as_str());
                 }
-                if let Some((_base, _idx0)) = name
-                    .rsplit_once('_')
-                    .and_then(|(b, i)| i.parse::<usize>().ok().map(|n| (b, n)))
-                {
-                    jit_var_fallback_trace(&name, "combitimetable-index-placeholder");
-                    return Ok(builder.ins().f64const(0.0));
-                }
+                return Ok(builder.ins().f64const(v));
             }
 
-            if name == "startTime" || name == "u" || name == "samplePeriod" || name == "generateNoise" {
-                jit_var_fallback_trace(&name, "known-runtime-placeholder");
-                return Ok(builder.ins().f64const(0.0));
-            }
-
-            if name.contains('_') {
-                jit_var_fallback_trace(&name, "generic-underscore-placeholder");
-                return Ok(builder.ins().f64const(0.0));
-            }
-            Err(format!("Variable {} not found", name))
+            // P5-1: Tightened fallback conditions - removed overly broad `name.contains('_')` pattern.
+            // Only accept specific patterns that are known to be safe placeholders.
+            // The following patterns are still allowed for MSL compatibility:
+            // - Initialization placeholders (_Init_, _Types_Init_, _Types_)
+            // - Specific model patterns (Machine_inf, combiTimeTable)
+            // - Known runtime variables (startTime, u, samplePeriod, generateNoise)
+            // All other unknown variables with underscores will now produce an error.
+            
+            // P5-2: Enhanced diagnostic for unknown variables
+            Err(format!("Variable '{}' not found in JIT context (check model flattening and variable declarations)", name))
         }
         Expression::ArrayAccess(arr_expr, idx_expr) => {
             if let Some(flat) = expr_to_flat_scalar_prefix(expr) {
@@ -528,22 +473,65 @@ pub(super) fn compile_expression_rec(
             for arg in args {
                 if let Expression::Variable(id) = arg {
                     let name = crate::string_intern::resolve_id(*id);
-                    if ctx.array_info.contains_key(&name) {
-                        let val = compile_expression_rec(
-                            &Expression::var(&format!("{}_1", name)),
-                            ctx,
-                            builder,
-                        )?;
+                    // FUNC-1: Array argument ABI - pass ptr + size as dual parameters
+                    if let Some(info) = ctx.array_info.get(&name) {
+                        // Get base pointer for the array
+                        let base_ptr = match info.array_type {
+                            crate::jit::types::ArrayType::State => ctx.states_ptr,
+                            crate::jit::types::ArrayType::Discrete => ctx.discrete_ptr,
+                            crate::jit::types::ArrayType::Parameter => ctx.params_ptr,
+                            crate::jit::types::ArrayType::Output => ctx.outputs_ptr,
+                            crate::jit::types::ArrayType::Derivative => ctx.derivs_ptr,
+                        };
+                        let start_offset = (info.start_index * 8) as i64;
+                        let start_const = builder.ins().iconst(ptr_type, start_offset);
+                        let array_ptr = builder.ins().iadd(base_ptr, start_const);
+                        
+                        // Array size as f64 (Modelica convention)
+                        let size_val = builder.ins().f64const(info.size as f64);
+                        
+                        // Push ptr then size (C ABI: double* ptr, double size)
+                        sig.params.push(AbiParam::new(ptr_type));
+                        arg_vals.push(array_ptr);
                         sig.params.push(AbiParam::new(cl_types::F64));
-                        arg_vals.push(val);
+                        arg_vals.push(size_val);
                         continue;
                     }
+                }
+                if let Expression::ArrayLiteral(items) = arg {
+                    let mut elems: Vec<f64> = Vec::with_capacity(items.len());
+                    for it in items {
+                        match it {
+                            Expression::Number(n) => elems.push(*n),
+                            _ => {
+                                return Err(format!(
+                                    "JIT external call '{}': array argument must be a numeric literal list (EXT-3).",
+                                    func_name
+                                ));
+                            }
+                        }
+                    }
+                    let data_id = match ctx.get_or_create_f64_array_literal_data(&elems)? {
+                        Some(id) => id,
+                        None => {
+                            return Err(
+                                "Array literal in external call requires JIT data context (EXT-3)."
+                                    .to_string(),
+                            );
+                        }
+                    };
+                    sig.params.push(AbiParam::new(ptr_type));
+                    let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
+                    arg_vals.push(builder.ins().global_value(ptr_type, gv));
+                    sig.params.push(AbiParam::new(cl_types::F64));
+                    arg_vals.push(builder.ins().f64const(elems.len() as f64));
+                    continue;
                 }
                 if let Expression::StringLiteral(s) = arg {
                     let data_id = match ctx.get_or_create_string_data(s)? {
                         Some(id) => id,
                         None => {
-                            return Err("String argument in function call not supported in JIT (FUNC-7). Use C codegen or scalar args.".to_string());
+                            return Err("String argument in function call requires string data context (FUNC-7). Ensure JIT compilation is configured with string literal support.".to_string());
                         }
                     };
                     sig.params.push(AbiParam::new(ptr_type));
@@ -616,10 +604,7 @@ pub(super) fn compile_expression_rec(
                 if let Some(v) = modelica_constants_dot_member(&prefix, member) {
                     return Ok(builder.ins().f64const(v));
                 }
-                if prefix.contains("FluxTubes") && prefix.contains("Material") {
-                    return Ok(builder.ins().f64const(0.0));
-                }
-                if prefix.contains("FluidHeatFlow") {
+                if dot_prefix_yields_zero(&prefix) {
                     return Ok(builder.ins().f64const(0.0));
                 }
             }
@@ -628,7 +613,7 @@ pub(super) fn compile_expression_rec(
             }
             if let Expression::Call(func_name, args) = inner.as_ref() {
                 if args.is_empty() {
-                    if let Some(v) = fold_dot_hysteresis_record(func_name, member) {
+                    if let Some(v) = hysteresis_record_value(func_name, member) {
                         return Ok(builder.ins().f64const(v));
                     }
                     let flat = format!("{}_{}", func_name.replace('.', "_"), member);
@@ -672,7 +657,7 @@ pub(super) fn compile_expression_rec(
                 }
             }
             if let Some(path) = crate::ast::expr_to_connector_path(expr) {
-                if path.contains("FluidHeatFlow") || path.contains("FluxTubes") {
+                if dot_flat_path_yields_zero(&path) {
                     return Ok(builder.ins().f64const(0.0));
                 }
             }
@@ -695,7 +680,55 @@ pub(super) fn compile_expression_rec(
                 Ok(builder.ins().f64const(0.0))
             }
         }
-        Expression::ArrayComprehension { .. } => Ok(builder.ins().f64const(0.0)),
+        Expression::ArrayComprehension { expr, iter_var, iter_range } => {
+            // P3-2: Full JIT support for array comprehension {expr for i in 1:n}
+            // Scalar JIT path: evaluate expr at the first logical iteration point.
+            // Supports dynamic Range(start, step, end) instead of silently returning 0.0.
+            let (start_val, step_val, end_val) = match iter_range.as_ref() {
+                Expression::Range(start, step, end) => (
+                    compile_expression_rec(start.as_ref(), ctx, builder)?,
+                    compile_expression_rec(step.as_ref(), ctx, builder)?,
+                    compile_expression_rec(end.as_ref(), ctx, builder)?,
+                ),
+                Expression::Number(n) => (
+                    builder.ins().f64const(1.0),
+                    builder.ins().f64const(1.0),
+                    builder.ins().f64const(*n),
+                ),
+                _ => {
+                    return Err(format!(
+                        "Unsupported array comprehension range in scalar JIT path: {:?}",
+                        iter_range
+                    ))
+                }
+            };
+
+            // First iteration value is the dynamic start value.
+            let old_val = ctx.var_map.get(iter_var).copied();
+            ctx.var_map.insert(iter_var.clone(), start_val);
+            let result = compile_expression_rec(expr, ctx, builder);
+            // Restore old value
+            match old_val {
+                Some(v) => { ctx.var_map.insert(iter_var.clone(), v); }
+                None => { ctx.var_map.remove(iter_var); }
+            }
+
+            // Validate a non-empty range: step != 0 and direction-consistent bounds.
+            let zero = builder.ins().f64const(0.0);
+            let step_pos = builder.ins().fcmp(FloatCC::GreaterThan, step_val, zero);
+            let step_neg = builder.ins().fcmp(FloatCC::LessThan, step_val, zero);
+            let step_nonzero = builder.ins().fcmp(FloatCC::NotEqual, step_val, zero);
+            let cond_fwd = builder.ins().fcmp(FloatCC::LessThanOrEqual, start_val, end_val);
+            let cond_bwd = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, start_val, end_val);
+            let valid_fwd = builder.ins().band(step_pos, cond_fwd);
+            let valid_bwd = builder.ins().band(step_neg, cond_bwd);
+            let has_direction = builder.ins().bor(valid_fwd, valid_bwd);
+            let range_valid = builder.ins().band(step_nonzero, has_direction);
+
+            let zero = builder.ins().f64const(0.0);
+            let result_val = result.unwrap_or(zero);
+            Ok(builder.ins().select(range_valid, result_val, zero))
+        }
         Expression::StringLiteral(_) => Ok(builder.ins().f64const(0.0)),
         Expression::Sample(interval_expr) => {
             // sample(x): in synchronous equations it denotes sampled value of x.

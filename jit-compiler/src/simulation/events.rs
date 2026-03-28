@@ -233,14 +233,17 @@ pub(crate) fn run_event_iteration_at_time(
                         homotopy_lambda,
                         homotopy_lambda_ptr,
                     );
-                    if recovered || !states.is_empty() {
-                        if !recovered && !states.is_empty() {
-                            fallback_counter::inc_newton_init_accept();
-                            eprintln!(
-                                "[fallback:newton-init] accepting t=0 Newton non-convergence (residual={:.6e}), continuing with current values",
-                                *diag_residual
-                            );
-                        }
+                    if recovered {
+                        break;
+                    }
+                    // Do not continue ODE integration after failed t=0 recovery unless Newton reports
+                    // a numerically negligible residual (avoids accepting huge |r| for large DAEs).
+                    if !states.is_empty() && allow_zero_residual_newton(status, *diag_residual) {
+                        fallback_counter::inc_newton_init_accept();
+                        eprintln!(
+                            "[fallback:newton-init] accepting t=0 Newton non-convergence (residual={:.6e}), continuing with current values",
+                            *diag_residual
+                        );
                         break;
                     }
                 }

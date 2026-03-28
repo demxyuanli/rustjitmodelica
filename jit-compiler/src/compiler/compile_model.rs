@@ -13,6 +13,7 @@ use crate::diag::WarningInfo;
 use crate::diag::fallback_counter;
 use crate::diag::fallback_counter::FallbackCounterSnapshot;
 use crate::diag::fallback_registry;
+use crate::flatten::ArraySizePolicy;
 use crate::i18n;
 use crate::jit::native::builtin_jit_symbol_names;
 use crate::jit::Jit;
@@ -302,7 +303,37 @@ pub(super) fn compile(
                     println!("{}", i18n::msg0("evaluating_function_default"));
                 }
             }
-            let value = compiler.run_function_once(model_name)?;
+            let fr = compiler.run_function_once(model_name);
+            let value = match fr {
+                Ok(v) => v,
+                Err(e) => {
+                    if compiler.options.validate_only {
+                        let msg = e.to_string();
+                        if msg.contains("array/dot/range not supported in function entry eval") {
+                            let path = compiler
+                                .loader
+                                .get_path_for_model(model_name)
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| model_name.to_string());
+                            compiler.warnings.push(WarningInfo {
+                                path,
+                                line: 0,
+                                column: 0,
+                                message: format!(
+                                    "validate: function root accepted without scalar entry eval ({})",
+                                    msg
+                                ),
+                                source: None,
+                            });
+                            0.0
+                        } else {
+                            return Err(e);
+                        }
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
             apply_fallback_snapshot(&mut perf_report);
             compiler.last_compile_perf = Some(perf_report);
             return Ok(CompileOutput::FunctionRun(value));
@@ -316,6 +347,12 @@ pub(super) fn compile(
             .emit_flat_snapshot
             .as_deref()
             .map(std::path::Path::new);
+        let array_sizes_path = compiler
+            .options
+            .array_sizes_json
+            .as_deref()
+            .map(std::path::Path::new);
+        let array_size_policy = ArraySizePolicy::parse(compiler.options.array_size_policy.as_str());
         let flatten_t0 = Instant::now();
         let frontend = flatten_and_inline(
             &mut root_model,
@@ -325,6 +362,9 @@ pub(super) fn compile(
             stage_trace,
             snap_path,
             compiler.options.coarse_constrainedby_only,
+            array_size_policy,
+            array_sizes_path,
+            compiler.options.warnings_level.as_str(),
         )?;
         perf_report.flatten_inline_ms = flatten_t0.elapsed().as_millis() as u64;
         if perf_trace {
@@ -540,16 +580,17 @@ pub(super) fn compile(
             );
         }
 
+        let algorithms = build_runtime_algorithms(&flat_model, stage_trace);
+
         let external_t0 = Instant::now();
         let external_list = collect_external_calls(
             &mut compiler.loader,
             &alg_equations,
             &diff_equations,
-            &flat_model.algorithms,
+            &algorithms,
         );
 
-        let all_called =
-            collect_all_called_names(&alg_equations, &diff_equations, &flat_model.algorithms);
+        let all_called = collect_all_called_names(&alg_equations, &diff_equations, &algorithms);
         let external_names: HashSet<String> =
             external_list.iter().map(|(n, _, _)| n.clone()).collect();
         let stub_cap = all_called.len().saturating_sub(external_names.len());
@@ -680,10 +721,6 @@ pub(super) fn compile(
             user_stub_ptrs.insert(name.clone(), ptr);
             user_stub_jits.push(stub_jit);
             user_function_bodies.insert(name.clone(), (input_names.clone(), outputs[0].1.clone()));
-        }
-        let mut all_symbols = compiler.external_symbol_ptrs.clone();
-        for (k, v) in user_stub_ptrs {
-            all_symbols.insert(k, v);
         }
 
         if opts.backend_dae_info {
@@ -840,7 +877,6 @@ pub(super) fn compile(
             println!("{}", i18n::msg("parameters_count", &[&param_vars.len()]));
         }
 
-        let algorithms = build_runtime_algorithms(&flat_model, stage_trace);
         let newton_tearing_var_names = collect_newton_tearing_var_names(&alg_equations);
         let aot_cache_status =
             maybe_write_aot_cache_marker(model_name, &alg_equations, &diff_equations, opts);
@@ -944,6 +980,19 @@ pub(super) fn compile(
             }
         }
 
+        let mut all_symbols = compiler.external_symbol_ptrs.clone();
+        for (k, v) in user_stub_ptrs {
+            all_symbols.insert(k, v);
+        }
+        for (modelica_name, c_name, _) in &external_list {
+            if all_symbols.contains_key(modelica_name) {
+                continue;
+            }
+            if let Some(ptr) = crate::jit::native::jit_stub_for_external_c_name(c_name) {
+                all_symbols.insert(modelica_name.clone(), ptr);
+            }
+        }
+
         let builtins = builtin_jit_symbol_names();
         for name in &external_names {
             if builtins.contains(name.as_str()) || all_symbols.contains_key(name) {
@@ -972,6 +1021,11 @@ pub(super) fn compile(
             model_file_path.clone(),
             &compiler.options.warnings_level,
         );
+        if let Some(ref path) = compiler.options.jit_policy_json {
+            if std::env::var_os("RUSTMODLICA_JIT_POLICY_JSON").is_none() && !path.trim().is_empty() {
+                std::env::set_var("RUSTMODLICA_JIT_POLICY_JSON", path.as_str());
+            }
+        }
         let mut jit = if all_symbols.is_empty() {
             Jit::new()
         } else {
@@ -990,6 +1044,7 @@ pub(super) fn compile(
             &clock_partition_schedule,
             t_end,
             &newton_tearing_var_names,
+            &external_names,
         );
         perf_report.jit_ms = jit_t0.elapsed().as_millis() as u64;
         if perf_trace {

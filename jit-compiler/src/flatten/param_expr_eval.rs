@@ -7,6 +7,74 @@ use std::collections::{HashMap, HashSet};
 
 const MAX_DEPTH: usize = 512;
 
+fn lookup_array_size_dimension(
+    array_sizes: &HashMap<String, usize>,
+    path: &str,
+    dim_1_based: i64,
+) -> Option<f64> {
+    if dim_1_based <= 0 {
+        return None;
+    }
+    if dim_1_based > 1 {
+        return Some(1.0);
+    }
+    if let Some(sz) = array_sizes.get(path) {
+        return Some(*sz as f64);
+    }
+    let underscored = path.replace('.', "_");
+    if underscored != path {
+        if let Some(sz) = array_sizes.get(&underscored) {
+            return Some(*sz as f64);
+        }
+    }
+    if let Some((_prefix, leaf)) = path.rsplit_once('.') {
+        if let Some(sz) = array_sizes.get(leaf) {
+            return Some(*sz as f64);
+        }
+    }
+    None
+}
+
+fn eval_size_call(
+    args: &[Expression],
+    bindings: &HashMap<String, Expression>,
+    array_sizes: &HashMap<String, usize>,
+    visiting: &mut HashSet<String>,
+    depth: usize,
+) -> Option<f64> {
+    if args.is_empty() || args.len() > 2 {
+        return None;
+    }
+    let dim_1_based = if args.len() == 1 {
+        1_i64
+    } else {
+        let d = eval_pe_inner(&args[1], bindings, array_sizes, visiting, depth + 1)?;
+        if !d.is_finite() {
+            return None;
+        }
+        d.round() as i64
+    };
+    match &args[0] {
+        Expression::Variable(id) => {
+            let name = crate::string_intern::resolve_id(*id);
+            lookup_array_size_dimension(array_sizes, &name, dim_1_based)
+        }
+        Expression::Dot(_, _) => {
+            let path = expr_to_path(&args[0])?;
+            lookup_array_size_dimension(array_sizes, &path, dim_1_based)
+        }
+        Expression::ArrayLiteral(items) => {
+            if dim_1_based <= 1 {
+                Some(items.len() as f64)
+            } else {
+                Some(1.0)
+            }
+        }
+        Expression::Number(_) => Some(1.0),
+        _ => None,
+    }
+}
+
 pub fn eval_const_expr_with_param_exprs(
     expr: &Expression,
     bindings: &HashMap<String, Expression>,
@@ -121,16 +189,7 @@ fn eval_pe_inner(
                 return eval_real_fft_sample_points_call(args, bindings, array_sizes, visiting, depth);
             }
             if func == "size" || func_tail == "size" {
-                let first = args.first()?;
-                return match first {
-                    Expression::Variable(id) => {
-                        let name = crate::string_intern::resolve_id(*id);
-                        array_sizes.get(&name).map(|v| *v as f64)
-                    }
-                    Expression::ArrayLiteral(items) => Some(items.len() as f64),
-                    Expression::Number(_) => Some(1.0),
-                    _ => None,
-                };
+                return eval_size_call(args, bindings, array_sizes, visiting, depth);
             }
             match func_tail {
                 "sin" if args.len() == 1 => {

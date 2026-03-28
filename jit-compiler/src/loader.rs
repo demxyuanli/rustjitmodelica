@@ -338,41 +338,44 @@ impl ModelLoader {
         // This matches common Modelica library layouts where a package is defined in a single
         // `<Package>.mo` (e.g. `Modelica/Blocks/Sources.mo`) and contains many inner classes.
         if let Some((prefix, suffix)) = name.rsplit_once('.') {
-            let base = self.load_model_impl(prefix, silent)?;
-            // `load_model_impl(prefix, ..)` registers all inner classes under `prefix.*` into
-            // `loaded_models`. Prefer returning the already-registered Arc to avoid deep cloning
-            // large inner-class trees (which can cause stack overflow).
-            if let Some(arc) = self.loaded_models.get(name) {
-                return Ok(Arc::clone(arc));
-            }
-            let inner = base.find_inner_class(suffix).cloned();
-            if let Some(m) = inner {
-                if !self.quiet && !silent {
-                    eprintln!("Resolved inner class: {} via {}", name, prefix);
+            // Do not `?` here: e.g. `TestLib.sumArrayExternal` may resolve via directory scan below
+            // when there is no loadable `TestLib.mo` package file (flat library folder layout).
+            if let Ok(base) = self.load_model_impl(prefix, silent) {
+                // `load_model_impl(prefix, ..)` registers all inner classes under `prefix.*` into
+                // `loaded_models`. Prefer returning the already-registered Arc to avoid deep cloning
+                // large inner-class trees (which can cause stack overflow).
+                if let Some(arc) = self.loaded_models.get(name) {
+                    return Ok(Arc::clone(arc));
                 }
-                let mut m = m;
-                if !base.imports.is_empty() {
-                    // Inherit imports from parent package/class so that short names like
-                    // `Interfaces.SISO` work after `import Modelica.Blocks.Interfaces;`.
-                    // Keep child's own imports as well.
-                    for (a, q) in &base.imports {
-                        if !m.imports.iter().any(|(aa, qq)| aa == a && qq == q) {
-                            m.imports.push((a.clone(), q.clone()));
+                let inner = base.find_inner_class(suffix).cloned();
+                if let Some(m) = inner {
+                    if !self.quiet && !silent {
+                        eprintln!("Resolved inner class: {} via {}", name, prefix);
+                    }
+                    let mut m = m;
+                    if !base.imports.is_empty() {
+                        // Inherit imports from parent package/class so that short names like
+                        // `Interfaces.SISO` work after `import Modelica.Blocks.Interfaces;`.
+                        // Keep child's own imports as well.
+                        for (a, q) in &base.imports {
+                            if !m.imports.iter().any(|(aa, qq)| aa == a && qq == q) {
+                                m.imports.push((a.clone(), q.clone()));
+                            }
                         }
                     }
+                    let arc = Arc::new(m);
+                    self.loaded_models
+                        .insert(name.to_string(), Arc::clone(&arc));
+                    self.loaded_paths.insert(
+                        name.to_string(),
+                        self.loaded_paths
+                            .get(prefix)
+                            .cloned()
+                            .unwrap_or_else(|| PathBuf::from(prefix)),
+                    );
+                    self.register_inner_classes(name, arc.as_ref());
+                    return Ok(arc);
                 }
-                let arc = Arc::new(m);
-                self.loaded_models
-                    .insert(name.to_string(), Arc::clone(&arc));
-                self.loaded_paths.insert(
-                    name.to_string(),
-                    self.loaded_paths
-                        .get(prefix)
-                        .cloned()
-                        .unwrap_or_else(|| PathBuf::from(prefix)),
-                );
-                self.register_inner_classes(name, arc.as_ref());
-                return Ok(arc);
             }
         }
 
@@ -380,6 +383,7 @@ impl ModelLoader {
         // If requested class/function is not found by path, scan already-loaded source files
         // for a sibling top-level definition with matching short name.
         {
+            let want_short = name.rsplit_once('.').map(|(_, s)| s).unwrap_or(name);
             let mut seen = std::collections::HashSet::new();
             let paths: Vec<PathBuf> = self.loaded_paths.values().cloned().collect();
             for p in paths {
@@ -388,7 +392,9 @@ impl ModelLoader {
                 }
                 if let Ok(content) = fs::read_to_string(&p) {
                     if let Ok(items) = parser::parse_all(&content) {
-                        if let Some(item) = items.into_iter().find(|it| Self::item_name(it) == name)
+                        if let Some(item) = items
+                            .into_iter()
+                            .find(|it| Self::item_name(it) == want_short)
                         {
                             let arc = Arc::new(Self::item_to_model(item));
                             self.loaded_models
@@ -397,6 +403,77 @@ impl ModelLoader {
                             self.register_inner_classes(name, arc.as_ref());
                             return Ok(arc);
                         }
+                    }
+                }
+            }
+        }
+
+        // Package directory scan: e.g. `TestLib.sumArrayExternal` has no `TestLib/sumArrayExternal.mo`,
+        // but `TestLib/ExtFuncArrayArg.mo` defines `function sumArrayExternal`.
+        if let Some((pkg_rel, short)) = name.rsplit_once('.') {
+            let rel_dir: PathBuf = pkg_rel.replace('.', std::path::MAIN_SEPARATOR_STR).into();
+            for lib_path in &self.library_paths {
+                let nested = lib_path.join(&rel_dir);
+                // If `lib_path` already points at a package directory (e.g. CLI `--lib-path=.../TestLib`),
+                // `nested` may be `.../TestLib/TestLib` and miss; fall back to scanning `lib_path`.
+                let scan_dir = if nested.is_dir() {
+                    nested
+                } else {
+                    lib_path.clone()
+                };
+                if scan_dir.is_dir() {
+                    let dir = scan_dir;
+                    let entries = match fs::read_dir(&dir) {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    for ent in entries.filter_map(|e| e.ok()) {
+                        let path = ent.path();
+                        if !path.extension().map(|e| e == "mo").unwrap_or(false) {
+                            continue;
+                        }
+                        let content = match fs::read_to_string(&path) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+                        let items = match parser::parse_all(&content) {
+                            Ok(i) => i,
+                            Err(_) => continue,
+                        };
+                        let Some((idx, _)) = items
+                            .iter()
+                            .enumerate()
+                            .find(|(_, it)| Self::item_name(it) == short)
+                        else {
+                            continue;
+                        };
+                        let matched = items[idx].clone();
+                        let arc = Arc::new(Self::item_to_model(matched));
+                        self.loaded_models
+                            .insert(name.to_string(), Arc::clone(&arc));
+                        self.loaded_paths.insert(name.to_string(), path.clone());
+                        self.register_inner_classes(name, arc.as_ref());
+                        for item in items {
+                            let sibling_name = Self::item_name(&item).to_string();
+                            if sibling_name == short {
+                                continue;
+                            }
+                            let sibling_model = Self::item_to_model(item);
+                            let fq = format!("{}.{}", pkg_rel, sibling_name);
+                            self.loaded_models
+                                .entry(fq.clone())
+                                .or_insert_with(|| Arc::new(sibling_model.clone()));
+                            self.loaded_paths
+                                .entry(fq)
+                                .or_insert_with(|| path.clone());
+                            self.loaded_models
+                                .entry(sibling_name.clone())
+                                .or_insert_with(|| Arc::new(sibling_model.clone()));
+                            self.loaded_paths
+                                .entry(sibling_name)
+                                .or_insert_with(|| path.clone());
+                        }
+                        return Ok(arc);
                     }
                 }
             }

@@ -80,6 +80,7 @@ fn handle_validate_output(
 
 pub fn validate_from_source(request: ValidateRequest<'_>) -> ValidateResult {
     let mut compiler = build_compiler_with_options(request.options);
+    compiler.options.validate_only = true;
     let result = compiler.compile_from_source(request.model_name, request.code);
     handle_validate_output(compiler, result)
 }

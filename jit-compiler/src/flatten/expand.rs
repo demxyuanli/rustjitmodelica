@@ -277,18 +277,24 @@ impl super::Flattener {
                         .map(|e| prefix_expression(e, prefix))
                         .collect();
                     let rhs_pre = prefix_expression(&rhs_sub, prefix);
-                    if let Expression::Call(name, _) = &rhs_pre {
-                        if name.ends_with("getInterpolationCoefficients") {
+                    // P4-2: getInterpolationCoefficients - expand to multiple coefficient equations
+                    // getInterpolationCoefficients(table, u) returns array of coefficients [c1, c2, ..., cn]
+                    // Each coefficient ci = frac(u) for linear interpolation
+                    if let Expression::Call(name, args_pre) = &rhs_pre {
+                        if name.ends_with("getInterpolationCoefficients") && args_pre.len() >= 2 {
+                            // Compute h = frac(u) = u - floor(u) for linear interpolation
+                            // For each LHS output, assign the same coefficient h
+                            let u_expr = &args_pre[1];
+                            let h_expr = Expression::BinaryOp(
+                                Box::new(u_expr.clone()),
+                                crate::ast::Operator::Sub,
+                                Box::new(Expression::Call("floor".to_string(), vec![u_expr.clone()])),
+                            );
                             for lhs in &lhss_pre {
-                                target.equations.push(Equation::Simple(
-                                    lhs.clone(),
-                                    Expression::Number(0.0),
-                                ));
+                                target.equations.push(Equation::Simple(lhs.clone(), h_expr.clone()));
                             }
                             continue;
                         }
-                    }
-                    if let Expression::Call(name, args_pre) = &rhs_pre {
                         if !complex_lhs_targets.is_empty() {
                             eprintln!(
                                 "Error: MultiAssign expansion in '{}' uses complex LHS target(s) [{}] (e.g. arr[i].field). This requires field-store semantics and is a hard backend error. Hint: assign to temporaries and copy fields/elements explicitly.",
@@ -755,18 +761,24 @@ impl super::Flattener {
                         .map(|e| prefix_expression(e, prefix))
                         .collect();
                     let rhs_pre = prefix_expression(&rhs_sub, prefix);
-                    if let Expression::Call(name, _) = &rhs_pre {
-                        if name.ends_with("getInterpolationCoefficients") {
+                    // P4-2: getInterpolationCoefficients - expand to multiple coefficient equations
+                    // getInterpolationCoefficients(table, u) returns array of coefficients [c1, c2, ..., cn]
+                    // Each coefficient ci = frac(u) for linear interpolation
+                    if let Expression::Call(name, args_pre) = &rhs_pre {
+                        if name.ends_with("getInterpolationCoefficients") && args_pre.len() >= 2 {
+                            // Compute h = frac(u) = u - floor(u) for linear interpolation
+                            // For each LHS output, assign the same coefficient h
+                            let u_expr = &args_pre[1];
+                            let h_expr = Expression::BinaryOp(
+                                Box::new(u_expr.clone()),
+                                crate::ast::Operator::Sub,
+                                Box::new(Expression::Call("floor".to_string(), vec![u_expr.clone()])),
+                            );
                             for lhs in &lhss_pre {
-                                target.algorithms.push(AlgorithmStatement::Assignment(
-                                    lhs.clone(),
-                                    Expression::Number(0.0),
-                                ));
+                                target.equations.push(Equation::Simple(lhs.clone(), h_expr.clone()));
                             }
                             continue;
                         }
-                    }
-                    if let Expression::Call(name, args_pre) = &rhs_pre {
                         if !complex_lhs_targets.is_empty() {
                             eprintln!(
                                 "Error: Algorithm MultiAssign in '{}' uses complex LHS target(s) [{}] like arr[i].field, which require field-store semantics and are treated as hard error in backend.",

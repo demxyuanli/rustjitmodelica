@@ -1,35 +1,8 @@
 use crate::jit::{native, CalcDerivsFunc};
-use std::sync::OnceLock;
+
+pub use crate::newton_policy::{allow_algebraic_newton_fallback, allow_zero_residual_newton};
 
 const ASSERT_STORM_LIMIT: u64 = 256;
-
-/// When RUSTMODLICA_STRICT_NEWTON=1, do not accept Newton failures via zero-residual or algebraic fallbacks.
-fn strict_newton_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("RUSTMODLICA_STRICT_NEWTON")
-            .ok()
-            .map(|v| {
-                let v = v.trim();
-                v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-            })
-            .unwrap_or(false)
-    })
-}
-
-pub fn allow_zero_residual_newton(status: i32, diag_residual: f64) -> bool {
-    if strict_newton_enabled() {
-        return false;
-    }
-    status == 2 && diag_residual.abs() <= 1e-5
-}
-
-pub fn allow_algebraic_newton_fallback(status: i32, state_len: usize) -> bool {
-    if strict_newton_enabled() {
-        return false;
-    }
-    status == 2 && state_len == 0
-}
 
 // With feature `sundials`, `crate::simulation::kinsol_solve_square_spgmr` can solve isolated F(u)=0 systems.
 
@@ -135,8 +108,8 @@ pub fn recover_newton_at_t0(
 ) -> bool {
     let mut recovered = false;
 
-    // Phase 1: True homotopy continuation.
-    let mut lambda_step = 0.1_f64;
+    // Phase 1: True homotopy continuation (finer steps help large MultiBody DAEs at t=0).
+    let mut lambda_step = 0.05_f64;
     let mut lam = 0.0_f64;
     *homotopy_lambda = 0.0;
     states.copy_from_slice(pre_states);
@@ -179,7 +152,7 @@ pub fn recover_newton_at_t0(
         } else {
             lambda_step *= 0.5;
             halve_count += 1;
-            if halve_count > 10 || lambda_step < 1e-6 {
+            if halve_count > 16 || lambda_step < 1e-7 {
                 homotopy_ok = false;
                 break;
             }
