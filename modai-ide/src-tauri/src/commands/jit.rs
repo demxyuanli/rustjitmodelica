@@ -297,6 +297,7 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
+    compiler.options.validate_only = true;
     with_loader_paths(
         &mut compiler,
         request.project_dir.as_ref(),

@@ -724,6 +724,7 @@ fn apply_component_to_declaration(decl: &mut Declaration, component: &ComponentI
                 is_outer: false,
                 is_public: false,
                 is_protected: false,
+                is_operator_function: false,
             });
         }
     }

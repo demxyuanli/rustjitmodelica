@@ -365,6 +365,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
       const tab = group?.tabs[group.activeIndex];
       if (!tab || tab.readOnly) return;
       const contentKey = tabContentKey(tab);
+      if ((contentByPath[contentKey] ?? "") === value) return;
       setContentByPath((prev) => ({ ...prev, [contentKey]: value }));
       setEditorGroups((prev) =>
         prev.map((g, i) =>
@@ -372,7 +373,7 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
         )
       );
     },
-    [editorGroups]
+    [editorGroups, contentByPath]
   );
 
   const handleSplit = useCallback(() => {

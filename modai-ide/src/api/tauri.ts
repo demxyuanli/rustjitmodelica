@@ -17,6 +17,7 @@ import type {
   RegressionWorkspaceInfo,
   RegressionWorkspaceState,
 } from "../types";
+import { agentDebugLog } from "../debug/agentDebugLog";
 
 // --- JIT / simulation ---
 
@@ -253,11 +254,46 @@ export async function getGraphicalDocumentFromSource<TAnnotation = unknown, TCom
   projectDir?: string | null,
   relativePath?: string | null,
 ): Promise<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>> {
-  return invoke<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>>("get_graphical_document_from_source", {
-    source,
-    projectDir: projectDir ?? undefined,
-    relativePath: relativePath ?? undefined,
-  });
+  // #region agent log
+  const t0 = performance.now();
+  // #endregion
+  try {
+    // #region agent log
+    agentDebugLog({
+      location: "tauri:getGraphicalDocumentFromSource",
+      message: "before invoke",
+      data: { sourceLen: source.length },
+      hypothesisId: "I",
+    });
+    // #endregion
+    const out = await invoke<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>>(
+      "get_graphical_document_from_source",
+      {
+        source,
+        projectDir: projectDir ?? undefined,
+        relativePath: relativePath ?? undefined,
+      },
+    );
+    // #region agent log
+    agentDebugLog({
+      location: "tauri:getGraphicalDocumentFromSource",
+      message: "invoke ok",
+      data: { ms: Math.round(performance.now() - t0) },
+      hypothesisId: "H",
+    });
+    // #endregion
+    return out;
+  } catch (e) {
+    // #region agent log
+    agentDebugLog({
+      location: "tauri:getGraphicalDocumentFromSource",
+      message: "invoke err",
+      data: { ms: Math.round(performance.now() - t0) },
+      hypothesisId: "H",
+    });
+    // #endregion
+    throw e;
+  }
 }
 
 export async function applyGraphicalDocumentEdits<TAnnotation = unknown, TComponent = unknown, TConnection = unknown>(
@@ -266,12 +302,44 @@ export async function applyGraphicalDocumentEdits<TAnnotation = unknown, TCompon
   projectDir?: string | null,
   relativePath?: string | null,
 ): Promise<{ newSource: string }> {
-  return invoke<{ newSource: string }>("apply_graphical_document_edits", {
-    source,
-    document,
-    projectDir: projectDir ?? undefined,
-    relativePath: relativePath ?? undefined,
-  });
+  // #region agent log
+  const t0 = performance.now();
+  // #endregion
+  try {
+    // #region agent log
+    agentDebugLog({
+      location: "tauri:applyGraphicalDocumentEdits",
+      message: "before invoke",
+      data: { sourceLen: source.length, componentCount: document.components?.length ?? -1 },
+      hypothesisId: "I",
+    });
+    // #endregion
+    const out = await invoke<{ newSource: string }>("apply_graphical_document_edits", {
+      source,
+      document,
+      projectDir: projectDir ?? undefined,
+      relativePath: relativePath ?? undefined,
+    });
+    // #region agent log
+    agentDebugLog({
+      location: "tauri:applyGraphicalDocumentEdits",
+      message: "invoke ok",
+      data: { ms: Math.round(performance.now() - t0) },
+      hypothesisId: "H",
+    });
+    // #endregion
+    return out;
+  } catch (e) {
+    // #region agent log
+    agentDebugLog({
+      location: "tauri:applyGraphicalDocumentEdits",
+      message: "invoke err",
+      data: { ms: Math.round(performance.now() - t0) },
+      hypothesisId: "H",
+    });
+    // #endregion
+    throw e;
+  }
 }
 
 export async function readProjectFile(projectDir: string, relativePath: string): Promise<string> {

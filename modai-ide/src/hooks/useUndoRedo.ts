@@ -28,11 +28,16 @@ export function useUndoRedo<T>(maxStack: number = MAX_STACK): UseUndoRedoResult<
     if (top && now - top.timestamp < MERGE_WINDOW_MS) {
       top.data = snapshot;
       top.timestamp = now;
-    } else {
-      undoStack.current.push({ data: snapshot, timestamp: now });
-      if (undoStack.current.length > maxStack) {
-        undoStack.current.shift();
+      const hadRedo = redoStack.current.length > 0;
+      redoStack.current = [];
+      if (hadRedo) {
+        setRevision((r) => r + 1);
       }
+      return;
+    }
+    undoStack.current.push({ data: snapshot, timestamp: now });
+    if (undoStack.current.length > maxStack) {
+      undoStack.current.shift();
     }
     redoStack.current = [];
     setRevision((r) => r + 1);

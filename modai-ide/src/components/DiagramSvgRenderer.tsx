@@ -1,8 +1,51 @@
 import React from "react";
+import { createBSplinePath, renderArrowheads } from "./DiagramSvgArrows";
 
 export interface AnnotationPoint { x: number; y: number }
 export interface AnnotationExtent { p1: AnnotationPoint; p2: AnnotationPoint }
 export interface AnnotationColor { r: number; g: number; b: number }
+
+/** Arrow type for line endpoints */
+export type ArrowType = "none" | "arrow" | "filled" | "open" | "tshape" | "circle";
+
+/** Fill pattern for shapes */
+export type FillPattern = "solid" | "horizontal" | "vertical" | "cross" | "diagCross" | "forward" | "backward" | "none";
+
+/** Border pattern for rectangles */
+export type BorderPattern = "solid" | "dashed" | "dotted" | "dotDashed";
+
+/** Line pattern for strokes */
+export type LinePattern = "solid" | "dashed" | "dotted" | "dotDashed";
+
+/** Gradient stop for gradient fills */
+export interface GradientStop {
+  offset: number;
+  color: AnnotationColor;
+  opacity?: number;
+}
+
+/** Linear gradient specification */
+export interface LinearGradient {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  stops: GradientStop[];
+}
+
+/** Radial gradient specification */
+export interface RadialGradient {
+  cx: number;
+  cy: number;
+  r: number;
+  stops: GradientStop[];
+}
+
+/** Fill definition - solid color or gradient */
+export type FillDefinition =
+  | { type: "solid"; color: AnnotationColor }
+  | { type: "linearGradient"; gradient: LinearGradient }
+  | { type: "radialGradient"; gradient: RadialGradient };
 
 export interface GraphicLine {
   type: "Line";
@@ -23,6 +66,7 @@ export interface GraphicRectangle {
   lineColor?: AnnotationColor;
   fillColor?: AnnotationColor;
   fillPattern?: string;
+  fillGradient?: { type: "linearGradient"; gradient: LinearGradient } | { type: "radialGradient"; gradient: RadialGradient };
   borderPattern?: string;
   lineThickness?: number;
   radius?: number;
@@ -36,6 +80,7 @@ export interface GraphicEllipse {
   lineColor?: AnnotationColor;
   fillColor?: AnnotationColor;
   fillPattern?: string;
+  fillGradient?: { type: "linearGradient"; gradient: LinearGradient } | { type: "radialGradient"; gradient: RadialGradient };
   startAngle?: number;
   endAngle?: number;
   lineThickness?: number;
@@ -49,6 +94,7 @@ export interface GraphicPolygon {
   lineColor?: AnnotationColor;
   fillColor?: AnnotationColor;
   fillPattern?: string;
+  fillGradient?: { type: "linearGradient"; gradient: LinearGradient } | { type: "radialGradient"; gradient: RadialGradient };
   lineThickness?: number;
   smooth?: string;
   rotation?: number;
@@ -79,13 +125,28 @@ export interface GraphicBitmap {
   origin?: AnnotationPoint;
 }
 
+/** Bezier spline curve for smooth connections */
+export interface GraphicBSpline {
+  type: "BSpline";
+  points: AnnotationPoint[];
+  color?: AnnotationColor;
+  thickness?: number;
+  pattern?: string;
+  smooth?: string;
+  arrow?: string[];
+  arrowSize?: number;
+  rotation?: number;
+  origin?: AnnotationPoint;
+}
+
 export type GraphicItem =
   | GraphicLine
   | GraphicRectangle
   | GraphicEllipse
   | GraphicPolygon
   | GraphicText
-  | GraphicBitmap;
+  | GraphicBitmap
+  | GraphicBSpline;
 
 export interface CoordinateSystem {
   extent?: AnnotationExtent;
@@ -128,11 +189,16 @@ export function colorToCSS(c?: AnnotationColor): string {
 function isFilled(fillPattern?: string): boolean {
   if (!fillPattern) return false;
   const lower = fillPattern.toLowerCase();
+  // "none" 图案不填充
+  if (lower === "none") return false;
   return (
     lower.includes("solid") ||
     lower.includes("horizontal") ||
     lower.includes("vertical") ||
-    lower.includes("cross")
+    lower.includes("cross") ||
+    lower.includes("diagcross") ||
+    lower.includes("forward") ||
+    lower.includes("backward")
   );
 }
 
@@ -215,6 +281,7 @@ export function getGraphicBounds(item: GraphicItem): GraphicBounds | null {
   switch (item.type) {
     case "Line":
     case "Polygon":
+    case "BSpline":
       points = transformPoints(item.points, item.rotation, item.origin);
       break;
     case "Rectangle":
@@ -268,6 +335,7 @@ export function translateGraphicItem(item: GraphicItem, delta: AnnotationPoint):
         origin: item.origin ? movePoint(item.origin) : item.origin,
       };
     case "Polygon":
+    case "BSpline":
       return {
         ...item,
         points: item.points.map(movePoint),
@@ -316,7 +384,7 @@ export function findGraphicAtPoint(
 ): number {
   for (let index = graphics.length - 1; index >= 0; index -= 1) {
     const item = graphics[index];
-    if (item.type === "Line" || item.type === "Polygon") {
+    if (item.type === "Line" || item.type === "Polygon" || item.type === "BSpline") {
       const points = transformPoints(item.points, item.rotation, item.origin);
       if (points.length < 2) continue;
       const hit = points.some((current, currentIndex) => {
@@ -372,15 +440,73 @@ function renderGraphicItem(
       if (item.points.length < 2) return null;
       const pts = item.points.map((point) => coordToSvg(point, cs, svgW, svgH));
       const d = pts.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+      
+      // 获取虚线样式
+      let strokeDasharray: string | undefined;
+      if (item.pattern) {
+        switch (item.pattern.toLowerCase()) {
+          case "dashed": strokeDasharray = "8,4"; break;
+          case "dotted": strokeDasharray = "2,4"; break;
+          case "dotdashed": strokeDasharray = "2,4,8,4"; break;
+        }
+      }
+      
       return (
         <g key={idx} transform={transform}>
-          <path d={d} stroke={colorToCSS(item.color)} strokeWidth={item.thickness ?? 1} fill="none" />
+          <path 
+            d={d} 
+            stroke={colorToCSS(item.color)} 
+            strokeWidth={item.thickness ?? 1} 
+            fill="none"
+            strokeDasharray={strokeDasharray}
+          />
+          {item.arrow && renderArrowheads(pts, item.arrow, item.color, item.arrowSize)}
+        </g>
+      );
+    }
+    case "BSpline": {
+      if (item.points.length < 2) return null;
+      const pts = item.points.map((point) => coordToSvg(point, cs, svgW, svgH));
+      const smooth = item.smooth === "BSpline" || item.smooth === "true";
+      const d = smooth ? createBSplinePath(pts) : pts.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+      
+      // 获取虚线样式
+      let strokeDasharray: string | undefined;
+      if (item.pattern) {
+        switch (item.pattern.toLowerCase()) {
+          case "dashed": strokeDasharray = "8,4"; break;
+          case "dotted": strokeDasharray = "2,4"; break;
+          case "dotdashed": strokeDasharray = "2,4,8,4"; break;
+        }
+      }
+      
+      return (
+        <g key={idx} transform={transform}>
+          <path 
+            d={d} 
+            stroke={colorToCSS(item.color)} 
+            strokeWidth={item.thickness ?? 1} 
+            fill="none"
+            strokeDasharray={strokeDasharray}
+          />
+          {item.arrow && renderArrowheads(pts, item.arrow, item.color, item.arrowSize)}
         </g>
       );
     }
     case "Rectangle": {
       if (!item.extent) return null;
       const rect = extentToSvgRect(item.extent, cs, svgW, svgH);
+      
+      // Determine fill - gradient takes precedence over solid color
+      let fill: string;
+      if (item.fillGradient) {
+        fill = `url(#gradient-${idx})`;
+      } else if (isFilled(item.fillPattern)) {
+        fill = colorToCSS(item.fillColor);
+      } else {
+        fill = "none";
+      }
+      
       return (
         <g key={idx} transform={transform}>
           <rect
@@ -391,7 +517,7 @@ function renderGraphicItem(
             rx={item.radius ?? 0}
             stroke={colorToCSS(item.lineColor)}
             strokeWidth={item.lineThickness ?? 1}
-            fill={isFilled(item.fillPattern) ? colorToCSS(item.fillColor) : "none"}
+            fill={fill}
           />
         </g>
       );
@@ -399,16 +525,66 @@ function renderGraphicItem(
     case "Ellipse": {
       if (!item.extent) return null;
       const rect = extentToSvgRect(item.extent, cs, svgW, svgH);
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const rx = rect.width / 2;
+      const ry = rect.height / 2;
+
+      // Determine fill - gradient takes precedence over solid color
+      let fill: string;
+      if (item.fillGradient) {
+        fill = `url(#gradient-${idx})`;
+      } else if (isFilled(item.fillPattern)) {
+        fill = colorToCSS(item.fillColor);
+      } else {
+        fill = "none";
+      }
+
+      // 检查是否为扇形/圆弧
+      if (item.startAngle !== undefined && item.endAngle !== undefined) {
+        const startAngle = item.startAngle;
+        const endAngle = item.endAngle;
+        const startRad = (startAngle * Math.PI) / 180;
+        const endRad = (endAngle * Math.PI) / 180;
+
+        // SVG 坐标系 Y 轴向下，需要翻转角度
+        const svgStartRad = -startRad;
+        const svgEndRad = -endRad;
+
+        const x1 = cx + rx * Math.cos(svgStartRad);
+        const y1 = cy + ry * Math.sin(svgStartRad);
+        const x2 = cx + rx * Math.cos(svgEndRad);
+        const y2 = cy + ry * Math.sin(svgEndRad);
+
+        const largeArc = Math.abs(endRad - startRad) > Math.PI ? 1 : 0;
+        const sweep = (endRad > startAngle) ? 0 : 1; // SVG Y 轴翻转
+
+        // 扇形路径：从中心到起点，沿弧到终点，回到中心
+        const d = `M ${cx} ${cy} L ${x1} ${y1} A ${rx} ${ry} 0 ${largeArc} ${sweep} ${x2} ${y2} Z`;
+
+        return (
+          <g key={idx} transform={transform}>
+            <path
+              d={d}
+              stroke={colorToCSS(item.lineColor)}
+              strokeWidth={item.lineThickness ?? 1}
+              fill={fill}
+            />
+          </g>
+        );
+      }
+
+      // 完整椭圆
       return (
         <g key={idx} transform={transform}>
           <ellipse
-            cx={rect.x + rect.width / 2}
-            cy={rect.y + rect.height / 2}
-            rx={rect.width / 2}
-            ry={rect.height / 2}
+            cx={cx}
+            cy={cy}
+            rx={rx}
+            ry={ry}
             stroke={colorToCSS(item.lineColor)}
             strokeWidth={item.lineThickness ?? 1}
-            fill={isFilled(item.fillPattern) ? colorToCSS(item.fillColor) : "none"}
+            fill={fill}
           />
         </g>
       );
@@ -416,13 +592,24 @@ function renderGraphicItem(
     case "Polygon": {
       if (item.points.length < 2) return null;
       const pts = item.points.map((point) => coordToSvg(point, cs, svgW, svgH));
+      
+      // Determine fill - gradient takes precedence over solid color
+      let fill: string;
+      if (item.fillGradient) {
+        fill = `url(#gradient-${idx})`;
+      } else if (isFilled(item.fillPattern)) {
+        fill = colorToCSS(item.fillColor);
+      } else {
+        fill = "none";
+      }
+      
       return (
         <g key={idx} transform={transform}>
           <polygon
             points={pts.map((point) => `${point.x},${point.y}`).join(" ")}
             stroke={colorToCSS(item.lineColor)}
             strokeWidth={item.lineThickness ?? 1}
-            fill={isFilled(item.fillPattern) ? colorToCSS(item.fillColor) : "none"}
+            fill={fill}
           />
         </g>
       );
@@ -551,6 +738,10 @@ export function AnnotationGraphicsSvg({
   const height = Math.max(1, size.height);
   const selectedGraphic =
     selectedGraphicIndex >= 0 ? annotation.graphics[selectedGraphicIndex] : null;
+
+  // Collect gradient definitions from graphics
+  const gradients = collectGradients(annotation.graphics);
+
   return (
     <svg
       width={width}
@@ -558,12 +749,89 @@ export function AnnotationGraphicsSvg({
       viewBox={`0 0 ${width} ${height}`}
       className={className ?? "block pointer-events-none"}
     >
+      <defs>
+        {gradients.map((grad, idx) => renderGradientDefinition(grad, idx))}
+      </defs>
       {annotation.graphics.map((graphic, index) =>
         renderGraphicItem(graphic, index, annotation.coordinateSystem, width, height, instanceName),
       )}
       {selectedGraphic && renderSelection(selectedGraphic, annotation.coordinateSystem, width, height)}
     </svg>
   );
+}
+
+/**
+ * Collect all gradient definitions from graphics
+ */
+function collectGradients(graphics: GraphicItem[]): Array<{ id: string; gradient: LinearGradient | RadialGradient; itemIndex: number }> {
+  const gradients: Array<{ id: string; gradient: LinearGradient | RadialGradient; itemIndex: number }> = [];
+
+  for (let idx = 0; idx < graphics.length; idx++) {
+    const item = graphics[idx];
+    if (item && "fillGradient" in item && item.fillGradient) {
+      const id = `gradient-${idx}`;
+      if (item.fillGradient.type === "linearGradient") {
+        gradients.push({ id, gradient: item.fillGradient.gradient, itemIndex: idx });
+      } else if (item.fillGradient.type === "radialGradient") {
+        gradients.push({ id, gradient: item.fillGradient.gradient, itemIndex: idx });
+      }
+    }
+  }
+
+  return gradients;
+}
+
+/**
+ * Render gradient definition as SVG def element
+ */
+function renderGradientDefinition(
+  grad: { id: string; gradient: LinearGradient | RadialGradient },
+  idx: number,
+): React.ReactNode {
+  const { id, gradient } = grad;
+
+  if ("x1" in gradient) {
+    // Linear gradient
+    return (
+      <linearGradient
+        key={idx}
+        id={id}
+        x1={gradient.x1}
+        y1={gradient.y1}
+        x2={gradient.x2}
+        y2={gradient.y2}
+      >
+        {gradient.stops.map((stop, i) => (
+          <stop
+            key={i}
+            offset={`${stop.offset * 100}%`}
+            stopColor={colorToCSS(stop.color)}
+            stopOpacity={stop.opacity ?? 1}
+          />
+        ))}
+      </linearGradient>
+    );
+  } else {
+    // Radial gradient
+    return (
+      <radialGradient
+        key={idx}
+        id={id}
+        cx={gradient.cx}
+        cy={gradient.cy}
+        r={gradient.r}
+      >
+        {gradient.stops.map((stop, i) => (
+          <stop
+            key={i}
+            offset={`${stop.offset * 100}%`}
+            stopColor={colorToCSS(stop.color)}
+            stopOpacity={stop.opacity ?? 1}
+          />
+        ))}
+      </radialGradient>
+    );
+  }
 }
 
 export { CONNECTOR_COLORS } from "./diagramConnectorColors";

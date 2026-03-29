@@ -1,15 +1,17 @@
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, startTransition } from "react";
 import { listInstantiableClasses } from "../api/tauri";
 import type { InstantiableClass } from "../types";
 import type { MoTreeEntry } from "../hooks/useProject";
 import { recentProjectDisplayName } from "../hooks/useRecentProjects";
-import { t } from "../i18n";
+import { t, tf } from "../i18n";
 import { AppIcon } from "./Icon";
 import { FileIcon } from "./FileIcon";
 import { useDiagramScheme } from "../contexts/DiagramSchemeContext";
 
 export const MODELICA_DRAG_TYPE = "application/modelica-type";
+
+const LIBRARY_DIAGRAM_SIDEBAR_RENDER_CAP = 450;
 
 export interface ModelicaDragPayload {
   typeName: string;
@@ -253,7 +255,7 @@ export function LibrariesBrowser({
     listInstantiableClasses(projectDir)
       .then((items) => {
         if (!cancelled) {
-          setClasses(items);
+          startTransition(() => setClasses(items));
         }
       })
       .catch(() => {
@@ -308,6 +310,26 @@ export function LibrariesBrowser({
     }
     return Array.from(groups.entries());
   }, [filteredClasses]);
+
+  const librarySidebarList = useMemo(() => {
+    const total = filteredClasses.length;
+    const cap = LIBRARY_DIAGRAM_SIDEBAR_RENDER_CAP;
+    if (total <= cap) {
+      return { groups: groupedClasses, shown: total, total, truncated: false };
+    }
+    let used = 0;
+    const out: [string, InstantiableClass[]][] = [];
+    for (const [g, items] of groupedClasses) {
+      if (used >= cap) break;
+      const room = cap - used;
+      const slice = items.slice(0, room);
+      if (slice.length > 0) {
+        out.push([g, slice]);
+        used += slice.length;
+      }
+    }
+    return { groups: out, shown: used, total, truncated: true };
+  }, [groupedClasses, filteredClasses.length]);
 
   const showProjectTree = Boolean(projectDir && moTree?.children && moTree.children.length > 0);
   const containerClass =
@@ -458,7 +480,7 @@ export function LibrariesBrowser({
 
             {showLibraryGroups && (
               <div className="p-2 space-y-3">
-                {groupedClasses.map(([group, items]) => (
+                {librarySidebarList.groups.map(([group, items]) => (
                   <div key={group}>
                     <div className="mb-1 px-2 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
                       {groupTitle(group)}
@@ -515,6 +537,14 @@ export function LibrariesBrowser({
                     </div>
                   </div>
                 ))}
+                {librarySidebarList.truncated && (
+                  <div className="px-2 py-2 text-[10px] text-[var(--text-muted)] rounded border border-[var(--border)] bg-[var(--surface)]/50">
+                    {tf("libraryDiagramSidebarTruncated", {
+                      shown: librarySidebarList.shown,
+                      total: librarySidebarList.total,
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </>

@@ -68,6 +68,7 @@ export const JointMiniMap = React.memo(function JointMiniMap({
   height = 120,
 }: JointMiniMapProps) {
   const [state, setState] = useState<MinimapState | null>(null);
+  const lastStateSnapRef = useRef<string>("");
   const svgRef = useRef<SVGSVGElement>(null);
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
@@ -141,7 +142,7 @@ export const JointMiniMap = React.memo(function JointMiniMap({
 
     const vpMini = toMini(vpModelX, vpModelY);
 
-    setState({
+    const next: MinimapState = {
       elements,
       links,
       viewport: {
@@ -154,24 +155,40 @@ export const JointMiniMap = React.memo(function JointMiniMap({
       minimapScale,
       offsetX,
       offsetY,
-    });
+    };
+    const snap = JSON.stringify(next);
+    if (snap === lastStateSnapRef.current) return;
+    lastStateSnapRef.current = snap;
+    setState(next);
   }, [paper, graph, width, height]);
 
   useEffect(() => {
     if (!paper || !graph) return;
 
     computeState();
-    const tid = setInterval(computeState, 250);
 
-    graph.on("change", computeState);
+    let rafId: number | null = null;
+    const scheduleUpdate = () => {
+      if (rafId != null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        computeState();
+      });
+    };
+
+    graph.on("batch:stop", scheduleUpdate);
     graph.on("add", computeState);
     graph.on("remove", computeState);
+    paper.on("scale", scheduleUpdate);
+    paper.on("translate", scheduleUpdate);
 
     return () => {
-      clearInterval(tid);
-      graph.off("change", computeState);
+      if (rafId != null) cancelAnimationFrame(rafId);
+      graph.off("batch:stop", scheduleUpdate);
       graph.off("add", computeState);
       graph.off("remove", computeState);
+      paper.off("scale", scheduleUpdate);
+      paper.off("translate", scheduleUpdate);
     };
   }, [paper, graph, computeState]);
 

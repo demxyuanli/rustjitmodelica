@@ -186,7 +186,7 @@ export function GraphicalCanvas({
             </div>
           )}
           {annotation && annotation.graphics.length > 0 && mode === "diagram" && (
-            <div className="absolute inset-0 z-0 opacity-40 flex items-center justify-center overflow-hidden">
+            <div className="absolute inset-0 z-0 opacity-40 flex items-center justify-center overflow-hidden pointer-events-none">
               <AnnotationGraphicsSvg annotation={annotation} size={{ width: 900, height: 700 }} />
             </div>
           )}

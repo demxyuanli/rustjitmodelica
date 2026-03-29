@@ -11,6 +11,7 @@ import type {
   GraphicPolygon,
   GraphicRectangle,
   GraphicText,
+  GraphicBSpline,
   AnnotationPoint,
 } from "./DiagramSvgRenderer";
 import { EquationGraphView } from "./EquationGraphView";
@@ -108,6 +109,13 @@ export function createDefaultGraphic(kind: GraphicItem["type"]): GraphicItem {
         extent: { p1: { x: -50, y: 50 }, p2: { x: 50, y: -50 } },
         fileName: "",
       };
+    case "BSpline":
+      return {
+        type: "BSpline",
+        points: [{ x: -80, y: -20 }, { x: -40, y: 20 }, { x: 0, y: -20 }, { x: 40, y: 20 }, { x: 80, y: -20 }],
+        color: { r: 128, g: 0, b: 128 },
+        smooth: "BSpline",
+      } satisfies GraphicBSpline;
     default:
       return {
         type: "Rectangle",

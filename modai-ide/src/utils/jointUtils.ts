@@ -47,18 +47,32 @@ export function resolveThemeColors(): {
   return { bg, bgElevated, border, text, textMuted, primary };
 }
 
-export function resolveDiagramColors(): {
+type ResolvedDiagramColors = {
   bg: string;
   bgElevated: string;
   border: string;
   text: string;
   textMuted: string;
   primary: string;
-} {
-  const base = resolveThemeColors();
+};
+
+let diagramColorsCache: { schemeId: string; colors: ResolvedDiagramColors } | null = null;
+
+export function resolveDiagramColors(): ResolvedDiagramColors {
   const scheme = getActiveScheme();
+  const schemeId = scheme.id;
+  if (diagramColorsCache?.schemeId === schemeId) {
+    return diagramColorsCache.colors;
+  }
+  const base = resolveThemeColors();
   const primary = scheme.diagramPrimary ?? base.primary;
-  return { ...base, primary };
+  const colors = { ...base, primary };
+  diagramColorsCache = { schemeId, colors };
+  return colors;
+}
+
+export function invalidateDiagramColorsCache(): void {
+  diagramColorsCache = null;
 }
 
 export function getConnectorColor(kind?: string): string {
@@ -133,11 +147,35 @@ export function createPaper(opts: CreatePaperOptions): dia.Paper {
     linkPinning: false,
   });
 
+  const RESIZE_EPS = 0.75;
+  let resizeRaf: number | null = null;
+  let pendingW = 0;
+  let pendingH = 0;
+  const applyPendingResize = () => {
+    resizeRaf = null;
+    if (pendingW <= 0 || pendingH <= 0) return;
+    try {
+      const cur = paper.getComputedSize();
+      if (
+        Math.abs(cur.width - pendingW) < RESIZE_EPS &&
+        Math.abs(cur.height - pendingH) < RESIZE_EPS
+      ) {
+        return;
+      }
+      paper.setDimensions(pendingW, pendingH);
+    } catch {
+      // paper may be tearing down
+    }
+  };
   const ro = new ResizeObserver((entries) => {
     for (const entry of entries) {
       const { width: newW, height: newH } = entry.contentRect;
       if (newW > 0 && newH > 0) {
-        paper.setDimensions(newW, newH);
+        pendingW = newW;
+        pendingH = newH;
+        if (resizeRaf == null) {
+          resizeRaf = requestAnimationFrame(applyPendingResize);
+        }
       }
     }
   });
@@ -146,6 +184,10 @@ export function createPaper(opts: CreatePaperOptions): dia.Paper {
   const origRemove = paper.remove.bind(paper);
   paper.remove = function () {
     ro.disconnect();
+    if (resizeRaf != null) {
+      cancelAnimationFrame(resizeRaf);
+      resizeRaf = null;
+    }
     return origRemove();
   };
 
@@ -184,12 +226,22 @@ function setupPanAndZoom(
 
   const svgEl = paper.el;
 
+  let translateRaf: number | null = null;
+  let latestTx = 0;
+  let latestTy = 0;
   svgEl.addEventListener("mousemove", (evt: MouseEvent) => {
     if (!isPanning) return;
     const dx = evt.clientX - panStart.x;
     const dy = evt.clientY - panStart.y;
-    paper.translate(translateStart.tx + dx, translateStart.ty + dy);
-    onTranslate?.(translateStart.tx + dx, translateStart.ty + dy);
+    latestTx = translateStart.tx + dx;
+    latestTy = translateStart.ty + dy;
+    paper.translate(latestTx, latestTy);
+    if (translateRaf == null) {
+      translateRaf = requestAnimationFrame(() => {
+        translateRaf = null;
+        onTranslate?.(latestTx, latestTy);
+      });
+    }
   });
 
   svgEl.addEventListener("mouseup", () => {
@@ -199,6 +251,45 @@ function setupPanAndZoom(
   svgEl.addEventListener("mouseleave", () => {
     isPanning = false;
   });
+
+  const clearLocalPan = () => {
+    isPanning = false;
+    if (translateRaf != null) {
+      cancelAnimationFrame(translateRaf);
+      translateRaf = null;
+    }
+  };
+
+  const releaseJointDocumentCapture = () => {
+    clearLocalPan();
+    try {
+      paper.undelegateDocumentEvents();
+    } catch {
+      // ignore if paper is tearing down
+    }
+  };
+
+  window.addEventListener("mouseup", clearLocalPan, true);
+  window.addEventListener("pointerup", clearLocalPan, true);
+  window.addEventListener("pointercancel", releaseJointDocumentCapture, true);
+  window.addEventListener("blur", releaseJointDocumentCapture);
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      releaseJointDocumentCapture();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
+  const origRemovePan = paper.remove.bind(paper);
+  paper.remove = function () {
+    window.removeEventListener("mouseup", clearLocalPan, true);
+    window.removeEventListener("pointerup", clearLocalPan, true);
+    window.removeEventListener("pointercancel", releaseJointDocumentCapture, true);
+    window.removeEventListener("blur", releaseJointDocumentCapture);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    return origRemovePan();
+  };
 
   svgEl.addEventListener("wheel", (evt: WheelEvent) => {
     evt.preventDefault();
@@ -214,8 +305,10 @@ function setupPanAndZoom(
     const adjustedTx = t.tx + (newLocal.x - localPoint.x) * newScale;
     const adjustedTy = t.ty + (newLocal.y - localPoint.y) * newScale;
     paper.translate(adjustedTx, adjustedTy);
-    onScale?.(newScale);
-    onTranslate?.(adjustedTx, adjustedTy);
+    requestAnimationFrame(() => {
+      onScale?.(newScale);
+      onTranslate?.(adjustedTx, adjustedTy);
+    });
   }, { passive: false });
 }
 

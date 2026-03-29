@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   DIAGRAM_COLOR_SCHEMES,
   getActiveSchemeId,
@@ -6,6 +6,7 @@ import {
   setActiveSchemeId,
   type DiagramColorScheme,
 } from "../utils/diagramColorSchemes";
+import { invalidateDiagramColorsCache } from "../utils/jointUtils";
 
 interface DiagramSchemeContextValue {
   schemeId: string;
@@ -24,6 +25,7 @@ export function DiagramSchemeProvider({ children }: { children: React.ReactNode 
   const setSchemeId = useCallback((id: string) => {
     if (!DIAGRAM_COLOR_SCHEMES.some((s) => s.id === id)) return;
     setActiveSchemeId(id);
+    invalidateDiagramColorsCache();
     setSchemeIdState(id);
   }, []);
 
@@ -36,8 +38,13 @@ export function DiagramSchemeProvider({ children }: { children: React.ReactNode 
     return () => window.removeEventListener("modai-diagram-scheme-change", handler);
   }, []);
 
+  const contextValue = useMemo(
+    () => ({ schemeId, scheme, setSchemeId }),
+    [schemeId, scheme, setSchemeId],
+  );
+
   return (
-    <DiagramSchemeContext.Provider value={{ schemeId, scheme, setSchemeId }}>
+    <DiagramSchemeContext.Provider value={contextValue}>
       {children}
     </DiagramSchemeContext.Provider>
   );

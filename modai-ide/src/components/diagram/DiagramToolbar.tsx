@@ -14,6 +14,7 @@ import {
   ZoomOut,
   Maximize2,
   Map,
+  Move,
 } from "lucide-react";
 import { t } from "../../i18n";
 import type { GraphicItem } from "../DiagramSvgRenderer";
@@ -27,6 +28,7 @@ const SHAPE_ITEMS: Array<{ kind: GraphicItem["type"]; Icon: typeof Square; title
   { kind: "Line", Icon: Minus, titleKey: "shapeLine" },
   { kind: "Polygon", Icon: Hexagon, titleKey: "shapePolygon" },
   { kind: "Text", Icon: Type, titleKey: "shapeText" },
+  { kind: "BSpline", Icon: Move, titleKey: "shapeBSpline" },
 ];
 
 const LAYOUT_OPTIONS: Array<{ kind: DiagramLayoutKind; labelKey: string; Icon: typeof LayoutGrid }> = [
