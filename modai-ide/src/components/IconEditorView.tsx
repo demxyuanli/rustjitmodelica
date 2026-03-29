@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import {
   AnnotationGraphicsSvg,
-  findGraphicAtPoint,
+  findDeepestGraphicPath,
+  getGraphicAtPath,
   svgToCoord,
   translateGraphicItem,
   type AnnotationPoint,
@@ -16,13 +17,13 @@ function cloneGraphicItem(item: GraphicItem): GraphicItem {
 
 interface IconEditorViewProps {
   annotation: IconDiagramAnnotation;
-  selectedGraphicIndex: number;
+  selectedGraphicPath: number[] | null;
   readOnly: boolean;
   gridEnabled?: boolean;
   gridSize?: number;
   showGrid?: boolean;
-  onSelectGraphic: (index: number) => void;
-  onUpdateGraphic: (index: number, next: GraphicItem) => void;
+  onSelectGraphic: (path: number[] | null, additive?: boolean) => void;
+  onUpdateGraphic: (path: number[], next: GraphicItem) => void;
 }
 
 function clientToModelPoint(
@@ -44,7 +45,7 @@ function clientToModelPoint(
 
 export function IconEditorView({
   annotation,
-  selectedGraphicIndex,
+  selectedGraphicPath,
   readOnly,
   gridEnabled = false,
   gridSize = 10,
@@ -53,7 +54,7 @@ export function IconEditorView({
   onUpdateGraphic,
 }: IconEditorViewProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const dragStateRef = useRef<{ index: number; lastPoint: AnnotationPoint } | null>(null);
+  const dragStateRef = useRef<{ path: number[]; lastPoint: AnnotationPoint } | null>(null);
   const dragWorkingRef = useRef<GraphicItem | null>(null);
   const pendingDeltaRef = useRef<AnnotationPoint>({ x: 0, y: 0 });
   const rafIdRef = useRef<number | null>(null);
@@ -72,9 +73,9 @@ export function IconEditorView({
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    const idx = dragStateRef.current?.index;
+    const path = dragStateRef.current?.path;
     const d = pendingDeltaRef.current;
-    if (idx == null || idx < 0 || (d.x === 0 && d.y === 0)) {
+    if (!path || path.length === 0 || (d.x === 0 && d.y === 0)) {
       pendingDeltaRef.current = { x: 0, y: 0 };
       return;
     }
@@ -82,16 +83,16 @@ export function IconEditorView({
     if (!working) return;
     pendingDeltaRef.current = { x: 0, y: 0 };
     dragWorkingRef.current = translateGraphicItem(working, d);
-    onUpdateGraphicRef.current(idx, dragWorkingRef.current);
+    onUpdateGraphicRef.current(path, dragWorkingRef.current);
   };
 
   const scheduleDragFlush = () => {
     if (rafIdRef.current != null) return;
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = null;
-      const idx = dragStateRef.current?.index;
+      const path = dragStateRef.current?.path;
       const d = pendingDeltaRef.current;
-      if (idx == null || idx < 0 || (d.x === 0 && d.y === 0)) {
+      if (!path || path.length === 0 || (d.x === 0 && d.y === 0)) {
         pendingDeltaRef.current = { x: 0, y: 0 };
         return;
       }
@@ -99,7 +100,7 @@ export function IconEditorView({
       if (!working) return;
       pendingDeltaRef.current = { x: 0, y: 0 };
       dragWorkingRef.current = translateGraphicItem(working, d);
-      onUpdateGraphicRef.current(idx, dragWorkingRef.current);
+      onUpdateGraphicRef.current(path, dragWorkingRef.current);
     });
   };
 
@@ -126,7 +127,7 @@ export function IconEditorView({
       <AnnotationGraphicsSvg
         annotation={annotation}
         size={{ width: 900, height: 700 }}
-        selectedGraphicIndex={selectedGraphicIndex}
+        selectedGraphicPath={selectedGraphicPath}
         className="block h-full w-full"
       />
       <svg
@@ -140,14 +141,22 @@ export function IconEditorView({
           if (!svgElement) return;
           const modelPoint = clientToModelPoint(event, svgElement, annotation);
           const snappedPoint = snapToGrid(modelPoint, snapOptions);
-          const hitIndex = findGraphicAtPoint(graphics, snappedPoint);
-          onSelectGraphic(hitIndex);
-          if (!readOnly && hitIndex >= 0) {
-            const current = graphics[hitIndex];
+          const hitPath = findDeepestGraphicPath(graphics, snappedPoint);
+          const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+          if (!hitPath && !additive) {
+            onSelectGraphic(null, false);
+          } else if (hitPath) {
+            onSelectGraphic(hitPath, additive);
+          }
+          if (!readOnly && hitPath) {
+            const current = getGraphicAtPath(graphics, hitPath);
+            if (current?.layerLocked) {
+              return;
+            }
             if (current) {
               dragWorkingRef.current = cloneGraphicItem(current);
               pendingDeltaRef.current = { x: 0, y: 0 };
-              dragStateRef.current = { index: hitIndex, lastPoint: snappedPoint };
+              dragStateRef.current = { path: hitPath, lastPoint: snappedPoint };
             }
           }
         }}

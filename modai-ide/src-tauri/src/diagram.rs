@@ -1,7 +1,7 @@
 // Diagram data extraction and apply for Modelica visual programming.
 
 use rustmodlica::annotation::{
-    self, IconDiagramAnnotation, LineAnnotation, Placement, Point,
+    self, format_icon_diagram_record, IconDiagramAnnotation, LineAnnotation, Placement, Point,
 };
 use rustmodlica::ast::{
     connector_path_to_expr, expr_to_connector_path, ClassItem, Declaration, Equation, Expression,
@@ -170,6 +170,38 @@ fn load_persistent_state(
         return Some(state.clone());
     }
     load_legacy_layout_from_file(project_dir, relative_path).map(|layout| DiagramPersistentState {
+        layout: layout.into_iter().collect(),
+        ..DiagramPersistentState::default()
+    })
+}
+
+/// Async read of `.modai/diagram-state.json` (and legacy layout file) so the Tauri async runtime
+/// is not blocked on disk I/O before CPU-heavy parse runs in `spawn_blocking`.
+async fn load_persistent_state_async(
+    project_dir: &str,
+    relative_path: &str,
+) -> Option<DiagramPersistentState> {
+    let path = state_file_path(project_dir);
+    if let Ok(content) = tokio::fs::read_to_string(&path).await {
+        if let Ok(all) = serde_json::from_str::<BTreeMap<String, DiagramPersistentState>>(&content) {
+            let key = normalize_relative_path(relative_path);
+            if let Some(state) = all.get(&key) {
+                return Some(state.clone());
+            }
+        }
+    }
+    load_legacy_layout_from_file_async(project_dir, relative_path).await
+}
+
+async fn load_legacy_layout_from_file_async(
+    project_dir: &str,
+    relative_path: &str,
+) -> Option<DiagramPersistentState> {
+    let path = legacy_layout_file_path(project_dir);
+    let content = tokio::fs::read_to_string(&path).await.ok()?;
+    let all: HashMap<String, HashMap<String, LayoutPoint>> = serde_json::from_str(&content).ok()?;
+    let layout = all.get(&normalize_relative_path(relative_path))?.clone();
+    Some(DiagramPersistentState {
         layout: layout.into_iter().collect(),
         ..DiagramPersistentState::default()
     })
@@ -573,10 +605,14 @@ fn extract_diagram_from_model(m: &Model, project_dir: Option<&str>) -> DiagramMo
 
 /// Parses source and returns diagram data for the top-level model.
 /// If project_dir and relative_path are set, internal diagram state is loaded from .modai/diagram-state.json.
-pub fn get_diagram_data_from_source(
+///
+/// `persistent_hint`: `None` — read state synchronously inside this function; `Some(inner)` — state
+/// was already read on the async runtime (`inner == None` means no saved state, same as a miss on disk).
+fn get_diagram_data_from_source_impl(
     source: &str,
     project_dir: Option<&str>,
     relative_path: Option<&str>,
+    persistent_hint: Option<Option<DiagramPersistentState>>,
 ) -> Result<DiagramModel, String> {
     let item = parser::parse(source).map_err(|e| e.to_string())?;
     let m = match item {
@@ -585,7 +621,11 @@ pub fn get_diagram_data_from_source(
     };
     let mut diagram = extract_diagram_from_model(&m, project_dir);
     if let (Some(pdir), Some(rpath)) = (project_dir, relative_path) {
-        if let Some(state) = load_persistent_state(pdir, rpath) {
+        let state_opt = match persistent_hint {
+            None => load_persistent_state(pdir, rpath),
+            Some(pre) => pre,
+        };
+        if let Some(state) = state_opt {
             if !state.layout.is_empty() {
                 diagram.layout = Some(state.layout.into_iter().collect());
             }
@@ -630,6 +670,38 @@ pub fn get_diagram_data_from_source(
     Ok(diagram)
 }
 
+pub fn get_diagram_data_from_source(
+    source: &str,
+    project_dir: Option<&str>,
+    relative_path: Option<&str>,
+) -> Result<DiagramModel, String> {
+    get_diagram_data_from_source_impl(source, project_dir, relative_path, None)
+}
+
+/// Loads persistent diagram JSON asynchronously, then parses source on the blocking pool.
+pub async fn load_and_build_graphical_document_from_source(
+    source: String,
+    project_dir: Option<String>,
+    relative_path: Option<String>,
+) -> Result<GraphicalDocumentModel, String> {
+    let persistent_hint: Option<Option<DiagramPersistentState>> =
+        match (&project_dir, &relative_path) {
+            (Some(p), Some(r)) => Some(load_persistent_state_async(p, r).await),
+            _ => None,
+        };
+    tokio::task::spawn_blocking(move || {
+        get_diagram_data_from_source_impl(
+            &source,
+            project_dir.as_deref(),
+            relative_path.as_deref(),
+            persistent_hint,
+        )
+        .map(GraphicalDocumentModel::from_diagram_model)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
+}
+
 /// Reads file and returns diagram data.
 pub fn get_diagram_data(project_dir: &str, relative_path: &str) -> Result<DiagramModel, String> {
     let path = std::path::Path::new(project_dir).join(relative_path);
@@ -637,12 +709,14 @@ pub fn get_diagram_data(project_dir: &str, relative_path: &str) -> Result<Diagra
     get_diagram_data_from_source(&source, Some(project_dir), Some(relative_path))
 }
 
+/// Synchronous build (blocking I/O + parse). Prefer `load_and_build_graphical_document_from_source` from async commands.
+#[allow(dead_code)]
 pub fn get_graphical_document_from_source(
     source: &str,
     project_dir: Option<&str>,
     relative_path: Option<&str>,
 ) -> Result<GraphicalDocumentModel, String> {
-    get_diagram_data_from_source(source, project_dir, relative_path)
+    get_diagram_data_from_source_impl(source, project_dir, relative_path, None)
         .map(GraphicalDocumentModel::from_diagram_model)
 }
 
@@ -838,23 +912,39 @@ pub fn apply_diagram_edits(
         };
         let _ = save_persistent_state(pdir, rpath, &state);
     }
-    if let Some(ref ann) = m.annotation {
-        let inner = ann
-            .trim()
-            .strip_suffix(';')
-            .unwrap_or(ann)
-            .trim()
-            .strip_prefix("annotation(")
-            .and_then(|s| s.strip_suffix(')'));
-        if let Some(inner) = inner {
-            let stripped = strip_diagram_layout_from_annotation_inner(inner);
-            m.annotation = if stripped.is_empty() {
-                None
-            } else {
-                Some(format!("annotation({});", stripped))
-            };
-        }
+    let inner_base = m
+        .annotation
+        .as_ref()
+        .and_then(|ann| annotation_inner(ann))
+        .map(|s| strip_diagram_layout_from_annotation_inner(&s))
+        .unwrap_or_default();
+
+    let mut items: Vec<String> = split_top_level_items(&inner_base)
+        .into_iter()
+        .filter(|item| {
+            let t = item.trim();
+            if icon_annotation.is_some() && t.starts_with("Icon(") {
+                return false;
+            }
+            if diagram_annotation.is_some() && t.starts_with("Diagram(") {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    if let Some(icon) = icon_annotation {
+        items.push(format_icon_diagram_record("Icon", icon));
     }
+    if let Some(diagram) = diagram_annotation {
+        items.push(format_icon_diagram_record("Diagram", diagram));
+    }
+
+    m.annotation = if items.is_empty() {
+        None
+    } else {
+        Some(format!("annotation({});", items.join(", ")))
+    };
 
     Ok(unparse::model_to_mo(&m))
 }

@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../i18n";
-import type { GraphicItem, IconDiagramAnnotation } from "./DiagramSvgRenderer";
-import { applyGraphicalDocumentEdits, getGraphicalDocumentFromSource } from "../api/tauri";
+import {
+  getGraphicAtPath,
+  removeGraphicAtPath,
+  replaceGraphicAtPath,
+  type GraphicItem,
+  type IconDiagramAnnotation,
+} from "./DiagramSvgRenderer";
+import {
+  applyGraphicalDocumentEdits,
+  getGraphicalDocumentFromSource,
+  GRAPHICAL_DOCUMENT_LOAD_TIMEOUT_MS,
+  isDiagramLoadTimeout,
+} from "../api/tauri";
 import { GraphicalCanvas, type GraphicalMessage } from "./GraphicalCanvas";
 import { decodeModelicaDragPayload, MODELICA_DRAG_TYPE } from "./LibrariesBrowser";
 import {
@@ -23,8 +34,9 @@ import { applyDiagramLayout, type DiagramLayoutKind } from "../utils/diagramLayo
 import { DiagramToolbar } from "./diagram/DiagramToolbar";
 import { AlignmentToolbar, alignGraphics, distributeGraphics } from "./diagram/AlignmentToolbar";
 import { MultiSelectToolbar } from "./diagram/MultiSelectToolbar";
+import { LayerPanel } from "./icon/LayerPanel";
 import { downloadSvg, downloadPng } from "../utils/graphicExport";
-import { duplicateGraphics, deleteGraphics } from "../utils/graphicGroup";
+import { duplicateGraphics, deleteGraphics, groupGraphics, ungroupGraphics, reorderGraphics } from "../utils/graphicGroup";
 import type { JointPaperHandle } from "../utils/jointUtils";
 
 export type { LayoutPoint } from "../structureEditor/types";
@@ -57,7 +69,9 @@ export function DiagramView({
   const session = sessionRef.current;
 
   const [error, setError] = useState<string | null>(null);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState(() => t("diagramLoading"));
   const [conflictPending, setConflictPending] = useState<DiagramDocument | null>(null);
   const [messages, setMessages] = useState<GraphicalMessage[]>([]);
 
@@ -94,7 +108,7 @@ export function DiagramView({
     return doc ? documentToDiagram(doc) : null;
   }, [session, sessionRevision]);
 
-  const [selectedGraphicIndex, setSelectedGraphicIndex] = useState(-1);
+  const [selectedGraphicPath, setSelectedGraphicPath] = useState<number[] | null>(null);
   const [selectedGraphicIndices, setSelectedGraphicIndices] = useState<number[]>([]);
   const [paperHandle, setPaperHandle] = useState<JointPaperHandle | null>(null);
   const [showMiniMap, setShowMiniMap] = useState(true);
@@ -147,11 +161,24 @@ export function DiagramView({
     const gen = ++loadGraphGenerationRef.current;
     setLoading(true);
     setError(null);
+    setLoadTimedOut(false);
     setConflictPending(null);
+    setLoadingMessage(t("diagramLoading"));
+    const slowHintTimer = window.setTimeout(() => {
+      if (!cancelled && gen === loadGraphGenerationRef.current) {
+        setLoadingMessage(t("diagramLoadingSlowHint"));
+      }
+    }, 2000);
     getGraphicalDocumentFromSource<IconDiagramAnnotation, ComponentData, ConnectionData>(
       source,
       projectDir,
       relativeFilePath,
+      {
+        timeoutMs: GRAPHICAL_DOCUMENT_LOAD_TIMEOUT_MS,
+        onTimeout: () => {
+          cancelled = true;
+        },
+      },
     )
       .then((data) => {
         if (cancelled || gen !== loadGraphGenerationRef.current) return;
@@ -175,7 +202,7 @@ export function DiagramView({
         const inSync = sameComponents && sameConnections;
         if (!hasCurrentState || inSync) {
           session.loadFromServer(data, true);
-          setSelectedGraphicIndex(-1);
+          setSelectedGraphicPath(null);
           setConflictPending(null);
           const nlLoaded = diagramToNodes(documentToDiagram(data), handleDoubleClickRef.current);
           lastAppliedRef.current = buildDiagramSyncKey(nlLoaded.nodes, nlLoaded.links, data.graphical);
@@ -184,18 +211,28 @@ export function DiagramView({
         }
       })
       .catch((err) => {
-        if (cancelled || gen !== loadGraphGenerationRef.current) return;
+        if (gen !== loadGraphGenerationRef.current) return;
+        if (isDiagramLoadTimeout(err)) {
+          setLoadTimedOut(true);
+          setError(String(err));
+          setConflictPending(null);
+          session.clearDocument();
+          return;
+        }
+        if (cancelled) return;
         setError(String(err));
         setConflictPending(null);
         session.clearDocument();
       })
       .finally(() => {
-        if (!cancelled && gen === loadGraphGenerationRef.current) {
+        clearTimeout(slowHintTimer);
+        if (gen === loadGraphGenerationRef.current) {
           setLoading(false);
         }
       });
     return () => {
       cancelled = true;
+      clearTimeout(slowHintTimer);
     };
   }, [source, session]);
 
@@ -245,7 +282,7 @@ export function DiagramView({
   const onRefreshDiagram = useCallback(
     (data: DiagramDocument) => {
       session.applyConflictRefresh(data);
-      setSelectedGraphicIndex(-1);
+      setSelectedGraphicPath(null);
       const nl = diagramToNodes(documentToDiagram(data), handleDoubleClickRef.current);
       lastAppliedRef.current = buildDiagramSyncKey(nl.nodes, nl.links, data.graphical);
     },
@@ -294,10 +331,8 @@ export function DiagramView({
   );
 
   const handleUpdateGraphic = useCallback(
-    (index: number, next: GraphicItem) => {
-      const graphics = [...activeGraphics];
-      graphics[index] = next;
-      setGraphicsForActiveMode(graphics);
+    (path: number[], next: GraphicItem) => {
+      setGraphicsForActiveMode(replaceGraphicAtPath(activeGraphics, path, next));
     },
     [activeGraphics, setGraphicsForActiveMode],
   );
@@ -306,19 +341,136 @@ export function DiagramView({
     (graphic: GraphicItem) => {
       const graphics = [...activeGraphics, graphic];
       setGraphicsForActiveMode(graphics);
-      setSelectedGraphicIndex(graphics.length - 1);
+      const last = graphics.length - 1;
+      setSelectedGraphicPath([last]);
+      setSelectedGraphicIndices([last]);
     },
     [activeGraphics, setGraphicsForActiveMode],
   );
 
   const handleDeleteGraphic = useCallback(
-    (index: number) => {
-      const graphics = activeGraphics.filter((_, itemIndex) => itemIndex !== index);
-      setGraphicsForActiveMode(graphics);
-      setSelectedGraphicIndex(-1);
+    (path: number[]) => {
+      if (path.length === 0) return;
+      const updated = removeGraphicAtPath(activeGraphics, path);
+      if (updated === null) return;
+      setGraphicsForActiveMode(updated);
+      const root = path[0]!;
+      if (path.length === 1) {
+        setSelectedGraphicIndices((prev) =>
+          prev.filter((i) => i !== root).map((i) => (i > root ? i - 1 : i)),
+        );
+        setSelectedGraphicPath(null);
+      } else {
+        setSelectedGraphicPath(path.slice(0, -1));
+      }
     },
     [activeGraphics, setGraphicsForActiveMode],
   );
+
+  const handleSelectGraphic = useCallback(
+    (path: number[] | null, additive?: boolean) => {
+      if (mode !== "icon") {
+        if (!path || path.length === 0) setSelectedGraphicPath(null);
+        else setSelectedGraphicPath([path[0]!]);
+        return;
+      }
+      if (!path || path.length === 0) {
+        if (!additive) {
+          setSelectedGraphicPath(null);
+          setSelectedGraphicIndices([]);
+        }
+        return;
+      }
+      const root = path[0]!;
+      if (additive) {
+        const s = new Set(selectedGraphicIndices);
+        const had = s.has(root);
+        if (had) s.delete(root);
+        else s.add(root);
+        const next = [...s].sort((a, b) => a - b);
+        setSelectedGraphicIndices(next);
+        if (next.length === 0) setSelectedGraphicPath(null);
+        else if (!had) setSelectedGraphicPath(path);
+        else setSelectedGraphicPath(next[0] !== undefined ? [next[0]] : null);
+        return;
+      }
+      setSelectedGraphicPath(path);
+      setSelectedGraphicIndices([root]);
+    },
+    [mode, selectedGraphicIndices],
+  );
+
+  const patchGraphicAtPath = useCallback(
+    (path: number[], patch: Partial<GraphicItem>) => {
+      const g = getGraphicAtPath(activeGraphics, path);
+      if (!g) return;
+      const next = { ...structuredClone(g), ...patch } as GraphicItem;
+      setGraphicsForActiveMode(replaceGraphicAtPath(activeGraphics, path, next));
+    },
+    [activeGraphics, setGraphicsForActiveMode],
+  );
+
+  const handleToggleLayerHidden = useCallback(
+    (index: number) => {
+      const g = activeGraphics[index];
+      if (!g) return;
+      patchGraphicAtPath([index], { layerHidden: !g.layerHidden });
+    },
+    [activeGraphics, patchGraphicAtPath],
+  );
+
+  const handleToggleLayerLocked = useCallback(
+    (index: number) => {
+      const g = activeGraphics[index];
+      if (!g) return;
+      patchGraphicAtPath([index], { layerLocked: !g.layerLocked });
+    },
+    [activeGraphics, patchGraphicAtPath],
+  );
+
+  const handleReorderGraphics = useCallback(
+    (from: number, to: number) => {
+      const updated = reorderGraphics(activeGraphics, from, to);
+      setGraphicsForActiveMode(updated);
+      const mapIndex = (i: number) => {
+        if (i === from) return to;
+        if (from < to) {
+          if (i > from && i <= to) return i - 1;
+        } else if (from > to) {
+          if (i >= to && i < from) return i + 1;
+        }
+        return i;
+      };
+      setSelectedGraphicIndices((prev) => [...new Set(prev.map(mapIndex))].sort((a, b) => a - b));
+      setSelectedGraphicPath((cur) => {
+        if (!cur || cur.length === 0) return cur;
+        const newRoot = mapIndex(cur[0]!);
+        return [newRoot, ...cur.slice(1)];
+      });
+    },
+    [activeGraphics, setGraphicsForActiveMode],
+  );
+
+  const handleGroupGraphics = useCallback(() => {
+    if (selectedGraphicIndices.length < 2) return;
+    const { updatedGraphics, groupIndex } = groupGraphics(activeGraphics, selectedGraphicIndices);
+    if (groupIndex < 0) return;
+    setGraphicsForActiveMode(updatedGraphics);
+    setSelectedGraphicIndices([groupIndex]);
+    setSelectedGraphicPath([groupIndex]);
+  }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
+
+  const handleUngroupGraphics = useCallback(() => {
+    if (selectedGraphicIndices.length !== 1) return;
+    const idx = selectedGraphicIndices[0]!;
+    const item = activeGraphics[idx];
+    if (!item || item.type !== "Group") return;
+    const n = item.children.length;
+    const updated = ungroupGraphics(activeGraphics, idx);
+    setGraphicsForActiveMode(updated);
+    setSelectedGraphicIndices(Array.from({ length: n }, (_, i) => idx + i));
+    setSelectedGraphicPath([idx]);
+  }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
 
   const handleAlign = useCallback(
     (alignment: "left" | "center" | "right" | "top" | "middle" | "bottom") => {
@@ -326,6 +478,7 @@ export function DiagramView({
       const updated = alignGraphics(activeGraphics, selectedGraphicIndices, alignment);
       setGraphicsForActiveMode(updated);
       setSelectedGraphicIndices([]);
+      setSelectedGraphicPath(null);
     },
     [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode],
   );
@@ -336,6 +489,7 @@ export function DiagramView({
       const updated = distributeGraphics(activeGraphics, selectedGraphicIndices, distribution);
       setGraphicsForActiveMode(updated);
       setSelectedGraphicIndices([]);
+      setSelectedGraphicPath(null);
     },
     [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode],
   );
@@ -345,6 +499,7 @@ export function DiagramView({
     const { updatedGraphics } = duplicateGraphics(activeGraphics, selectedGraphicIndices);
     setGraphicsForActiveMode(updatedGraphics);
     setSelectedGraphicIndices([]);
+    setSelectedGraphicPath(null);
   }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
 
   const handleDeleteSelected = useCallback(() => {
@@ -352,6 +507,7 @@ export function DiagramView({
     const updated = deleteGraphics(activeGraphics, selectedGraphicIndices);
     setGraphicsForActiveMode(updated);
     setSelectedGraphicIndices([]);
+    setSelectedGraphicPath(null);
   }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
 
   const handleExportSvg = useCallback(() => {
@@ -445,7 +601,7 @@ export function DiagramView({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-[var(--text-muted)]">{t("diagramLoading")}</div>
+      <div className="flex items-center justify-center h-full text-[var(--text-muted)]">{loadingMessage}</div>
     );
   }
 
@@ -453,9 +609,13 @@ export function DiagramView({
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-[var(--text-muted)] p-4">
         <span>
-          {error.includes("File defines a function, not a model") ? t("diagramErrorNotModel") : t("diagramErrorParse")}
+          {loadTimedOut ?
+            t("diagramLoadTimeout")
+          : error.includes("File defines a function, not a model") ?
+            t("diagramErrorNotModel")
+          : t("diagramErrorParse")}
         </span>
-        <span className="text-xs">{error}</span>
+        {!loadTimedOut && <span className="text-xs">{error}</span>}
       </div>
     );
   }
@@ -474,12 +634,12 @@ export function DiagramView({
       readOnly={readOnly}
       annotation={mode === "icon" ? diagram.iconAnnotation : diagram.diagramAnnotation}
       graphics={activeGraphics}
-      selectedGraphicIndex={selectedGraphicIndex}
+      selectedGraphicPath={selectedGraphicPath}
       selectedComponent={mode === "icon" ? null : selectedComponent}
       conflictPending={Boolean(conflictPending)}
       messages={messages}
       onRefreshDiagram={conflictPending ? () => onRefreshDiagram(conflictPending) : undefined}
-      onSelectGraphic={setSelectedGraphicIndex}
+      onSelectGraphic={handleSelectGraphic}
       onUpdateGraphic={handleUpdateGraphic}
       onAddGraphic={handleAddGraphic}
       onDeleteGraphic={handleDeleteGraphic}
@@ -532,6 +692,9 @@ export function DiagramView({
             {selectedGraphicIndices.length >= 1 && (
               <MultiSelectToolbar
                 selectedIndices={selectedGraphicIndices}
+                graphics={activeGraphics}
+                onGroup={readOnly ? undefined : handleGroupGraphics}
+                onUngroup={readOnly ? undefined : handleUngroupGraphics}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDeleteSelected}
               />
@@ -586,25 +749,29 @@ export function DiagramView({
               </button>
             </div>
           </div>
-          <IconEditorShell
-            annotation={diagram.iconAnnotation ?? { graphics: [] }}
-            selectedGraphicIndex={selectedGraphicIndex}
-            readOnly={readOnly}
-            gridEnabled={gridEnabled}
-            gridSize={gridSize}
-            showGrid={showGrid}
-            onSelectGraphic={(index) => {
-              setSelectedGraphicIndex(index);
-              if (index >= 0) {
-                setSelectedGraphicIndices((prev) =>
-                  prev.length === 1 && prev[0] === index ? prev : [index],
-                );
-              } else {
-                setSelectedGraphicIndices([]);
-              }
-            }}
-            onUpdateGraphic={handleUpdateGraphic}
-          />
+          <div className="flex flex-1 min-h-0 flex-row">
+            <LayerPanel
+              graphics={activeGraphics}
+              selectedIndices={selectedGraphicIndices}
+              readOnly={readOnly}
+              onSelectLayer={(i, add) => handleSelectGraphic([i], add)}
+              onToggleVisibility={handleToggleLayerHidden}
+              onToggleLock={handleToggleLayerLocked}
+              onReorder={handleReorderGraphics}
+            />
+            <div className="flex-1 min-h-0 min-w-0">
+              <IconEditorShell
+                annotation={diagram.iconAnnotation ?? { graphics: [] }}
+                selectedGraphicPath={selectedGraphicPath}
+                readOnly={readOnly}
+                gridEnabled={gridEnabled}
+                gridSize={gridSize}
+                showGrid={showGrid}
+                onSelectGraphic={handleSelectGraphic}
+                onUpdateGraphic={handleUpdateGraphic}
+              />
+            </div>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col flex-1 min-h-0">
@@ -626,7 +793,7 @@ export function DiagramView({
               showMiniMap={showMiniMap}
               snapToGrid
               canConnect={canConnect}
-              onDiagramSelection={() => setSelectedGraphicIndex(-1)}
+              onDiagramSelection={() => setSelectedGraphicPath(null)}
             />
           </div>
         </div>

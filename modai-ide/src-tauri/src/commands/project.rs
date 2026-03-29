@@ -408,15 +408,7 @@ pub async fn get_graphical_document_from_source(
     project_dir: Option<String>,
     relative_path: Option<String>,
 ) -> Result<diagram::GraphicalDocumentModel, String> {
-    tokio::task::spawn_blocking(move || {
-        diagram::get_graphical_document_from_source(
-            &source,
-            project_dir.as_deref(),
-            relative_path.as_deref(),
-        )
-    })
-    .await
-    .map_err(|e| format!("join error: {e}"))?
+    diagram::load_and_build_graphical_document_from_source(source, project_dir, relative_path).await
 }
 
 #[derive(Debug, Serialize)]

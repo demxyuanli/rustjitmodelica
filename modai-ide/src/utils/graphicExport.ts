@@ -3,7 +3,14 @@
  * Provides functions to export graphics as SVG and PNG
  */
 
-import type { GraphicItem, IconDiagramAnnotation, AnnotationPoint, AnnotationColor } from "../components/DiagramSvgRenderer";
+import type {
+  GraphicItem,
+  IconDiagramAnnotation,
+  AnnotationPoint,
+  AnnotationColor,
+  CoordinateSystem,
+} from "../components/DiagramSvgRenderer";
+import { graphicOuterTransformSvg, patternStringToStrokeDasharray } from "../components/DiagramSvgRenderer";
 
 export interface ExportOptions {
   width: number;
@@ -29,6 +36,86 @@ function escapeXmlText(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function escapeXmlAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function colorToSvgString(c?: AnnotationColor): string {
+  if (!c) return "currentColor";
+  return `rgb(${c.r},${c.g},${c.b})`;
+}
+
+function isFilledExport(pattern?: string): boolean {
+  if (!pattern) return false;
+  const lower = pattern.toLowerCase();
+  if (lower === "none") return false;
+  return (
+    lower.includes("solid") ||
+    lower.includes("horizontal") ||
+    lower.includes("vertical") ||
+    lower.includes("cross") ||
+    lower.includes("diagcross") ||
+    lower.includes("forward") ||
+    lower.includes("backward")
+  );
+}
+
+function gradientDefsString(graphics: GraphicItem[]): string {
+  const parts: string[] = [];
+  function walk(items: GraphicItem[], prefix: string) {
+    items.forEach((item, i) => {
+      const path = prefix === "" ? `${i}` : `${prefix}-${i}`;
+      if (item.type === "Group") {
+        walk(item.children, path);
+      } else if ("fillGradient" in item && item.fillGradient) {
+        const id = `gradient-${path}`;
+        if (item.fillGradient.type === "linearGradient") {
+          const g = item.fillGradient.gradient;
+          const stops = g.stops
+            .map(
+              (s) =>
+                `<stop offset="${s.offset * 100}%" stop-color="${colorToSvgString(s.color)}" stop-opacity="${s.opacity ?? 1}"/>`,
+            )
+            .join("");
+          parts.push(
+            `<linearGradient id="${escapeXmlAttr(id)}" x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}">${stops}</linearGradient>`,
+          );
+        } else {
+          const g = item.fillGradient.gradient;
+          const stops = g.stops
+            .map(
+              (s) =>
+                `<stop offset="${s.offset * 100}%" stop-color="${colorToSvgString(s.color)}" stop-opacity="${s.opacity ?? 1}"/>`,
+            )
+            .join("");
+          parts.push(
+            `<radialGradient id="${escapeXmlAttr(id)}" cx="${g.cx}" cy="${g.cy}" r="${g.r}">${stops}</radialGradient>`,
+          );
+        }
+      }
+    });
+  }
+  walk(graphics, "");
+  return parts.join("");
+}
+
+function wrapItemSvg(
+  inner: string,
+  item: GraphicItem,
+  extent: { p1: AnnotationPoint; p2: AnnotationPoint },
+  svgWidth: number,
+  svgHeight: number,
+): string {
+  if (!inner) return "";
+  const cs: CoordinateSystem = { extent };
+  const tf = graphicOuterTransformSvg(item, cs, svgWidth, svgHeight);
+  const op = item.opacity != null && !Number.isNaN(item.opacity) ? Math.max(0, Math.min(1, item.opacity)) : 1;
+  const ta = tf ? ` transform="${escapeXmlAttr(tf)}"` : "";
+  const oa = op < 1 ? ` opacity="${op}"` : "";
+  if (!ta && !oa) return inner;
+  return `<g${ta}${oa}>${inner}</g>`;
+}
+
 /**
  * Export graphics as SVG string
  */
@@ -42,9 +129,11 @@ export function exportToSvg(
     p2: { x: 100, y: 100 },
   };
 
-  // Generate SVG content
+  const defs = gradientDefsString(annotation.graphics);
+  const defsBlock = defs ? `\n  <defs>${defs}</defs>` : "";
+
   const graphicsSvg = annotation.graphics
-    .map((item, idx) => renderGraphicItemToSvg(item, idx, extent, width, height))
+    .map((item, idx) => renderGraphicItemToSvg(item, String(idx), extent, width, height))
     .join("\n");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -52,7 +141,7 @@ export function exportToSvg(
      width="${width}" 
      height="${height}" 
      viewBox="0 0 ${width} ${height}">
-  <rect width="100%" height="100%" fill="${backgroundColor}"/>
+  <rect width="100%" height="100%" fill="${backgroundColor}"/>${defsBlock}
   ${graphicsSvg}
 </svg>`;
 }
@@ -125,7 +214,7 @@ export function downloadSvg(
   const svgString = exportToSvg(annotation, options);
   const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  
+
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
@@ -144,7 +233,7 @@ export async function downloadPng(
   options: ExportOptions = DEFAULT_EXPORT_OPTIONS,
 ): Promise<void> {
   const dataUrl = await exportToPng(annotation, options);
-  
+
   const link = document.createElement("a");
   link.href = dataUrl;
   link.download = filename;
@@ -158,11 +247,12 @@ export async function downloadPng(
  */
 function renderGraphicItemToSvg(
   item: GraphicItem,
-  _idx: number,
+  pathId: string,
   extent: { p1: AnnotationPoint; p2: AnnotationPoint },
   svgWidth: number,
   svgHeight: number,
 ): string {
+  if (item.layerHidden) return "";
   const cw = Math.abs(extent.p2.x - extent.p1.x) || 200;
   const ch = Math.abs(extent.p2.y - extent.p1.y) || 200;
   const minX = Math.min(extent.p1.x, extent.p2.x);
@@ -173,20 +263,11 @@ function renderGraphicItemToSvg(
     y: ((maxY - p.y) / ch) * svgHeight,
   });
 
-  const colorToSvg = (c?: { r: number; g: number; b: number }) => {
-    if (!c) return "currentColor";
-    return `rgb(${c.r},${c.g},${c.b})`;
-  };
+  const colorToSvg = (c?: AnnotationColor) => colorToSvgString(c);
 
-  const isFilled = (pattern?: string) => {
-    if (!pattern) return false;
-    const lower = pattern.toLowerCase();
-    return lower !== "none" && (
-      lower.includes("solid") ||
-      lower.includes("horizontal") ||
-      lower.includes("vertical") ||
-      lower.includes("cross")
-    );
+  const dashAttr = (pattern?: string) => {
+    const d = patternStringToStrokeDasharray(pattern);
+    return d ? ` stroke-dasharray="${d}"` : "";
   };
 
   switch (item.type) {
@@ -195,10 +276,11 @@ function renderGraphicItemToSvg(
       if (item.points.length < 2) return "";
       const pts = item.points.map(coordToSvg);
       const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-      const colorObj: AnnotationColor | undefined = "color" in item ? item.color : ("lineColor" in item ? item.lineColor as AnnotationColor | undefined : undefined);
+      const colorObj: AnnotationColor | undefined = item.color;
       const color = colorToSvg(colorObj);
-      const thickness = "thickness" in item ? item.thickness : ("lineThickness" in item ? (item.lineThickness as number | undefined) : 1) ?? 1;
-      return `<path d="${d}" stroke="${color}" stroke-width="${thickness}" fill="none"/>`;
+      const thickness = item.thickness ?? 1;
+      const inner = `<path d="${d}" stroke="${color}" stroke-width="${thickness}" fill="none"${dashAttr(item.pattern)}/>`;
+      return wrapItemSvg(inner, item, extent, svgWidth, svgHeight);
     }
 
     case "Rectangle": {
@@ -210,10 +292,18 @@ function renderGraphicItemToSvg(
       const w = Math.abs(p2.x - p1.x);
       const h = Math.abs(p2.y - p1.y);
       const stroke = colorToSvg(item.lineColor);
-      const fill = isFilled(item.fillPattern) ? colorToSvg(item.fillColor) : "none";
+      let fill: string;
+      if (item.fillGradient) {
+        fill = `url(#gradient-${pathId})`;
+      } else if (isFilledExport(item.fillPattern)) {
+        fill = colorToSvg(item.fillColor);
+      } else {
+        fill = "none";
+      }
       const strokeWidth = item.lineThickness ?? 1;
       const rx = item.radius ?? 0;
-      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}"/>`;
+      const inner = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}"${dashAttr(item.borderPattern)}/>`;
+      return wrapItemSvg(inner, item, extent, svgWidth, svgHeight);
     }
 
     case "Ellipse": {
@@ -225,18 +315,34 @@ function renderGraphicItemToSvg(
       const rx = Math.abs(p2.x - p1.x) / 2;
       const ry = Math.abs(p2.y - p1.y) / 2;
       const stroke = colorToSvg(item.lineColor);
-      const fill = isFilled(item.fillPattern) ? colorToSvg(item.fillColor) : "none";
+      let fill: string;
+      if (item.fillGradient) {
+        fill = `url(#gradient-${pathId})`;
+      } else if (isFilledExport(item.fillPattern)) {
+        fill = colorToSvg(item.fillColor);
+      } else {
+        fill = "none";
+      }
       const strokeWidth = item.lineThickness ?? 1;
-      return `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}"/>`;
+      const inner = `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}"${dashAttr(item.linePattern)}/>`;
+      return wrapItemSvg(inner, item, extent, svgWidth, svgHeight);
     }
 
     case "Polygon": {
       if (item.points.length < 2) return "";
-      const pts = item.points.map(coordToSvg).map(p => `${p.x},${p.y}`).join(" ");
+      const pts = item.points.map(coordToSvg).map((p) => `${p.x},${p.y}`).join(" ");
       const stroke = colorToSvg(item.lineColor);
-      const fill = isFilled(item.fillPattern) ? colorToSvg(item.fillColor) : "none";
+      let fill: string;
+      if (item.fillGradient) {
+        fill = `url(#gradient-${pathId})`;
+      } else if (isFilledExport(item.fillPattern)) {
+        fill = colorToSvg(item.fillColor);
+      } else {
+        fill = "none";
+      }
       const strokeWidth = item.lineThickness ?? 1;
-      return `<polygon points="${pts}" stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}"/>`;
+      const inner = `<polygon points="${pts}" stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}"${dashAttr(item.linePattern)}/>`;
+      return wrapItemSvg(inner, item, extent, svgWidth, svgHeight);
     }
 
     case "Text": {
@@ -249,7 +355,8 @@ function renderGraphicItemToSvg(
       const fontSize = item.fontSize ?? 12;
       const fill = colorToSvg(item.textColor ?? item.lineColor);
       const fontFamily = item.fontName || "sans-serif";
-      return `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="${fill}" font-family="${fontFamily}">${text}</text>`;
+      const inner = `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="${fill}" font-family="${escapeXmlAttr(fontFamily)}">${text}</text>`;
+      return wrapItemSvg(inner, item, extent, svgWidth, svgHeight);
     }
 
     case "Bitmap": {
@@ -260,7 +367,15 @@ function renderGraphicItemToSvg(
       const y = Math.min(p1.y, p2.y);
       const w = Math.abs(p2.x - p1.x);
       const h = Math.abs(p2.y - p1.y);
-      return `<image href="${item.fileName}" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+      const inner = `<image href="${escapeXmlAttr(item.fileName)}" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+      return wrapItemSvg(inner, item, extent, svgWidth, svgHeight);
+    }
+
+    case "Group": {
+      const inner = item.children
+        .map((c, j) => renderGraphicItemToSvg(c, `${pathId}-${j}`, extent, svgWidth, svgHeight))
+        .join("\n");
+      return wrapItemSvg(inner, item, extent, svgWidth, svgHeight);
     }
 
     default:

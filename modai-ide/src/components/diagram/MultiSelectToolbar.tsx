@@ -4,10 +4,12 @@
  */
 
 import { Copy, Trash2, Group, Ungroup } from "lucide-react";
+import type { GraphicItem } from "../DiagramSvgRenderer";
 import { t } from "../../i18n";
 
 export interface MultiSelectToolbarProps {
   selectedIndices: number[];
+  graphics: GraphicItem[];
   onGroup?: () => void;
   onUngroup?: () => void;
   onDuplicate: () => void;
@@ -20,14 +22,17 @@ function ToolbarSeparator() {
 
 export function MultiSelectToolbar({
   selectedIndices,
+  graphics,
   onGroup,
   onUngroup,
   onDuplicate,
   onDelete,
 }: MultiSelectToolbarProps) {
   const hasSelection = selectedIndices.length >= 1;
-  const canGroup = selectedIndices.length >= 2;
-  const showGroupControls = canGroup && onGroup && onUngroup;
+  const canGroup = selectedIndices.length >= 2 && onGroup;
+  const primary =
+    selectedIndices.length === 1 ? graphics[selectedIndices[0]!] : undefined;
+  const canUngroup = primary?.type === "Group" && onUngroup;
 
   if (!hasSelection) return null;
 
@@ -42,27 +47,27 @@ export function MultiSelectToolbar({
       >
         <Copy className="h-4 w-4" />
       </button>
-      {showGroupControls && (
-        <>
-          <button
-            type="button"
-            className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
-            onClick={onGroup}
-            title={t("group")}
-          >
-            <Group className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
-            onClick={onUngroup}
-            title={t("ungroup")}
-          >
-            <Ungroup className="h-4 w-4" />
-          </button>
-          <ToolbarSeparator />
-        </>
+      {canGroup && (
+        <button
+          type="button"
+          className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+          onClick={onGroup}
+          title={t("group")}
+        >
+          <Group className="h-4 w-4" />
+        </button>
       )}
+      {canUngroup && (
+        <button
+          type="button"
+          className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+          onClick={onUngroup}
+          title={t("ungroup")}
+        >
+          <Ungroup className="h-4 w-4" />
+        </button>
+      )}
+      {(canGroup || canUngroup) && <ToolbarSeparator />}
       <button
         type="button"
         className="toolbar-icon-btn flex rounded items-center justify-center text-red-400 hover:text-red-300 hover:bg-white/10"

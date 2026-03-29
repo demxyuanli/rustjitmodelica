@@ -291,8 +291,7 @@ fn with_loader_paths(
     }
 }
 
-#[tauri::command]
-pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, String> {
+fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, String> {
     let _timer = ScopedTimer::new("jit_validate");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
@@ -381,8 +380,19 @@ pub fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, St
 }
 
 #[tauri::command]
-pub fn jit_validate_v2(request: JitValidateRequest) -> Result<JitApiEnvelope<JitValidateResult>, String> {
-    let result = jit_validate(request)?;
+pub async fn jit_validate(request: JitValidateRequest) -> Result<JitValidateResult, String> {
+    tokio::task::spawn_blocking(move || jit_validate_sync(request))
+        .await
+        .map_err(|e| format!("blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn jit_validate_v2(
+    request: JitValidateRequest,
+) -> Result<JitApiEnvelope<JitValidateResult>, String> {
+    let result = tokio::task::spawn_blocking(move || jit_validate_sync(request))
+        .await
+        .map_err(|e| format!("blocking task join error: {e}"))??;
     if result.success {
         Ok(envelope_ok("validate", result))
     } else {
@@ -408,8 +418,7 @@ pub fn jit_validate_v2(request: JitValidateRequest) -> Result<JitApiEnvelope<Jit
     }
 }
 
-#[tauri::command]
-pub fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationResult, String> {
+fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult, String> {
     let _timer = ScopedTimer::new("run_simulation_cmd");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
@@ -460,10 +469,20 @@ pub fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationRes
 }
 
 #[tauri::command]
-pub fn run_simulation_cmd_v2(
+pub async fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationResult, String> {
+    tokio::task::spawn_blocking(move || run_simulation_sync(request))
+        .await
+        .map_err(|e| format!("blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn run_simulation_cmd_v2(
     request: RunSimulationRequest,
 ) -> Result<JitApiEnvelope<SimulationResult>, String> {
-    match run_simulation_cmd(request) {
+    match tokio::task::spawn_blocking(move || run_simulation_sync(request))
+        .await
+        .map_err(|e| format!("blocking task join error: {e}"))?
+    {
         Ok(data) => Ok(envelope_ok("simulate", data)),
         Err(message) => {
             let d = diagnostics_from_error_message(&message);
@@ -481,8 +500,7 @@ pub fn run_simulation_cmd_v2(
     }
 }
 
-#[tauri::command]
-pub fn get_equation_graph(
+fn get_equation_graph_sync(
     code: String,
     model_name: String,
     project_dir: Option<String>,
@@ -499,12 +517,26 @@ pub fn get_equation_graph(
 }
 
 #[tauri::command]
-pub fn get_equation_graph_v2(
+pub async fn get_equation_graph(
+    code: String,
+    model_name: String,
+    project_dir: Option<String>,
+) -> Result<rustmodlica::EquationGraph, String> {
+    tokio::task::spawn_blocking(move || get_equation_graph_sync(code, model_name, project_dir))
+        .await
+        .map_err(|e| format!("blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn get_equation_graph_v2(
     code: String,
     model_name: String,
     project_dir: Option<String>,
 ) -> Result<JitApiEnvelope<rustmodlica::EquationGraph>, String> {
-    match get_equation_graph(code, model_name, project_dir) {
+    match tokio::task::spawn_blocking(move || get_equation_graph_sync(code, model_name, project_dir))
+        .await
+        .map_err(|e| format!("blocking task join error: {e}"))?
+    {
         Ok(data) => Ok(envelope_ok("equationGraph", data)),
         Err(message) => {
             let d = diagnostics_from_error_message(&message);
@@ -562,8 +594,7 @@ pub struct StartSessionRequest {
     resolver_context: Option<ResolverContext>,
 }
 
-#[tauri::command]
-pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, String> {
+fn start_simulation_session_sync(request: StartSessionRequest) -> Result<String, String> {
     let _timer = ScopedTimer::new("start_simulation_session");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let mut compiler = rustmodlica::Compiler::new();
@@ -627,6 +658,13 @@ pub fn start_simulation_session(request: StartSessionRequest) -> Result<String, 
 
     SESSIONS.lock().unwrap().insert(session_id.clone(), session);
     Ok(session_id)
+}
+
+#[tauri::command]
+pub async fn start_simulation_session(request: StartSessionRequest) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || start_simulation_session_sync(request))
+        .await
+        .map_err(|e| format!("blocking task join error: {e}"))?
 }
 
 fn uuid_simple() -> String {

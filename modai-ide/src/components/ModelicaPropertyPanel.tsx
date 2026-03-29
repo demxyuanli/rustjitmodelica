@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ZoomIn, ZoomOut, Maximize2, Maximize } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Maximize, GripVertical } from "lucide-react";
 import { getComponentTypeDetails } from "../api/tauri";
 import type { ComponentTypeInfo } from "../types";
 import { t } from "../i18n";
-import type {
-  AnnotationColor,
-  GraphicEllipse,
-  GraphicItem,
-  GraphicLine,
-  GraphicPolygon,
-  GraphicRectangle,
-  GraphicText,
-  GraphicBSpline,
-  AnnotationPoint,
+import {
+  getGraphicAtPath,
+  type AnnotationColor,
+  type GraphicEllipse,
+  type GraphicItem,
+  type GraphicLine,
+  type GraphicPolygon,
+  type GraphicRectangle,
+  type GraphicText,
+  type GraphicBSpline,
+  type AnnotationPoint,
+  type GradientStop,
+  type LinearGradient,
+  type RadialGradient,
 } from "./DiagramSvgRenderer";
 import { EquationGraphView } from "./EquationGraphView";
 import { DependencyGraphModal } from "./DependencyGraphModal";
@@ -50,7 +54,97 @@ function cloneGraphic(item: GraphicItem): GraphicItem {
 type GraphicEditorField =
   | { type: "text"; label: string; value: string; onChange: (value: string) => void }
   | { type: "number"; label: string; value: number; onChange: (value: number) => void }
-  | { type: "color"; label: string; value?: AnnotationColor; onChange: (value: AnnotationColor) => void };
+  | { type: "color"; label: string; value?: AnnotationColor; onChange: (value: AnnotationColor) => void }
+  | {
+      type: "select";
+      label: string;
+      value: string;
+      options: { value: string; label: string }[];
+      onChange: (value: string) => void;
+    }
+  | { type: "checkbox"; label: string; checked: boolean; onChange: (checked: boolean) => void };
+
+function defaultLinearGradient(fill?: AnnotationColor): LinearGradient {
+  const base = fill ?? { r: 128, g: 128, b: 128 };
+  return {
+    x1: 0,
+    y1: 0,
+    x2: 1,
+    y2: 0,
+    stops: [
+      { offset: 0, color: base },
+      { offset: 1, color: { r: 255, g: 255, b: 255 } },
+    ],
+  };
+}
+
+function defaultRadialGradient(fill?: AnnotationColor): RadialGradient {
+  const base = fill ?? { r: 128, g: 128, b: 128 };
+  return {
+    cx: 0.5,
+    cy: 0.5,
+    r: 0.5,
+    stops: [
+      { offset: 0, color: base },
+      { offset: 1, color: { r: 255, g: 255, b: 255 } },
+    ],
+  };
+}
+
+function linePatternOptions(): { value: string; label: string }[] {
+  return [
+    { value: "", label: t("patternSolid") },
+    { value: "dashed", label: t("patternDashed") },
+    { value: "dotted", label: t("patternDotted") },
+    { value: "dotdashed", label: t("patternDotDashed") },
+  ];
+}
+
+function fillKindOf(graphic: GraphicRectangle | GraphicEllipse | GraphicPolygon): string {
+  if (graphic.fillGradient?.type === "linearGradient") return "linear";
+  if (graphic.fillGradient?.type === "radialGradient") return "radial";
+  const fp = (graphic.fillPattern ?? "").toLowerCase();
+  if (fp.includes("none") || fp === "") return "none";
+  return "solid";
+}
+
+function fillKindOptions(): { value: string; label: string }[] {
+  return [
+    { value: "none", label: t("fillKindNone") },
+    { value: "solid", label: t("fillKindSolid") },
+    { value: "linear", label: t("fillKindLinearGradient") },
+    { value: "radial", label: t("fillKindRadialGradient") },
+  ];
+}
+
+function fillPatternOptions(): { value: string; label: string }[] {
+  return [
+    { value: "none", label: t("fillKindNone") },
+    { value: "solid", label: t("patternSolid") },
+    { value: "horizontal", label: t("fillPatternHorizontal") },
+    { value: "vertical", label: t("fillPatternVertical") },
+    { value: "cross", label: t("fillPatternCross") },
+  ];
+}
+
+function normalizeStrokePatternSelect(pattern?: string): string {
+  if (!pattern) return "";
+  const lower = pattern.toLowerCase();
+  if (lower.includes("dotdashed") || lower.includes("dashdot")) return "dotdashed";
+  if (lower.includes("dotted")) return "dotted";
+  if (lower.includes("dashed")) return "dashed";
+  return "";
+}
+
+function fillPatternSelectValue(pattern?: string): string {
+  if (!pattern) return "solid";
+  const lower = pattern.toLowerCase();
+  if (lower.includes("none")) return "none";
+  if (lower.includes("horizontal")) return "horizontal";
+  if (lower.includes("vertical")) return "vertical";
+  if (lower.includes("cross") && !lower.includes("diag")) return "cross";
+  return "solid";
+}
 
 function colorToHex(color?: AnnotationColor) {
   if (!color) return "#808080";
@@ -130,11 +224,11 @@ interface ModelicaPropertyPanelProps {
   presentation?: "sidebar" | "floating";
   selectedComponent: SelectedComponent | null;
   graphics: GraphicItem[];
-  selectedGraphicIndex: number;
-  onSelectGraphic: (index: number) => void;
-  onUpdateGraphic: (index: number, next: GraphicItem) => void;
+  selectedGraphicPath: number[] | null;
+  onSelectGraphic: (path: number[] | null, additive?: boolean) => void;
+  onUpdateGraphic: (path: number[], next: GraphicItem) => void;
   onAddGraphic: (graphic: GraphicItem) => void;
-  onDeleteGraphic: (index: number) => void;
+  onDeleteGraphic: (path: number[]) => void;
   onUpdateParam: (name: string, value: string) => void;
   onUpdatePlacement: (patch: { x?: number; y?: number; rotation?: number }) => void;
   source?: string;
@@ -179,7 +273,291 @@ function renderField(field: GraphicEditorField, key: string) {
           className="h-8 w-full rounded bg-[var(--surface)] border border-[var(--border)] px-1"
         />
       )}
+      {field.type === "select" && (
+        <select
+          value={field.value}
+          onChange={(event) => field.onChange(event.target.value)}
+          className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
+        >
+          {field.options.map((opt) => (
+            <option key={opt.value || "__empty"} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      )}
+      {field.type === "checkbox" && (
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={field.checked}
+            onChange={(event) => field.onChange(event.target.checked)}
+            className="rounded border-[var(--border)]"
+          />
+        </div>
+      )}
     </label>
+  );
+}
+
+type ShapeWithGradientFill = GraphicRectangle | GraphicEllipse | GraphicPolygon;
+
+function normalizeGradientStopOffsets(stops: GradientStop[]): GradientStop[] {
+  const n = stops.length;
+  if (n <= 1) {
+    return stops.map((s) => ({ ...s, offset: 0 }));
+  }
+  return stops.map((s, i) => ({ ...s, offset: i / (n - 1) }));
+}
+
+function FillGradientEditor({
+  graphic,
+  onCommit,
+}: {
+  graphic: ShapeWithGradientFill;
+  onCommit: (next: GraphicItem) => void;
+}) {
+  const [draggingStopIndex, setDraggingStopIndex] = useState<number | null>(null);
+  const fg = graphic.fillGradient;
+  if (!fg) return null;
+
+  const commit = (mutate: (draft: ShapeWithGradientFill) => void) => {
+    const next = cloneGraphic(graphic) as ShapeWithGradientFill;
+    mutate(next);
+    onCommit(next);
+  };
+
+  const setLinearField = (key: keyof LinearGradient, value: number) => {
+    if (fg.type !== "linearGradient") return;
+    commit((draft) => {
+      if (draft.fillGradient?.type === "linearGradient") {
+        const g = draft.fillGradient.gradient;
+        if (key === "x1") g.x1 = value;
+        else if (key === "y1") g.y1 = value;
+        else if (key === "x2") g.x2 = value;
+        else if (key === "y2") g.y2 = value;
+      }
+    });
+  };
+
+  const setRadialField = (key: keyof RadialGradient, value: number) => {
+    if (fg.type !== "radialGradient") return;
+    commit((draft) => {
+      if (draft.fillGradient?.type === "radialGradient") {
+        const g = draft.fillGradient.gradient;
+        if (key === "cx") g.cx = value;
+        else if (key === "cy") g.cy = value;
+        else if (key === "r") g.r = value;
+      }
+    });
+  };
+
+  const setStops = (stops: GradientStop[]) => {
+    commit((draft) => {
+      const g = draft.fillGradient;
+      if (g?.type === "linearGradient") g.gradient.stops = stops;
+      else if (g?.type === "radialGradient") g.gradient.stops = stops;
+    });
+  };
+
+  const stops =
+    fg.type === "linearGradient" ? fg.gradient.stops : fg.type === "radialGradient" ? fg.gradient.stops : [];
+
+  const updateStop = (index: number, patch: Partial<GradientStop>) => {
+    const nextStops = stops.map((s, i) => (i === index ? { ...s, ...patch } : s));
+    setStops(nextStops);
+  };
+
+  const removeStop = (index: number) => {
+    if (stops.length <= 2) return;
+    setStops(stops.filter((_, i) => i !== index));
+  };
+
+  const addStop = () => {
+    if (stops.length === 0) {
+      setStops([
+        { offset: 0, color: { r: 64, g: 64, b: 64 } },
+        { offset: 1, color: { r: 220, g: 220, b: 220 } },
+      ]);
+      return;
+    }
+    const last = stops[stops.length - 1]!;
+    const prev = stops[stops.length - 2] ?? { offset: 0, color: last.color };
+    const midOffset = (prev.offset + last.offset) / 2;
+    setStops([
+      ...stops.slice(0, -1),
+      { offset: midOffset, color: { ...last.color }, opacity: last.opacity },
+      last,
+    ]);
+  };
+
+  const sortStopsByOffset = () => {
+    setStops([...stops].sort((a, b) => a.offset - b.offset));
+  };
+
+  const moveStop = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= stops.length || to >= stops.length) return;
+    const next = [...stops];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item!);
+    setStops(normalizeGradientStopOffsets(next));
+  };
+
+  return (
+    <div className="space-y-2 border-t border-[var(--border)] pt-2 mt-1">
+      {fg.type === "linearGradient" && (
+        <>
+          <div className="text-[10px] font-medium text-[var(--text-muted)]">{t("graphicGradientLinearParams")}</div>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ["x1", fg.gradient.x1],
+                ["y1", fg.gradient.y1],
+                ["x2", fg.gradient.x2],
+                ["y2", fg.gradient.y2],
+              ] as const
+            ).map(([key, val]) => (
+              <label key={key} className="block">
+                <div className="mb-1 text-[var(--text-muted)]">{key}</div>
+                <input
+                  type="number"
+                  step="any"
+                  value={val}
+                  onChange={(e) => setLinearField(key, Number(e.target.value))}
+                  className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
+                />
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+      {fg.type === "radialGradient" && (
+        <>
+          <div className="text-[10px] font-medium text-[var(--text-muted)]">{t("graphicGradientRadialParams")}</div>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ["cx", fg.gradient.cx],
+                ["cy", fg.gradient.cy],
+                ["r", fg.gradient.r],
+              ] as const
+            ).map(([key, val]) => (
+              <label key={key} className="block">
+                <div className="mb-1 text-[var(--text-muted)]">{key}</div>
+                <input
+                  type="number"
+                  step="any"
+                  value={val}
+                  onChange={(e) => setRadialField(key, Number(e.target.value))}
+                  className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
+                />
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+      <div className="flex items-center justify-between gap-1">
+        <div className="text-[10px] font-medium text-[var(--text-muted)]">{t("graphicGradientStops")}</div>
+        <button
+          type="button"
+          className="shrink-0 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-0.5 text-[10px] hover:bg-white/10"
+          onClick={sortStopsByOffset}
+        >
+          {t("graphicGradientSortByOffset")}
+        </button>
+      </div>
+      <div className="space-y-2">
+        {stops.map((stop, index) => (
+          <div
+            key={`stop-${index}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const raw = e.dataTransfer.getData("text/plain");
+              const from = Number.parseInt(raw, 10);
+              if (!Number.isFinite(from) || from < 0 || from >= stops.length) {
+                setDraggingStopIndex(null);
+                return;
+              }
+              moveStop(from, index);
+              setDraggingStopIndex(null);
+            }}
+            className={`grid gap-1 rounded border border-[var(--border)] bg-[var(--surface)] p-1.5 ${
+              draggingStopIndex === index ? "opacity-60" : ""
+            }`}
+            style={{ gridTemplateColumns: "auto 1fr 1fr 1fr auto" }}
+          >
+            <span
+              draggable
+              title={t("graphicGradientDragReorder")}
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/plain", String(index));
+                e.dataTransfer.effectAllowed = "move";
+                setDraggingStopIndex(index);
+              }}
+              onDragEnd={() => setDraggingStopIndex(null)}
+              className="cursor-grab self-center text-[var(--text-muted)] active:cursor-grabbing shrink-0 px-0.5"
+            >
+              <GripVertical className="h-3.5 w-3.5" />
+            </span>
+            <label className="block min-w-0">
+              <div className="mb-0.5 text-[9px] text-[var(--text-muted)]">t</div>
+              <input
+                type="number"
+                step="any"
+                value={stop.offset}
+                onChange={(e) => updateStop(index, { offset: Number(e.target.value) })}
+                className="w-full rounded bg-[var(--bg-elevated)] border border-[var(--border)] px-1 py-0.5 text-[11px]"
+              />
+            </label>
+            <label className="block min-w-0">
+              <div className="mb-0.5 text-[9px] text-[var(--text-muted)]">RGB</div>
+              <input
+                type="color"
+                value={colorToHex(stop.color)}
+                onChange={(e) => updateStop(index, { color: hexToColor(e.target.value) })}
+                className="h-7 w-full rounded border border-[var(--border)] px-0.5"
+              />
+            </label>
+            <label className="block min-w-0">
+              <div className="mb-0.5 text-[9px] text-[var(--text-muted)]">{t("graphicGradientStopOpacityPct")}</div>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={Math.round((stop.opacity ?? 1) * 100)}
+                onChange={(e) => {
+                  const pct = Number(e.target.value);
+                  const o = Math.max(0, Math.min(100, pct)) / 100;
+                  updateStop(index, { opacity: o >= 0.999 ? undefined : o });
+                }}
+                className="w-full rounded bg-[var(--bg-elevated)] border border-[var(--border)] px-1 py-0.5 text-[11px]"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={stops.length <= 2}
+              title={t("graphicGradientRemoveStop")}
+              className="self-end rounded bg-red-600/20 px-1.5 py-0.5 text-[11px] text-red-300 disabled:opacity-40"
+              onClick={() => removeStop(index)}
+            >
+              −
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] hover:bg-white/10"
+        onClick={addStop}
+      >
+        {t("graphicGradientAddStop")}
+      </button>
+      <p className="text-[9px] text-[var(--text-muted)] leading-tight">{t("graphicGradientDragReorderHint")}</p>
+    </div>
   );
 }
 
@@ -231,14 +609,14 @@ function graphicFields(
     });
   }
 
-  if ("thickness" in graphic) {
+  if ("thickness" in graphic && (graphic.type === "Line" || graphic.type === "BSpline")) {
     fields.push({
       type: "number",
       label: "Thickness",
       value: graphic.thickness ?? 1,
       onChange: (value) =>
         onChange(
-          updateGraphicField(graphic, (item) => item as GraphicLine, (next) => {
+          updateGraphicField(graphic, (item) => item as GraphicLine | GraphicBSpline, (next) => {
             next.thickness = value;
           }),
         ),
@@ -287,19 +665,157 @@ function graphicFields(
     });
   }
 
-  if ("color" in graphic) {
+  if ("color" in graphic && (graphic.type === "Line" || graphic.type === "BSpline")) {
     fields.push({
       type: "color",
       label: "Color",
       value: graphic.color,
       onChange: (value) =>
         onChange(
-          updateGraphicField(graphic, (item) => item as GraphicLine, (next) => {
+          updateGraphicField(graphic, (item) => item as GraphicLine | GraphicBSpline, (next) => {
             next.color = value;
           }),
         ),
     });
   }
+
+  if (graphic.type === "Line" || graphic.type === "BSpline") {
+    fields.push({
+      type: "select",
+      label: t("graphicLinePattern"),
+      value: normalizeStrokePatternSelect(graphic.pattern),
+      options: linePatternOptions(),
+      onChange: (value) =>
+        onChange(
+          updateGraphicField(graphic, (item) => item as GraphicLine | GraphicBSpline, (next) => {
+            next.pattern = value || undefined;
+          }),
+        ),
+    });
+  }
+
+  if (graphic.type === "Rectangle") {
+    fields.push({
+      type: "select",
+      label: t("graphicBorderPattern"),
+      value: normalizeStrokePatternSelect(graphic.borderPattern),
+      options: linePatternOptions(),
+      onChange: (value) =>
+        onChange(
+          updateGraphicField(graphic, (item) => item as GraphicRectangle, (next) => {
+            next.borderPattern = value || undefined;
+          }),
+        ),
+    });
+  }
+
+  if (graphic.type === "Ellipse" || graphic.type === "Polygon") {
+    fields.push({
+      type: "select",
+      label: t("graphicLinePattern"),
+      value: normalizeStrokePatternSelect(graphic.linePattern),
+      options: linePatternOptions(),
+      onChange: (value) =>
+        onChange(
+          updateGraphicField(graphic, (item) => item as GraphicEllipse | GraphicPolygon, (next) => {
+            next.linePattern = value || undefined;
+          }),
+        ),
+    });
+  }
+
+  if (graphic.type === "Rectangle" || graphic.type === "Ellipse" || graphic.type === "Polygon") {
+    const filled = graphic as GraphicRectangle | GraphicEllipse | GraphicPolygon;
+    fields.push({
+      type: "select",
+      label: t("graphicFillKind"),
+      value: fillKindOf(filled),
+      options: fillKindOptions(),
+      onChange: (value) =>
+        onChange(
+          updateGraphicField(graphic, (item) => item as GraphicRectangle | GraphicEllipse | GraphicPolygon, (next) => {
+            if (value === "none") {
+              next.fillGradient = undefined;
+              next.fillPattern = "none";
+            } else if (value === "solid") {
+              next.fillGradient = undefined;
+              next.fillPattern = next.fillPattern && next.fillPattern.toLowerCase().includes("none") ? "solid" : (next.fillPattern ?? "solid");
+            } else if (value === "linear") {
+              next.fillPattern = "solid";
+              next.fillGradient = { type: "linearGradient", gradient: defaultLinearGradient(next.fillColor) };
+            } else if (value === "radial") {
+              next.fillPattern = "solid";
+              next.fillGradient = { type: "radialGradient", gradient: defaultRadialGradient(next.fillColor) };
+            }
+          }),
+        ),
+    });
+    if (fillKindOf(filled) === "solid") {
+      fields.push({
+        type: "select",
+        label: t("graphicFillPattern"),
+        value: fillPatternSelectValue(filled.fillPattern),
+        options: fillPatternOptions(),
+        onChange: (value) =>
+          onChange(
+            updateGraphicField(graphic, (item) => item as GraphicRectangle | GraphicEllipse | GraphicPolygon, (next) => {
+              next.fillPattern = value;
+            }),
+          ),
+      });
+    }
+  }
+
+  if (graphic.type === "Text" && "fillPattern" in graphic) {
+    fields.push({
+      type: "select",
+      label: t("graphicFillPattern"),
+      value: fillPatternSelectValue(graphic.fillPattern),
+      options: fillPatternOptions(),
+      onChange: (value) =>
+        onChange(
+          updateGraphicField(graphic, (item) => item as GraphicText, (next) => {
+            next.fillPattern = value;
+          }),
+        ),
+    });
+  }
+
+  fields.push({
+    type: "number",
+    label: t("graphicOpacity"),
+    value: Math.round((graphic.opacity ?? 1) * 100),
+    onChange: (value) =>
+      onChange(
+        updateGraphicField(graphic, (item) => item as GraphicItem, (next) => {
+          next.opacity = Math.max(0, Math.min(100, value)) / 100;
+        }),
+      ),
+  });
+
+  fields.push({
+    type: "checkbox",
+    label: t("graphicMirrorX"),
+    checked: !!graphic.mirrorX,
+    onChange: (checked) =>
+      onChange(
+        updateGraphicField(graphic, (item) => item as GraphicItem, (next) => {
+          next.mirrorX = checked;
+        }),
+      ),
+  });
+
+  fields.push({
+    type: "checkbox",
+    label: t("graphicMirrorY"),
+    checked: !!graphic.mirrorY,
+    onChange: (checked) =>
+      onChange(
+        updateGraphicField(graphic, (item) => item as GraphicItem, (next) => {
+          next.mirrorY = checked;
+        }),
+      ),
+  });
 
   return fields;
 }
@@ -310,7 +826,7 @@ export function ModelicaPropertyPanel({
   presentation = "sidebar",
   selectedComponent,
   graphics,
-  selectedGraphicIndex,
+  selectedGraphicPath,
   onSelectGraphic,
   onUpdateGraphic,
   onAddGraphic,
@@ -373,14 +889,15 @@ export function ModelicaPropertyPanel({
     });
   }, [typeInfo]);
 
-  const currentGraphic = selectedGraphicIndex >= 0 ? graphics[selectedGraphicIndex] : null;
+  const editPath =
+    selectedGraphicPath != null && selectedGraphicPath.length > 0 ? selectedGraphicPath : null;
+  const currentGraphic = editPath ? getGraphicAtPath(graphics, editPath) : null;
   const placement = selectedComponent?.placement?.transformation;
   const origin = placement?.origin ?? { x: 0, y: 0 };
   const rotation = placement?.rotation ?? 0;
   const componentParams = new Map((selectedComponent?.params ?? []).map((item) => [item.name, item.value]));
-  const currentGraphicFields = currentGraphic
-    ? graphicFields(currentGraphic, (next) => onUpdateGraphic(selectedGraphicIndex, next))
-    : [];
+  const currentGraphicFields =
+    currentGraphic && editPath ? graphicFields(currentGraphic, (next) => onUpdateGraphic(editPath, next)) : [];
   const showGraphicLibrary = presentation === "sidebar";
   const showComponentSection = Boolean(selectedComponent) && (mode === "icon" || groupedParams.length > 0);
   const showGraphicsSection = mode === "icon" || currentGraphic != null || presentation === "sidebar";
@@ -545,31 +1062,47 @@ export function ModelicaPropertyPanel({
                   key={`${graphic.type}:${index}`}
                   type="button"
                   className={`w-full text-left rounded px-2 py-1 border ${
-                    selectedGraphicIndex === index
+                    editPath != null && editPath[0] === index
                       ? "border-primary bg-primary/10"
                       : "border-[var(--border)] bg-[var(--surface)]"
                   }`}
-                  onClick={() => onSelectGraphic(index)}
+                  onClick={() => onSelectGraphic([index], false)}
                 >
-                  {graphic.type} #{index + 1}
+                  {graphic.type === "Group" ? t("shapeGroup") : graphic.type} #{index + 1}
                 </button>
               ))}
             </div>
-            {currentGraphic && (
+            {currentGraphic && editPath && (
               <div className="border border-[var(--border)] rounded p-2 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium">{currentGraphic.type}</span>
+                  <span className="font-medium">
+                    {currentGraphic.type === "Group" ? t("shapeGroup") : currentGraphic.type}
+                  </span>
                   <button
                     type="button"
                     className="rounded bg-red-600/20 px-2 py-1 text-red-300"
-                    onClick={() => onDeleteGraphic(selectedGraphicIndex)}
+                    onClick={() => onDeleteGraphic(editPath)}
                   >
                     {t("deleteTest")}
                   </button>
                 </div>
+                {currentGraphic.type === "Group" && (
+                  <div className="text-[var(--text-muted)]">
+                    {t("groupChildren")}: {currentGraphic.children.length}
+                  </div>
+                )}
                 <div className="grid grid-cols-1 gap-2">
                   {currentGraphicFields.map((field, index) => renderField(field, `field-${index}`))}
                 </div>
+                {(currentGraphic.type === "Rectangle" ||
+                  currentGraphic.type === "Ellipse" ||
+                  currentGraphic.type === "Polygon") &&
+                  currentGraphic.fillGradient && (
+                    <FillGradientEditor
+                      graphic={currentGraphic}
+                      onCommit={(next) => onUpdateGraphic(editPath, next)}
+                    />
+                  )}
                 {"extent" in currentGraphic && currentGraphic.extent && (
                   <div className="grid grid-cols-2 gap-2">
                     {(["p1", "p2"] as const).flatMap((corner) => ([
@@ -579,11 +1112,11 @@ export function ModelicaPropertyPanel({
                           type="number"
                           value={currentGraphic.extent?.[corner].x ?? 0}
                           onChange={(e) => {
-                            const next = cloneGraphic(currentGraphic) as GraphicRectangle;
-                            if (next.extent) {
+                            const next = cloneGraphic(currentGraphic);
+                            if ("extent" in next && next.extent) {
                               next.extent[corner].x = Number(e.target.value);
                             }
-                            onUpdateGraphic(selectedGraphicIndex, next);
+                            onUpdateGraphic(editPath, next);
                           }}
                           className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
                         />
@@ -594,11 +1127,11 @@ export function ModelicaPropertyPanel({
                           type="number"
                           value={currentGraphic.extent?.[corner].y ?? 0}
                           onChange={(e) => {
-                            const next = cloneGraphic(currentGraphic) as GraphicRectangle;
-                            if (next.extent) {
+                            const next = cloneGraphic(currentGraphic);
+                            if ("extent" in next && next.extent) {
                               next.extent[corner].y = Number(e.target.value);
                             }
-                            onUpdateGraphic(selectedGraphicIndex, next);
+                            onUpdateGraphic(editPath, next);
                           }}
                           className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
                         />
@@ -618,7 +1151,7 @@ export function ModelicaPropertyPanel({
                             onChange={(event) => {
                               const next = cloneGraphic(currentGraphic) as GraphicLine | GraphicPolygon;
                               next.points[pointIndex].x = Number(event.target.value);
-                              onUpdateGraphic(selectedGraphicIndex, next);
+                              onUpdateGraphic(editPath, next);
                             }}
                             className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
                           />
@@ -631,7 +1164,7 @@ export function ModelicaPropertyPanel({
                             onChange={(event) => {
                               const next = cloneGraphic(currentGraphic) as GraphicLine | GraphicPolygon;
                               next.points[pointIndex].y = Number(event.target.value);
-                              onUpdateGraphic(selectedGraphicIndex, next);
+                              onUpdateGraphic(editPath, next);
                             }}
                             className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
                           />

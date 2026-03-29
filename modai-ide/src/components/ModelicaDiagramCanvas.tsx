@@ -32,14 +32,14 @@ interface ModelicaDiagramCanvasProps {
   readOnly: boolean;
   annotation?: IconDiagramAnnotation;
   graphics: GraphicItem[];
-  selectedGraphicIndex: number;
+  selectedGraphicPath: number[] | null;
   selectedComponent: SelectedComponent | null;
   conflictPending: boolean;
   onRefreshDiagram?: () => void;
-  onSelectGraphic: (index: number) => void;
-  onUpdateGraphic: (index: number, next: GraphicItem) => void;
+  onSelectGraphic: (path: number[] | null, additive?: boolean) => void;
+  onUpdateGraphic: (path: number[], next: GraphicItem) => void;
   onAddGraphic: (graphic: GraphicItem) => void;
-  onDeleteGraphic: (index: number) => void;
+  onDeleteGraphic: (path: number[]) => void;
   onUpdateParam: (name: string, value: string) => void;
   onUpdatePlacement: (patch: { x?: number; y?: number; rotation?: number }) => void;
   onOpenType?: (typeName: string, libraryId?: string) => void;
@@ -55,7 +55,7 @@ export function ModelicaDiagramCanvas({
   readOnly,
   annotation,
   graphics,
-  selectedGraphicIndex,
+  selectedGraphicPath,
   selectedComponent,
   conflictPending,
   onRefreshDiagram,
@@ -107,7 +107,7 @@ export function ModelicaDiagramCanvas({
           mode={mode}
           selectedComponent={selectedComponent}
           graphics={graphics}
-          selectedGraphicIndex={selectedGraphicIndex}
+          selectedGraphicPath={selectedGraphicPath}
           onSelectGraphic={onSelectGraphic}
           onUpdateGraphic={onUpdateGraphic}
           onAddGraphic={onAddGraphic}

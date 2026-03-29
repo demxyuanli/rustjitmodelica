@@ -14,6 +14,7 @@ import {
   Combine,
 } from "lucide-react";
 import type { GraphicItem } from "../DiagramSvgRenderer";
+import { getGraphicBounds, translateGraphicItem, type GraphicBounds } from "../DiagramSvgRenderer";
 import { t } from "../../i18n";
 
 export type AlignmentType = "left" | "center" | "right" | "top" | "middle" | "bottom";
@@ -281,84 +282,4 @@ export function distributeGraphics(
   }
 
   return resultGraphics;
-}
-
-// Import required functions from DiagramSvgRenderer
-function getGraphicBounds(item: GraphicItem): GraphicBounds | null {
-  // Simplified implementation - should import from DiagramSvgRenderer
-  let points: { x: number; y: number }[] = [];
-
-  switch (item.type) {
-    case "Line":
-    case "Polygon":
-    case "BSpline":
-      points = item.points;
-      break;
-    case "Rectangle":
-    case "Ellipse":
-    case "Text":
-    case "Bitmap":
-      if (!item.extent) return null;
-      points = [
-        item.extent.p1,
-        item.extent.p2,
-        { x: item.extent.p1.x, y: item.extent.p2.y },
-        { x: item.extent.p2.x, y: item.extent.p1.y },
-      ];
-      break;
-    default:
-      return null;
-  }
-
-  if (points.length === 0) return null;
-
-  return {
-    minX: Math.min(...points.map((p) => p.x)),
-    minY: Math.min(...points.map((p) => p.y)),
-    maxX: Math.max(...points.map((p) => p.x)),
-    maxY: Math.max(...points.map((p) => p.y)),
-  };
-}
-
-interface GraphicBounds {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
-function translateGraphicItem(item: GraphicItem, delta: { x: number; y: number }): GraphicItem {
-  const movePoint = (point: { x: number; y: number }) => ({ x: point.x + delta.x, y: point.y + delta.y });
-
-  switch (item.type) {
-    case "Line":
-      return {
-        ...item,
-        points: item.points.map(movePoint),
-        origin: item.origin ? movePoint(item.origin) : item.origin,
-      };
-    case "Polygon":
-    case "BSpline":
-      return {
-        ...item,
-        points: item.points.map(movePoint),
-        origin: item.origin ? movePoint(item.origin) : item.origin,
-      };
-    case "Rectangle":
-    case "Ellipse":
-    case "Text":
-    case "Bitmap":
-      return {
-        ...item,
-        extent: item.extent
-          ? {
-              p1: movePoint(item.extent.p1),
-              p2: movePoint(item.extent.p2),
-            }
-          : item.extent,
-        origin: item.origin ? movePoint(item.origin) : item.origin,
-      };
-    default:
-      return item;
-  }
 }

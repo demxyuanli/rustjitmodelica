@@ -249,14 +249,61 @@ export async function getComponentTypeRelationGraph(
   });
 }
 
+export const GRAPHICAL_DOCUMENT_LOAD_TIMEOUT_MS = 45_000;
+
+export class DiagramLoadTimeoutError extends Error {
+  override readonly name = "DiagramLoadTimeout";
+  constructor(message = "Diagram load timed out") {
+    super(message);
+  }
+}
+
+export function isDiagramLoadTimeout(err: unknown): boolean {
+  return err instanceof DiagramLoadTimeoutError;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onTimeout();
+      reject(new DiagramLoadTimeoutError());
+    }, ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+export type GetGraphicalDocumentFromSourceOptions = {
+  /** When set, reject if the invoke does not complete in time (default: none). */
+  timeoutMs?: number;
+  /** Called once when the timeout fires (e.g. to mark load as cancelled). */
+  onTimeout?: () => void;
+};
+
 export async function getGraphicalDocumentFromSource<TAnnotation = unknown, TComponent = unknown, TConnection = unknown>(
   source: string,
   projectDir?: string | null,
   relativePath?: string | null,
+  options?: GetGraphicalDocumentFromSourceOptions,
 ): Promise<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>> {
   // #region agent log
   const t0 = performance.now();
   // #endregion
+  const invokeOnce = () =>
+    invoke<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>>("get_graphical_document_from_source", {
+      source,
+      projectDir: projectDir ?? undefined,
+      relativePath: relativePath ?? undefined,
+    });
+
   try {
     // #region agent log
     agentDebugLog({
@@ -266,14 +313,11 @@ export async function getGraphicalDocumentFromSource<TAnnotation = unknown, TCom
       hypothesisId: "I",
     });
     // #endregion
-    const out = await invoke<GraphicalDocumentModel<TAnnotation, TComponent, TConnection>>(
-      "get_graphical_document_from_source",
-      {
-        source,
-        projectDir: projectDir ?? undefined,
-        relativePath: relativePath ?? undefined,
-      },
-    );
+    const timeoutMs = options?.timeoutMs;
+    const out =
+      timeoutMs != null && timeoutMs > 0 ?
+        await withTimeout(invokeOnce(), timeoutMs, () => options?.onTimeout?.())
+      : await invokeOnce();
     // #region agent log
     agentDebugLog({
       location: "tauri:getGraphicalDocumentFromSource",

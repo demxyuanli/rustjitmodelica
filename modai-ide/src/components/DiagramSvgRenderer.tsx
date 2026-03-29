@@ -1,5 +1,6 @@
 import React from "react";
 import { createBSplinePath, renderArrowheads } from "./DiagramSvgArrows";
+import { CONNECTOR_COLORS } from "./diagramConnectorColors";
 
 export interface AnnotationPoint { x: number; y: number }
 export interface AnnotationExtent { p1: AnnotationPoint; p2: AnnotationPoint }
@@ -58,6 +59,11 @@ export interface GraphicLine {
   arrowSize?: number;
   rotation?: number;
   origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
 }
 
 export interface GraphicRectangle {
@@ -72,6 +78,11 @@ export interface GraphicRectangle {
   radius?: number;
   rotation?: number;
   origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
 }
 
 export interface GraphicEllipse {
@@ -84,8 +95,14 @@ export interface GraphicEllipse {
   startAngle?: number;
   endAngle?: number;
   lineThickness?: number;
+  linePattern?: string;
   rotation?: number;
   origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
 }
 
 export interface GraphicPolygon {
@@ -96,9 +113,15 @@ export interface GraphicPolygon {
   fillPattern?: string;
   fillGradient?: { type: "linearGradient"; gradient: LinearGradient } | { type: "radialGradient"; gradient: RadialGradient };
   lineThickness?: number;
+  linePattern?: string;
   smooth?: string;
   rotation?: number;
   origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
 }
 
 export interface GraphicText {
@@ -114,6 +137,11 @@ export interface GraphicText {
   fillPattern?: string;
   rotation?: number;
   origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
 }
 
 export interface GraphicBitmap {
@@ -123,6 +151,11 @@ export interface GraphicBitmap {
   imageSource?: string;
   rotation?: number;
   origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
 }
 
 /** Bezier spline curve for smooth connections */
@@ -137,6 +170,24 @@ export interface GraphicBSpline {
   arrowSize?: number;
   rotation?: number;
   origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
+}
+
+/** Editor-only group; children share z-order under one top-level layer row. */
+export interface GraphicGroup {
+  type: "Group";
+  children: GraphicItem[];
+  rotation?: number;
+  origin?: AnnotationPoint;
+  opacity?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  layerHidden?: boolean;
+  layerLocked?: boolean;
 }
 
 export type GraphicItem =
@@ -146,7 +197,8 @@ export type GraphicItem =
   | GraphicPolygon
   | GraphicText
   | GraphicBitmap
-  | GraphicBSpline;
+  | GraphicBSpline
+  | GraphicGroup;
 
 export interface CoordinateSystem {
   extent?: AnnotationExtent;
@@ -184,6 +236,70 @@ export const DEFAULT_ICON_SIZE = 40;
 export function colorToCSS(c?: AnnotationColor): string {
   if (!c) return "currentColor";
   return `rgb(${c.r},${c.g},${c.b})`;
+}
+
+/** Map Modelica-style line/border pattern names to SVG stroke-dasharray. */
+export function patternStringToStrokeDasharray(pattern?: string): string | undefined {
+  if (!pattern) return undefined;
+  const norm = pattern
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/linepattern\./g, "")
+    .replace(/borderpattern\./g, "");
+  if (norm.includes("dotdashed") || norm.includes("dashdot")) return "2 4 8 4";
+  if (norm.includes("dotted")) return "2 4";
+  if (norm.includes("dashed")) return "8 4";
+  if (norm.includes("solid") || norm === "none") return undefined;
+  return undefined;
+}
+
+function clampGraphicOpacity(value?: number): number {
+  if (value == null || Number.isNaN(value)) return 1;
+  return Math.max(0, Math.min(1, value));
+}
+
+function graphicRotationCenterCoord(item: GraphicItem, bounds: GraphicBounds): AnnotationPoint {
+  if ("origin" in item && item.origin) {
+    return item.origin;
+  }
+  return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+}
+
+/** SVG transform for rotation (deg, Modelica CCW) and mirror around origin or bounds center. */
+export function graphicOuterTransformSvg(
+  item: GraphicItem,
+  cs: CoordinateSystem | undefined,
+  svgW: number,
+  svgH: number,
+): string | undefined {
+  const bounds = getGraphicBounds(item);
+  if (!bounds) return undefined;
+  const centerCoord = graphicRotationCenterCoord(item, bounds);
+  const centerSvg = coordToSvg(centerCoord, cs, svgW, svgH);
+  const rotation = ("rotation" in item && item.rotation != null ? item.rotation : 0) as number;
+  const mirrorX = ("mirrorX" in item && item.mirrorX) ?? false;
+  const mirrorY = ("mirrorY" in item && item.mirrorY) ?? false;
+  const sx = mirrorX ? -1 : 1;
+  const sy = mirrorY ? -1 : 1;
+  if (!rotation && !mirrorX && !mirrorY) return undefined;
+  return `translate(${centerSvg.x},${centerSvg.y}) rotate(${-rotation}) scale(${sx},${sy}) translate(${-centerSvg.x},${-centerSvg.y})`;
+}
+
+function wrapGraphicNode(
+  reactKey: string,
+  item: GraphicItem,
+  inner: React.ReactNode,
+  cs: CoordinateSystem | undefined,
+  svgW: number,
+  svgH: number,
+): React.ReactNode {
+  const outerTransform = graphicOuterTransformSvg(item, cs, svgW, svgH);
+  const opacity = clampGraphicOpacity("opacity" in item ? item.opacity : undefined);
+  return (
+    <g key={reactKey} transform={outerTransform} opacity={opacity}>
+      {inner}
+    </g>
+  );
 }
 
 function isFilled(fillPattern?: string): boolean {
@@ -277,6 +393,16 @@ function transformPoints(points: AnnotationPoint[], rotation?: number, origin?: 
 }
 
 export function getGraphicBounds(item: GraphicItem): GraphicBounds | null {
+  if (item.type === "Group") {
+    const boxes = item.children.map((c) => getGraphicBounds(c)).filter((b): b is GraphicBounds => b != null);
+    if (boxes.length === 0) return null;
+    return {
+      minX: Math.min(...boxes.map((b) => b.minX)),
+      minY: Math.min(...boxes.map((b) => b.minY)),
+      maxX: Math.max(...boxes.map((b) => b.maxX)),
+      maxY: Math.max(...boxes.map((b) => b.maxY)),
+    };
+  }
   let points: AnnotationPoint[] = [];
   switch (item.type) {
     case "Line":
@@ -328,6 +454,12 @@ export function getConnectorAnchors(item: GraphicItem): ConnectorAnchor[] {
 export function translateGraphicItem(item: GraphicItem, delta: AnnotationPoint): GraphicItem {
   const movePoint = (point: AnnotationPoint) => ({ x: point.x + delta.x, y: point.y + delta.y });
   switch (item.type) {
+    case "Group":
+      return {
+        ...item,
+        children: item.children.map((c) => translateGraphicItem(c, delta)),
+        origin: item.origin ? movePoint(item.origin) : item.origin,
+      };
     case "Line":
       return {
         ...item,
@@ -377,6 +509,125 @@ function distanceToSegment(point: AnnotationPoint, a: AnnotationPoint, b: Annota
   });
 }
 
+function hitLeafGraphicItem(item: GraphicItem, point: AnnotationPoint, tolerance: number): boolean {
+  if (item.layerHidden) return false;
+  if (item.type === "Group") return false;
+  if (item.type === "Line" || item.type === "Polygon" || item.type === "BSpline") {
+    const points = transformPoints(item.points, item.rotation, item.origin);
+    if (points.length < 2) return false;
+    return points.some((current, currentIndex) => {
+      if (currentIndex === 0) return false;
+      return distanceToSegment(point, points[currentIndex - 1]!, current) <= tolerance;
+    });
+  }
+  const bounds = getGraphicBounds(item);
+  return !!(
+    bounds &&
+    point.x >= bounds.minX - tolerance &&
+    point.x <= bounds.maxX + tolerance &&
+    point.y >= bounds.minY - tolerance &&
+    point.y <= bounds.maxY + tolerance
+  );
+}
+
+function hitTestGraphicItem(item: GraphicItem, point: AnnotationPoint, tolerance: number): boolean {
+  if (item.layerHidden) return false;
+  if (item.type === "Group") {
+    for (let ci = item.children.length - 1; ci >= 0; ci -= 1) {
+      if (hitTestGraphicItem(item.children[ci]!, point, tolerance)) return true;
+    }
+    return false;
+  }
+  return hitLeafGraphicItem(item, point, tolerance);
+}
+
+function hitDeepestPathFromItem(item: GraphicItem, point: AnnotationPoint, tolerance: number): number[] | null {
+  if (item.layerHidden) return null;
+  if (item.type === "Group") {
+    for (let ci = item.children.length - 1; ci >= 0; ci -= 1) {
+      const ch = item.children[ci]!;
+      if (ch.layerHidden) continue;
+      const sub = hitDeepestPathFromItem(ch, point, tolerance);
+      if (sub !== null) return [ci, ...sub];
+    }
+    const b = getGraphicBounds(item);
+    if (
+      b &&
+      point.x >= b.minX - tolerance &&
+      point.x <= b.maxX + tolerance &&
+      point.y >= b.minY - tolerance &&
+      point.y <= b.maxY + tolerance
+    ) {
+      return [];
+    }
+    return null;
+  }
+  if (hitLeafGraphicItem(item, point, tolerance)) return [];
+  return null;
+}
+
+/**
+ * Deepest hit path: [rootIndex] or [rootIndex, childIndex, ...] inside nested Groups.
+ */
+export function findDeepestGraphicPath(
+  graphics: GraphicItem[],
+  point: AnnotationPoint,
+  tolerance = 8,
+): number[] | null {
+  for (let i = graphics.length - 1; i >= 0; i -= 1) {
+    const item = graphics[i];
+    if (!item || item.layerHidden) continue;
+    const suffix = hitDeepestPathFromItem(item, point, tolerance);
+    if (suffix !== null) return [i, ...suffix];
+  }
+  return null;
+}
+
+export function getGraphicAtPath(graphics: GraphicItem[], path: number[]): GraphicItem | null {
+  if (path.length === 0) return null;
+  let cur: GraphicItem | undefined = graphics[path[0]!];
+  if (!cur) return null;
+  for (let d = 1; d < path.length; d++) {
+    if (cur.type !== "Group") return null;
+    cur = cur.children[path[d]!];
+    if (!cur) return null;
+  }
+  return cur;
+}
+
+export function replaceGraphicAtPath(graphics: GraphicItem[], path: number[], next: GraphicItem): GraphicItem[] {
+  if (path.length === 0) return graphics;
+  const root = path[0]!;
+  if (root < 0 || root >= graphics.length) return graphics;
+  if (path.length === 1) {
+    const copy = [...graphics];
+    copy[root] = next;
+    return copy;
+  }
+  const item = graphics[root];
+  if (!item || item.type !== "Group") return graphics;
+  const newChildren = replaceGraphicAtPath(item.children, path.slice(1), next);
+  const copy = [...graphics];
+  copy[root] = { ...item, children: newChildren };
+  return copy;
+}
+
+export function removeGraphicAtPath(graphics: GraphicItem[], path: number[]): GraphicItem[] | null {
+  if (path.length === 0) return null;
+  const root = path[0]!;
+  if (root < 0 || root >= graphics.length) return null;
+  if (path.length === 1) {
+    return graphics.filter((_, i) => i !== root);
+  }
+  const item = graphics[root];
+  if (!item || item.type !== "Group") return null;
+  const newChildren = removeGraphicAtPath(item.children, path.slice(1));
+  if (newChildren === null) return null;
+  const copy = [...graphics];
+  copy[root] = { ...item, children: newChildren };
+  return copy;
+}
+
 export function findGraphicAtPoint(
   graphics: GraphicItem[],
   point: AnnotationPoint,
@@ -384,26 +635,8 @@ export function findGraphicAtPoint(
 ): number {
   for (let index = graphics.length - 1; index >= 0; index -= 1) {
     const item = graphics[index];
-    if (item.type === "Line" || item.type === "Polygon" || item.type === "BSpline") {
-      const points = transformPoints(item.points, item.rotation, item.origin);
-      if (points.length < 2) continue;
-      const hit = points.some((current, currentIndex) => {
-        if (currentIndex === 0) return false;
-        return distanceToSegment(point, points[currentIndex - 1], current) <= tolerance;
-      });
-      if (hit) return index;
-    } else {
-      const bounds = getGraphicBounds(item);
-      if (
-        bounds &&
-        point.x >= bounds.minX - tolerance &&
-        point.x <= bounds.maxX + tolerance &&
-        point.y >= bounds.minY - tolerance &&
-        point.y <= bounds.maxY + tolerance
-      ) {
-        return index;
-      }
-    }
+    if (!item || item.layerHidden) continue;
+    if (hitTestGraphicItem(item, point, tolerance)) return index;
   }
   return -1;
 }
@@ -418,50 +651,35 @@ function replaceTemplateTokens(text: string, instanceName?: string): string {
 
 function renderGraphicItem(
   item: GraphicItem,
-  idx: number,
+  pathId: string,
   cs?: CoordinateSystem,
   svgW = DEFAULT_ICON_SIZE,
   svgH = DEFAULT_ICON_SIZE,
   instanceName?: string,
 ): React.ReactNode {
-  const bounds = getGraphicBounds(item);
-  const rotation = item.rotation ?? 0;
-  const origin = item.origin;
-  const transform =
-    bounds && rotation
-      ? (() => {
-          const center = coordToSvg(origin ?? { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, cs, svgW, svgH);
-          return `rotate(${-rotation} ${center.x} ${center.y})`;
-        })()
-      : undefined;
-
+  if (item.layerHidden) return null;
   switch (item.type) {
     case "Line": {
       if (item.points.length < 2) return null;
       const pts = item.points.map((point) => coordToSvg(point, cs, svgW, svgH));
       const d = pts.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-      
-      // 获取虚线样式
-      let strokeDasharray: string | undefined;
-      if (item.pattern) {
-        switch (item.pattern.toLowerCase()) {
-          case "dashed": strokeDasharray = "8,4"; break;
-          case "dotted": strokeDasharray = "2,4"; break;
-          case "dotdashed": strokeDasharray = "2,4,8,4"; break;
-        }
-      }
-      
-      return (
-        <g key={idx} transform={transform}>
-          <path 
-            d={d} 
-            stroke={colorToCSS(item.color)} 
-            strokeWidth={item.thickness ?? 1} 
+      const strokeDasharray = patternStringToStrokeDasharray(item.pattern);
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <>
+          <path
+            d={d}
+            stroke={colorToCSS(item.color)}
+            strokeWidth={item.thickness ?? 1}
             fill="none"
             strokeDasharray={strokeDasharray}
           />
           {item.arrow && renderArrowheads(pts, item.arrow, item.color, item.arrowSize)}
-        </g>
+        </>,
+        cs,
+        svgW,
+        svgH,
       );
     }
     case "BSpline": {
@@ -469,28 +687,23 @@ function renderGraphicItem(
       const pts = item.points.map((point) => coordToSvg(point, cs, svgW, svgH));
       const smooth = item.smooth === "BSpline" || item.smooth === "true";
       const d = smooth ? createBSplinePath(pts) : pts.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-      
-      // 获取虚线样式
-      let strokeDasharray: string | undefined;
-      if (item.pattern) {
-        switch (item.pattern.toLowerCase()) {
-          case "dashed": strokeDasharray = "8,4"; break;
-          case "dotted": strokeDasharray = "2,4"; break;
-          case "dotdashed": strokeDasharray = "2,4,8,4"; break;
-        }
-      }
-      
-      return (
-        <g key={idx} transform={transform}>
-          <path 
-            d={d} 
-            stroke={colorToCSS(item.color)} 
-            strokeWidth={item.thickness ?? 1} 
+      const strokeDasharray = patternStringToStrokeDasharray(item.pattern);
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <>
+          <path
+            d={d}
+            stroke={colorToCSS(item.color)}
+            strokeWidth={item.thickness ?? 1}
             fill="none"
             strokeDasharray={strokeDasharray}
           />
           {item.arrow && renderArrowheads(pts, item.arrow, item.color, item.arrowSize)}
-        </g>
+        </>,
+        cs,
+        svgW,
+        svgH,
       );
     }
     case "Rectangle": {
@@ -500,26 +713,31 @@ function renderGraphicItem(
       // Determine fill - gradient takes precedence over solid color
       let fill: string;
       if (item.fillGradient) {
-        fill = `url(#gradient-${idx})`;
+        fill = `url(#gradient-${pathId})`;
       } else if (isFilled(item.fillPattern)) {
         fill = colorToCSS(item.fillColor);
       } else {
         fill = "none";
       }
       
-      return (
-        <g key={idx} transform={transform}>
-          <rect
-            x={rect.x}
-            y={rect.y}
-            width={rect.width}
-            height={rect.height}
-            rx={item.radius ?? 0}
-            stroke={colorToCSS(item.lineColor)}
-            strokeWidth={item.lineThickness ?? 1}
-            fill={fill}
-          />
-        </g>
+      const strokeDasharray = patternStringToStrokeDasharray(item.borderPattern);
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <rect
+          x={rect.x}
+          y={rect.y}
+          width={rect.width}
+          height={rect.height}
+          rx={item.radius ?? 0}
+          stroke={colorToCSS(item.lineColor)}
+          strokeWidth={item.lineThickness ?? 1}
+          fill={fill}
+          strokeDasharray={strokeDasharray}
+        />,
+        cs,
+        svgW,
+        svgH,
       );
     }
     case "Ellipse": {
@@ -533,7 +751,7 @@ function renderGraphicItem(
       // Determine fill - gradient takes precedence over solid color
       let fill: string;
       if (item.fillGradient) {
-        fill = `url(#gradient-${idx})`;
+        fill = `url(#gradient-${pathId})`;
       } else if (isFilled(item.fillPattern)) {
         fill = colorToCSS(item.fillColor);
       } else {
@@ -561,32 +779,40 @@ function renderGraphicItem(
 
         // 扇形路径：从中心到起点，沿弧到终点，回到中心
         const d = `M ${cx} ${cy} L ${x1} ${y1} A ${rx} ${ry} 0 ${largeArc} ${sweep} ${x2} ${y2} Z`;
-
-        return (
-          <g key={idx} transform={transform}>
-            <path
-              d={d}
-              stroke={colorToCSS(item.lineColor)}
-              strokeWidth={item.lineThickness ?? 1}
-              fill={fill}
-            />
-          </g>
-        );
-      }
-
-      // 完整椭圆
-      return (
-        <g key={idx} transform={transform}>
-          <ellipse
-            cx={cx}
-            cy={cy}
-            rx={rx}
-            ry={ry}
+        const strokeDasharray = patternStringToStrokeDasharray(item.linePattern);
+        return wrapGraphicNode(
+          pathId,
+          item,
+          <path
+            d={d}
             stroke={colorToCSS(item.lineColor)}
             strokeWidth={item.lineThickness ?? 1}
             fill={fill}
-          />
-        </g>
+            strokeDasharray={strokeDasharray}
+          />,
+          cs,
+          svgW,
+          svgH,
+        );
+      }
+
+      const strokeDasharray = patternStringToStrokeDasharray(item.linePattern);
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <ellipse
+          cx={cx}
+          cy={cy}
+          rx={rx}
+          ry={ry}
+          stroke={colorToCSS(item.lineColor)}
+          strokeWidth={item.lineThickness ?? 1}
+          fill={fill}
+          strokeDasharray={strokeDasharray}
+        />,
+        cs,
+        svgW,
+        svgH,
       );
     }
     case "Polygon": {
@@ -596,22 +822,27 @@ function renderGraphicItem(
       // Determine fill - gradient takes precedence over solid color
       let fill: string;
       if (item.fillGradient) {
-        fill = `url(#gradient-${idx})`;
+        fill = `url(#gradient-${pathId})`;
       } else if (isFilled(item.fillPattern)) {
         fill = colorToCSS(item.fillColor);
       } else {
         fill = "none";
       }
       
-      return (
-        <g key={idx} transform={transform}>
-          <polygon
-            points={pts.map((point) => `${point.x},${point.y}`).join(" ")}
-            stroke={colorToCSS(item.lineColor)}
-            strokeWidth={item.lineThickness ?? 1}
-            fill={fill}
-          />
-        </g>
+      const strokeDasharray = patternStringToStrokeDasharray(item.linePattern);
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <polygon
+          points={pts.map((point) => `${point.x},${point.y}`).join(" ")}
+          stroke={colorToCSS(item.lineColor)}
+          strokeWidth={item.lineThickness ?? 1}
+          fill={fill}
+          strokeDasharray={strokeDasharray}
+        />,
+        cs,
+        svgW,
+        svgH,
       );
     }
     case "Text": {
@@ -629,20 +860,23 @@ function renderGraphicItem(
           : anchor === "end"
             ? rect.x + rect.width - 2
             : rect.x + rect.width / 2;
-      return (
-        <g key={idx} transform={transform}>
-          <text
-            x={x}
-            y={rect.y + rect.height / 2}
-            textAnchor={anchor}
-            dominantBaseline="central"
-            fontSize={fontSize}
-            fill={colorToCSS(item.textColor ?? item.lineColor)}
-            fontFamily={item.fontName || "sans-serif"}
-          >
-            {text}
-          </text>
-        </g>
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <text
+          x={x}
+          y={rect.y + rect.height / 2}
+          textAnchor={anchor}
+          dominantBaseline="central"
+          fontSize={fontSize}
+          fill={colorToCSS(item.textColor ?? item.lineColor)}
+          fontFamily={item.fontName || "sans-serif"}
+        >
+          {text}
+        </text>,
+        cs,
+        svgW,
+        svgH,
       );
     }
     case "Bitmap": {
@@ -650,10 +884,27 @@ function renderGraphicItem(
       const rect = extentToSvgRect(item.extent, cs, svgW, svgH);
       const href = item.fileName || item.imageSource;
       if (!href) return null;
-      return (
-        <g key={idx} transform={transform}>
-          <image href={href} x={rect.x} y={rect.y} width={rect.width} height={rect.height} preserveAspectRatio="none" />
-        </g>
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <image href={href} x={rect.x} y={rect.y} width={rect.width} height={rect.height} preserveAspectRatio="none" />,
+        cs,
+        svgW,
+        svgH,
+      );
+    }
+    case "Group": {
+      return wrapGraphicNode(
+        pathId,
+        item,
+        <>
+          {item.children.map((child, j) =>
+            renderGraphicItem(child, `${pathId}-${j}`, cs, svgW, svgH, instanceName),
+          )}
+        </>,
+        cs,
+        svgW,
+        svgH,
       );
     }
     default:
@@ -710,11 +961,15 @@ export function IconSvg({
   size?: number;
 }) {
   const transform = rotation ? `rotate(${rotation} ${size / 2} ${size / 2})` : undefined;
+  const gradients = collectGradients(icon.graphics);
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="block">
+      <defs>
+        {gradients.map((grad) => renderGradientDefinition(grad))}
+      </defs>
       <g transform={transform}>
         {icon.graphics.map((graphic, index) =>
-          renderGraphicItem(graphic, index, icon.coordinateSystem, size, size, instanceName),
+          renderGraphicItem(graphic, String(index), icon.coordinateSystem, size, size, instanceName),
         )}
       </g>
     </svg>
@@ -725,19 +980,27 @@ export function AnnotationGraphicsSvg({
   annotation,
   size,
   instanceName,
+  selectedGraphicPath = null,
   selectedGraphicIndex = -1,
   className,
 }: {
   annotation: IconDiagramAnnotation;
   size: { width: number; height: number };
   instanceName?: string;
+  /** Preferred: nested selection [root, child, ...]. */
+  selectedGraphicPath?: number[] | null;
+  /** Fallback when path is not provided. */
   selectedGraphicIndex?: number;
   className?: string;
 }) {
   const width = Math.max(1, size.width);
   const height = Math.max(1, size.height);
   const selectedGraphic =
-    selectedGraphicIndex >= 0 ? annotation.graphics[selectedGraphicIndex] : null;
+    selectedGraphicPath != null && selectedGraphicPath.length > 0
+      ? getGraphicAtPath(annotation.graphics, selectedGraphicPath)
+      : selectedGraphicIndex >= 0
+        ? annotation.graphics[selectedGraphicIndex]
+        : null;
 
   // Collect gradient definitions from graphics
   const gradients = collectGradients(annotation.graphics);
@@ -750,10 +1013,10 @@ export function AnnotationGraphicsSvg({
       className={className ?? "block pointer-events-none"}
     >
       <defs>
-        {gradients.map((grad, idx) => renderGradientDefinition(grad, idx))}
+        {gradients.map((grad) => renderGradientDefinition(grad))}
       </defs>
       {annotation.graphics.map((graphic, index) =>
-        renderGraphicItem(graphic, index, annotation.coordinateSystem, width, height, instanceName),
+        renderGraphicItem(graphic, String(index), annotation.coordinateSystem, width, height, instanceName),
       )}
       {selectedGraphic && renderSelection(selectedGraphic, annotation.coordinateSystem, width, height)}
     </svg>
@@ -761,40 +1024,42 @@ export function AnnotationGraphicsSvg({
 }
 
 /**
- * Collect all gradient definitions from graphics
+ * Collect all gradient definitions from graphics (nested paths for groups).
  */
-function collectGradients(graphics: GraphicItem[]): Array<{ id: string; gradient: LinearGradient | RadialGradient; itemIndex: number }> {
-  const gradients: Array<{ id: string; gradient: LinearGradient | RadialGradient; itemIndex: number }> = [];
+function collectGradients(graphics: GraphicItem[]): Array<{ id: string; gradient: LinearGradient | RadialGradient }> {
+  const gradients: Array<{ id: string; gradient: LinearGradient | RadialGradient }> = [];
 
-  for (let idx = 0; idx < graphics.length; idx++) {
-    const item = graphics[idx];
-    if (item && "fillGradient" in item && item.fillGradient) {
-      const id = `gradient-${idx}`;
-      if (item.fillGradient.type === "linearGradient") {
-        gradients.push({ id, gradient: item.fillGradient.gradient, itemIndex: idx });
-      } else if (item.fillGradient.type === "radialGradient") {
-        gradients.push({ id, gradient: item.fillGradient.gradient, itemIndex: idx });
+  function walk(items: GraphicItem[], prefix: string) {
+    items.forEach((item, i) => {
+      const path = prefix === "" ? `${i}` : `${prefix}-${i}`;
+      if (item.type === "Group") {
+        walk(item.children, path);
+      } else if ("fillGradient" in item && item.fillGradient) {
+        const id = `gradient-${path}`;
+        if (item.fillGradient.type === "linearGradient") {
+          gradients.push({ id, gradient: item.fillGradient.gradient });
+        } else if (item.fillGradient.type === "radialGradient") {
+          gradients.push({ id, gradient: item.fillGradient.gradient });
+        }
       }
-    }
+    });
   }
 
+  walk(graphics, "");
   return gradients;
 }
 
 /**
  * Render gradient definition as SVG def element
  */
-function renderGradientDefinition(
-  grad: { id: string; gradient: LinearGradient | RadialGradient },
-  idx: number,
-): React.ReactNode {
+function renderGradientDefinition(grad: { id: string; gradient: LinearGradient | RadialGradient }): React.ReactNode {
   const { id, gradient } = grad;
 
   if ("x1" in gradient) {
     // Linear gradient
     return (
       <linearGradient
-        key={idx}
+        key={id}
         id={id}
         x1={gradient.x1}
         y1={gradient.y1}
@@ -815,7 +1080,7 @@ function renderGradientDefinition(
     // Radial gradient
     return (
       <radialGradient
-        key={idx}
+        key={id}
         id={id}
         cx={gradient.cx}
         cy={gradient.cy}
@@ -834,8 +1099,7 @@ function renderGradientDefinition(
   }
 }
 
-export { CONNECTOR_COLORS } from "./diagramConnectorColors";
-import { CONNECTOR_COLORS } from "./diagramConnectorColors";
+export { CONNECTOR_COLORS };
 
 export function connectorHandleStyle(
   kind?: string,
