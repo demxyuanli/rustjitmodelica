@@ -11,6 +11,8 @@ pub struct JitValidateOptions {
     pub solver: Option<String>,
     pub output_interval: Option<f64>,
     pub coarse_constrainedby_only: Option<bool>,
+    /// `full` | `parse` | `flatten` | `analyze` — validation stops after this tier (JIT only for `full`).
+    pub validation_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

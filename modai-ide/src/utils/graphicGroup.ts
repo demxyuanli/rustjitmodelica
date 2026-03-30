@@ -2,7 +2,12 @@
  * Graphic grouping utilities
  */
 
-import type { GraphicItem, AnnotationPoint, GraphicBounds, GraphicGroup } from "../components/DiagramSvgRenderer";
+import type {
+  AnnotationPoint,
+  GraphicBounds,
+  GraphicGroup,
+  GraphicItem,
+} from "../components/diagramGraphicTypes";
 import { getGraphicBounds, translateGraphicItem } from "../components/DiagramSvgRenderer";
 
 /**

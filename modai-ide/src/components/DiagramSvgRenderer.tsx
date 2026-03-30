@@ -1,256 +1,37 @@
 import React from "react";
 import { createBSplinePath, renderArrowheads } from "./DiagramSvgArrows";
 import { CONNECTOR_COLORS } from "./diagramConnectorColors";
+import type {
+  AnnotationExtent,
+  AnnotationPoint,
+  ConnectorAnchor,
+  CoordinateSystem,
+  GraphicBitmap,
+  GraphicBSpline,
+  GraphicBounds,
+  GraphicEditHandle,
+  GraphicEllipse,
+  GraphicItem,
+  GraphicLine,
+  GraphicPolygon,
+  GraphicRectangle,
+  GraphicText,
+  IconDiagramAnnotation,
+  LinearGradient,
+  RadialGradient,
+} from "./diagramGraphicTypes";
+import { DEFAULT_ICON_SIZE } from "./diagramGraphicTypes";
+import { colorToCSS, patternStringToStrokeDasharray } from "./diagramSvg/diagramSvgStyle";
 
-export interface AnnotationPoint { x: number; y: number }
-export interface AnnotationExtent { p1: AnnotationPoint; p2: AnnotationPoint }
-export interface AnnotationColor { r: number; g: number; b: number }
+export * from "./diagramGraphicTypes";
+export { colorToCSS, patternStringToStrokeDasharray } from "./diagramSvg/diagramSvgStyle";
 
-/** Arrow type for line endpoints */
-export type ArrowType = "none" | "arrow" | "filled" | "open" | "tshape" | "circle";
-
-/** Fill pattern for shapes */
-export type FillPattern = "solid" | "horizontal" | "vertical" | "cross" | "diagCross" | "forward" | "backward" | "none";
-
-/** Border pattern for rectangles */
-export type BorderPattern = "solid" | "dashed" | "dotted" | "dotDashed";
-
-/** Line pattern for strokes */
-export type LinePattern = "solid" | "dashed" | "dotted" | "dotDashed";
-
-/** Gradient stop for gradient fills */
-export interface GradientStop {
-  offset: number;
-  color: AnnotationColor;
-  opacity?: number;
-}
-
-/** Linear gradient specification */
-export interface LinearGradient {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  stops: GradientStop[];
-}
-
-/** Radial gradient specification */
-export interface RadialGradient {
-  cx: number;
-  cy: number;
-  r: number;
-  stops: GradientStop[];
-}
-
-/** Fill definition - solid color or gradient */
-export type FillDefinition =
-  | { type: "solid"; color: AnnotationColor }
-  | { type: "linearGradient"; gradient: LinearGradient }
-  | { type: "radialGradient"; gradient: RadialGradient };
-
-export interface GraphicLine {
-  type: "Line";
-  points: AnnotationPoint[];
-  color?: AnnotationColor;
-  thickness?: number;
-  pattern?: string;
-  smooth?: string;
-  arrow?: string[];
-  arrowSize?: number;
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-export interface GraphicRectangle {
-  type: "Rectangle";
-  extent?: AnnotationExtent;
-  lineColor?: AnnotationColor;
-  fillColor?: AnnotationColor;
-  fillPattern?: string;
-  fillGradient?: { type: "linearGradient"; gradient: LinearGradient } | { type: "radialGradient"; gradient: RadialGradient };
-  borderPattern?: string;
-  lineThickness?: number;
-  radius?: number;
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-export interface GraphicEllipse {
-  type: "Ellipse";
-  extent?: AnnotationExtent;
-  lineColor?: AnnotationColor;
-  fillColor?: AnnotationColor;
-  fillPattern?: string;
-  fillGradient?: { type: "linearGradient"; gradient: LinearGradient } | { type: "radialGradient"; gradient: RadialGradient };
-  startAngle?: number;
-  endAngle?: number;
-  lineThickness?: number;
-  linePattern?: string;
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-export interface GraphicPolygon {
-  type: "Polygon";
-  points: AnnotationPoint[];
-  lineColor?: AnnotationColor;
-  fillColor?: AnnotationColor;
-  fillPattern?: string;
-  fillGradient?: { type: "linearGradient"; gradient: LinearGradient } | { type: "radialGradient"; gradient: RadialGradient };
-  lineThickness?: number;
-  linePattern?: string;
-  smooth?: string;
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-export interface GraphicText {
-  type: "Text";
-  extent?: AnnotationExtent;
-  textString?: string;
-  fontSize?: number;
-  fontName?: string;
-  textColor?: AnnotationColor;
-  lineColor?: AnnotationColor;
-  fillColor?: AnnotationColor;
-  horizontalAlignment?: string;
-  fillPattern?: string;
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-export interface GraphicBitmap {
-  type: "Bitmap";
-  extent?: AnnotationExtent;
-  fileName?: string;
-  imageSource?: string;
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-/** Bezier spline curve for smooth connections */
-export interface GraphicBSpline {
-  type: "BSpline";
-  points: AnnotationPoint[];
-  color?: AnnotationColor;
-  thickness?: number;
-  pattern?: string;
-  smooth?: string;
-  arrow?: string[];
-  arrowSize?: number;
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-/** Editor-only group; children share z-order under one top-level layer row. */
-export interface GraphicGroup {
-  type: "Group";
-  children: GraphicItem[];
-  rotation?: number;
-  origin?: AnnotationPoint;
-  opacity?: number;
-  mirrorX?: boolean;
-  mirrorY?: boolean;
-  layerHidden?: boolean;
-  layerLocked?: boolean;
-}
-
-export type GraphicItem =
-  | GraphicLine
-  | GraphicRectangle
-  | GraphicEllipse
-  | GraphicPolygon
-  | GraphicText
-  | GraphicBitmap
-  | GraphicBSpline
-  | GraphicGroup;
-
-export interface CoordinateSystem {
-  extent?: AnnotationExtent;
-  preserveAspectRatio?: boolean;
-  initialScale?: number;
-}
-
-export interface IconDiagramAnnotation {
-  coordinateSystem?: CoordinateSystem;
-  graphics: GraphicItem[];
-}
-
-export interface LineAnnotation {
-  points: AnnotationPoint[];
-  color?: AnnotationColor;
-  thickness?: number;
-  pattern?: string;
-  smooth?: string;
-}
-
-export interface GraphicBounds {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
-export interface ConnectorAnchor {
-  id: string;
-  point: AnnotationPoint;
-}
-
-export const DEFAULT_ICON_SIZE = 40;
-
-export function colorToCSS(c?: AnnotationColor): string {
-  if (!c) return "currentColor";
-  return `rgb(${c.r},${c.g},${c.b})`;
-}
-
-/** Map Modelica-style line/border pattern names to SVG stroke-dasharray. */
-export function patternStringToStrokeDasharray(pattern?: string): string | undefined {
-  if (!pattern) return undefined;
-  const norm = pattern
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/linepattern\./g, "")
-    .replace(/borderpattern\./g, "");
-  if (norm.includes("dotdashed") || norm.includes("dashdot")) return "2 4 8 4";
-  if (norm.includes("dotted")) return "2 4";
-  if (norm.includes("dashed")) return "8 4";
-  if (norm.includes("solid") || norm === "none") return undefined;
-  return undefined;
+function warnIfSlowDiagramRender(label: string, startMs: number) {
+  if (typeof performance === "undefined") return;
+  const dt = performance.now() - startMs;
+  if (dt > 16) {
+    console.warn(`[DiagramSvg] ${label} took ${dt.toFixed(2)}ms`);
+  }
 }
 
 function clampGraphicOpacity(value?: number): number {
@@ -490,6 +271,169 @@ export function translateGraphicItem(item: GraphicItem, delta: AnnotationPoint):
     default:
       return item;
   }
+}
+
+/** Minimum width/height in model units when resizing extent-based graphics. */
+export const EDIT_EXTENT_MIN_SPAN = 5;
+
+export function inverseRotatePoint(point: AnnotationPoint, rotation = 0, origin?: AnnotationPoint): AnnotationPoint {
+  if (!rotation) return point;
+  const center = origin ?? { x: 0, y: 0 };
+  const radians = (-rotation * Math.PI) / 180;
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return {
+    x: center.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+    y: center.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+  };
+}
+
+/** Axis-aligned corners in local model space: top-left, top-right, bottom-right, bottom-left (Modelica Y up). */
+export function localExtentCorners(ext: AnnotationExtent): [AnnotationPoint, AnnotationPoint, AnnotationPoint, AnnotationPoint] {
+  const minX = Math.min(ext.p1.x, ext.p2.x);
+  const maxX = Math.max(ext.p1.x, ext.p2.x);
+  const minY = Math.min(ext.p1.y, ext.p2.y);
+  const maxY = Math.max(ext.p1.y, ext.p2.y);
+  return [
+    { x: minX, y: maxY },
+    { x: maxX, y: maxY },
+    { x: maxX, y: minY },
+    { x: minX, y: minY },
+  ];
+}
+
+export function resizeExtentByLocalCorner(
+  ext: AnnotationExtent,
+  cornerIndex: number,
+  newLocal: AnnotationPoint,
+  minSpan: number,
+): AnnotationExtent {
+  const corners = localExtentCorners(ext);
+  const fixed = corners[(cornerIndex + 2) % 4]!;
+  let minX = Math.min(fixed.x, newLocal.x);
+  let maxX = Math.max(fixed.x, newLocal.x);
+  let minY = Math.min(fixed.y, newLocal.y);
+  let maxY = Math.max(fixed.y, newLocal.y);
+  if (maxX - minX < minSpan) {
+    const mid = (minX + maxX) / 2;
+    minX = mid - minSpan / 2;
+    maxX = mid + minSpan / 2;
+  }
+  if (maxY - minY < minSpan) {
+    const mid = (minY + maxY) / 2;
+    minY = mid - minSpan / 2;
+    maxY = mid + minSpan / 2;
+  }
+  return { p1: { x: minX, y: minY }, p2: { x: maxX, y: maxY } };
+}
+
+export function getEditHandleHitTolerance(cs?: CoordinateSystem): number {
+  const ext = getCoordinateExtent(cs);
+  const cw = Math.abs(ext.p2.x - ext.p1.x) || 200;
+  const ch = Math.abs(ext.p2.y - ext.p1.y) || 200;
+  return Math.max(10, Math.min(cw, ch) * 0.04);
+}
+
+export function listGraphicEditHandlesInWorld(
+  item: GraphicItem,
+): Array<{ handle: GraphicEditHandle; world: AnnotationPoint }> {
+  if (item.type === "Group" || item.layerHidden) return [];
+  const rot = "rotation" in item && item.rotation != null ? item.rotation : 0;
+  const origin = "origin" in item ? item.origin : undefined;
+  if (item.type === "Rectangle" || item.type === "Ellipse" || item.type === "Text" || item.type === "Bitmap") {
+    if (!item.extent) return [];
+    const corners = localExtentCorners(item.extent);
+    return corners.map((local, cornerIndex) => ({
+      handle: { kind: "extent-corner" as const, cornerIndex },
+      world: rotatePoint(local, rot, origin),
+    }));
+  }
+  if (item.type === "Line" || item.type === "Polygon" || item.type === "BSpline") {
+    return item.points.map((local, pointIndex) => ({
+      handle: { kind: "poly-point" as const, pointIndex },
+      world: rotatePoint(local, rot, origin),
+    }));
+  }
+  return [];
+}
+
+export function hitGraphicEditHandle(
+  item: GraphicItem,
+  worldPoint: AnnotationPoint,
+  tolerance: number,
+): GraphicEditHandle | null {
+  const list = listGraphicEditHandlesInWorld(item);
+  for (const { handle, world } of list) {
+    if (pointDistance(worldPoint, world) <= tolerance) return handle;
+  }
+  return null;
+}
+
+function applyExtentCornerDrag(
+  item: GraphicRectangle | GraphicEllipse | GraphicText | GraphicBitmap,
+  cornerIndex: number,
+  newWorld: AnnotationPoint,
+  minSpan: number,
+): GraphicRectangle | GraphicEllipse | GraphicText | GraphicBitmap {
+  if (!item.extent) return item;
+  const nl = inverseRotatePoint(newWorld, item.rotation ?? 0, item.origin);
+  const nextExt = resizeExtentByLocalCorner(item.extent, cornerIndex, nl, minSpan);
+  return { ...item, extent: nextExt };
+}
+
+function applyPolylinePointDrag(
+  item: GraphicLine | GraphicPolygon | GraphicBSpline,
+  pointIndex: number,
+  newWorld: AnnotationPoint,
+): GraphicLine | GraphicPolygon | GraphicBSpline {
+  const nl = inverseRotatePoint(newWorld, item.rotation ?? 0, item.origin);
+  const pts = [...item.points];
+  if (pointIndex < 0 || pointIndex >= pts.length) return item;
+  pts[pointIndex] = nl;
+  return { ...item, points: pts };
+}
+
+export function applyGraphicEditHandleDrag(
+  item: GraphicItem,
+  handle: GraphicEditHandle,
+  newWorld: AnnotationPoint,
+  minSpan = EDIT_EXTENT_MIN_SPAN,
+): GraphicItem {
+  if (handle.kind === "extent-corner") {
+    if (item.type === "Rectangle" || item.type === "Ellipse" || item.type === "Text" || item.type === "Bitmap") {
+      return applyExtentCornerDrag(item, handle.cornerIndex, newWorld, minSpan);
+    }
+    return item;
+  }
+  if (handle.kind === "poly-point") {
+    if (item.type === "Line" || item.type === "Polygon" || item.type === "BSpline") {
+      return applyPolylinePointDrag(item, handle.pointIndex, newWorld);
+    }
+    return item;
+  }
+  return item;
+}
+
+export function rectangleToPolygonGraphic(item: GraphicRectangle): GraphicPolygon {
+  const ext = item.extent ?? { p1: { x: -60, y: 40 }, p2: { x: 60, y: -40 } };
+  const [tl, tr, br, bl] = localExtentCorners(ext);
+  return {
+    type: "Polygon",
+    points: [tl, tr, br, bl],
+    lineColor: item.lineColor,
+    fillColor: item.fillColor,
+    fillPattern: item.fillPattern,
+    fillGradient: item.fillGradient,
+    lineThickness: item.lineThickness,
+    linePattern: item.borderPattern,
+    rotation: item.rotation,
+    origin: item.origin,
+    opacity: item.opacity,
+    mirrorX: item.mirrorX,
+    mirrorY: item.mirrorY,
+    layerHidden: item.layerHidden,
+    layerLocked: item.layerLocked,
+  };
 }
 
 function pointDistance(a: AnnotationPoint, b: AnnotationPoint): number {
@@ -960,9 +904,10 @@ export function IconSvg({
   rotation?: number;
   size?: number;
 }) {
+  const t0 = typeof performance !== "undefined" ? performance.now() : 0;
   const transform = rotation ? `rotate(${rotation} ${size / 2} ${size / 2})` : undefined;
   const gradients = collectGradients(icon.graphics);
-  return (
+  const el = (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="block">
       <defs>
         {gradients.map((grad) => renderGradientDefinition(grad))}
@@ -974,6 +919,8 @@ export function IconSvg({
       </g>
     </svg>
   );
+  warnIfSlowDiagramRender("IconSvg", t0);
+  return el;
 }
 
 export function AnnotationGraphicsSvg({
@@ -993,6 +940,7 @@ export function AnnotationGraphicsSvg({
   selectedGraphicIndex?: number;
   className?: string;
 }) {
+  const t0 = typeof performance !== "undefined" ? performance.now() : 0;
   const width = Math.max(1, size.width);
   const height = Math.max(1, size.height);
   const selectedGraphic =
@@ -1005,7 +953,7 @@ export function AnnotationGraphicsSvg({
   // Collect gradient definitions from graphics
   const gradients = collectGradients(annotation.graphics);
 
-  return (
+  const el = (
     <svg
       width={width}
       height={height}
@@ -1021,6 +969,8 @@ export function AnnotationGraphicsSvg({
       {selectedGraphic && renderSelection(selectedGraphic, annotation.coordinateSystem, width, height)}
     </svg>
   );
+  warnIfSlowDiagramRender("AnnotationGraphicsSvg", t0);
+  return el;
 }
 
 /**

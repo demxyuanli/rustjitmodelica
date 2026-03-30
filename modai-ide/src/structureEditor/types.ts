@@ -2,7 +2,7 @@ import type {
   AnnotationPoint,
   IconDiagramAnnotation,
   LineAnnotation,
-} from "../components/DiagramSvgRenderer";
+} from "../components/diagramGraphicTypes";
 
 export interface DiagramNodeData {
   [key: string]: unknown;

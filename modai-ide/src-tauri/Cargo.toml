@@ -38,4 +38,6 @@ directories = "5"
 once_cell = "1"
 modai-worker = { path = "../../modai-worker" }
 modai-protocol = { path = "../../crates/modai-protocol" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 

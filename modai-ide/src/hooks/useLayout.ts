@@ -276,3 +276,5 @@ export function useLayout() {
     startResizeLeft, startResizeRight, startResizeBottom,
   };
 }
+
+export type ModelicaLayoutApi = ReturnType<typeof useLayout>;

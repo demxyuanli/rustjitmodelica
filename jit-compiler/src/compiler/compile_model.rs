@@ -21,7 +21,7 @@ use crate::jit::Jit;
 use super::{
     c_codegen, collect_all_called_names, collect_external_calls, inline, jacobian,
     solvable_scale_warn, Artifacts, ClockPartitionScheduleEntry, ClockPartitionTrigger,
-    CompileOutput, CompilePerfReport, Compiler,
+    CompileOutput, CompilePerfReport, CompileStopPhase, Compiler, ValidationAnalyzedSummary,
 };
 use super::pipeline::{
     analyze_equations, build_runtime_algorithms, classify_variables,
@@ -295,6 +295,12 @@ pub(super) fn compile(
             eprintln!("[perf] compile_phase.load_model_ms={}", perf_report.load_model_ms);
         }
 
+        if matches!(compiler.options.compile_stop, CompileStopPhase::Parse) {
+            apply_fallback_snapshot(&mut perf_report);
+            compiler.last_compile_perf = Some(perf_report);
+            return Ok(CompileOutput::ValidationParseOk);
+        }
+
         if root_model.as_ref().is_function {
             if !compiler.options.quiet {
                 if compiler.options.function_args.is_some() {
@@ -381,6 +387,14 @@ pub(super) fn compile(
         }
         let total_equations = frontend.total_equations;
         let total_declarations = frontend.total_declarations;
+        if matches!(compiler.options.compile_stop, CompileStopPhase::Flatten) {
+            apply_fallback_snapshot(&mut perf_report);
+            compiler.last_compile_perf = Some(perf_report);
+            return Ok(CompileOutput::ValidationFlattenOk {
+                total_equations,
+                total_declarations,
+            });
+        }
         if !compiler.options.quiet {
             println!("{}", i18n::msg("flattened_equations", &[&total_equations]));
             println!(
@@ -535,6 +549,19 @@ pub(super) fn compile(
                 ),
                 source: None,
             });
+        }
+
+        if matches!(compiler.options.compile_stop, CompileStopPhase::Analyze) {
+            apply_fallback_snapshot(&mut perf_report);
+            compiler.last_compile_perf = Some(perf_report);
+            return Ok(CompileOutput::ValidationAnalyzed(ValidationAnalyzedSummary {
+                state_vars: state_vars_sorted.clone(),
+                output_vars: output_vars.clone(),
+                total_equations,
+                total_declarations,
+                alg_equation_count: alg_equations.len(),
+                diff_equation_count: diff_equations.len(),
+            }));
         }
 
         let symbolic_ode_jacobian = symbolic_ode_jacobian_matrix.is_some();

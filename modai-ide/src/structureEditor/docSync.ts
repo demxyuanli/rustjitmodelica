@@ -1,5 +1,5 @@
 import type { GraphicModelState, GraphicalDocumentModel } from "../types";
-import type { IconDiagramAnnotation, LineAnnotation } from "../components/DiagramSvgRenderer";
+import type { IconDiagramAnnotation, LineAnnotation } from "../components/diagramGraphicTypes";
 import type {
   ComponentData,
   ConnectionData,
@@ -10,6 +10,7 @@ import type {
   LayoutPoint,
   ParamValue,
 } from "./types";
+import { GRID_GAP, ROW_GAP } from "./layoutConstants";
 
 export const DEFAULT_HANDLE_ID = "__default__";
 export const DEBOUNCE_MS = 600;
@@ -31,9 +32,6 @@ export function nodeAndHandleToPath(nodeId: string, handleId: string): string {
   if (handleId === DEFAULT_HANDLE_ID || !handleId) return nodeId;
   return `${nodeId}.${handleId}`;
 }
-
-const GRID_GAP = 180;
-const ROW_GAP = 120;
 
 export function documentToDiagram(document: DiagramDocument): DiagramModel {
   return {

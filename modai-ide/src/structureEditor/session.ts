@@ -1,4 +1,4 @@
-import type { GraphicItem } from "../components/DiagramSvgRenderer";
+import type { GraphicItem } from "../components/diagramGraphicTypes";
 import {
   attachFlowRoles,
   buildUndoHistoryKey,
@@ -10,9 +10,7 @@ import {
   type DiagramDocument,
 } from "./docSync";
 import type { DiagramLink, DiagramNode, LayoutPoint } from "./types";
-
-const MAX_UNDO = 50;
-const MERGE_MS = 300;
+import { MAX_UNDO, MERGE_MS } from "./layoutConstants";
 
 function cloneDoc(d: DiagramDocument): DiagramDocument {
   return structuredClone(d);
@@ -32,6 +30,9 @@ export class StructureGraphSession {
   private redoStack: UndoEntry[] = [];
   private lastUndoKey = "";
   private skipUndoPush = false;
+  /** Monotonic counter for document content; used to bind skip-next-undo to a specific doc generation. */
+  private docContentVersion = 0;
+  private skipUndoAtVersion = -1;
 
   subscribe = (fn: () => void) => {
     this.subs.add(fn);
@@ -94,18 +95,30 @@ export class StructureGraphSession {
     this.undoStack = [];
     this.redoStack = [];
     this.lastUndoKey = "";
+    this.skipUndoPush = false;
+    this.skipUndoAtVersion = -1;
   }
 
   setSkipNextUndoPush() {
     this.skipUndoPush = true;
+    this.skipUndoAtVersion = this.docContentVersion;
+  }
+
+  private bumpDocContentVersion() {
+    this.docContentVersion++;
   }
 
   private pushUndo(nodes: DiagramNode[], links: DiagramLink[]) {
     if (!this.doc) return;
     if (this.skipUndoPush) {
+      if (this.skipUndoAtVersion === this.docContentVersion) {
+        this.skipUndoPush = false;
+        this.skipUndoAtVersion = -1;
+        this.lastUndoKey = buildUndoHistoryKey(nodes, links);
+        return;
+      }
       this.skipUndoPush = false;
-      this.lastUndoKey = buildUndoHistoryKey(nodes, links);
-      return;
+      this.skipUndoAtVersion = -1;
     }
     if (nodes.length === 0 && links.length === 0) return;
     const k = buildUndoHistoryKey(nodes, links);
@@ -132,6 +145,8 @@ export class StructureGraphSession {
 
   loadFromServer(d: DiagramDocument, resetUndo: boolean) {
     this.doc = cloneDoc(d);
+    this.docContentVersion = 0;
+    this.bumpDocContentVersion();
     if (resetUndo) {
       this.clearUndo();
       this.undoStack = [{ doc: cloneDoc(d), ts: Date.now() }];
@@ -144,6 +159,8 @@ export class StructureGraphSession {
 
   applyConflictRefresh(d: DiagramDocument) {
     this.doc = cloneDoc(d);
+    this.docContentVersion = 0;
+    this.bumpDocContentVersion();
     this.selection = [];
     this.clearUndo();
     this.undoStack = [{ doc: cloneDoc(d), ts: Date.now() }];
@@ -156,6 +173,7 @@ export class StructureGraphSession {
     this.doc = null;
     this.selection = [];
     this.sim = null;
+    this.docContentVersion = 0;
     this.clearUndo();
     this.emit();
   }
@@ -192,6 +210,7 @@ export class StructureGraphSession {
     }
     const layout = { ...(this.doc.graphical.layout ?? {}), [id]: p };
     this.doc = { ...this.doc, graphical: { ...this.doc.graphical, layout } };
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.afterTopo(nodes, links);
   }
@@ -201,6 +220,7 @@ export class StructureGraphSession {
     const from = nodeAndHandleToPath(src, sp);
     const to = nodeAndHandleToPath(tgt, tp);
     this.doc = { ...this.doc, connections: [...this.doc.connections, { from, to }] };
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.afterTopo(nodes, links);
   }
@@ -228,6 +248,7 @@ export class StructureGraphSession {
       graphical: { ...this.doc.graphical, layout },
     };
     this.selection = this.selection.filter((id) => !nodeSet.has(id) && !linkSet.has(id));
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.afterTopo(nodes, links);
   }
@@ -251,6 +272,7 @@ export class StructureGraphSession {
       components: [...this.doc.components, comp],
       graphical: { ...this.doc.graphical, layout },
     };
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.afterTopo(nodes, links);
   }
@@ -259,6 +281,7 @@ export class StructureGraphSession {
     if (!this.doc) return;
     const layout = { ...(this.doc.graphical.layout ?? {}), ...positions };
     this.doc = { ...this.doc, graphical: { ...this.doc.graphical, layout } };
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.afterTopo(nodes, links);
   }
@@ -274,6 +297,7 @@ export class StructureGraphSession {
       return { ...c, params };
     });
     this.doc = { ...this.doc, components };
+    this.bumpDocContentVersion();
     this.emit();
   }
 
@@ -293,6 +317,7 @@ export class StructureGraphSession {
       components,
       graphical: { ...this.doc.graphical, layout },
     };
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.afterTopo(nodes, links);
   }
@@ -310,6 +335,7 @@ export class StructureGraphSession {
       : c,
     );
     this.doc = { ...this.doc, connections };
+    this.bumpDocContentVersion();
     const next = this.getNodesLinksForCanvas(() => {});
     this.afterTopo(next.nodes, next.links);
   }
@@ -357,6 +383,7 @@ export class StructureGraphSession {
         },
       };
     }
+    this.bumpDocContentVersion();
     const now = Date.now();
     const snap = cloneDoc(this.doc);
     const top = this.undoStack[this.undoStack.length - 1];
@@ -387,9 +414,11 @@ export class StructureGraphSession {
     const prev = this.undoStack[this.undoStack.length - 1];
     if (!prev) return;
     this.doc = cloneDoc(prev.doc);
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.lastUndoKey = buildUndoHistoryKey(nodes, links);
     this.skipUndoPush = true;
+    this.skipUndoAtVersion = this.docContentVersion;
     this.emit();
   }
 
@@ -398,9 +427,11 @@ export class StructureGraphSession {
     if (!item) return;
     this.undoStack.push(item);
     this.doc = cloneDoc(item.doc);
+    this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
     this.lastUndoKey = buildUndoHistoryKey(nodes, links);
     this.skipUndoPush = true;
+    this.skipUndoAtVersion = this.docContentVersion;
     this.emit();
   }
 

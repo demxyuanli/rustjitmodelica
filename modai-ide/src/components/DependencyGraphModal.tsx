@@ -1,6 +1,7 @@
-import { useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, Maximize2, X } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { ZoomIn, ZoomOut, Maximize2, Settings, X } from "lucide-react";
 import { t } from "../i18n";
+import type { EquationGraphMode } from "../api/tauri";
 import {
   EquationGraphView,
   type LayoutAlgorithm,
@@ -8,6 +9,7 @@ import {
   type EquationGraphLayoutOptions,
 } from "./EquationGraphView";
 import type { JointPaperHandle } from "../utils/jointUtils";
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
 
 export interface DependencyGraphModalProps {
   open: boolean;
@@ -15,6 +17,10 @@ export interface DependencyGraphModalProps {
   code: string;
   modelName: string;
   projectDir: string | null | undefined;
+  graphMode?: EquationGraphMode;
+  onGraphModeChange?: (mode: EquationGraphMode) => void;
+  dependencyGraphBehavior?: Partial<DependencyGraphBehavior>;
+  onOpenDependencyGraphSettings?: () => void;
 }
 
 const ALGORITHMS: { value: LayoutAlgorithm; labelKey: string }[] = [
@@ -36,10 +42,21 @@ export function DependencyGraphModal({
   code,
   modelName,
   projectDir,
+  graphMode: graphModeProp,
+  onGraphModeChange: onGraphModeChangeParent,
+  dependencyGraphBehavior,
+  onOpenDependencyGraphSettings,
 }: DependencyGraphModalProps) {
   const [algorithm, setAlgorithm] = useState<LayoutAlgorithm>("layered");
   const [direction, setDirection] = useState<LayoutDirection>("RIGHT");
+  const [graphMode, setGraphMode] = useState<EquationGraphMode>(graphModeProp ?? "compact");
   const [paperHandle, setPaperHandle] = useState<JointPaperHandle | null>(null);
+
+  useEffect(() => {
+    if (graphModeProp) {
+      setGraphMode(graphModeProp);
+    }
+  }, [graphModeProp]);
 
   const layoutOptions: EquationGraphLayoutOptions = { algorithm, direction };
 
@@ -54,6 +71,14 @@ export function DependencyGraphModal({
   const handleFitView = useCallback(() => {
     paperHandle?.fitView({ padding: 0.16 });
   }, [paperHandle]);
+
+  const propagateGraphMode = useCallback(
+    (mode: EquationGraphMode) => {
+      setGraphMode(mode);
+      onGraphModeChangeParent?.(mode);
+    },
+    [onGraphModeChangeParent]
+  );
 
   if (!open) return null;
 
@@ -72,6 +97,26 @@ export function DependencyGraphModal({
           <h2 className="text-xs font-semibold text-[var(--text)] mr-auto">
             {t("dependencyGraphTitle")}
           </h2>
+          <select
+            className="rounded border border-[var(--border)] bg-[var(--bg-input)] text-[var(--text)] text-[10px] px-1.5 py-0.5"
+            value={graphMode}
+            onChange={(e) => propagateGraphMode(e.target.value as EquationGraphMode)}
+            title={t("dependencyGraphMode")}
+          >
+            <option value="structural">{t("dependencyGraphModeStructural")}</option>
+            <option value="compact">{t("dependencyGraphModeCompact")}</option>
+            <option value="top-level">{t("dependencyGraphModeTopLevel")}</option>
+            <option value="full">{t("dependencyGraphModeFull")}</option>
+          </select>
+          <span className="text-[10px] text-[var(--text-muted)]">
+            {graphMode === "structural"
+              ? t("dependencyGraphModeHelpStructural")
+              : graphMode === "compact"
+                ? t("dependencyGraphModeHelpCompact")
+                : graphMode === "full"
+                  ? t("dependencyGraphModeHelpFull")
+                  : t("dependencyGraphModeHelpTopLevel")}
+          </span>
           <select
             className="rounded border border-[var(--border)] bg-[var(--bg-input)] text-[var(--text)] text-[10px] px-1.5 py-0.5"
             value={algorithm}
@@ -102,6 +147,20 @@ export function DependencyGraphModal({
           <button type="button" className="p-1 rounded hover:bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]" title={t("fitView")} onClick={handleFitView}>
             <Maximize2 className="h-3.5 w-3.5" />
           </button>
+          {onOpenDependencyGraphSettings ? (
+            <>
+              <div className="h-4 w-px bg-[var(--border)]" />
+              <button
+                type="button"
+                className="p-1 rounded hover:bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                title={t("dependencyGraphOpenSettings")}
+                aria-label={t("dependencyGraphOpenSettings")}
+                onClick={() => onOpenDependencyGraphSettings()}
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </button>
+            </>
+          ) : null}
           <div className="h-4 w-px bg-[var(--border)]" />
           <button type="button" className="p-1 rounded hover:bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]" title={t("restoreWindow")} onClick={onClose}>
             <X className="h-4 w-4" />
@@ -112,6 +171,9 @@ export function DependencyGraphModal({
             code={code}
             modelName={modelName}
             projectDir={projectDir}
+            graphMode={graphMode}
+            onGraphModeChange={propagateGraphMode}
+            dependencyGraphBehavior={dependencyGraphBehavior}
             layoutOptions={layoutOptions}
             onReady={setPaperHandle}
           />

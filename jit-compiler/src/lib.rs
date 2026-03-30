@@ -30,7 +30,9 @@ pub mod sparse_solve;
 pub mod string_intern;
 pub mod unparse;
 
-pub use compiler::{Artifacts, CompileOutput, Compiler, CompilerOptions};
+pub use compiler::{
+    Artifacts, CompileOutput, CompileStopPhase, Compiler, CompilerOptions, ValidationAnalyzedSummary,
+};
 pub use diag::{ParseErrorInfo, SourceLocation, WarningInfo};
 pub use string_intern::{StringInterner, VarId};
 pub use equation_graph::{EquationGraph, EquationGraphEdge, EquationGraphNode};

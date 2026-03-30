@@ -1,7 +1,14 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { JitValidateOptions, JitValidateResult, SimulationResult } from "../types";
-import { jitValidateV2, runSimulationV2, readProjectFile } from "../api/tauri";
-import { t } from "../i18n";
+import {
+  formatMonitorReplayLine,
+  getMonitorEvents,
+  jitValidateV2,
+  readProjectFile,
+  runSimulationV2,
+} from "../api/tauri";
+import { t, tf } from "../i18n";
 import {
   buildSimulationChartMeta,
   buildSimulationChartSeries,
@@ -29,7 +36,62 @@ export interface TableState {
   visibleTableColumns: string[];
 }
 
-export function useSimulation(log: (msg: string) => void) {
+export function useSimulation(
+  log: (msg: string) => void,
+  validationDefaultTier?: string | null
+) {
+  useEffect(() => {
+    let disposed = false;
+    void getMonitorEvents(undefined, 40)
+      .then((rows) => {
+        if (disposed || rows.length === 0) return;
+        log("[monitor-replay] restored recent runtime events:");
+        for (const r of rows) {
+          log(formatMonitorReplayLine(r));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [log]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    let unlisten: (() => void) | null = null;
+    void listen<{
+      category?: "control" | "progress" | "error";
+      task?: string;
+      stage?: string;
+      elapsedSec?: number;
+      message?: string;
+      currentStep?: number;
+      totalSteps?: number;
+      reason?: string;
+    }>("modai-jit-progress", (event) => {
+      if (isDisposed) return;
+      const payload = event.payload ?? {};
+      const category = payload.category ?? "progress";
+      const task = payload.task ?? "task";
+      const stage = payload.stage ?? "running";
+      const elapsed = payload.elapsedSec != null ? ` (${payload.elapsedSec}s)` : "";
+      const reason = payload.reason ? ` reason=${payload.reason}` : "";
+      const stepPart =
+        payload.currentStep != null && payload.totalSteps != null
+          ? ` step=${payload.currentStep}/${payload.totalSteps}`
+          : "";
+      const msg = payload.message?.trim() || `${task} ${stage}${elapsed}${stepPart}${reason}`;
+      log(`[${category}] [backend:${task}] ${msg}`);
+    }).then((off) => {
+      if (isDisposed) off();
+      else unlisten = off;
+    }).catch(() => {});
+    return () => {
+      isDisposed = true;
+      unlisten?.();
+    };
+  }, [log]);
+
   const [params, setParamsState] = useState<SimulationParams>({
     tEnd: 2, dt: 0.01, solver: "rk45", outputInterval: 0.05, atol: 1e-6, rtol: 1e-3,
   });
@@ -37,6 +99,7 @@ export function useSimulation(log: (msg: string) => void) {
   const [simResult, setSimResult] = useState<SimulationResult | null>(null);
   const [selectedPlotVars, setSelectedPlotVars] = useState<string[]>([]);
   const [simLoading, setSimLoading] = useState(false);
+  const [validateLoading, setValidateLoading] = useState(false);
 
   const [testAllLoading, setTestAllLoading] = useState(false);
   const [testAllResults, setTestAllResults] = useState<{ path: string; success: boolean; errors: string[] }[] | null>(null);
@@ -58,6 +121,7 @@ export function useSimulation(log: (msg: string) => void) {
     setTableState((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const tierTrim = validationDefaultTier?.trim();
   const buildOptions = useCallback((): JitValidateOptions => ({
     t_end: params.tEnd,
     dt: params.dt,
@@ -65,9 +129,27 @@ export function useSimulation(log: (msg: string) => void) {
     output_interval: params.outputInterval,
     atol: params.atol,
     rtol: params.rtol,
-  }), [params]);
+    ...(tierTrim ? { validationTier: tierTrim } : {}),
+  }), [params, tierTrim]);
+
+  const beginHeartbeat = useCallback((label: string, intervalMs = 5000) => {
+    const startedAt = Date.now();
+    log(`${label} started...`);
+    const timer = setInterval(() => {
+      const elapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+      log(`${label} running (${elapsed}s)...`);
+    }, intervalMs);
+    return () => {
+      clearInterval(timer);
+      return Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+    };
+  }, [log]);
 
   const validate = useCallback(async (code: string, modelName: string, projectDir: string | null) => {
+    setValidateLoading(true);
+    log(tf("jitValidateLogStart", { model: modelName }));
+    const t0 = typeof performance !== "undefined" ? performance.now() : 0;
+    const finishHeartbeat = beginHeartbeat("Validation");
     try {
       const result = await jitValidateV2({
         code,
@@ -89,28 +171,54 @@ export function useSimulation(log: (msg: string) => void) {
         })),
         state_vars: [],
         output_vars: [],
+        compile_trace: [],
+        validation_stop_phase: null,
+        validation_partial: false,
       };
+      for (const line of resolved.compile_trace ?? []) {
+        log(line);
+      }
+      if (resolved.warnings.length > 0) {
+        log(tf("jitValidateLogWarningsHeader", { count: resolved.warnings.length }));
+        for (const w of resolved.warnings) {
+          log(`${w.path}:${w.line}:${w.column} ${w.message}`);
+        }
+      }
       setJitResult(resolved);
+      const elapsedMs =
+        typeof performance !== "undefined" ? Math.round(performance.now() - t0) : 0;
       if (resolved.success) {
-        log("JIT validation OK");
+        log(tf("jitValidateLogDoneOk", { ms: elapsedMs }));
+        if (resolved.validation_partial && resolved.validation_stop_phase) {
+          log(`Validation tier: ${resolved.validation_stop_phase} (partial, no JIT).`);
+        }
         setSelectedPlotVars((prev) =>
           prev.length ? prev : [...new Set([...(resolved.state_vars ?? []), ...(resolved.output_vars ?? [])])]
         );
       } else {
-        log("JIT validation failed: " + resolved.errors.join("; "));
+        log(tf("jitValidateLogDoneFail", { ms: elapsedMs }));
+        for (const errLine of resolved.errors) {
+          log(errLine);
+        }
       }
+      const elapsedSec = finishHeartbeat();
+      log(`Validation completed in ${elapsedSec}s.`);
       return resolved;
     } catch (e) {
-      log("Error: " + String(e));
+      const elapsedSec = finishHeartbeat();
+      log(tf("jitValidateLogException", { message: String(e) }));
+      log(`Validation failed after ${elapsedSec}s.`);
       setJitResult(null);
       return null;
+    } finally {
+      setValidateLoading(false);
     }
-  }, [buildOptions, log]);
+  }, [beginHeartbeat, buildOptions, log]);
 
   const runSimulation = useCallback(async (code: string, modelName: string, projectDir: string | null) => {
     setSimLoading(true);
     setSimResult(null);
-    log("Running simulation...");
+    const finishHeartbeat = beginHeartbeat("Simulation");
     try {
       const result = await runSimulationV2({
         code,
@@ -126,12 +234,16 @@ export function useSimulation(log: (msg: string) => void) {
       setSimResult(sim);
       setSelectedPlotVars(Object.keys(sim.series).filter((k) => k !== "time"));
       log("Simulation done. Points: " + (sim.time?.length ?? 0));
+      const elapsedSec = finishHeartbeat();
+      log(`Simulation completed in ${elapsedSec}s.`);
     } catch (e) {
+      const elapsedSec = finishHeartbeat();
       log("Simulation error: " + String(e));
+      log(`Simulation failed after ${elapsedSec}s.`);
     } finally {
       setSimLoading(false);
     }
-  }, [buildOptions, log]);
+  }, [beginHeartbeat, buildOptions, log]);
 
   const testAllMoFiles = useCallback(async (
     projectDir: string,
@@ -141,8 +253,10 @@ export function useSimulation(log: (msg: string) => void) {
     setTestAllLoading(true);
     setTestAllResults(null);
     log(t("testAllRunning"));
+    const finishHeartbeat = beginHeartbeat("Test-all");
     const opts = buildOptions();
     const results: { path: string; success: boolean; errors: string[] }[] = [];
+    let processed = 0;
     for (const path of moFiles) {
       try {
         const content = await readProjectFile(projectDir, path);
@@ -166,13 +280,19 @@ export function useSimulation(log: (msg: string) => void) {
       } catch (e) {
         results.push({ path, success: false, errors: [String(e)] });
       }
+      processed++;
+      if (processed % 10 === 0 || processed === moFiles.length) {
+        log(`Test-all progress: ${processed}/${moFiles.length}`);
+      }
     }
     setTestAllResults(results);
     setTestAllLoading(false);
     const passed = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
     log(t("testAllSummary").replace("{passed}", String(passed)).replace("{failed}", String(failed)));
-  }, [buildOptions, log]);
+    const elapsedSec = finishHeartbeat();
+    log(`Test-all completed in ${elapsedSec}s.`);
+  }, [beginHeartbeat, buildOptions, log]);
 
   const tableColumns = useMemo(() => buildSimulationTableColumns(simResult), [simResult]);
 
@@ -235,6 +355,7 @@ export function useSimulation(log: (msg: string) => void) {
     jitResult, setJitResult,
     simResult,
     selectedPlotVars, setSelectedPlotVars,
+    validateLoading,
     simLoading,
     testAllLoading, testAllResults,
     tableState, setTable,
@@ -244,3 +365,5 @@ export function useSimulation(log: (msg: string) => void) {
     exportCSV, exportJSON,
   };
 }
+
+export type ModelicaSimulationApi = ReturnType<typeof useSimulation>;

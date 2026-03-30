@@ -1,5 +1,5 @@
 import React from "react";
-import type { AnnotationColor } from "./DiagramSvgRenderer";
+import type { AnnotationColor } from "./diagramGraphicTypes";
 
 function colorToCSS(c?: AnnotationColor): string {
   if (!c) return "currentColor";

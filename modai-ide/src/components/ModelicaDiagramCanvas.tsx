@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
-import { AnnotationGraphicsSvg, type GraphicItem, type IconDiagramAnnotation } from "./DiagramSvgRenderer";
+import type { GraphicItem, IconDiagramAnnotation } from "./diagramGraphicTypes";
+import { AnnotationGraphicsSvg } from "./DiagramSvgRenderer";
 import { ModelicaLibraryBrowser } from "./ModelicaLibraryBrowser";
 import { ModelicaPropertyPanel } from "./ModelicaPropertyPanel";
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
 import { t } from "../i18n";
 
 interface PlacementData {
@@ -45,6 +47,8 @@ interface ModelicaDiagramCanvasProps {
   onOpenType?: (typeName: string, libraryId?: string) => void;
   onDrop?: (event: React.DragEvent) => void;
   onDragOver?: (event: React.DragEvent) => void;
+  onOpenDependencyGraphSettings?: () => void;
+  dependencyGraphBehavior?: DependencyGraphBehavior;
   children: ReactNode;
 }
 
@@ -68,6 +72,8 @@ export function ModelicaDiagramCanvas({
   onOpenType,
   onDrop,
   onDragOver,
+  onOpenDependencyGraphSettings,
+  dependencyGraphBehavior,
   children,
 }: ModelicaDiagramCanvasProps) {
   return (
@@ -114,6 +120,8 @@ export function ModelicaDiagramCanvas({
           onDeleteGraphic={onDeleteGraphic}
           onUpdateParam={onUpdateParam}
           onUpdatePlacement={onUpdatePlacement}
+          onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
+          dependencyGraphBehavior={dependencyGraphBehavior}
         />
       </div>
     </div>

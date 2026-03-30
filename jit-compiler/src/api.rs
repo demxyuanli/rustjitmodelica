@@ -1,4 +1,4 @@
-use crate::compiler::{CompileOutput, Compiler, CompilerOptions};
+use crate::compiler::{CompileOutput, CompileStopPhase, Compiler, CompilerOptions};
 use crate::diag::WarningInfo;
 use crate::simulation::{run_simulation_collect, SimulationResult};
 
@@ -21,6 +21,10 @@ pub struct ValidateResult {
     pub errors: Vec<String>,
     pub state_vars: Vec<String>,
     pub output_vars: Vec<String>,
+    /// When successful, which compile tier finished (`Full` after JIT or function eval).
+    pub validation_stop_phase: Option<CompileStopPhase>,
+    /// True when validation stopped before JIT (`Parse`, `Flatten`, or `Analyze`).
+    pub validation_partial: bool,
 }
 
 fn build_compiler_with_options(options: Option<CompilerOptions>) -> Compiler {
@@ -48,6 +52,8 @@ fn handle_validate_output(
                     errors: Vec::new(),
                     state_vars: Vec::new(),
                     output_vars: Vec::new(),
+                    validation_stop_phase: Some(CompileStopPhase::Full),
+                    validation_partial: false,
                 },
                 CompileOutput::Simulation(artifacts) => ValidateResult {
                     success: true,
@@ -55,6 +61,8 @@ fn handle_validate_output(
                     errors: Vec::new(),
                     state_vars: artifacts.state_vars,
                     output_vars: artifacts.output_vars,
+                    validation_stop_phase: Some(CompileStopPhase::Full),
+                    validation_partial: false,
                 },
                 CompileOutput::FlatSnapshotDone => ValidateResult {
                     success: true,
@@ -62,6 +70,35 @@ fn handle_validate_output(
                     errors: Vec::new(),
                     state_vars: Vec::new(),
                     output_vars: Vec::new(),
+                    validation_stop_phase: Some(CompileStopPhase::Full),
+                    validation_partial: false,
+                },
+                CompileOutput::ValidationParseOk => ValidateResult {
+                    success: true,
+                    warnings,
+                    errors: Vec::new(),
+                    state_vars: Vec::new(),
+                    output_vars: Vec::new(),
+                    validation_stop_phase: Some(CompileStopPhase::Parse),
+                    validation_partial: true,
+                },
+                CompileOutput::ValidationFlattenOk { .. } => ValidateResult {
+                    success: true,
+                    warnings,
+                    errors: Vec::new(),
+                    state_vars: Vec::new(),
+                    output_vars: Vec::new(),
+                    validation_stop_phase: Some(CompileStopPhase::Flatten),
+                    validation_partial: true,
+                },
+                CompileOutput::ValidationAnalyzed(s) => ValidateResult {
+                    success: true,
+                    warnings,
+                    errors: Vec::new(),
+                    state_vars: s.state_vars,
+                    output_vars: s.output_vars,
+                    validation_stop_phase: Some(CompileStopPhase::Analyze),
+                    validation_partial: true,
                 },
             }
         }
@@ -73,6 +110,8 @@ fn handle_validate_output(
                 errors: vec![e.to_string()],
                 state_vars: Vec::new(),
                 output_vars: Vec::new(),
+                validation_stop_phase: None,
+                validation_partial: false,
             }
         }
     }
@@ -91,6 +130,7 @@ pub fn simulate_from_source(
     options: Option<CompilerOptions>,
 ) -> Result<SimulationResult, BoxError> {
     let mut compiler = build_compiler_with_options(options);
+    compiler.options.compile_stop = CompileStopPhase::Full;
     let out = compiler.compile_from_source(model_name, code)?;
     let artifacts = match out {
         CompileOutput::FunctionRun(_) => {
@@ -98,6 +138,11 @@ pub fn simulate_from_source(
         }
         CompileOutput::FlatSnapshotDone => {
             return Err("simulation not available for flat-snapshot-only compile".into());
+        }
+        CompileOutput::ValidationParseOk
+        | CompileOutput::ValidationFlattenOk { .. }
+        | CompileOutput::ValidationAnalyzed(_) => {
+            return Err("simulation requires full compile (tiered validation stopped early)".into());
         }
         CompileOutput::Simulation(artifacts) => artifacts,
     };

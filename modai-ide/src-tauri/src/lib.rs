@@ -43,8 +43,8 @@ use commands::index_commands::{
 };
 use commands::iterate_commands::{apply_patch_to_project, apply_patch_to_workspace, commit_patch, self_iterate};
 use commands::jit::{
-    get_equation_graph, get_equation_graph_v2, get_simulation_state, jit_validate, jit_validate_v2,
-    run_simulation_cmd, run_simulation_cmd_v2,
+    get_equation_graph, get_equation_graph_v2, get_monitor_events, get_simulation_state, jit_validate, jit_validate_v2,
+    list_monitor_event_sessions, run_simulation_cmd, run_simulation_cmd_v2,
     simulation_command, simulation_step, start_simulation_session,
 };
 use commands::project::{
@@ -80,8 +80,20 @@ use commands::traceability_commands::{
     update_traceability_link,
 };
 
+fn init_tracing_subscriber() {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,modai_diagram=info")
+    });
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .try_init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_tracing_subscriber();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -115,6 +127,8 @@ pub fn run() {
             start_simulation_session,
             simulation_step,
             simulation_command,
+            get_monitor_events,
+            list_monitor_event_sessions,
             get_simulation_state,
             get_diagram_data,
             get_diagram_data_from_source,

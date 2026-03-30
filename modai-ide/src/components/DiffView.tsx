@@ -58,7 +58,7 @@ export function DiffView({
   const [diffText, setDiffText] = useState<string | null>(null);
   const [original, setOriginal] = useState("");
   const [modified, setModified] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(diffTarget));
   const [error, setError] = useState<string | null>(null);
   const [viewType, setViewType] = useState<ViewType>("split");
   const [useMonacoFallback, setUseMonacoFallback] = useState(false);
@@ -290,7 +290,28 @@ export function DiffView({
     );
   }
 
-  const files = parseDiff(diffText!, { nearbySequences: "zip" });
+  if (diffText === null) {
+    return (
+      <div className="flex flex-col h-full min-h-0">
+        {header}
+        <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-[var(--text-muted)]">
+          {t("running")}
+        </div>
+      </div>
+    );
+  }
+
+  let files: ReturnType<typeof parseDiff>;
+  try {
+    files = parseDiff(diffText, { nearbySequences: "zip" });
+  } catch {
+    return (
+      <div className="flex flex-col h-full min-h-0">
+        {header}
+        <div className="shrink-0 px-2 py-2 text-xs text-[var(--danger-text)]">{t("invalidDiffFormat")}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full min-h-0 diff-view-container">

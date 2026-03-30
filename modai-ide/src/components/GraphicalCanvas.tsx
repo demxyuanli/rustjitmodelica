@@ -1,6 +1,7 @@
 import { useState, type DragEvent, type ReactNode } from "react";
-import { Square, Circle, Minus, Hexagon, Type, RefreshCw } from "lucide-react";
-import { AnnotationGraphicsSvg, type GraphicItem, type IconDiagramAnnotation } from "./DiagramSvgRenderer";
+import { Square, Circle, Minus, Hexagon, Type, RefreshCw, Move } from "lucide-react";
+import type { GraphicItem, IconDiagramAnnotation } from "./diagramGraphicTypes";
+import { AnnotationGraphicsSvg } from "./DiagramSvgRenderer";
 import { LibrariesBrowser } from "./LibrariesBrowser";
 import { createDefaultGraphic, ModelicaPropertyPanel } from "./ModelicaPropertyPanel";
 import { t } from "../i18n";
@@ -9,6 +10,7 @@ import { EquationBlockEditor, type EquationEntry } from "./diagram/EquationBlock
 import { VariableDeclarationPanel, type VariableDecl } from "./diagram/VariableDeclarationPanel";
 import { SimulationDebugPanel } from "./diagram/SimulationDebugPanel";
 import { TimelinePlayer } from "./diagram/TimelinePlayer";
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
 
 interface PlacementData {
   transformation?: {
@@ -67,6 +69,8 @@ interface GraphicalCanvasProps {
   onStartDebug?: () => void;
   validationErrors?: string[];
   source?: string;
+  onOpenDependencyGraphSettings?: () => void;
+  dependencyGraphBehavior: DependencyGraphBehavior;
 }
 
 function severityClass(severity: GraphicalMessage["severity"]) {
@@ -86,6 +90,7 @@ const ICON_TOOLBAR_ITEMS: Array<{ kind: GraphicItem["type"]; Icon: typeof Square
   { kind: "Line", Icon: Minus, titleKey: "shapeLine" },
   { kind: "Polygon", Icon: Hexagon, titleKey: "shapePolygon" },
   { kind: "Text", Icon: Type, titleKey: "shapeText" },
+  { kind: "BSpline", Icon: Move, titleKey: "shapeBSpline" },
 ];
 
 type BottomTab = "messages" | "equations" | "variables" | "debug";
@@ -121,6 +126,8 @@ export function GraphicalCanvas({
   onStartDebug,
   validationErrors,
   source,
+  onOpenDependencyGraphSettings,
+  dependencyGraphBehavior,
 }: GraphicalCanvasProps) {
   const primaryGraphicRoot = selectedGraphicPath != null && selectedGraphicPath.length > 0 ? selectedGraphicPath[0]! : -1;
   const placement = selectedComponent?.placement?.transformation;
@@ -211,6 +218,8 @@ export function GraphicalCanvas({
                 onUpdatePlacement={onUpdatePlacement}
                 source={source}
                 modelName={modelName}
+                onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
+                dependencyGraphBehavior={dependencyGraphBehavior}
               />
             </div>
           )}

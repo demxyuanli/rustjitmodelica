@@ -8,6 +8,7 @@ import { DiagramView } from "./DiagramView";
 import { IconButton } from "./IconButton";
 import { AppIcon } from "./Icon";
 import type { JitValidateResult } from "../types";
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
 
 export interface EditorGroupState {
   tabs: EditorTab[];
@@ -46,6 +47,8 @@ interface EditorGroupColumnProps {
   onNavigateToType?: (typeName: string, libraryId?: string) => void;
   libraryRefreshToken?: number;
   theme?: "dark" | "light";
+  onOpenDependencyGraphSettings?: () => void;
+  dependencyGraphBehavior: DependencyGraphBehavior;
 }
 
 const DEFAULT_MODEL = `model BouncingBall
@@ -95,6 +98,8 @@ export function EditorGroupColumn({
   onNavigateToType,
   libraryRefreshToken = 0,
   theme = "dark",
+  onOpenDependencyGraphSettings,
+  dependencyGraphBehavior,
 }: EditorGroupColumnProps) {
   const activeTab = group.tabs[group.activeIndex] ?? null;
   const groupPath = activeTab?.path ?? null;
@@ -275,6 +280,8 @@ export function EditorGroupColumn({
             focusSymbolQuery={focusSymbolQuery}
             onNavigateToType={onNavigateToType}
             libraryRefreshToken={libraryRefreshToken}
+            onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
+            dependencyGraphBehavior={dependencyGraphBehavior}
           />
         ) : (
           <CodeEditor

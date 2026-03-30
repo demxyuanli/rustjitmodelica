@@ -1,26 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ZoomIn, ZoomOut, Maximize2, Maximize, GripVertical } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Maximize, GripVertical, Settings } from "lucide-react";
 import { getComponentTypeDetails } from "../api/tauri";
 import type { ComponentTypeInfo } from "../types";
 import { t } from "../i18n";
-import {
-  getGraphicAtPath,
-  type AnnotationColor,
-  type GraphicEllipse,
-  type GraphicItem,
-  type GraphicLine,
-  type GraphicPolygon,
-  type GraphicRectangle,
-  type GraphicText,
-  type GraphicBSpline,
-  type AnnotationPoint,
-  type GradientStop,
-  type LinearGradient,
-  type RadialGradient,
-} from "./DiagramSvgRenderer";
+import type {
+  AnnotationColor,
+  AnnotationPoint,
+  GradientStop,
+  GraphicBSpline,
+  GraphicEllipse,
+  GraphicItem,
+  GraphicLine,
+  GraphicPolygon,
+  GraphicRectangle,
+  GraphicText,
+  LinearGradient,
+  RadialGradient,
+} from "./diagramGraphicTypes";
+import { getGraphicAtPath } from "./DiagramSvgRenderer";
 import { EquationGraphView } from "./EquationGraphView";
 import { DependencyGraphModal } from "./DependencyGraphModal";
 import type { JointPaperHandle } from "../utils/jointUtils";
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
 
 interface PlacementData {
   transformation?: {
@@ -127,6 +128,36 @@ function fillPatternOptions(): { value: string; label: string }[] {
   ];
 }
 
+function arrowPlacementFromSpec(spec?: string[]): "none" | "end" | "start" | "both" {
+  if (!spec?.length) return "none";
+  const lower = spec.map((a) => a.toLowerCase());
+  const hasS = lower.some((a) => a === "start" || a === "first");
+  const hasE = lower.some((a) => a === "end" || a === "last");
+  if (hasS && hasE) return "both";
+  if (hasS) return "start";
+  if (hasE) return "end";
+  return "none";
+}
+
+function arrowStyleFromSpec(spec?: string[]): "filled" | "open" | "arrow" {
+  const hit = spec?.find((a) => ["filled", "open", "arrow"].includes(a.toLowerCase()));
+  const t = hit?.toLowerCase();
+  if (t === "open" || t === "arrow") return t;
+  return "filled";
+}
+
+function buildArrowSpec(
+  placement: "none" | "end" | "start" | "both",
+  style: "filled" | "open" | "arrow",
+): string[] | undefined {
+  if (placement === "none") return undefined;
+  const out: string[] = [];
+  if (placement === "start" || placement === "both") out.push("start");
+  if (placement === "end" || placement === "both") out.push("end");
+  if (style !== "filled") out.push(style);
+  return out;
+}
+
 function normalizeStrokePatternSelect(pattern?: string): string {
   if (!pattern) return "";
   const lower = pattern.toLowerCase();
@@ -164,59 +195,9 @@ function hexToColor(hex: string): AnnotationColor {
   };
 }
 
-export function createDefaultGraphic(kind: GraphicItem["type"]): GraphicItem {
-  switch (kind) {
-    case "Rectangle":
-      return {
-        type: "Rectangle",
-        extent: { p1: { x: -60, y: 40 }, p2: { x: 60, y: -40 } },
-        lineColor: { r: 0, g: 0, b: 255 },
-      } satisfies GraphicRectangle;
-    case "Ellipse":
-      return {
-        type: "Ellipse",
-        extent: { p1: { x: -50, y: 50 }, p2: { x: 50, y: -50 } },
-        lineColor: { r: 191, g: 0, b: 0 },
-      } satisfies GraphicEllipse;
-    case "Line":
-      return {
-        type: "Line",
-        points: [{ x: -80, y: 0 }, { x: 80, y: 0 }],
-        color: { r: 0, g: 127, b: 0 },
-      } satisfies GraphicLine;
-    case "Polygon":
-      return {
-        type: "Polygon",
-        points: [{ x: -60, y: -40 }, { x: 0, y: 60 }, { x: 60, y: -40 }],
-        lineColor: { r: 85, g: 85, b: 85 },
-      } satisfies GraphicPolygon;
-    case "Text":
-      return {
-        type: "Text",
-        extent: { p1: { x: -100, y: 90 }, p2: { x: 100, y: 50 } },
-        textString: "%name",
-        textColor: { r: 0, g: 0, b: 255 },
-      } satisfies GraphicText;
-    case "Bitmap":
-      return {
-        type: "Bitmap",
-        extent: { p1: { x: -50, y: 50 }, p2: { x: 50, y: -50 } },
-        fileName: "",
-      };
-    case "BSpline":
-      return {
-        type: "BSpline",
-        points: [{ x: -80, y: -20 }, { x: -40, y: 20 }, { x: 0, y: -20 }, { x: 40, y: 20 }, { x: 80, y: -20 }],
-        color: { r: 128, g: 0, b: 128 },
-        smooth: "BSpline",
-      } satisfies GraphicBSpline;
-    default:
-      return {
-        type: "Rectangle",
-        extent: { p1: { x: -40, y: 40 }, p2: { x: 40, y: -40 } },
-      } satisfies GraphicRectangle;
-  }
-}
+import { createDefaultGraphic } from "./modelicaProperty/createDefaultGraphic";
+
+export { createDefaultGraphic };
 
 interface ModelicaPropertyPanelProps {
   projectDir: string | null;
@@ -233,6 +214,8 @@ interface ModelicaPropertyPanelProps {
   onUpdatePlacement: (patch: { x?: number; y?: number; rotation?: number }) => void;
   source?: string;
   modelName?: string;
+  onOpenDependencyGraphSettings?: () => void;
+  dependencyGraphBehavior?: DependencyGraphBehavior;
 }
 
 function updateGraphicField<T extends GraphicItem>(
@@ -694,6 +677,69 @@ function graphicFields(
     });
   }
 
+  if (graphic.type === "Line" || graphic.type === "BSpline") {
+    const placement = arrowPlacementFromSpec(graphic.arrow);
+    fields.push({
+      type: "select",
+      label: t("graphicArrowHeads"),
+      value: placement,
+      options: [
+        { value: "none", label: t("graphicArrowHeadsNone") },
+        { value: "end", label: t("graphicArrowHeadsEnd") },
+        { value: "start", label: t("graphicArrowHeadsStart") },
+        { value: "both", label: t("graphicArrowHeadsBoth") },
+      ],
+      onChange: (value) =>
+        onChange(
+          updateGraphicField(graphic, (item) => item as GraphicLine | GraphicBSpline, (next) => {
+            const p = value as "none" | "end" | "start" | "both";
+            if (p === "none") {
+              delete next.arrow;
+              delete next.arrowSize;
+              return;
+            }
+            const s = arrowStyleFromSpec(next.arrow);
+            const spec = buildArrowSpec(p, s);
+            if (spec) next.arrow = spec;
+            else delete next.arrow;
+          }),
+        ),
+    });
+    if (placement !== "none") {
+      fields.push({
+        type: "select",
+        label: t("graphicArrowStyle"),
+        value: arrowStyleFromSpec(graphic.arrow),
+        options: [
+          { value: "filled", label: t("graphicArrowStyleFilled") },
+          { value: "open", label: t("graphicArrowStyleOpen") },
+          { value: "arrow", label: t("graphicArrowStyleLine") },
+        ],
+        onChange: (value) =>
+          onChange(
+            updateGraphicField(graphic, (item) => item as GraphicLine | GraphicBSpline, (next) => {
+              const p = arrowPlacementFromSpec(next.arrow);
+              const s = (value || "filled") as "filled" | "open" | "arrow";
+              const spec = buildArrowSpec(p, s);
+              if (spec) next.arrow = spec;
+              else delete next.arrow;
+            }),
+          ),
+      });
+      fields.push({
+        type: "number",
+        label: t("graphicArrowSize"),
+        value: graphic.arrowSize ?? 10,
+        onChange: (value) =>
+          onChange(
+            updateGraphicField(graphic, (item) => item as GraphicLine | GraphicBSpline, (next) => {
+              next.arrowSize = value;
+            }),
+          ),
+      });
+    }
+  }
+
   if (graphic.type === "Rectangle") {
     fields.push({
       type: "select",
@@ -835,6 +881,8 @@ export function ModelicaPropertyPanel({
   onUpdatePlacement,
   source,
   modelName,
+  onOpenDependencyGraphSettings,
+  dependencyGraphBehavior,
 }: ModelicaPropertyPanelProps) {
   const [typeInfo, setTypeInfo] = useState<ComponentTypeInfo | null>(null);
   const [showDepGraph, setShowDepGraph] = useState(false);
@@ -1008,6 +1056,20 @@ export function ModelicaPropertyPanel({
                   <button type="button" className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("expandToWindow")} onClick={() => setDepGraphModal(true)}>
                     <Maximize className="h-3 w-3" />
                   </button>
+                  {onOpenDependencyGraphSettings ? (
+                    <>
+                      <div className="w-px h-3 bg-[var(--border)] mx-0.5" />
+                      <button
+                        type="button"
+                        className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]"
+                        title={t("dependencyGraphOpenSettings")}
+                        aria-label={t("dependencyGraphOpenSettings")}
+                        onClick={() => onOpenDependencyGraphSettings()}
+                      >
+                        <Settings className="h-3 w-3" />
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -1018,6 +1080,7 @@ export function ModelicaPropertyPanel({
                   modelName={modelName}
                   projectDir={projectDir}
                   layoutOptions={{ algorithm: "layered", direction: "RIGHT" }}
+                  dependencyGraphBehavior={dependencyGraphBehavior}
                   onReady={setDepPaperHandle}
                 />
               </div>
@@ -1029,6 +1092,8 @@ export function ModelicaPropertyPanel({
                 code={source}
                 modelName={modelName}
                 projectDir={projectDir}
+                onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
+                dependencyGraphBehavior={dependencyGraphBehavior}
               />
             )}
           </section>

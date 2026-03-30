@@ -10,16 +10,41 @@ mod solvable_scale_warn;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::ast::{AlgorithmStatement, Equation, Expression, Model};
 use crate::backend_dae::ClockPartition as BackendClockPartition;
 use crate::diag::WarningInfo;
 use crate::equation_graph;
+use crate::equation_graph::EquationGraphMode;
 use crate::expr_eval;
 use crate::flatten::{ArraySizePolicy, Flattener};
 use crate::jit::{CalcDerivsFunc, Jit};
 use crate::loader::ModelLoader;
 use pipeline::{flatten_and_inline, stage_trace_enabled};
 pub use pipeline::geometric_default_for_name;
+
+/// Stops compilation after the named phase when not `Full`. Used for tiered IDE validation.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CompileStopPhase {
+    #[default]
+    Full,
+    Parse,
+    Flatten,
+    Analyze,
+}
+
+/// Summary returned when compilation stops after `Analyze` (no JIT).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ValidationAnalyzedSummary {
+    pub state_vars: Vec<String>,
+    pub output_vars: Vec<String>,
+    pub total_equations: usize,
+    pub total_declarations: usize,
+    pub alg_equation_count: usize,
+    pub diff_equation_count: usize,
+}
 
 #[derive(Clone, Debug)]
 pub struct CompilerOptions {
@@ -61,6 +86,8 @@ pub struct CompilerOptions {
     pub array_sizes_json: Option<String>,
     /// When set and `RUSTMODLICA_JIT_POLICY_JSON` is unset, JIT loads this policy overlay path before the first JIT compile in the process.
     pub jit_policy_json: Option<String>,
+    /// Tiered validation: stop after parse, flatten, or analysis instead of running JIT.
+    pub compile_stop: CompileStopPhase,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -122,6 +149,7 @@ impl Default for CompilerOptions {
             array_size_policy: "legacy".to_string(),
             array_sizes_json: None,
             jit_policy_json: None,
+            compile_stop: CompileStopPhase::Full,
         }
     }
 }
@@ -493,6 +521,15 @@ pub enum CompileOutput {
     FunctionRun(f64),
     /// Flat Tier S snapshot written; compilation stopped before analysis/JIT.
     FlatSnapshotDone,
+    /// Stopped after load/parse; no flatten.
+    ValidationParseOk,
+    /// Stopped after flatten; no variable analysis or JIT.
+    ValidationFlattenOk {
+        total_equations: usize,
+        total_declarations: usize,
+    },
+    /// Stopped after analysis; no external stub resolution or JIT.
+    ValidationAnalyzed(ValidationAnalyzedSummary),
 }
 
 #[derive(Clone, Debug)]
@@ -610,6 +647,7 @@ impl Compiler {
         &mut self,
         model_name: &str,
         code: &str,
+        mode: EquationGraphMode,
     ) -> Result<equation_graph::EquationGraph, Box<dyn std::error::Error + Send + Sync>> {
         self.loader
             .load_model_from_source(model_name, code)
@@ -620,6 +658,9 @@ impl Compiler {
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
         if root_model.as_ref().is_function {
             return Err("Equation graph is not supported for functions.".into());
+        }
+        if matches!(mode, EquationGraphMode::Structural) {
+            return Ok(equation_graph::build_structural_graph(root_model.as_ref()));
         }
         let stage_trace = stage_trace_enabled();
         let snap_path = self
@@ -646,7 +687,7 @@ impl Compiler {
             self.options.warnings_level.as_str(),
         )?
         .flat_model;
-        Ok(equation_graph::build_equation_graph(&flat_model))
+        Ok(equation_graph::build_equation_graph(&flat_model, mode))
     }
 
     /// Run a function once with given inputs (or 0.0 per input if not provided) and return the output (F3-1).

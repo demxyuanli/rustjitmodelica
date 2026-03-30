@@ -1012,6 +1012,12 @@ impl ScriptRunner {
                     CompileOutput::FlatSnapshotDone => Err(
                         "load: flat-snapshot-only compile produced no simulation artifacts".into(),
                     ),
+                    CompileOutput::ValidationParseOk
+                    | CompileOutput::ValidationFlattenOk { .. }
+                    | CompileOutput::ValidationAnalyzed(_) => Err(
+                        "load: tiered compile stop produced no simulation artifacts (use full compile)"
+                            .into(),
+                    ),
                 }
             }
             ScriptCommand::SwitchModel(name) => {
@@ -1044,6 +1050,11 @@ impl ScriptRunner {
                     }
                     CompileOutput::FlatSnapshotDone => Err(
                         "instantiateModel: flat-snapshot-only produced no simulation model".into(),
+                    ),
+                    CompileOutput::ValidationParseOk
+                    | CompileOutput::ValidationFlattenOk { .. }
+                    | CompileOutput::ValidationAnalyzed(_) => Err(
+                        "instantiateModel: tiered compile stop produced no simulation model".into(),
                     ),
                 }
             }
@@ -1103,6 +1114,11 @@ impl ScriptRunner {
                     .into()),
                     CompileOutput::FlatSnapshotDone => Err(
                         "simulateModel: flat-snapshot-only produced no simulation artifacts".into(),
+                    ),
+                    CompileOutput::ValidationParseOk
+                    | CompileOutput::ValidationFlattenOk { .. }
+                    | CompileOutput::ValidationAnalyzed(_) => Err(
+                        "simulateModel: tiered compile stop produced no simulation artifacts".into(),
                     ),
                 }
             }

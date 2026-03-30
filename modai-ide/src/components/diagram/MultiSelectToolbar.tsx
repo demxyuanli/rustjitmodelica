@@ -3,8 +3,8 @@
  * Provides selection and batch operations
  */
 
-import { Copy, Trash2, Group, Ungroup } from "lucide-react";
-import type { GraphicItem } from "../DiagramSvgRenderer";
+import { Copy, Trash2, Group, Ungroup, Pentagon } from "lucide-react";
+import type { GraphicItem } from "../diagramGraphicTypes";
 import { t } from "../../i18n";
 
 export interface MultiSelectToolbarProps {
@@ -12,6 +12,7 @@ export interface MultiSelectToolbarProps {
   graphics: GraphicItem[];
   onGroup?: () => void;
   onUngroup?: () => void;
+  onRectangleToPolygon?: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }
@@ -25,6 +26,7 @@ export function MultiSelectToolbar({
   graphics,
   onGroup,
   onUngroup,
+  onRectangleToPolygon,
   onDuplicate,
   onDelete,
 }: MultiSelectToolbarProps) {
@@ -33,6 +35,7 @@ export function MultiSelectToolbar({
   const primary =
     selectedIndices.length === 1 ? graphics[selectedIndices[0]!] : undefined;
   const canUngroup = primary?.type === "Group" && onUngroup;
+  const canRectToPoly = primary?.type === "Rectangle" && onRectangleToPolygon;
 
   if (!hasSelection) return null;
 
@@ -67,7 +70,17 @@ export function MultiSelectToolbar({
           <Ungroup className="h-4 w-4" />
         </button>
       )}
-      {(canGroup || canUngroup) && <ToolbarSeparator />}
+      {canRectToPoly && (
+        <button
+          type="button"
+          className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
+          onClick={onRectangleToPolygon}
+          title={t("graphicRectToPolygon")}
+        >
+          <Pentagon className="h-4 w-4" />
+        </button>
+      )}
+      {(canGroup || canUngroup || canRectToPoly) && <ToolbarSeparator />}
       <button
         type="button"
         className="toolbar-icon-btn flex rounded items-center justify-center text-red-400 hover:text-red-300 hover:bg-white/10"

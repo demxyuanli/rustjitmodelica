@@ -1,7 +1,9 @@
-import React, { useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import React, { useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle, useMemo } from "react";
 import type monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { readComponentTypeSource } from "../api/tauri";
+import type { AppSettings } from "../api/tauri";
+import { dependencyGraphBehaviorFromAppSettings } from "../utils/dependencyGraphBehavior";
 import { t } from "../i18n";
 import { EditorGroupColumn, type EditorGroupState } from "./EditorGroupColumn";
 import type { EditorTab } from "./EditorTabBar";
@@ -80,6 +82,8 @@ export interface EditorWorkbenchProps {
   initialFocusedGroupIndex?: number;
   initialSplitRatio?: number;
   initialProjectDir?: string | null;
+  onOpenDependencyGraphSettings?: () => void;
+  appSettings?: AppSettings | null;
 }
 
 export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchProps>(function EditorWorkbench(
@@ -107,9 +111,15 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     initialFocusedGroupIndex = 0,
     initialSplitRatio = 0.5,
     initialProjectDir = null,
+    onOpenDependencyGraphSettings,
+    appSettings = null,
   },
   ref
 ) {
+  const dependencyGraphBehavior = useMemo(
+    () => dependencyGraphBehaviorFromAppSettings(appSettings),
+    [appSettings]
+  );
   const [editorGroups, setEditorGroups] = useState<EditorGroupState[]>(
     () => initialEditorGroups ?? [{ tabs: [], activeIndex: 0 }]
   );
@@ -120,6 +130,8 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
   );
   const [splitRatio, setSplitRatio] = useState(initialSplitRatio);
   const appliedInitialRef = useRef(false);
+  const contentByPathRef = useRef(contentByPath);
+  contentByPathRef.current = contentByPath;
 
   useEffect(() => {
     onContentByPathChange?.(contentByPath);
@@ -187,18 +199,45 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     else setModelName("BouncingBall");
   }, [focusedPath, focusedContent, focusedTab, onFocusedChange, setModelName]);
 
+  // Load disk content for every project .mo tab that is not yet in contentByPath (restore / split / multi-tab).
+  // Previously only the globally focused tab was loaded, so other tabs stayed empty until clicked.
   useEffect(() => {
-    if (!projectDir || !focusedTab?.projectPath) return;
-    const contentKey = tabContentKey(focusedTab);
-    if ((contentByPath[contentKey] ?? "") !== "") return;
+    if (!projectDir) return;
+    const missing: { key: string; relativePath: string }[] = [];
+    const seen = new Set<string>();
+    for (const g of editorGroups) {
+      for (const tab of g.tabs) {
+        if (!tab.projectPath || tab.readOnly) continue;
+        const key = tabContentKey(tab);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if ((contentByPathRef.current[key] ?? "") !== "") continue;
+        missing.push({ key, relativePath: normalizePath(tab.projectPath) });
+      }
+    }
+    if (missing.length === 0) return;
     let cancelled = false;
-    invoke<string>("read_project_file", { projectDir, relativePath: normalizePath(focusedTab.projectPath) })
-      .then((content) => {
-        if (!cancelled) setContentByPath((prev) => ({ ...prev, [contentKey]: content }));
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [projectDir, focusedTab, contentByPath]);
+    void Promise.all(
+      missing.map(({ key, relativePath }) =>
+        invoke<string>("read_project_file", { projectDir, relativePath }).then(
+          (content) => ({ key, content, ok: true as const }),
+          () => ({ key, content: "", ok: false as const }),
+        ),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      setContentByPath((prev) => {
+        const next = { ...prev };
+        for (const r of results) {
+          if (r.ok && (next[r.key] ?? "") === "") next[r.key] = r.content;
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectDir, editorGroups]);
 
   const handleOpenFile = useCallback(
     async (relativePath: string, groupIndex?: number) => {
@@ -472,6 +511,8 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
             }}
             libraryRefreshToken={libraryRefreshToken}
             theme={theme}
+            onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
+            dependencyGraphBehavior={dependencyGraphBehavior}
           />
         </React.Fragment>
       ))}

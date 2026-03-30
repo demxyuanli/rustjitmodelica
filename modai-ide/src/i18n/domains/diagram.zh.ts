@@ -1,0 +1,28 @@
+export const diagramMessagesZh = {
+    diagramConnectorMechanical: "\u673a\u68b0",
+    diagramConnectorElectrical: "\u7535\u6c14",
+    diagramConnectorThermal: "\u70ed",
+    diagramConnectorFluid: "\u6d41\u4f53",
+    diagramConnectorSignalInput: "\u4fe1\u53f7\u5165",
+    diagramConnectorSignalOutput: "\u4fe1\u53f7\u51fa",
+    outlineDiagram: "\u7ed3\u6784\u56fe",
+    diagramProperties: "\u7ed3\u6784\u56fe\u5c5e\u6027",
+    diagramGraphics: "\u7ed3\u6784\u56fe\u56fe\u5f62",
+    diagramErrorNotModel: "\u5f53\u524d\u6587\u4ef6\u4e0d\u662f\u6a21\u578b\uff08\u5982\u4e3a function\uff09\u3002\u4ec5\u652f\u6301\u6a21\u578b\u7684\u6846\u56fe\u3002",
+    diagramErrorParse: "\u89e3\u6790\u9519\u8bef",
+    diagramLoading: "\u52a0\u8f7d\u6846\u56fe\u4e2d\u2026",
+    diagramLoadingSlowHint:
+      "\u4ecd\u5728\u52a0\u8f7d\uff08\u5927\u578b\u6a21\u578b\u53ef\u80fd\u8f83\u6162\uff09\u2026",
+    diagramLoadTimeout:
+      "\u52a0\u8f7d\u6846\u56fe\u8d85\u65f6\u3002\u6a21\u578b\u53ef\u80fd\u8fc7\u5927\u6216\u89e3\u6790\u5361\u4f4f\u3002",
+    diagramEmpty: "\u65e0\u7ec4\u4ef6\u3002\u8bf7\u6dfb\u52a0\u7ec4\u4ef6\u5e76\u8fde\u63a5\u3002",
+    diagramConflict: "\u4ee3\u7801\u4e0e\u6846\u56fe\u53ef\u80fd\u4e0d\u4e00\u81f4\u3002\u662f\u5426\u4ece\u4ee3\u7801\u5237\u65b0\u6846\u56fe\uff1f",
+    refreshDiagram: "\u5237\u65b0\u6846\u56fe",
+    diagramAutoLayout: "\u81ea\u52a8\u5e03\u5c40",
+    diagramLayoutGrid: "\u7f51\u683c",
+    diagramLayoutHierarchical: "\u5c42\u6b21",
+    diagramLayoutCircular: "\u73af\u5f62",
+    diagramLayoutForce: "\u529b\u5411\u5b9a\u4f4d",
+    diagramLayoutHorizontal: "\u6a2a\u5411\uff08\u5f00\u59cb\u5de6\u7ed3\u675f\u53f3\uff09",
+    diagramLayoutVertical: "\u7eb5\u5411\uff08\u5f00\u59cb\u4e0a\u7ed3\u675f\u4e0b\uff09",
+} as const;

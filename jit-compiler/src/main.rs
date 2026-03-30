@@ -1,5 +1,6 @@
 use rustmodlica::{
-    Artifacts, CompileOutput, Compiler, WarningInfo, run_simulation, run_simulation_collect,
+    Artifacts, CompileOutput, CompileStopPhase, Compiler, WarningInfo, run_simulation,
+    run_simulation_collect,
 };
 use rustmodlica::runtime_perf_counters;
 use rustmodlica::error;
@@ -45,6 +46,8 @@ fn emit_validate_json(
     errors: &[String],
     state_vars: &[String],
     output_vars: &[String],
+    validation_stop_phase: Option<&str>,
+    validation_partial: bool,
 ) {
     let warnings_json: Vec<serde_json::Value> = warnings
         .iter()
@@ -62,9 +65,24 @@ fn emit_validate_json(
         "warnings": warnings_json,
         "errors": errors,
         "state_vars": state_vars,
-        "output_vars": output_vars
+        "output_vars": output_vars,
+        "validationStopPhase": validation_stop_phase,
+        "validationPartial": validation_partial,
     });
     println!("{}", serde_json::to_string(&out).unwrap_or_default());
+}
+
+fn parse_validate_tier(s: &str) -> Result<CompileStopPhase, RunError> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "full" => Ok(CompileStopPhase::Full),
+        "parse" => Ok(CompileStopPhase::Parse),
+        "flatten" => Ok(CompileStopPhase::Flatten),
+        "analyze" => Ok(CompileStopPhase::Analyze),
+        _ => Err(RunError::Message(format!(
+            "unknown --validate-tier={} (use full|parse|flatten|analyze)",
+            s.trim()
+        ))),
+    }
 }
 
 fn parse_numeric_prefix(s: &str) -> Option<f64> {
@@ -694,6 +712,7 @@ fn run_event_scan(args: &[String]) -> Result<(), RunError> {
             compiler.options.t_end = t_end;
             compiler.options.dt = dt;
             compiler.options.output_interval = output_interval;
+            compiler.options.compile_stop = CompileStopPhase::Full;
             for p in &lib_paths {
                 compiler.loader.add_path(p.into());
             }
@@ -741,6 +760,25 @@ fn run_event_scan(args: &[String]) -> Result<(), RunError> {
                         unsupported_reason: None,
                         config_error: Some(format!(
                             "event-scan cannot run with flat-snapshot-only output for model '{}'",
+                            model_name
+                        )),
+                        baseline_rk4: None,
+                        baseline_rk45: None,
+                        best: None,
+                        topn: Vec::new(),
+                    });
+                    continue;
+                }
+                CompileOutput::ValidationParseOk
+                | CompileOutput::ValidationFlattenOk { .. }
+                | CompileOutput::ValidationAnalyzed(_) => {
+                    models.push(EventScanModelOutput {
+                        model: model_name.clone(),
+                        status: EventScanModelStatus::ConfigError,
+                        supported_solvers: Vec::new(),
+                        unsupported_reason: None,
+                        config_error: Some(format!(
+                            "event-scan requires full compile; model '{}' used tiered compile stop",
                             model_name
                         )),
                         baseline_rk4: None,
@@ -1047,6 +1085,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut script_path: Option<String> = None;
     let mut model_name = None;
     let mut validate_only = false;
+    let mut validate_tier: Option<CompileStopPhase> = None;
     let mut output_format: Option<String> = None;
     let mut perf_json_path: Option<String> = None;
     let mut emit_flat_snapshot: Option<String> = None;
@@ -1175,6 +1214,9 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if a == "--validate" {
             validate_only = true;
             i += 1;
+        } else if let Some(v) = a.strip_prefix("--validate-tier=") {
+            validate_tier = Some(parse_validate_tier(v)?);
+            i += 1;
         } else if a == "-" {
             model_name = Some("-".to_string());
             i += 1;
@@ -1224,6 +1266,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         compiler.options.array_sizes_json = array_sizes_json.clone();
         compiler.options.emit_c_dir = emit_c_dir.clone();
         compiler.options.external_libs = external_libs;
+        compiler.options.compile_stop = CompileStopPhase::Full;
         for p in &lib_paths {
             compiler.loader.add_path(p.into());
         }
@@ -1245,7 +1288,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Some(n) => n,
         None => {
             let msg = format!(
-                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --array-size-policy=legacy|strict  flatten: unevaluated array dims (default legacy: warn+scalar fallback; strict: error unless --array-sizes-json)\n  --array-sizes-json=<path>  JSON object with \"array_sizes\" map: flat base names to positive integer sizes\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --fmi-model-id=<id>  override FMI modelIdentifier (sanitized; wins over env)\n  --fmi-guid=<uuid|token>  fixed guid attribute (UUID or ASCII alnum/-/_)\n  Env (FMI): RUSTMODLICA_FMI_MODEL_ID, RUSTMODLICA_FMI_MODEL_ID_PREFIX, RUSTMODLICA_FMI_GUID, RUSTMODLICA_FMI_GENERATION_TOOL\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
+                "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --validate-tier=full|parse|flatten|analyze  with --validate: stop after tier (default full)\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --array-size-policy=legacy|strict  flatten: unevaluated array dims (default legacy: warn+scalar fallback; strict: error unless --array-sizes-json)\n  --array-sizes-json=<path>  JSON object with \"array_sizes\" map: flat base names to positive integer sizes\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --fmi-model-id=<id>  override FMI modelIdentifier (sanitized; wins over env)\n  --fmi-guid=<uuid|token>  fixed guid attribute (UUID or ASCII alnum/-/_)\n  Env (FMI): RUSTMODLICA_FMI_MODEL_ID, RUSTMODLICA_FMI_MODEL_ID_PREFIX, RUSTMODLICA_FMI_GUID, RUSTMODLICA_FMI_GENERATION_TOOL\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
                 args[0]
             );
             return Err(msg.into());
@@ -1278,6 +1321,11 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
     }
     compiler.options.emit_c_dir = emit_c_dir;
     compiler.options.external_libs = external_libs;
+    compiler.options.compile_stop = if validate_only {
+        validate_tier.unwrap_or(CompileStopPhase::Full)
+    } else {
+        CompileStopPhase::Full
+    };
     let run_repl = repl;
     let json_mode = validate_only || output_format.as_deref() == Some("json");
     if validate_only {
@@ -1339,7 +1387,15 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         Err(e) => {
             let warnings = compiler.take_warnings();
             if validate_only {
-                emit_validate_json(false, &warnings, &[e.to_string()], &[], &[]);
+                emit_validate_json(
+                    false,
+                    &warnings,
+                    &[e.to_string()],
+                    &[],
+                    &[],
+                    None,
+                    false,
+                );
                 return Ok(());
             }
             return Err(e.into());
@@ -1362,7 +1418,7 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some(compile_perf.clone()),
                     None,
                 )?;
-                emit_validate_json(true, &warnings, &[], &[], &[]);
+                emit_validate_json(true, &warnings, &[], &[], &[], Some("full"), false);
             }
             CompileOutput::Simulation(artifacts) => {
                 maybe_write_perf_json(
@@ -1378,6 +1434,8 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     &[],
                     &artifacts.state_vars,
                     &artifacts.output_vars,
+                    Some("full"),
+                    false,
                 );
             }
             CompileOutput::FlatSnapshotDone => {
@@ -1388,7 +1446,45 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some(compile_perf.clone()),
                     None,
                 )?;
-                emit_validate_json(true, &warnings, &[], &[], &[]);
+                emit_validate_json(true, &warnings, &[], &[], &[], Some("full"), false);
+            }
+            CompileOutput::ValidationParseOk => {
+                maybe_write_perf_json(
+                    &perf_json_path,
+                    &effective_model,
+                    warnings.len(),
+                    Some(compile_perf.clone()),
+                    None,
+                )?;
+                emit_validate_json(true, &warnings, &[], &[], &[], Some("parse"), true);
+            }
+            CompileOutput::ValidationFlattenOk { .. } => {
+                maybe_write_perf_json(
+                    &perf_json_path,
+                    &effective_model,
+                    warnings.len(),
+                    Some(compile_perf.clone()),
+                    None,
+                )?;
+                emit_validate_json(true, &warnings, &[], &[], &[], Some("flatten"), true);
+            }
+            CompileOutput::ValidationAnalyzed(s) => {
+                maybe_write_perf_json(
+                    &perf_json_path,
+                    &effective_model,
+                    warnings.len(),
+                    Some(compile_perf.clone()),
+                    None,
+                )?;
+                emit_validate_json(
+                    true,
+                    &warnings,
+                    &[],
+                    &s.state_vars,
+                    &s.output_vars,
+                    Some("analyze"),
+                    true,
+                );
             }
         }
         return Ok(());
@@ -1405,6 +1501,32 @@ fn run(args: Vec<String>) -> Result<(), RunError> {
         }
     }
     match out {
+        CompileOutput::ValidationParseOk | CompileOutput::ValidationFlattenOk { .. } => {
+            maybe_write_perf_json(
+                &perf_json_path,
+                &effective_model,
+                warnings.len(),
+                Some(compile_perf.clone()),
+                None,
+            )?;
+            if !json_mode {
+                println!("Compile stopped early (--validate); no simulation artifacts.");
+            }
+            return Ok(());
+        }
+        CompileOutput::ValidationAnalyzed(_) => {
+            maybe_write_perf_json(
+                &perf_json_path,
+                &effective_model,
+                warnings.len(),
+                Some(compile_perf.clone()),
+                None,
+            )?;
+            if !json_mode {
+                println!("Compile stopped after analysis (--validate-tier=analyze); no simulation artifacts.");
+            }
+            return Ok(());
+        }
         CompileOutput::FlatSnapshotDone => {
             maybe_write_perf_json(
                 &perf_json_path,

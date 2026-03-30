@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Eye, EyeOff, GripVertical, Lock, Unlock } from "lucide-react";
-import type { GraphicItem } from "../DiagramSvgRenderer";
+import type { GraphicItem } from "../diagramGraphicTypes";
 import { t } from "../../i18n";
 
 export interface LayerPanelProps {

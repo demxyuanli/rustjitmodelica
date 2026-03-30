@@ -13,8 +13,8 @@ import {
   Split,
   Combine,
 } from "lucide-react";
-import type { GraphicItem } from "../DiagramSvgRenderer";
-import { getGraphicBounds, translateGraphicItem, type GraphicBounds } from "../DiagramSvgRenderer";
+import type { GraphicBounds, GraphicItem } from "../diagramGraphicTypes";
+import { getGraphicBounds, translateGraphicItem } from "../DiagramSvgRenderer";
 import { t } from "../../i18n";
 
 export type AlignmentType = "left" | "center" | "right" | "top" | "middle" | "bottom";

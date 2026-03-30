@@ -17,32 +17,15 @@ import {
 } from "../api/tauri";
 import { useAISessions } from "./useAISessions";
 import { listen } from "@tauri-apps/api/event";
+import { buildIterateAssistantMessage, parsePatchFromResponse } from "./useAIPatchParsing";
+import {
+  DAILY_TOKEN_LIMIT,
+  estimateTokens,
+  getDailyUsed,
+  setDailyUsedStorage,
+} from "./aiTokenBudget";
 
-const DAILY_TOKEN_LIMIT = 50000;
 const DEFAULT_MODEL = "deepseek-chat";
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length * 1.2);
-}
-
-function getDailyUsed(): number {
-  try {
-    const raw = localStorage.getItem("modai-ai-daily");
-    if (!raw) return 0;
-    const { date, used } = JSON.parse(raw) as { date: string; used: number };
-    const today = new Date().toISOString().slice(0, 10);
-    return date === today ? used : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function setDailyUsedStorage(used: number): void {
-  try {
-    const date = new Date().toISOString().slice(0, 10);
-    localStorage.setItem("modai-ai-daily", JSON.stringify({ date, used }));
-  } catch { /* ignore */ }
-}
 
 export interface AiContextBlock {
   path: string;
@@ -65,54 +48,7 @@ export interface PendingPatch {
   newContent: string | null;
 }
 
-function buildIterateAssistantMessage(target: string, diff: string): string {
-  return [
-    `Prepared compiler patch for \`${target}\`. Review the diff and run the sandbox actions below.`,
-    "",
-    "```diff",
-    diff,
-    "```",
-  ].join("\n");
-}
-
 type AiMode = "chat" | "code";
-
-function parsePatchFromResponse(
-  result: string,
-  agentMode: AgentMode,
-  activeFilePath: string | null
-): PendingPatch | null {
-  if (agentMode === "edit-selection") {
-    const trimmed = result.trim();
-    if (!trimmed) return null;
-    return {
-      filePath: activeFilePath,
-      startLine: null,
-      endLine: null,
-      newContent: trimmed,
-    };
-  }
-  if (agentMode === "edit-file") {
-    const m = result.match(/```json\s*([\s\S]*?)```/i);
-    if (!m) return null;
-    try {
-      const obj = JSON.parse(m[1].trim()) as { patches?: Array<{ filePath?: string; startLine?: number; endLine?: number; newContent?: string }> };
-      const list = obj.patches;
-      if (!Array.isArray(list) || list.length === 0) return null;
-      const patch = list.find((p) => !p.filePath || p.filePath === activeFilePath || (activeFilePath && activeFilePath.endsWith(p.filePath ?? "")));
-      if (!patch) return null;
-      return {
-        filePath: patch.filePath ?? activeFilePath,
-        startLine: patch.startLine ?? null,
-        endLine: patch.endLine ?? null,
-        newContent: patch.newContent ?? null,
-      };
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
 
 function createAiHook(log: (msg: string) => void, kind: "modelica" | "jit") {
   const [projectDir, setProjectDir] = useState<string | null>(null);
@@ -507,3 +443,5 @@ export function useModelicaAI(log: (msg: string) => void) {
 export function useJitAI(log: (msg: string) => void) {
   return createAiHook(log, "jit");
 }
+
+export type ModelicaAiApi = ReturnType<typeof useModelicaAI>;

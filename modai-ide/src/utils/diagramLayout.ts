@@ -3,10 +3,12 @@
  * All functions return positions keyed by node id. Uses default node size for spacing.
  */
 
-const DEFAULT_NODE_WIDTH = 160;
-const DEFAULT_NODE_HEIGHT = 80;
-const LAYOUT_GAP_X = 80;
-const LAYOUT_GAP_Y = 60;
+import {
+  DEFAULT_NODE_HEIGHT,
+  DEFAULT_NODE_WIDTH,
+  LAYOUT_GAP_X,
+  LAYOUT_GAP_Y,
+} from "../structureEditor/layoutConstants";
 
 export type DiagramLayoutKind = "grid" | "hierarchical" | "circular" | "force" | "horizontal" | "vertical";
 
@@ -46,6 +48,49 @@ export interface ForceLayoutOptions {
 }
 
 export type LayoutResult = Record<string, { x: number; y: number }>;
+
+const OVERLAP_PAD = 8;
+
+function rectsOverlap(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  w: number,
+  h: number,
+): boolean {
+  return ax < bx + w && ax + w > bx && ay < by + h && ay + h > by;
+}
+
+/** Push apart overlapping node boxes (same dimensions as layout spacing). */
+function resolveOverlaps(result: LayoutResult, nodeIds: string[], w: number, h: number): void {
+  const ew = w + OVERLAP_PAD;
+  const eh = h + OVERLAP_PAD;
+  for (let iter = 0; iter < 24; iter++) {
+    let any = false;
+    for (let i = 0; i < nodeIds.length; i++) {
+      for (let j = i + 1; j < nodeIds.length; j++) {
+        const ida = nodeIds[i];
+        const idb = nodeIds[j];
+        const pa = result[ida];
+        const pb = result[idb];
+        if (!pa || !pb) continue;
+        if (rectsOverlap(pa.x, pa.y, pb.x, pb.y, ew, eh)) {
+          any = true;
+          const cx = pa.x + w / 2 - (pb.x + w / 2);
+          const cy = pa.y + h / 2 - (pb.y + h / 2);
+          const len = Math.hypot(cx, cy) || 1;
+          const push = (Math.min(ew, eh) * 0.25) / len;
+          pa.x += cx * push;
+          pa.y += cy * push;
+          pb.x -= cx * push;
+          pb.y -= cy * push;
+        }
+      }
+    }
+    if (!any) break;
+  }
+}
 
 function getInEdges(nodeId: string, edges: { source: string; target: string }[]): number {
   return edges.filter((e) => e.target === nodeId).length;
@@ -241,6 +286,8 @@ export function layoutHierarchical(
       else result[id] = { x: startY + (layers.length - 1 - layerIdx) * layerGap, y: x };
     });
   });
+
+  resolveOverlaps(result, nodeIds, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT);
 
   if (direction === "LR" || direction === "RL") {
     const swap = (r: LayoutResult): LayoutResult => {

@@ -17,7 +17,7 @@ import {
   Move,
 } from "lucide-react";
 import { t } from "../../i18n";
-import type { GraphicItem } from "../DiagramSvgRenderer";
+import type { GraphicItem } from "../diagramGraphicTypes";
 import type { DiagramLayoutKind } from "../../utils/diagramLayout";
 import { createDefaultGraphic } from "../ModelicaPropertyPanel";
 import type { JointPaperHandle } from "../../utils/jointUtils";

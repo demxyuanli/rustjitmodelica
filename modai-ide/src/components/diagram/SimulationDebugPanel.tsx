@@ -10,7 +10,18 @@ interface SimulationDebugPanelProps {
 
 export function SimulationDebugPanel({ debug, onStartDebug }: SimulationDebugPanelProps) {
   const { state, step, stepN, play, pause, stop, reset } = debug;
-  const { status, currentStep, stepHistory, error, totalSteps } = state;
+  const {
+    status,
+    currentStep,
+    stepHistory,
+    error,
+    totalSteps,
+    progressMessage,
+    averageStepsPerSec,
+    recentStepsPerSec,
+    controlEvents,
+    progressEventCount,
+  } = state;
 
   const isIdle = status === "idle";
   const isRunning = status === "running";
@@ -48,6 +59,12 @@ export function SimulationDebugPanel({ debug, onStartDebug }: SimulationDebugPan
         }`}>
           {status}
         </span>
+      </div>
+      <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
+        <span>Total steps: <span className="font-mono text-[var(--text)]">{totalSteps}</span></span>
+        <span>Avg: <span className="font-mono text-[var(--text)]">{averageStepsPerSec.toFixed(2)} steps/s</span></span>
+        <span>Last 1s: <span className="font-mono text-[var(--text)]">{recentStepsPerSec.toFixed(2)} steps/s</span></span>
+        <span>Progress events: <span className="font-mono text-[var(--text)]">{progressEventCount}</span></span>
       </div>
 
       <div className="flex items-center gap-1">
@@ -162,9 +179,29 @@ export function SimulationDebugPanel({ debug, onStartDebug }: SimulationDebugPan
         </div>
       )}
 
+      {!error && progressMessage && (
+        <div className="text-[10px] text-[var(--text-muted)] bg-white/5 rounded px-2 py-1">
+          {progressMessage}
+        </div>
+      )}
+
       {stepHistory.length > 0 && (
         <div className="text-[10px] text-[var(--text-muted)]">
           {stepHistory.length} steps recorded
+        </div>
+      )}
+      {controlEvents.length > 0 && (
+        <div className="mt-1 rounded border border-[var(--border)]/40 bg-black/10 p-2">
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
+            Control Timeline
+          </div>
+          <div className="max-h-[120px] overflow-auto space-y-1">
+            {controlEvents.map((line, i) => (
+              <div key={`${line}-${i}`} className="text-[10px] text-[var(--text-muted)] leading-tight">
+                {line}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

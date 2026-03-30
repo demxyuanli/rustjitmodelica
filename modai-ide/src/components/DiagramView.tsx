@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../i18n";
-import {
-  getGraphicAtPath,
-  removeGraphicAtPath,
-  replaceGraphicAtPath,
-  type GraphicItem,
-  type IconDiagramAnnotation,
-} from "./DiagramSvgRenderer";
+import type { GraphicItem, IconDiagramAnnotation } from "./diagramGraphicTypes";
 import {
   applyGraphicalDocumentEdits,
   getGraphicalDocumentFromSource,
@@ -30,15 +24,15 @@ import { JointStructureEditor } from "../structureEditor/JointStructureEditor";
 import { IconEditorShell } from "../structureEditor/IconEditorShell";
 import { useStepDebug } from "../hooks/useStepDebug";
 import { useDiagramSimulation } from "../hooks/useDiagramSimulation";
+import { useDiagramViewPaperState } from "../hooks/useDiagramViewPaperState";
+import { useDiagramGraphicInteraction } from "../hooks/useDiagramGraphicInteraction";
 import { applyDiagramLayout, type DiagramLayoutKind } from "../utils/diagramLayout";
 import { DiagramToolbar } from "./diagram/DiagramToolbar";
-import { AlignmentToolbar, alignGraphics, distributeGraphics } from "./diagram/AlignmentToolbar";
+import { AlignmentToolbar } from "./diagram/AlignmentToolbar";
 import { MultiSelectToolbar } from "./diagram/MultiSelectToolbar";
 import { LayerPanel } from "./icon/LayerPanel";
 import { downloadSvg, downloadPng } from "../utils/graphicExport";
-import { duplicateGraphics, deleteGraphics, groupGraphics, ungroupGraphics, reorderGraphics } from "../utils/graphicGroup";
-import type { JointPaperHandle } from "../utils/jointUtils";
-
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
 export type { LayoutPoint } from "../structureEditor/types";
 
 export interface DiagramViewProps {
@@ -51,6 +45,8 @@ export interface DiagramViewProps {
   mode?: "diagram" | "icon";
   focusSymbolQuery?: string | null;
   libraryRefreshToken?: number;
+  onOpenDependencyGraphSettings?: () => void;
+  dependencyGraphBehavior: DependencyGraphBehavior;
 }
 
 export function DiagramView({
@@ -63,7 +59,12 @@ export function DiagramView({
   mode = "diagram",
   focusSymbolQuery = null,
   libraryRefreshToken = 0,
+  onOpenDependencyGraphSettings,
+  dependencyGraphBehavior,
 }: DiagramViewProps) {
+  const SYNC_STATUS_PREFIX = "[sync-status] ";
+  const SYNC_SLOW_HINT_MS = 2000;
+  const SYNC_HEARTBEAT_MS = 5000;
   const sessionRef = useRef<ReturnType<typeof createStructureGraphSession> | null>(null);
   if (!sessionRef.current) sessionRef.current = createStructureGraphSession();
   const session = sessionRef.current;
@@ -108,13 +109,48 @@ export function DiagramView({
     return doc ? documentToDiagram(doc) : null;
   }, [session, sessionRevision]);
 
-  const [selectedGraphicPath, setSelectedGraphicPath] = useState<number[] | null>(null);
-  const [selectedGraphicIndices, setSelectedGraphicIndices] = useState<number[]>([]);
-  const [paperHandle, setPaperHandle] = useState<JointPaperHandle | null>(null);
-  const [showMiniMap, setShowMiniMap] = useState(true);
-  const [gridEnabled, setGridEnabled] = useState(true);
-  const [gridSize, setGridSize] = useState(10);
-  const [showGrid, setShowGrid] = useState(true);
+  const activeGraphics =
+    mode === "icon" ? (diagram?.iconAnnotation?.graphics ?? []) : (diagram?.diagramAnnotation?.graphics ?? []);
+
+  const setGraphicsForActiveMode = useCallback(
+    (graphics: GraphicItem[]) => {
+      session.setGraphicsForMode(modeRef.current, graphics);
+    },
+    [session],
+  );
+
+  const {
+    selectedGraphicPath,
+    setSelectedGraphicPath,
+    selectedGraphicIndices,
+    handleUpdateGraphic,
+    handleRectangleToPolygon,
+    handleAddGraphic,
+    handleDeleteGraphic,
+    handleSelectGraphic,
+    handleToggleLayerHidden,
+    handleToggleLayerLocked,
+    handleReorderGraphics,
+    handleGroupGraphics,
+    handleUngroupGraphics,
+    handleAlign,
+    handleDistribute,
+    handleDuplicate,
+    handleDeleteSelected,
+  } = useDiagramGraphicInteraction(mode, activeGraphics, setGraphicsForActiveMode);
+
+  const {
+    paperHandle,
+    setPaperHandle,
+    showMiniMap,
+    setShowMiniMap,
+    gridEnabled,
+    setGridEnabled,
+    gridSize,
+    setGridSize,
+    showGrid,
+    setShowGrid,
+  } = useDiagramViewPaperState();
 
   const loadGraphGenerationRef = useRef(0);
 
@@ -238,6 +274,29 @@ export function DiagramView({
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAppliedRef = useRef<string>("");
+  const activeSyncTokenRef = useRef(0);
+  const activeSyncSlowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeSyncHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const setSyncStatusMessage = useCallback((severity: GraphicalMessage["severity"], text: string) => {
+    const payload = `${SYNC_STATUS_PREFIX}${text}`;
+    setMessages((prev) => [{ severity, text: payload } as GraphicalMessage, ...prev.filter((m) => !m.text.startsWith(SYNC_STATUS_PREFIX))].slice(0, 20));
+  }, []);
+
+  const clearSyncStatusMessage = useCallback(() => {
+    setMessages((prev) => prev.filter((m) => !m.text.startsWith(SYNC_STATUS_PREFIX)));
+  }, []);
+
+  const clearSyncTimers = useCallback(() => {
+    if (activeSyncSlowTimerRef.current) {
+      clearTimeout(activeSyncSlowTimerRef.current);
+      activeSyncSlowTimerRef.current = null;
+    }
+    if (activeSyncHeartbeatRef.current) {
+      clearInterval(activeSyncHeartbeatRef.current);
+      activeSyncHeartbeatRef.current = null;
+    }
+  }, []);
 
   const syncToSource = useCallback(() => {
     if (readOnly || !onContentChangeRef.current) return;
@@ -249,6 +308,22 @@ export function DiagramView({
     const { components, connections, layout } = nodesToDiagram(nodes, links);
     const previousKey = lastAppliedRef.current;
     lastAppliedRef.current = key;
+    const syncToken = activeSyncTokenRef.current + 1;
+    activeSyncTokenRef.current = syncToken;
+    const syncStart = Date.now();
+    let showedSlowStatus = false;
+    clearSyncTimers();
+    clearSyncStatusMessage();
+    activeSyncSlowTimerRef.current = setTimeout(() => {
+      if (activeSyncTokenRef.current !== syncToken) return;
+      showedSlowStatus = true;
+      setSyncStatusMessage("info", "Diagram sync is still running...");
+      activeSyncHeartbeatRef.current = setInterval(() => {
+        if (activeSyncTokenRef.current !== syncToken) return;
+        const elapsedSec = Math.floor((Date.now() - syncStart) / 1000);
+        setSyncStatusMessage("info", `Diagram sync running for ${elapsedSec}s...`);
+      }, SYNC_HEARTBEAT_MS);
+    }, SYNC_SLOW_HINT_MS);
     const nextDocument: DiagramDocument = {
       modelName: doc.modelName,
       components,
@@ -265,19 +340,39 @@ export function DiagramView({
       projectDirRef.current,
       filePathRef.current,
     )
-      .then(({ newSource }) => {
+      .then(({ newSource, warning }) => {
+        if (activeSyncTokenRef.current !== syncToken) return;
         onContentChangeRef.current?.(newSource);
+        if (warning) {
+          setMessages((prev) =>
+            [{ severity: "warning", text: warning } as GraphicalMessage, ...prev].slice(0, 20),
+          );
+        }
+        if (showedSlowStatus) {
+          const elapsedSec = Math.max(1, Math.round((Date.now() - syncStart) / 1000));
+          setSyncStatusMessage("info", `Diagram sync completed in ${elapsedSec}s.`);
+        }
       })
       .catch((syncError) => {
+        if (activeSyncTokenRef.current !== syncToken) return;
         lastAppliedRef.current = previousKey;
+        clearSyncStatusMessage();
         setMessages((prev) =>
           [{ severity: "error", text: `Sync failed: ${String(syncError)}` } as GraphicalMessage, ...prev].slice(
             0,
             20,
           ),
         );
+      })
+      .finally(() => {
+        if (activeSyncTokenRef.current !== syncToken) return;
+        clearSyncTimers();
+        // Keep completion message briefly; remove running status text only.
+        setMessages((prev) =>
+          prev.filter((m) => !m.text.startsWith(`${SYNC_STATUS_PREFIX}Diagram sync is still running`) && !m.text.includes("running for")),
+        );
       });
-  }, [readOnly, session]);
+  }, [clearSyncStatusMessage, clearSyncTimers, readOnly, session, setSyncStatusMessage]);
 
   const onRefreshDiagram = useCallback(
     (data: DiagramDocument) => {
@@ -296,16 +391,6 @@ export function DiagramView({
     const { nodes, links } = session.getNodesLinksForCanvas(handleDoubleClickRef.current);
     return buildDiagramSyncKey(nodes, links, doc.graphical);
   }, [session, sessionRevision]);
-
-  const activeGraphics =
-    mode === "icon" ? (diagram?.iconAnnotation?.graphics ?? []) : (diagram?.diagramAnnotation?.graphics ?? []);
-
-  const setGraphicsForActiveMode = useCallback(
-    (graphics: GraphicItem[]) => {
-      session.setGraphicsForMode(modeRef.current, graphics);
-    },
-    [session],
-  );
 
   const selectedComponent = useMemo(() => {
     void sessionRevision;
@@ -329,186 +414,6 @@ export function DiagramView({
     },
     [session],
   );
-
-  const handleUpdateGraphic = useCallback(
-    (path: number[], next: GraphicItem) => {
-      setGraphicsForActiveMode(replaceGraphicAtPath(activeGraphics, path, next));
-    },
-    [activeGraphics, setGraphicsForActiveMode],
-  );
-
-  const handleAddGraphic = useCallback(
-    (graphic: GraphicItem) => {
-      const graphics = [...activeGraphics, graphic];
-      setGraphicsForActiveMode(graphics);
-      const last = graphics.length - 1;
-      setSelectedGraphicPath([last]);
-      setSelectedGraphicIndices([last]);
-    },
-    [activeGraphics, setGraphicsForActiveMode],
-  );
-
-  const handleDeleteGraphic = useCallback(
-    (path: number[]) => {
-      if (path.length === 0) return;
-      const updated = removeGraphicAtPath(activeGraphics, path);
-      if (updated === null) return;
-      setGraphicsForActiveMode(updated);
-      const root = path[0]!;
-      if (path.length === 1) {
-        setSelectedGraphicIndices((prev) =>
-          prev.filter((i) => i !== root).map((i) => (i > root ? i - 1 : i)),
-        );
-        setSelectedGraphicPath(null);
-      } else {
-        setSelectedGraphicPath(path.slice(0, -1));
-      }
-    },
-    [activeGraphics, setGraphicsForActiveMode],
-  );
-
-  const handleSelectGraphic = useCallback(
-    (path: number[] | null, additive?: boolean) => {
-      if (mode !== "icon") {
-        if (!path || path.length === 0) setSelectedGraphicPath(null);
-        else setSelectedGraphicPath([path[0]!]);
-        return;
-      }
-      if (!path || path.length === 0) {
-        if (!additive) {
-          setSelectedGraphicPath(null);
-          setSelectedGraphicIndices([]);
-        }
-        return;
-      }
-      const root = path[0]!;
-      if (additive) {
-        const s = new Set(selectedGraphicIndices);
-        const had = s.has(root);
-        if (had) s.delete(root);
-        else s.add(root);
-        const next = [...s].sort((a, b) => a - b);
-        setSelectedGraphicIndices(next);
-        if (next.length === 0) setSelectedGraphicPath(null);
-        else if (!had) setSelectedGraphicPath(path);
-        else setSelectedGraphicPath(next[0] !== undefined ? [next[0]] : null);
-        return;
-      }
-      setSelectedGraphicPath(path);
-      setSelectedGraphicIndices([root]);
-    },
-    [mode, selectedGraphicIndices],
-  );
-
-  const patchGraphicAtPath = useCallback(
-    (path: number[], patch: Partial<GraphicItem>) => {
-      const g = getGraphicAtPath(activeGraphics, path);
-      if (!g) return;
-      const next = { ...structuredClone(g), ...patch } as GraphicItem;
-      setGraphicsForActiveMode(replaceGraphicAtPath(activeGraphics, path, next));
-    },
-    [activeGraphics, setGraphicsForActiveMode],
-  );
-
-  const handleToggleLayerHidden = useCallback(
-    (index: number) => {
-      const g = activeGraphics[index];
-      if (!g) return;
-      patchGraphicAtPath([index], { layerHidden: !g.layerHidden });
-    },
-    [activeGraphics, patchGraphicAtPath],
-  );
-
-  const handleToggleLayerLocked = useCallback(
-    (index: number) => {
-      const g = activeGraphics[index];
-      if (!g) return;
-      patchGraphicAtPath([index], { layerLocked: !g.layerLocked });
-    },
-    [activeGraphics, patchGraphicAtPath],
-  );
-
-  const handleReorderGraphics = useCallback(
-    (from: number, to: number) => {
-      const updated = reorderGraphics(activeGraphics, from, to);
-      setGraphicsForActiveMode(updated);
-      const mapIndex = (i: number) => {
-        if (i === from) return to;
-        if (from < to) {
-          if (i > from && i <= to) return i - 1;
-        } else if (from > to) {
-          if (i >= to && i < from) return i + 1;
-        }
-        return i;
-      };
-      setSelectedGraphicIndices((prev) => [...new Set(prev.map(mapIndex))].sort((a, b) => a - b));
-      setSelectedGraphicPath((cur) => {
-        if (!cur || cur.length === 0) return cur;
-        const newRoot = mapIndex(cur[0]!);
-        return [newRoot, ...cur.slice(1)];
-      });
-    },
-    [activeGraphics, setGraphicsForActiveMode],
-  );
-
-  const handleGroupGraphics = useCallback(() => {
-    if (selectedGraphicIndices.length < 2) return;
-    const { updatedGraphics, groupIndex } = groupGraphics(activeGraphics, selectedGraphicIndices);
-    if (groupIndex < 0) return;
-    setGraphicsForActiveMode(updatedGraphics);
-    setSelectedGraphicIndices([groupIndex]);
-    setSelectedGraphicPath([groupIndex]);
-  }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
-
-  const handleUngroupGraphics = useCallback(() => {
-    if (selectedGraphicIndices.length !== 1) return;
-    const idx = selectedGraphicIndices[0]!;
-    const item = activeGraphics[idx];
-    if (!item || item.type !== "Group") return;
-    const n = item.children.length;
-    const updated = ungroupGraphics(activeGraphics, idx);
-    setGraphicsForActiveMode(updated);
-    setSelectedGraphicIndices(Array.from({ length: n }, (_, i) => idx + i));
-    setSelectedGraphicPath([idx]);
-  }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
-
-  const handleAlign = useCallback(
-    (alignment: "left" | "center" | "right" | "top" | "middle" | "bottom") => {
-      if (selectedGraphicIndices.length < 2) return;
-      const updated = alignGraphics(activeGraphics, selectedGraphicIndices, alignment);
-      setGraphicsForActiveMode(updated);
-      setSelectedGraphicIndices([]);
-      setSelectedGraphicPath(null);
-    },
-    [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode],
-  );
-
-  const handleDistribute = useCallback(
-    (distribution: "horizontal" | "vertical") => {
-      if (selectedGraphicIndices.length < 3) return;
-      const updated = distributeGraphics(activeGraphics, selectedGraphicIndices, distribution);
-      setGraphicsForActiveMode(updated);
-      setSelectedGraphicIndices([]);
-      setSelectedGraphicPath(null);
-    },
-    [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode],
-  );
-
-  const handleDuplicate = useCallback(() => {
-    if (selectedGraphicIndices.length === 0) return;
-    const { updatedGraphics } = duplicateGraphics(activeGraphics, selectedGraphicIndices);
-    setGraphicsForActiveMode(updatedGraphics);
-    setSelectedGraphicIndices([]);
-    setSelectedGraphicPath(null);
-  }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
-
-  const handleDeleteSelected = useCallback(() => {
-    if (selectedGraphicIndices.length === 0) return;
-    const updated = deleteGraphics(activeGraphics, selectedGraphicIndices);
-    setGraphicsForActiveMode(updated);
-    setSelectedGraphicIndices([]);
-    setSelectedGraphicPath(null);
-  }, [activeGraphics, selectedGraphicIndices, setGraphicsForActiveMode]);
 
   const handleExportSvg = useCallback(() => {
     const annotation = diagram?.iconAnnotation;
@@ -546,6 +451,10 @@ export function DiagramView({
       }
     };
   }, [syncContentFingerprint, readOnly, syncToSource]);
+
+  useEffect(() => () => {
+    clearSyncTimers();
+  }, [clearSyncTimers]);
 
   useEffect(() => {
     if (!simOverlay.isActive || !simOverlay.overlayData) {
@@ -632,6 +541,8 @@ export function DiagramView({
       projectDir={projectDir}
       mode={mode}
       readOnly={readOnly}
+      onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
+      dependencyGraphBehavior={dependencyGraphBehavior}
       annotation={mode === "icon" ? diagram.iconAnnotation : diagram.diagramAnnotation}
       graphics={activeGraphics}
       selectedGraphicPath={selectedGraphicPath}
@@ -695,6 +606,7 @@ export function DiagramView({
                 graphics={activeGraphics}
                 onGroup={readOnly ? undefined : handleGroupGraphics}
                 onUngroup={readOnly ? undefined : handleUngroupGraphics}
+                onRectangleToPolygon={readOnly ? undefined : handleRectangleToPolygon}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDeleteSelected}
               />

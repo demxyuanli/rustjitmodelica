@@ -5,6 +5,8 @@ export interface JitValidateOptions {
   rtol?: number;
   solver?: string;
   output_interval?: number;
+  /** Stops validation after this tier: full | parse | flatten | analyze */
+  validationTier?: string;
 }
 
 export interface WarningItem {
@@ -22,6 +24,10 @@ export interface JitValidateResult {
   diagnostics?: DiagnosticErrorItem[];
   state_vars: string[];
   output_vars: string[];
+  /** Phase timings and counts from the compiler (shown in Simulation Output tab). */
+  compile_trace?: string[];
+  validation_stop_phase?: string | null;
+  validation_partial?: boolean;
 }
 
 export interface DiagnosticErrorItem {
@@ -72,6 +78,10 @@ export interface EquationGraphEdge {
 export interface EquationGraph {
   nodes: EquationGraphNode[];
   edges: EquationGraphEdge[];
+  truncated?: boolean;
+  totalEquations?: number;
+  includedEquations?: number;
+  omittedEquations?: number;
 }
 
 export interface DialogSelector {

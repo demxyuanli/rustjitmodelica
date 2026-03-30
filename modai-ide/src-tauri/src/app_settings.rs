@@ -123,6 +123,72 @@ impl Default for IndexingSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DependencyGraphDowngradeTarget {
+    #[default]
+    Compact,
+    TopLevel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyGraphSettings {
+    /// Seconds to wait in Full mode before auto-switching (1–300). Ignored when auto_downgrade_from_full is false.
+    #[serde(default = "dependency_graph_default_full_timeout_sec")]
+    pub full_timeout_sec: u32,
+    #[serde(default = "default_true")]
+    pub auto_downgrade_from_full: bool,
+    #[serde(default)]
+    pub downgrade_target: DependencyGraphDowngradeTarget,
+    /// Initial graph mode: `structural` | `compact` | `top-level` | `full`.
+    #[serde(default = "dependency_graph_default_mode_string")]
+    pub default_graph_mode: String,
+    /// When true, the initial mode is forced to `structural` for a fast first paint.
+    #[serde(default)]
+    pub prefer_structural_first: bool,
+}
+
+fn dependency_graph_default_full_timeout_sec() -> u32 {
+    8
+}
+
+fn dependency_graph_default_mode_string() -> String {
+    "compact".to_string()
+}
+
+impl Default for DependencyGraphSettings {
+    fn default() -> Self {
+        Self {
+            full_timeout_sec: dependency_graph_default_full_timeout_sec(),
+            auto_downgrade_from_full: true,
+            downgrade_target: DependencyGraphDowngradeTarget::default(),
+            default_graph_mode: dependency_graph_default_mode_string(),
+            prefer_structural_first: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationSettings {
+    /// Default validation tier: `full` | `parse` | `flatten` | `analyze`.
+    #[serde(default = "validation_default_tier_string")]
+    pub default_tier: String,
+}
+
+fn validation_default_tier_string() -> String {
+    "analyze".to_string()
+}
+
+impl Default for ValidationSettings {
+    fn default() -> Self {
+        Self {
+            default_tier: validation_default_tier_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiRule {
@@ -264,6 +330,10 @@ pub struct AppSettings {
     pub index_cache: IndexCacheSettings,
     #[serde(default)]
     pub indexing: IndexingSettings,
+    #[serde(default)]
+    pub dependency_graph: DependencyGraphSettings,
+    #[serde(default)]
+    pub validation: ValidationSettings,
     #[serde(default)]
     pub ai: AiConfig,
 }

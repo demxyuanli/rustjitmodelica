@@ -3,7 +3,7 @@
  * Provides functions to snap points and extents to a grid
  */
 
-import type { AnnotationPoint, AnnotationExtent } from "../components/DiagramSvgRenderer";
+import type { AnnotationExtent, AnnotationPoint } from "../components/diagramGraphicTypes";
 
 export interface GridOptions {
   enabled: boolean;

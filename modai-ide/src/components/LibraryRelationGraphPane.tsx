@@ -1,9 +1,10 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { ZoomIn, ZoomOut, Maximize2, Maximize } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Maximize, Settings } from "lucide-react";
 import { t } from "../i18n";
 import { EquationGraphView } from "./EquationGraphView";
 import { DependencyGraphModal } from "./DependencyGraphModal";
 import type { JointPaperHandle } from "../utils/jointUtils";
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
 import type { IconGraphics, AnnotationViewModel } from "../utils/modelicaAnnotation";
 import { parseAnnotationViewModelForType } from "../utils/modelicaAnnotation";
 
@@ -102,11 +103,19 @@ interface LibraryRelationGraphPaneProps {
   code: string | null;
   modelName: string | null;
   projectDir?: string | null;
+  onOpenDependencyGraphSettings?: () => void;
+  dependencyGraphBehavior: DependencyGraphBehavior;
 }
 
 type ContentTab = "graph" | "icon" | "info" | "annotation";
 
-export function LibraryRelationGraphPane({ code, modelName, projectDir }: LibraryRelationGraphPaneProps) {
+export function LibraryRelationGraphPane({
+  code,
+  modelName,
+  projectDir,
+  onOpenDependencyGraphSettings,
+  dependencyGraphBehavior,
+}: LibraryRelationGraphPaneProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [paperHandle, setPaperHandle] = useState<JointPaperHandle | null>(null);
   const [contentTab, setContentTab] = useState<ContentTab>("graph");
@@ -186,6 +195,20 @@ export function LibraryRelationGraphPane({ code, modelName, projectDir }: Librar
             <button type="button" className="toolbar-icon-btn flex rounded items-center justify-center hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]" title={t("expandToWindow")} onClick={() => setModalOpen(true)}>
               <Maximize className="h-3 w-3" />
             </button>
+            {onOpenDependencyGraphSettings ? (
+              <>
+                <div className="w-px bg-[var(--border)] mx-0.5 self-stretch min-h-[1em]" />
+                <button
+                  type="button"
+                  className="toolbar-icon-btn flex rounded items-center justify-center hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]"
+                  title={t("dependencyGraphOpenSettings")}
+                  aria-label={t("dependencyGraphOpenSettings")}
+                  onClick={() => onOpenDependencyGraphSettings()}
+                >
+                  <Settings className="h-3 w-3" />
+                </button>
+              </>
+            ) : null}
           </div>
         )}
       </div>
@@ -201,7 +224,9 @@ export function LibraryRelationGraphPane({ code, modelName, projectDir }: Librar
                 code={code ?? ""}
                 modelName={modelName ?? ""}
                 projectDir={projectDir}
+                graphMode={dependencyGraphBehavior.initialGraphMode}
                 layoutOptions={{ algorithm: "layered", direction: "RIGHT" }}
+                dependencyGraphBehavior={dependencyGraphBehavior}
                 onReady={setPaperHandle}
               />
             )}
@@ -322,6 +347,8 @@ export function LibraryRelationGraphPane({ code, modelName, projectDir }: Librar
           code={code ?? ""}
           modelName={modelName ?? ""}
           projectDir={projectDir}
+          onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
+          dependencyGraphBehavior={dependencyGraphBehavior}
         />
       )}
     </div>

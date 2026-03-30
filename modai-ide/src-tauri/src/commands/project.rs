@@ -411,11 +411,7 @@ pub async fn get_graphical_document_from_source(
     diagram::load_and_build_graphical_document_from_source(source, project_dir, relative_path).await
 }
 
-#[derive(Debug, Serialize)]
-pub struct ApplyDiagramEditsResult {
-    #[serde(rename = "newSource")]
-    pub new_source: String,
-}
+pub type ApplyDiagramEditsResult = diagram::ApplyDiagramEditsOutput;
 
 #[tauri::command]
 pub fn apply_diagram_edits(
@@ -428,7 +424,7 @@ pub fn apply_diagram_edits(
     project_dir: Option<String>,
     relative_path: Option<String>,
 ) -> Result<ApplyDiagramEditsResult, String> {
-    let new_source = diagram::apply_diagram_edits(
+    diagram::apply_diagram_edits(
         &source,
         &components,
         &connections,
@@ -437,8 +433,7 @@ pub fn apply_diagram_edits(
         icon_annotation.as_ref(),
         project_dir.as_deref(),
         relative_path.as_deref(),
-    )?;
-    Ok(ApplyDiagramEditsResult { new_source })
+    )
 }
 
 #[tauri::command]
@@ -448,7 +443,7 @@ pub async fn apply_graphical_document_edits(
     project_dir: Option<String>,
     relative_path: Option<String>,
 ) -> Result<ApplyDiagramEditsResult, String> {
-    let new_source = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         diagram::apply_graphical_document_edits(
             &source,
             &document,
@@ -457,8 +452,7 @@ pub async fn apply_graphical_document_edits(
         )
     })
     .await
-    .map_err(|e| format!("join error: {e}"))??;
-    Ok(ApplyDiagramEditsResult { new_source })
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 #[derive(Debug, Clone, Serialize)]

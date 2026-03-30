@@ -1,3 +1,9 @@
+export interface TestAllResultItem {
+  path: string;
+  success: boolean;
+  errors: string[];
+}
+
 export interface SimulationChartSeries {
   name: string;
   values: number[];

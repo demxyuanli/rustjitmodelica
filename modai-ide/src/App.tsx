@@ -11,23 +11,12 @@ import { useSimulation } from "./hooks/useSimulation";
 import { useModelicaAI, type AiContextBlock } from "./hooks/useAI";
 
 import { Titlebar } from "./components/Titlebar";
-import { FileTree } from "./components/FileTree";
-import { OutlineSection } from "./components/OutlineSection";
-import { TimelineSection } from "./components/TimelineSection";
-import { SourceControlView } from "./components/SourceControlView";
-import { EditorWorkbench, type EditorWorkbenchRef } from "./components/EditorWorkbench";
-import { WelcomeView } from "./components/WelcomeView";
+import type { EditorWorkbenchRef } from "./components/EditorWorkbench";
 import { ComponentLibraryWorkspace } from "./components/ComponentLibraryWorkspace";
 import { StatusBar, type IndexStatusInfo } from "./components/StatusBar";
-import { AIPanel } from "./components/AIPanel";
-import { SearchPanel } from "./components/SearchPanel";
-import { AppIcon } from "./components/Icon";
-import { IconButton } from "./components/IconButton";
+import { ModelicaWorkbenchLayout, type WorkbenchBottomTab } from "./components/ModelicaWorkbenchLayout";
 import { emit } from "@tauri-apps/api/event";
 
-const DiffView = lazy(() => import("./components/DiffView").then((m) => ({ default: m.DiffView })));
-const GitGraphView = lazy(() => import("./components/GitGraphView").then((m) => ({ default: m.GitGraphView })));
-const SimulationPanel = lazy(() => import("./components/SimulationPanel").then((m) => ({ default: m.SimulationPanel })));
 const RegressionWorkspacePanel = lazy(() => import("./components/RegressionWorkspacePanel").then((m) => ({ default: m.RegressionWorkspacePanel })));
 import { NewModelDialog } from "./components/diagram/NewModelDialog";
 import { JitIdeWorkspace } from "./components/JitIdeWorkspace";
@@ -37,7 +26,6 @@ import { t } from "./i18n";
 import type { JitCenterView } from "./hooks/useJitLayout";
 import { DEFAULT_MODEL_BOUNCING_BALL } from "./examples";
 import {
-  indexRepoRoot,
   indexBuild,
   indexStats,
   indexStartWatcher,
@@ -49,58 +37,15 @@ import {
   indexRebuildRepo,
   indexRepoStats,
   writeProjectFile,
-  getAppSettings,
   setAppSettings,
-  getAppDataRoot,
   applyPatchToProject,
   readProjectFile,
 } from "./api/tauri";
 import { parsePathsFromDiff } from "./components/ai/ai-markdown";
 import type { AppSettings } from "./api/tauri";
-import { PREFS_KEYS, readPref, writePref } from "./utils/prefsConstants";
-import {
-  getWorkspaceStateKey,
-  loadWorkspaceMeta,
-  loadWorkspaceDrafts,
-  saveWorkspaceMeta,
-  saveWorkspaceDrafts,
-  type WorkspaceMetaSerial,
-} from "./utils/workspacePersistence";
-import type { EditorTab } from "./components/EditorTabBar";
+import { useAppBootstrapEffects } from "./hooks/useAppBootstrapEffects";
+import { useModelicaWorkspacePersistence } from "./hooks/useModelicaWorkspacePersistence";
 import "./App.css";
-
-type WorkbenchBottomTab = "problems" | "output" | "results" | "deps";
-
-let lastProjectRestoreAttempted = false;
-
-function scheduleRestoreLastProjectOnce(
-  setWorkspaceMode: (mode: "modelica" | "component-library" | "compiler-iterate" | "regression") => void,
-  setProjectDirFromPath: (path: string) => Promise<void>
-) {
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      if (lastProjectRestoreAttempted) return;
-      const restoreLayout = readPref(PREFS_KEYS.restoreLayout, (s) => s === "true", true);
-      if (!restoreLayout) return;
-      const lastDir = readPref(PREFS_KEYS.lastProjectDir, (s) => (s && s.trim() ? s.trim() : ""), "");
-      if (!lastDir) return;
-      const attempt = (retry = false) => {
-        lastProjectRestoreAttempted = true;
-        setProjectDirFromPath(lastDir)
-          .then(() => setWorkspaceMode("modelica"))
-          .catch(() => {
-            if (retry) {
-              writePref(PREFS_KEYS.lastProjectDir, "");
-              return;
-            }
-            lastProjectRestoreAttempted = false;
-            setTimeout(() => attempt(true), 500);
-          });
-      };
-      attempt(false);
-    }, 200);
-  });
-}
 
 function App() {
   const [modelName, setModelName] = useState("BouncingBall");
@@ -123,8 +68,6 @@ function App() {
   const project = useProject();
   const { recentProjects, addRecentProject } = useRecentProjects();
   const diagramScheme = useDiagramScheme();
-  const sim = useSimulation(log);
-  const ai = useModelicaAI(log);
 
   const [indexStatus, setIndexStatus] = useState<IndexStatusInfo | null>(null);
   const [repoRoot, setRepoRoot] = useState<string | null>(null);
@@ -137,70 +80,19 @@ function App() {
   const [libraryRefreshToken, setLibraryRefreshToken] = useState(0);
   const [showNewModelDialog, setShowNewModelDialog] = useState(false);
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null);
+  const sim = useSimulation(log, appSettings?.validation?.defaultTier ?? null);
+  const ai = useModelicaAI(log);
   const [appDataRoot, setAppDataRoot] = useState<string | null>(null);
-  const [restoredWorkspace, setRestoredWorkspace] = useState<{
-    projectDir: string;
-    meta: WorkspaceMetaSerial;
-    drafts: Record<string, string>;
-  } | null>(null);
 
-  const indexRepoRootDoneRef = useRef(false);
-  useEffect(() => {
-    if (indexRepoRootDoneRef.current) return;
-    const start = performance.now?.() ?? Date.now();
-    const run = () => {
-      indexRepoRootDoneRef.current = true;
-      indexRepoRoot()
-        .then((r) => setRepoRoot(r))
-        .catch(() => {})
-        .finally(() => {
-          const end = performance.now?.() ?? Date.now();
-          // eslint-disable-next-line no-console
-          console.log("[modai-prof] indexRepoRoot took", end - start, "ms");
-        });
-    };
-    const t = window.setTimeout(run, 0);
-    return () => window.clearTimeout(t);
-  }, []);
+  useAppBootstrapEffects({
+    setRepoRoot,
+    setAppSettingsState,
+    setAppDataRoot,
+    setWorkspaceMode: layout.setWorkspaceMode,
+    setProjectDirFromPath: project.setProjectDirFromPath,
+  });
 
-  useEffect(() => {
-    const handler = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      const tag = target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") {
-        return;
-      }
-      if (target.isContentEditable) {
-        return;
-      }
-      let el: HTMLElement | null = target;
-      while (el) {
-        if (el.dataset && el.dataset.allowBrowserContextmenu === "true") {
-          return;
-        }
-        el = el.parentElement;
-      }
-      event.preventDefault();
-    };
-    window.addEventListener("contextmenu", handler);
-    return () => {
-      window.removeEventListener("contextmenu", handler);
-    };
-  }, []);
-
-  useEffect(() => {
-    getAppSettings().then(setAppSettingsState).catch(() => {});
-    getAppDataRoot().then(setAppDataRoot).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const start = performance.now?.() ?? Date.now();
-    scheduleRestoreLastProjectOnce(layout.setWorkspaceMode, project.setProjectDirFromPath);
-    const end = performance.now?.() ?? Date.now();
-    // eslint-disable-next-line no-console
-    console.log("[modai-prof] scheduleRestoreLastProjectOnce took", end - start, "ms");
-  }, [layout.setWorkspaceMode, project.setProjectDirFromPath]);
+  const restoredWorkspace = useModelicaWorkspacePersistence(project.projectDir, workbenchRef);
 
   useEffect(() => {
     if (project.projectDir) addRecentProject(project.projectDir);
@@ -209,83 +101,6 @@ function App() {
   useEffect(() => {
     ai.setProjectDir(project.projectDir ?? null);
   }, [ai.setProjectDir, project.projectDir]);
-
-  useEffect(() => {
-    if (!project.projectDir) {
-      setRestoredWorkspace(null);
-      return;
-    }
-    const projectKey = getWorkspaceStateKey(project.projectDir);
-    if (!projectKey) return;
-    const start = performance.now?.() ?? Date.now();
-    const meta = loadWorkspaceMeta(projectKey);
-    loadWorkspaceDrafts(projectKey).then((drafts) => {
-      const end = performance.now?.() ?? Date.now();
-      // eslint-disable-next-line no-console
-      console.log("[modai-prof] restore modelica workspace state took", end - start, "ms");
-      if (meta) {
-        setRestoredWorkspace({ projectDir: project.projectDir!, meta, drafts });
-      } else {
-        setRestoredWorkspace(null);
-      }
-    });
-  }, [project.projectDir]);
-
-  const persistWorkspaceState = useCallback(() => {
-    const dir = project.projectDir;
-    if (!dir) return;
-    const snapshot = workbenchRef.current?.getWorkspaceState?.();
-    if (!snapshot) return;
-    const hasTabs = snapshot.editorGroups.some((g) => g.tabs.length > 0);
-    if (!hasTabs) return;
-    const projectKey = getWorkspaceStateKey(dir);
-    if (!projectKey) return;
-    const meta: WorkspaceMetaSerial = {
-      version: 1,
-      editorGroups: snapshot.editorGroups.map((g) => ({
-        tabs: g.tabs.map((t: EditorTab) => ({
-          id: t.id,
-          path: t.path,
-          dirty: t.dirty,
-          projectPath: t.projectPath,
-          readOnly: t.readOnly,
-          modelName: t.modelName,
-        })),
-        activeIndex: g.activeIndex,
-      })),
-      focusedGroupIndex: snapshot.focusedGroupIndex,
-      splitRatio: snapshot.splitRatio,
-    };
-    saveWorkspaceMeta(projectKey, meta);
-    const drafts: Record<string, string> = {};
-    const norm = (p: string) => p.replace(/\\/g, "/");
-    for (const g of snapshot.editorGroups) {
-      for (const tab of g.tabs) {
-        if (tab.dirty) {
-          const key = tab.projectPath != null ? norm(tab.projectPath) : tab.id;
-          const content = snapshot.contentByPath[key];
-          if (content !== undefined) drafts[key] = content;
-        }
-      }
-    }
-    saveWorkspaceDrafts(projectKey, drafts);
-  }, [project.projectDir]);
-
-  useEffect(() => {
-    if (!project.projectDir) return;
-    const id = setInterval(persistWorkspaceState, 2000);
-    return () => clearInterval(id);
-  }, [project.projectDir, persistWorkspaceState]);
-
-  useEffect(() => {
-    const onUnload = () => persistWorkspaceState();
-    window.addEventListener("beforeunload", onUnload);
-    window.addEventListener("pagehide", onUnload);
-    return () => {
-      window.removeEventListener("beforeunload", onUnload);
-      window.removeEventListener("pagehide", onUnload);
-    };
-  }, [persistWorkspaceState]);
 
   useEffect(() => {
     setLang(layout.lang);
@@ -597,9 +412,10 @@ function App() {
 
   const handleValidate = useCallback(async () => {
     layout.setShowBottomPanel(true);
-    setRequestedSimulationTab("problems");
+    setRequestedSimulationTab("output");
     const result = await sim.validate(code, modelName, project.projectDir);
     if (result && !result.success) {
+      setRequestedSimulationTab("problems");
       ai.setAiPrompt(`Compilation failed.\n${result.errors.join("\n")}`);
       layout.setShowRightPanel(true);
       layout.setRightPanelTab("ai");
@@ -734,363 +550,58 @@ function App() {
       <div className="relative flex flex-1 min-h-0 min-w-0">
       <>
       <div className={layout.workspaceMode === "modelica" ? "flex flex-1 min-h-0 min-w-0" : "hidden"}>
-            {layout.showLeftSidebar && (
-              <>
-                <div className="shrink-0 border-r border-border bg-surface-alt overflow-hidden flex flex-col w-full" style={{ width: layout.leftSidebarWidth }}>
-                  <div className="panel-header-min-height shrink-0 flex items-center justify-around border-b border-border w-full">
-                    <IconButton
-                      icon={<AppIcon name="explorer" aria-hidden="true" />}
-                      variant="tab"
-                      size="xs"
-                      active={layout.leftSidebarTab === "explorer"}
-                      onClick={() => layout.setLeftSidebarTab("explorer")}
-                      title={t("explorer")}
-                      aria-label={t("explorer")}
-                    />
-                    <IconButton
-                      icon={<AppIcon name="sourceControl" aria-hidden="true" />}
-                      variant="tab"
-                      size="xs"
-                      active={layout.leftSidebarTab === "sourceControl"}
-                      onClick={() => layout.setLeftSidebarTab("sourceControl")}
-                      title={t("sourceControl")}
-                      aria-label={t("sourceControl")}
-                    />
-                    <IconButton
-                      icon={<AppIcon name="search" aria-hidden="true" />}
-                      variant="tab"
-                      size="xs"
-                      active={layout.leftSidebarTab === "search"}
-                      onClick={() => layout.setLeftSidebarTab("search")}
-                      title={t("search")}
-                      aria-label={t("search")}
-                    />
-                  </div>
-                  <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                    {layout.leftSidebarTab === "explorer" && (
-                      <>
-                        {project.projectDir && (
-                          <div className="panel-header-bar shrink-0 flex items-center border-b border-border">
-                            <button
-                              type="button"
-                              className="flex items-center gap-[var(--toolbar-gap)] px-2 py-0.5 text-[10px] rounded hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text)]"
-                              onClick={() => setShowNewModelDialog(true)}
-                              title={t("newModelTooltip")}
-                            >
-                              <span className="text-sm leading-none">+</span>
-                              {t("newModel")}
-                            </button>
-                          </div>
-                        )}
-                        <div className="flex-1 min-h-0 overflow-auto scroll-vscode">
-                          <FileTree
-                            projectDir={project.projectDir}
-                            moTree={project.moTree}
-                            moFiles={project.moFiles}
-                            onOpenProject={project.openProject}
-                            onOpenFile={handleOpenMoFile}
-                            recentProjects={recentProjects}
-                            onOpenRecentProject={handleOpenRecentProject}
-                            onNewModel={() => setShowNewModelDialog(true)}
-                          />
-                        </div>
-                        <div className="shrink-0 max-h-64 overflow-auto scroll-vscode">
-                          <OutlineSection
-                            code={code}
-                            openFilePath={openFilePath}
-                            editorRef={editorRef}
-                            projectDir={project.projectDir}
-                            onOpenDiagram={() => workbenchRef.current?.setViewModeRequest?.("diagramReadOnly")}
-                          />
-                        </div>
-                        <div className="shrink-0 max-h-64 overflow-auto scroll-vscode">
-                          <TimelineSection
-                            projectDir={project.projectDir}
-                            openFilePath={openFilePath}
-                            onOpenDiffAtRevision={(revision) => {
-                              if (project.projectDir && openFilePath) {
-                                project.setDiffTarget({
-                                  projectDir: project.projectDir,
-                                  relativePath: openFilePath,
-                                  isStaged: false,
-                                  revision,
-                                });
-                                layout.setRightPanelTab("diff");
-                                layout.setShowRightPanel(true);
-                              }
-                            }}
-                          />
-                        </div>
-                      </>
-                    )}
-                    {layout.leftSidebarTab === "sourceControl" && (
-                      <div className="flex flex-col flex-1 min-h-0">
-                        <div className="flex-1 min-h-0 overflow-hidden border-b border-border">
-                          <SourceControlView
-                            projectDir={project.projectDir}
-                            onOpenDiff={(relativePath, isStaged) => {
-                              if (project.projectDir) {
-                                project.setDiffTarget({ projectDir: project.projectDir, relativePath, isStaged });
-                                layout.setRightPanelTab("diff");
-                                layout.setShowRightPanel(true);
-                              }
-                            }}
-                            onOpenInEditor={handleOpenMoFile}
-                            onRefreshStatus={project.refreshGitStatus}
-                          />
-                        </div>
-                        <div className="shrink-0 border-t border-border flex flex-col min-h-0">
-                          <button
-                            type="button"
-                            className="panel-header-bar shrink-0 flex items-center text-xs text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text)] w-full text-left"
-                            onClick={() => layout.setGraphExpanded((e) => !e)}
-                            aria-expanded={layout.graphExpanded}
-                          >
-                            <span className="inline-block w-3 text-center" aria-hidden>{layout.graphExpanded ? "\u25BC" : "\u25B6"}</span>
-                            {t("graph")}
-                          </button>
-                          {layout.graphExpanded && (
-                            <div className="flex-1 min-h-[120px] overflow-hidden">
-                              <Suspense fallback={<div className="p-2 text-[var(--text-muted)] text-xs">{t("loading")}</div>}>
-                                <GitGraphView projectDir={project.projectDir} />
-                              </Suspense>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    {layout.leftSidebarTab === "search" && (
-                      <SearchPanel
-                        projectDir={project.projectDir}
-                        onOpenFile={handleOpenMoFile}
-                      />
-                    )}
-                  </div>
-                </div>
-                <div className="resize-handle shrink-0" onMouseDown={layout.startResizeLeft} aria-hidden />
-              </>
-            )}
-            <div className="flex min-w-0 flex-col flex-1 min-h-0">
-              {project.projectDir ? (
-              <EditorWorkbench
-                key={project.projectDir}
-                ref={workbenchRef}
-                projectDir={project.projectDir}
-                gitStatus={project.gitStatus}
-                jitResult={sim.jitResult}
-                modelName={modelName}
-                setModelName={setModelName}
-                editorRef={editorRef}
-                monacoRef={monacoRef}
-                onFocusedChange={({ path, content }) => {
-                  setOpenFilePath(path);
-                  setCode(content);
-                  ai.setActiveFilePath(path ?? null);
-                }}
-                onCursorPositionChange={(ln, col) => setCursorPosition({ lineNumber: ln, column: col })}
-                onSelectionChange={({ path, selectedText }) => setCurrentSelection({ path, text: selectedText })}
-                onGitStatusChange={project.setGitStatus}
-                onContentByPathChange={setContentByPath}
-                log={log}
-                focusSymbolQuery={focusedDiagramSymbol}
-                onRequestWorkbenchView={(view) => {
-                  layout.setShowBottomPanel(true);
-                  setRequestedSimulationTab(view === "analysis" ? "deps" : "results");
-                }}
-                onViewModeChange={(mode) => {
-                  if (mode === "icon" || mode === "diagram" || mode === "diagramReadOnly") {
-                    layout.setShowRightPanel(false);
-                  }
-                }}
-                libraryRefreshToken={libraryRefreshToken}
-                theme={layout.theme}
-                initialEditorGroups={
-                  restoredWorkspace?.projectDir === project.projectDir
-                    ? (restoredWorkspace.meta.editorGroups as import("./components/EditorGroupColumn").EditorGroupState[])
-                    : undefined
-                }
-                initialContentByPath={
-                  restoredWorkspace?.projectDir === project.projectDir ? restoredWorkspace.drafts : undefined
-                }
-                initialFocusedGroupIndex={
-                  restoredWorkspace?.projectDir === project.projectDir
-                    ? restoredWorkspace.meta.focusedGroupIndex
-                    : undefined
-                }
-                initialSplitRatio={
-                  restoredWorkspace?.projectDir === project.projectDir ? restoredWorkspace.meta.splitRatio : undefined
-                }
-                initialProjectDir={
-                  restoredWorkspace?.projectDir === project.projectDir ? project.projectDir : undefined
-                }
-              />
-              ) : (
-                <WelcomeView
-                  onOpenProject={project.openProject}
-                  recentProjects={recentProjects}
-                  onOpenRecentProject={handleOpenRecentProject}
-                />
-              )}
-              {layout.showBottomPanel && project.projectDir && (
-                <>
-                  <div className="resize-handle-h shrink-0" onMouseDown={layout.startResizeBottom} aria-hidden />
-                  <div className="shrink-0 overflow-hidden flex flex-col border-t border-border bg-surface-alt" style={{ height: layout.bottomPanelHeight }}>
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                      <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
-                        <SimulationPanel
-                          params={sim.params}
-                          onParamChange={sim.setParam}
-                          tableState={sim.tableState}
-                          onTableChange={sim.setTable}
-                          actions={{
-                            onValidate: handleValidate,
-                            onRunSimulation: handleRunSimulation,
-                            onTestAll: handleTestAll,
-                            onExportCSV: sim.exportCSV,
-                            onExportJSON: sim.exportJSON,
-                            onSuggestFixWithAi: ai.setAiPrompt,
-                          onClearLog: () => setLogLines([]),
-                          }}
-                          data={{
-                            jitResult: sim.jitResult,
-                            simResult: sim.simResult,
-                            simLoading: sim.simLoading,
-                            testAllLoading: sim.testAllLoading,
-                            testAllResults: sim.testAllResults,
-                            moFilesCount: project.moFiles.length,
-                            logLines,
-                            plotSeries: sim.plotSeries,
-                            chartMeta: sim.chartMeta,
-                            allPlotVarNames: sim.allPlotVarNames,
-                            selectedPlotVars: sim.selectedPlotVars,
-                            tableColumns: sim.tableColumns,
-                            sortedTableRows: sim.sortedTableRows,
-                          }}
-                          setSelectedPlotVars={sim.setSelectedPlotVars}
-                          theme={layout.theme}
-                          code={code}
-                          openFilePath={openFilePath}
-                          projectDir={project.projectDir}
-                          requestedTab={requestedSimulationTab}
-                          onRequestedTabHandled={() => setRequestedSimulationTab(null)}
-                          onFocusSymbol={(symbol) => {
-                            setFocusedDiagramSymbol(symbol);
-                            layout.setShowBottomPanel(true);
-                          }}
-                          selectedSymbol={focusedDiagramSymbol}
-                        />
-                      </Suspense>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-            {layout.showRightPanel && (
-              <>
-                <div className="resize-handle shrink-0" onMouseDown={layout.startResizeRight} aria-hidden />
-                <aside
-                  className="shrink-0 border-l border-border bg-surface-alt overflow-hidden flex flex-col min-w-0 w-full"
-                  style={{ width: layout.rightPanelWidth }}
-                >
-                  <div className="panel-header-min-height shrink-0 flex items-center justify-around border-b border-border w-full">
-                    <IconButton
-                      icon={<AppIcon name="ai" aria-hidden="true" />}
-                      variant="tab"
-                      size="xs"
-                      active={layout.rightPanelTab === "ai"}
-                      onClick={() => layout.setRightPanelTab("ai")}
-                      title={t("aiCoding")}
-                      aria-label={t("aiCoding")}
-                    />
-                    <IconButton
-                      icon={<AppIcon name="diff" aria-hidden="true" />}
-                      variant="tab"
-                      size="xs"
-                      active={layout.rightPanelTab === "diff"}
-                      onClick={() => layout.setRightPanelTab("diff")}
-                      title={t("viewDiff")}
-                      aria-label={t("viewDiff")}
-                    />
-                  </div>
-                  <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                    {layout.rightPanelTab === "ai" && (
-                      <div className="flex-1 overflow-auto p-3 scroll-vscode">
-                        <AIPanel
-                          apiKey={ai.apiKey}
-                          setApiKey={ai.setApiKey}
-                          apiKeySaved={ai.apiKeySaved}
-                          onSaveApiKey={ai.saveApiKey}
-                          aiPrompt={ai.aiPrompt}
-                          setAiPrompt={ai.setAiPrompt}
-                          aiLoading={ai.aiLoading}
-                          aiResponse={ai.aiResponse}
-                          onSend={ai.send}
-                          onInsert={handleInsertAi}
-                          tokenEstimate={ai.tokenEstimate}
-                          dailyTokenUsed={ai.dailyTokenUsed}
-                          dailyTokenLimit={ai.dailyTokenLimit}
-                          sendDisabled={ai.sendDisabled}
-                          projectDir={project.projectDir}
-                          repoRoot={repoRoot}
-                          mode={ai.mode}
-                          setMode={ai.setMode}
-                          model={ai.model}
-                          setModel={ai.setModel}
-                          currentFilePath={openFilePath ?? undefined}
-                          currentSelectionText={currentSelection.text ?? undefined}
-                          lastJitErrorText={sim.jitResult?.errors?.join(" ") ?? undefined}
-                          messages={ai.messages}
-                          agentMode={ai.agentMode}
-                          setAgentMode={ai.setAgentMode}
-                          pendingPatch={ai.pendingPatch}
-                          clearPendingPatch={ai.clearPendingPatch}
-                          onCreateMoFile={project.projectDir ? handleCreateMoFile : undefined}
-                          onApplyDiff={project.projectDir ? handleApplyDiff : undefined}
-                          iterationDiff={ai.iterationDiff}
-                          iterationRunResult={ai.iterationRunResult}
-                          iterationHistory={ai.iterationHistory}
-                          onRunIteration={ai.runIteration}
-                          onAdoptIteration={ai.adoptIteration}
-                          onCommitIteration={ai.commitIteration}
-                          onReuseIteration={ai.reuseIteration}
-                          onNewChat={ai.newChat}
-                          sessions={ai.sessions}
-                          onLoadSession={ai.loadSessionById}
-                          onDeleteSession={ai.deleteSession}
-                          lastToolCallsUsed={ai.lastToolCallsUsed}
-                          onOpenRulesAndSkills={() => {
-                            layout.setShowSettings(true);
-                            layout.setOpenSettingsToGroup("ai-config");
-                          }}
-                          enabledModelIds={appSettings?.ai?.modelIdsEnabled ?? undefined}
-                          theme={layout.theme}
-                        />
-                      </div>
-                    )}
-                    {layout.rightPanelTab === "diff" && (
-                      <Suspense fallback={<div className="p-3 text-[var(--text-muted)] text-sm">{t("loading")}</div>}>
-                        <DiffView
-                          diffTarget={project.diffTarget}
-                          currentFileContent={
-                            project.diffTarget ? (contentByPath[project.diffTarget.relativePath.replace(/\\/g, "/")] ?? null) : null
-                          }
-                          currentFilePath={openFilePath}
-                          onClose={() => { project.setDiffTarget(null); layout.setRightPanelTab("ai"); }}
-                          onOpenInEditor={(path) => handleOpenMoFile(path)}
-                          theme={layout.theme}
-                        />
-                      </Suspense>
-                    )}
-                  </div>
-                </aside>
-              </>
-            )}
-          </div>
+        <ModelicaWorkbenchLayout
+          layout={layout}
+          project={project}
+          sim={sim}
+          ai={ai}
+          workbenchRef={workbenchRef}
+          editorRef={editorRef}
+          monacoRef={monacoRef}
+          repoRoot={repoRoot}
+          appSettings={appSettings}
+          restoredWorkspace={restoredWorkspace}
+          recentProjects={recentProjects}
+          modelName={modelName}
+          setModelName={setModelName}
+          openFilePath={openFilePath}
+          code={code}
+          setOpenFilePath={setOpenFilePath}
+          setCode={setCode}
+          currentSelection={currentSelection}
+          setCurrentSelection={setCurrentSelection}
+          setCursorPosition={setCursorPosition}
+          contentByPath={contentByPath}
+          setContentByPath={setContentByPath}
+          logLines={logLines}
+          setLogLines={setLogLines}
+          libraryRefreshToken={libraryRefreshToken}
+          focusedDiagramSymbol={focusedDiagramSymbol}
+          setFocusedDiagramSymbol={setFocusedDiagramSymbol}
+          requestedSimulationTab={requestedSimulationTab}
+          setRequestedSimulationTab={setRequestedSimulationTab}
+          setShowNewModelDialog={setShowNewModelDialog}
+          log={log}
+          handleOpenMoFile={handleOpenMoFile}
+          handleCreateMoFile={handleCreateMoFile}
+          handleValidate={handleValidate}
+          handleRunSimulation={handleRunSimulation}
+          handleTestAll={handleTestAll}
+          handleInsertAi={handleInsertAi}
+          handleApplyDiff={handleApplyDiff}
+          handleOpenRecentProject={handleOpenRecentProject}
+        />
+      </div>
       <div className={layout.workspaceMode === "component-library" ? "flex flex-1 min-h-0 min-w-0" : "hidden"}>
         <ComponentLibraryWorkspace
           projectDir={project.projectDir}
           isActive={layout.workspaceMode === "component-library"}
           theme={layout.theme}
+          appSettings={appSettings}
+          onOpenDependencyGraphSettings={() => {
+            layout.setShowSettings(true);
+            layout.setOpenSettingsToGroup("dependency-graph");
+          }}
           onLibrariesChanged={() => setLibraryRefreshToken((value) => value + 1)}
           onOpenType={(typeName, libraryId) => {
             if (!project.projectDir) {

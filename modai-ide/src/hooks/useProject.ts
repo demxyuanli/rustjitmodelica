@@ -149,3 +149,5 @@ export function useProject() {
     refreshMoTree,
   };
 }
+
+export type ModelicaProjectApi = ReturnType<typeof useProject>;

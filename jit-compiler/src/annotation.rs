@@ -343,6 +343,9 @@ pub struct GraphicBSpline {
     pub layer_locked: Option<bool>,
 }
 
+/// Maximum nesting depth for `Group` children (avoids stack overflow on pathological input).
+const MAX_GRAPHIC_GROUP_DEPTH: usize = 10;
+
 /// Logical group of graphics (editor / persistence; not standard Modelica Icon primitive).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphicGroup {
@@ -870,7 +873,7 @@ fn extract_coordinate_system(v: &AVal) -> Option<CoordinateSystem> {
     })
 }
 
-fn extract_graphic_item(v: &AVal) -> Option<GraphicItem> {
+fn extract_graphic_item(v: &AVal, depth: usize) -> Option<GraphicItem> {
     let (name, _fields) = v.as_record()?;
     match name {
         "Line" => Some(GraphicItem::Line(GraphicLine {
@@ -984,10 +987,13 @@ fn extract_graphic_item(v: &AVal) -> Option<GraphicItem> {
             layer_locked: v.field("layerLocked").and_then(|v| v.as_bool()),
         })),
         "Group" => {
+            if depth >= MAX_GRAPHIC_GROUP_DEPTH {
+                return None;
+            }
             let mut children = Vec::new();
             if let Some(arr) = v.field("children").and_then(|c| c.as_array()) {
                 for item in arr {
-                    if let Some(gi) = extract_graphic_item(item) {
+                    if let Some(gi) = extract_graphic_item(item, depth + 1) {
                         children.push(gi);
                     }
                 }
@@ -1016,7 +1022,7 @@ fn extract_icon_diagram(v: &AVal) -> Option<IconDiagramAnnotation> {
     if let Some(g) = v.field("graphics") {
         if let Some(arr) = g.as_array() {
             for item in arr {
-                if let Some(gi) = extract_graphic_item(item) {
+                if let Some(gi) = extract_graphic_item(item, 0) {
                     graphics.push(gi);
                 }
             }

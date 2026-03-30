@@ -3,9 +3,17 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import { dia, shapes } from "@joint/core";
 import { createPaper, createPaperHandle, resolveDiagramColors, type JointPaperHandle } from "../utils/jointUtils";
 import { useDiagramScheme } from "../contexts/DiagramSchemeContext";
-import { getEquationGraph } from "../api/tauri";
+import { getEquationGraphV2, type EquationGraphMode } from "../api/tauri";
 import type { EquationGraph } from "../types";
-import { t } from "../i18n";
+import { t, tf } from "../i18n";
+import type { DependencyGraphBehavior } from "../utils/dependencyGraphBehavior";
+
+const DEFAULT_DEPENDENCY_GRAPH_BEHAVIOR: DependencyGraphBehavior = {
+  fullTimeoutSec: 8,
+  autoDowngradeFromFull: true,
+  downgradeTarget: "compact",
+  initialGraphMode: "compact",
+};
 
 const elk = new ELK();
 const DEFAULT_NODE_HEIGHT = 42;
@@ -130,47 +138,135 @@ interface EquationGraphViewProps {
   modelName: string;
   projectDir: string | null | undefined;
   layoutOptions?: EquationGraphLayoutOptions;
+  graphMode?: EquationGraphMode;
+  onGraphModeChange?: (mode: EquationGraphMode) => void;
+  dependencyGraphBehavior?: Partial<DependencyGraphBehavior>;
   onReady?: (handle: JointPaperHandle | null) => void;
 }
 
-export function EquationGraphView({ code, modelName, projectDir, layoutOptions: externalLayout, onReady }: EquationGraphViewProps) {
+export function EquationGraphView({
+  code,
+  modelName,
+  projectDir,
+  layoutOptions: externalLayout,
+  graphMode = "compact",
+  onGraphModeChange,
+  dependencyGraphBehavior: behaviorProp,
+  onReady,
+}: EquationGraphViewProps) {
+  const downgradeTargetResolved: "compact" | "top-level" =
+    behaviorProp?.downgradeTarget === "top-level"
+      ? "top-level"
+      : behaviorProp?.downgradeTarget === "compact"
+        ? "compact"
+        : DEFAULT_DEPENDENCY_GRAPH_BEHAVIOR.downgradeTarget;
+  const fullTimeoutResolved =
+    behaviorProp?.fullTimeoutSec !== undefined
+      ? behaviorProp.fullTimeoutSec
+      : DEFAULT_DEPENDENCY_GRAPH_BEHAVIOR.fullTimeoutSec;
+  const behavior: DependencyGraphBehavior = {
+    fullTimeoutSec: Math.min(300, Math.max(1, fullTimeoutResolved)),
+    autoDowngradeFromFull:
+      behaviorProp?.autoDowngradeFromFull ?? DEFAULT_DEPENDENCY_GRAPH_BEHAVIOR.autoDowngradeFromFull,
+    downgradeTarget: downgradeTargetResolved,
+    initialGraphMode:
+      behaviorProp?.initialGraphMode ?? DEFAULT_DEPENDENCY_GRAPH_BEHAVIOR.initialGraphMode,
+  };
+  const alternateGraphMode: EquationGraphMode =
+    behavior.downgradeTarget === "compact" ? "top-level" : "compact";
   const [graph, setGraph] = useState<EquationGraph | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState("Loading equation graph...");
+  const [autoDowngradeReason, setAutoDowngradeReason] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<dia.Graph | null>(null);
   const paperRef = useRef<dia.Paper | null>(null);
   const initializedRef = useRef(false);
+  const requestSeqRef = useRef(0);
   const layoutOptions = externalLayout ?? DEFAULT_LAYOUT;
   const { schemeId } = useDiagramScheme();
 
   useEffect(() => {
     let cancelled = false;
+    let beat: ReturnType<typeof setInterval> | null = null;
+    let fullFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let activeMode: EquationGraphMode = graphMode;
+    let started = Date.now();
 
-    async function loadGraph() {
+    async function loadGraph(mode: EquationGraphMode) {
+      const currentSeq = ++requestSeqRef.current;
+      activeMode = mode;
+      started = Date.now();
       setLoading(true);
       setError(null);
-      try {
-        const graphResult = await getEquationGraph(code, modelName, projectDir);
+      setAutoDowngradeReason(null);
+      setLoadingMessage("Loading equation graph...");
+      if (beat) clearInterval(beat);
+      beat = setInterval(() => {
         if (cancelled) return;
-        setGraph(graphResult);
+        const sec = Math.max(1, Math.floor((Date.now() - started) / 1000));
+        setLoadingMessage(`Loading equation graph (${sec}s)...`);
+      }, 5000);
+      try {
+        const graphResult = await getEquationGraphV2(code, modelName, projectDir, mode);
+        if (cancelled || currentSeq !== requestSeqRef.current) return;
+        if (!graphResult.ok || !graphResult.data) {
+          const errText = graphResult.errors.map((e) => `${e.code}: ${e.message}`).join("; ");
+          throw new Error(errText || "Equation graph build failed");
+        }
+        setGraph(graphResult.data);
+        if (mode === "full" && fullFallbackTimer) {
+          clearTimeout(fullFallbackTimer);
+          fullFallbackTimer = null;
+        }
       } catch (loadError) {
-        if (!cancelled) {
+        if (!cancelled && currentSeq === requestSeqRef.current) {
           setError(String(loadError));
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && currentSeq === requestSeqRef.current) {
+          if (beat) {
+            clearInterval(beat);
+            beat = null;
+          }
           setLoading(false);
         }
       }
     }
 
-    void loadGraph();
+    if (graphMode === "full" && behavior.autoDowngradeFromFull && behavior.fullTimeoutSec >= 1) {
+      fullFallbackTimer = setTimeout(() => {
+        if (cancelled) return;
+        if (activeMode !== "full") return;
+        const target = behavior.downgradeTarget;
+        const modeLabel =
+          target === "top-level" ? t("dependencyGraphModeTopLevel") : t("dependencyGraphModeCompact");
+        setAutoDowngradeReason(
+          tf("dependencyGraphAutoDowngraded", { seconds: String(behavior.fullTimeoutSec), mode: modeLabel })
+        );
+        onGraphModeChange?.(target);
+        void loadGraph(target);
+      }, behavior.fullTimeoutSec * 1000);
+    }
+
+    void loadGraph(graphMode);
 
     return () => {
       cancelled = true;
+      if (beat) clearInterval(beat);
+      if (fullFallbackTimer) clearTimeout(fullFallbackTimer);
     };
-  }, [code, modelName, projectDir]);
+  }, [
+    code,
+    modelName,
+    projectDir,
+    graphMode,
+    onGraphModeChange,
+    behavior.autoDowngradeFromFull,
+    behavior.downgradeTarget,
+    behavior.fullTimeoutSec,
+  ]);
 
   useEffect(() => {
     if (!graph || graph.nodes.length === 0 || !containerRef.current) return;
@@ -221,6 +317,16 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
 
     for (const node of result.nodes) {
       const isEquation = node.data.kind === "equation";
+      const isInstance = node.data.kind === "instance";
+      const isConnector = node.data.kind === "connector";
+      const isComponent = node.data.kind === "component" || isInstance;
+      const nodeFill = isEquation
+        ? equationFill
+        : isComponent
+          ? colorToRgba(theme.primary, 0.22)
+          : isConnector
+            ? colorToRgba(theme.border, 0.28)
+            : variableFill;
       const el = new shapes.standard.Rectangle({
         id: node.id,
         position: { x: node.x, y: node.y },
@@ -229,8 +335,14 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
           body: {
             rx: 4,
             ry: 4,
-            fill: isEquation ? equationFill : variableFill,
-            stroke: isEquation ? theme.primary : theme.border,
+            fill: nodeFill,
+            stroke: isEquation
+              ? theme.primary
+              : isComponent
+                ? theme.primary
+                : isConnector
+                  ? theme.border
+                  : theme.border,
             strokeWidth: isEquation ? 2 : 1.5,
           },
           label: {
@@ -320,7 +432,7 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">
-        {t("loading")}...
+        {loadingMessage}
       </div>
     );
   }
@@ -341,6 +453,35 @@ export function EquationGraphView({ code, modelName, projectDir, layoutOptions: 
 
   return (
     <div className="h-full w-full relative">
+      {autoDowngradeReason ? (
+        <div className="absolute top-2 left-2 z-10 rounded border border-blue-500/40 bg-blue-500/15 px-2 py-1 text-[10px] text-blue-100 flex items-center gap-2">
+          <span>{autoDowngradeReason}</span>
+          <button
+            type="button"
+            className="rounded border border-blue-300/40 px-1 py-0.5 hover:bg-blue-400/20"
+            onClick={() => onGraphModeChange?.(alternateGraphMode)}
+          >
+            {alternateGraphMode === "top-level" ? t("dependencyGraphSwitchToTopLevel") : t("dependencyGraphSwitchToCompact")}
+          </button>
+        </div>
+      ) : null}
+      {graph?.truncated ? (
+        <div className="absolute top-2 right-2 z-10 rounded border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[10px] text-amber-200 flex items-center gap-2">
+          <span>
+            {tf("dependencyGraphTruncatedHint", {
+              included: String(graph.includedEquations ?? 0),
+              total: String(graph.totalEquations ?? 0),
+            })}
+          </span>
+          <button
+            type="button"
+            className="rounded border border-amber-300/40 px-1 py-0.5 hover:bg-amber-400/20"
+            onClick={() => onGraphModeChange?.(alternateGraphMode)}
+          >
+            {alternateGraphMode === "top-level" ? t("dependencyGraphSwitchToTopLevel") : t("dependencyGraphSwitchToCompact")}
+          </button>
+        </div>
+      ) : null}
       <div ref={containerRef} className="absolute inset-0" />
     </div>
   );

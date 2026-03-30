@@ -14,97 +14,20 @@ import type {
 } from "../types";
 import { t, tf } from "../i18n";
 import { PREFS_KEYS, readPref } from "../utils/prefsConstants";
-
-const CATEGORY_OPTIONS = [
-  "basic",
-  "initialization",
-  "array",
-  "connect",
-  "discrete",
-  "algebraic",
-  "solver",
-  "function",
-  "structure",
-  "msl",
-  "tooling",
-  "error",
-];
-
-function pct(a: number, b: number): string {
-  if (!b) return "0.0%";
-  return `${((a / b) * 100).toFixed(1)}%`;
-}
-
-function statusTone(status: string): string {
-  if (status === "completed") return "theme-banner-success";
-  if (status === "failed" || status === "cancelled") return "theme-banner-danger";
-  if (status === "running") return "theme-banner-warning";
-  return "theme-button-secondary";
-}
-
-function parseCategoryFromDetail(detail: string): string {
-  const marker = "category=";
-  const idx = detail.indexOf(marker);
-  if (idx < 0) return "unknown";
-  const raw = detail.slice(idx + marker.length).trim();
-  const endByPipe = raw.indexOf("|");
-  const endByComma = raw.indexOf(",");
-  const endBySpace = raw.indexOf(" ");
-  const ends = [endByPipe, endByComma, endBySpace].filter((x) => x >= 0);
-  const end = ends.length > 0 ? Math.min(...ends) : raw.length;
-  const value = raw.slice(0, end).trim();
-  return value || "unknown";
-}
-
-function workspaceStatusLabel(status: string): string {
-  const map: Record<string, string> = {
-    planned: t("regressionStatusPlanned"),
-    running: t("regressionStatusRunning"),
-    completed: t("regressionStatusCompleted"),
-    failed: t("regressionStatusFailed"),
-    cancelled: t("regressionStatusCancelled"),
-  };
-  return map[status] ?? status;
-}
-
-function reasonLabel(reason: string): string {
-  const map: Record<string, string> = {
-    expectationMet: t("regressionReasonExpectationMet"),
-    modelNotFound: t("regressionReasonModelNotFound"),
-    dependencyMissing: t("regressionReasonDependencyMissing"),
-    newtonNonconverged: t("regressionReasonNewtonNonconverged"),
-    parseError: t("regressionReasonParseError"),
-    runtimeError: t("regressionReasonRuntimeError"),
-    timeout: t("regressionReasonTimeout"),
-    processError: t("regressionReasonProcessError"),
-    cancelled: t("regressionReasonCancelled"),
-  };
-  return map[reason] ?? reason;
-}
-
-type RecordPreset = "latest" | "failed-triage" | "slowest";
-type BatchField = "caseName" | "status" | "reason" | "category" | "exitCode" | "durationMs" | "timestamp";
-type CliCaseMode = "combined" | "repeated";
-
-const BATCH_FIELD_OPTIONS: Array<{ key: BatchField; labelKey: "name" | "status" | "regressionFilterReason" | "regressionFilterCategory" | "exitLabel" | "durationLabel" | "regressionSortTime" }> = [
-  { key: "caseName", labelKey: "name" },
-  { key: "status", labelKey: "status" },
-  { key: "reason", labelKey: "regressionFilterReason" },
-  { key: "category", labelKey: "regressionFilterCategory" },
-  { key: "exitCode", labelKey: "exitLabel" },
-  { key: "durationMs", labelKey: "durationLabel" },
-  { key: "timestamp", labelKey: "regressionSortTime" },
-];
-
-function presetLabel(preset: RecordPreset): string {
-  if (preset === "failed-triage") return t("regressionPresetFailedTriage");
-  if (preset === "slowest") return t("regressionPresetSlowest");
-  return t("regressionPresetLatest");
-}
-
-function recordKeyOf(r: { timestamp: string; caseName: string }): string {
-  return `${r.timestamp}-${r.caseName}`;
-}
+import type { BatchField, CliCaseMode, RecordPreset } from "./regression/regressionConstants";
+import {
+  parseCategoryFromDetail,
+  reasonLabel,
+  recordKeyOf,
+  workspaceStatusLabel,
+} from "./regression/regressionFormat";
+import { RegressionMonitorTab } from "./regression/RegressionMonitorTab";
+import { RegressionPlanSidebar } from "./regression/RegressionPlanSidebar";
+import { RegressionRecordsTab } from "./regression/RegressionRecordsTab";
+import { RegressionStatsTab } from "./regression/RegressionStatsTab";
+import { RegressionWorkspaceHeader } from "./regression/RegressionWorkspaceHeader";
+import { RegressionWorkspaceSummaryGrid } from "./regression/RegressionWorkspaceSummaryGrid";
+import { RegressionWorkspaceTabChrome } from "./regression/RegressionWorkspaceTabChrome";
 
 export function RegressionWorkspacePanel({ theme: _theme = "dark" }: { theme?: "dark" | "light" }) {
   const [strategy, setStrategy] = useState<RegressionPlanStrategy>("relation");
@@ -861,956 +784,183 @@ export function RegressionWorkspacePanel({ theme: _theme = "dark" }: { theme?: "
     }
   }, [selectedWorkspaceId, refreshList]);
 
+  const resetRecordFilters = useCallback(() => {
+    setReasonFilter("all");
+    setStatusFilter("all");
+    setCategoryFilter("all");
+    setCaseQuery("");
+    setShowFailedOnly(false);
+    setFailedFirst(true);
+    setSortBy("time");
+    setSortDir("desc");
+    setActivePreset("latest");
+    setSelectedRecordKeys([]);
+    setPageIndex(0);
+  }, []);
+
+  const openRecordsForReason = useCallback((reasonKey: string) => {
+    setActiveTab("records");
+    setReasonFilter(reasonKey);
+    setStatusFilter("all");
+    setCategoryFilter("all");
+    setCaseQuery("");
+    setShowFailedOnly(false);
+    setActivePreset("latest");
+  }, []);
+
+  const openRecordsForCategory = useCallback((categoryKey: string) => {
+    setActiveTab("records");
+    setReasonFilter("all");
+    setStatusFilter("all");
+    setCategoryFilter(categoryKey);
+    setCaseQuery("");
+    setShowFailedOnly(false);
+    setActivePreset("latest");
+  }, []);
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface">
-      <div className="panel-header-min-height shrink-0 border-b border-border bg-[var(--surface-elevated)] px-3 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs uppercase text-[var(--text-muted)]">{t("workspaceRegression")}</div>
-          <div className="text-[11px] text-[var(--text-muted)] truncate">{t("testManagerDesc")}</div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <select
-            value={selectedWorkspaceId ?? ""}
-            onChange={(e) => setSelectedWorkspaceId(e.target.value || null)}
-            className="theme-input border px-2 py-1 text-xs rounded w-72"
-          >
-            <option value="">{t("regressionSelectWorkspace")}</option>
-            {workspaces.map((w) => (
-              <option key={w.workspaceId} value={w.workspaceId}>
-                {w.workspaceId} [{w.status}]
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={runCurrent}
-            disabled={!selectedWorkspaceId || running}
-            className="px-2.5 py-1 text-xs rounded border theme-banner-success disabled:opacity-50"
-          >
-            {running ? t("running") : t("run")}
-          </button>
-          <button
-            type="button"
-            onClick={() => refreshState().catch((e) => setMessage(String(e)))}
-            disabled={!selectedWorkspaceId}
-            className="px-2.5 py-1 text-xs rounded border theme-button-secondary disabled:opacity-50"
-          >
-            {t("refresh")}
-          </button>
-          <button
-            type="button"
-            onClick={cancelCurrent}
-            disabled={!selectedWorkspaceId}
-            className="px-2.5 py-1 text-xs rounded border theme-banner-danger disabled:opacity-50"
-          >
-            {t("cancel")}
-          </button>
-        </div>
-      </div>
+      <RegressionWorkspaceHeader
+        workspaces={workspaces}
+        selectedWorkspaceId={selectedWorkspaceId}
+        onSelectWorkspace={setSelectedWorkspaceId}
+        onRun={runCurrent}
+        onRefresh={() => refreshState().catch((e) => setMessage(String(e)))}
+        onCancel={cancelCurrent}
+        running={running}
+      />
 
       <div className="flex-1 min-h-0 overflow-hidden grid grid-cols-12">
-      <aside className="col-span-4 min-w-0 border-r border-border bg-[var(--panel-bg)] p-3 overflow-auto">
-        <div className="text-xs uppercase text-[var(--text-muted)] mb-2">{t("regressionPlan")}</div>
-
-        {state && (
-          <div className="grid grid-cols-3 gap-1.5 mb-2">
-            <div className="border border-border rounded p-1.5">
-              <div className="text-[10px] text-[var(--text-muted)]">{t("regressionPlanCases")}</div>
-              <div className="text-xs">{state.plan.plannedCases.length}</div>
-            </div>
-            <div className="border border-border rounded p-1.5">
-              <div className="text-[10px] text-[var(--text-muted)]">{t("regressionChangedSources")}</div>
-              <div className="text-xs">{state.plan.changedSources.length}</div>
-            </div>
-            <div className="border border-border rounded p-1.5">
-              <div className="text-[10px] text-[var(--text-muted)]">{t("regressionAffectedFeatures")}</div>
-              <div className="text-xs">{state.plan.affectedFeatures.length}</div>
-            </div>
-          </div>
-        )}
-
-        <details open className="border border-border rounded mb-2">
-          <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
-            {t("regressionPlan")}
-          </summary>
-          <div className="p-2 space-y-2">
-            <label className="text-xs text-[var(--text-muted)]">{t("regressionStrategy")}</label>
-            <select
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value as RegressionPlanStrategy)}
-              className="w-full theme-input border px-2 py-1 text-xs rounded"
-            >
-              <option value="category">category</option>
-              <option value="feature">feature</option>
-              <option value="relation">relation</option>
-            </select>
-
-            <label className="text-xs text-[var(--text-muted)]">{t("regressionCategories")}</label>
-            <div className="flex flex-wrap gap-1">
-              {CATEGORY_OPTIONS.map((c) => {
-                const active = categories.includes(c);
-                return (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() =>
-                      setCategories((prev) =>
-                        active ? prev.filter((x) => x !== c) : [...prev, c]
-                      )
-                    }
-                    className={`px-2 py-0.5 text-[10px] rounded border ${
-                      active ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"
-                    }`}
-                  >
-                    {c}
-                  </button>
-                );
-              })}
-            </div>
-
-            <details className="border border-border/60 rounded">
-              <summary className="px-2 py-1 text-[10px] cursor-pointer select-none text-[var(--text-muted)]">
-                {t("regressionFeatureIds")} / {t("regressionChangedFiles")}
-              </summary>
-              <div className="p-2 space-y-2">
-                <textarea
-                  value={featureIdsRaw}
-                  onChange={(e) => setFeatureIdsRaw(e.target.value)}
-                  rows={3}
-                  className="w-full theme-input border px-2 py-1 text-xs rounded"
-                />
-                <textarea
-                  value={changedFilesRaw}
-                  onChange={(e) => setChangedFilesRaw(e.target.value)}
-                  rows={4}
-                  className="w-full theme-input border px-2 py-1 text-xs rounded"
-                />
-              </div>
-            </details>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
-                <input
-                  id="reg-indirect"
-                  type="checkbox"
-                  checked={includeIndirect}
-                  onChange={(e) => setIncludeIndirect(e.target.checked)}
-                />
-                {t("regressionIncludeIndirect")}
-              </label>
-              <label className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
-                <input
-                  id="reg-msl-examples"
-                  type="checkbox"
-                  checked={includeModelicaExamples}
-                  onChange={(e) => setIncludeModelicaExamples(e.target.checked)}
-                />
-                {t("regressionIncludeModelicaExamples")}
-              </label>
-              <label className="flex items-center gap-1 text-[10px] text-[var(--text-muted)] col-span-2">
-                <input
-                  id="reg-modelica-test"
-                  type="checkbox"
-                  checked={includeModelicaTest}
-                  onChange={(e) => setIncludeModelicaTest(e.target.checked)}
-                />
-                {t("regressionIncludeModelicaTest")}
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-[var(--text-muted)]">{t("regressionMaxCases")}</label>
-                <input
-                  value={maxCasesRaw}
-                  onChange={(e) => setMaxCasesRaw(e.target.value)}
-                  className="w-full theme-input border px-2 py-1 text-xs rounded"
-                  placeholder={t("regressionMaxCasesPlaceholder")}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-[var(--text-muted)]">{t("regressionWorkspaceMode")}</label>
-                <select
-                  value={workspaceMode}
-                  onChange={(e) => setWorkspaceMode(e.target.value as "persistent" | "ephemeral")}
-                  className="w-full theme-input border px-2 py-1 text-xs rounded"
-                >
-                  <option value="persistent">{t("regressionPersistent")}</option>
-                  <option value="ephemeral">{t("regressionEphemeral")}</option>
-                </select>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={createPlan}
-              disabled={loading}
-              className="w-full px-3 py-1.5 text-xs rounded bg-primary hover:bg-blue-600 disabled:opacity-50"
-            >
-              {loading ? t("regressionCreating") : t("regressionCreatePlan")}
-            </button>
-          </div>
-        </details>
-
-        {state && (
-          <details open className="border border-border rounded mb-2">
-            <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
-              {t("regressionPlanDetails")}
-            </summary>
-            <div className="p-2">
-              <div className="text-[10px] text-[var(--text-muted)] mb-1">
-                {tf("regressionPlanFilteredCount", { count: planCasesByCategory.length, total: state.plan.plannedCases.length })}
-              </div>
-              <input
-                value={planCaseQuery}
-                onChange={(e) => setPlanCaseQuery(e.target.value)}
-                placeholder={t("regressionFilterCaseName")}
-                className="w-full theme-input border px-2 py-1 text-xs rounded mb-2"
-              />
-              <div className="max-h-44 overflow-auto border border-border/40 rounded bg-[var(--surface-muted)] p-1">
-                {planCasesByCategory.length === 0 ? (
-                  <div className="text-xs text-[var(--text-muted)] px-1 py-1">{t("none")}</div>
-                ) : (
-                  planCasesByCategory.slice(0, 300).map((x) => (
-                    <div key={`${x.name}-${x.category}`} className="text-xs py-1 px-1 border-b border-border/20 last:border-b-0">
-                      <div className="font-mono truncate" title={x.name}>{x.name}</div>
-                      <div className="text-[10px] text-[var(--text-muted)] truncate">{x.category} | {x.reason}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </details>
-        )}
-
-        {state && (
-          <details className="border border-border rounded mb-2">
-            <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
-              {t("regressionChangedSources")}
-            </summary>
-            <div className="p-2 max-h-28 overflow-auto">
-              {state.plan.changedSources.length === 0 ? (
-                <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-              ) : (
-                state.plan.changedSources.slice(0, 200).map((s) => (
-                  <div key={s} className="text-[10px] font-mono truncate" title={s}>{s}</div>
-                ))
-              )}
-            </div>
-          </details>
-        )}
-
-        {state && (
-          <details className="border border-border rounded mb-2">
-            <summary className="px-2 py-1.5 text-xs cursor-pointer select-none bg-[var(--surface-elevated)]">
-              {t("regressionAffectedFeatures")}
-            </summary>
-            <div className="p-2 max-h-28 overflow-auto">
-              {state.plan.affectedFeatures.length === 0 ? (
-                <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-              ) : (
-                state.plan.affectedFeatures.slice(0, 200).map((f) => (
-                  <div key={f} className="text-[10px] truncate" title={f}>{f}</div>
-                ))
-              )}
-            </div>
-          </details>
-        )}
-
-        <div className="border-t border-border mt-3 pt-3 flex items-center justify-between gap-2">
-          <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
-            {t("refresh")} (3s)
-          </label>
-          <button
-            type="button"
-            onClick={() => refreshList().catch((e) => setMessage(String(e)))}
-            className="px-2 py-1 text-xs rounded border theme-button-secondary"
-          >
-            {t("regressionRuns")}
-          </button>
-        </div>
-
-        {message && (
-          <div className="mt-3 text-xs break-all px-2 py-1.5 rounded border border-border bg-[var(--surface-muted)] text-[var(--text-muted)]">{message}</div>
-        )}
-      </aside>
+        <RegressionPlanSidebar
+          state={state}
+          strategy={strategy}
+          setStrategy={setStrategy}
+          categories={categories}
+          setCategories={setCategories}
+          featureIdsRaw={featureIdsRaw}
+          setFeatureIdsRaw={setFeatureIdsRaw}
+          changedFilesRaw={changedFilesRaw}
+          setChangedFilesRaw={setChangedFilesRaw}
+          includeIndirect={includeIndirect}
+          setIncludeIndirect={setIncludeIndirect}
+          includeModelicaExamples={includeModelicaExamples}
+          setIncludeModelicaExamples={setIncludeModelicaExamples}
+          includeModelicaTest={includeModelicaTest}
+          setIncludeModelicaTest={setIncludeModelicaTest}
+          maxCasesRaw={maxCasesRaw}
+          setMaxCasesRaw={setMaxCasesRaw}
+          workspaceMode={workspaceMode}
+          setWorkspaceMode={setWorkspaceMode}
+          onCreatePlan={createPlan}
+          loading={loading}
+          planCasesByCategory={planCasesByCategory}
+          planCaseQuery={planCaseQuery}
+          setPlanCaseQuery={setPlanCaseQuery}
+          autoRefresh={autoRefresh}
+          setAutoRefresh={setAutoRefresh}
+          onRefreshList={refreshList}
+          message={message}
+          onError={(msg) => setMessage(msg)}
+        />
 
       <main className="col-span-8 min-w-0 min-h-0 overflow-auto p-3">
         {!state ? (
           <div className="text-sm text-[var(--text-muted)]">{t("regressionNoWorkspaceSelected")}</div>
         ) : (
           <>
-            <div className="grid grid-cols-4 gap-2 mb-3">
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("regressionWorkspace")}</div>
-                <div className="text-xs font-mono">{state.info.workspaceId}</div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("status")}</div>
-                <div className={`inline-flex px-1.5 py-0.5 rounded text-xs border ${statusTone(state.info.status)}`}>{workspaceStatusLabel(state.info.status)}</div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("regressionPlanCases")}</div>
-                <div className="text-xs">{state.plan.plannedCases.length}</div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("regressionSkipped")}</div>
-                <div className="text-xs">{state.plan.skippedCases.length}</div>
-              </div>
-            </div>
+            <RegressionWorkspaceSummaryGrid state={state} />
 
-            <div className="panel-header-min-height border border-border rounded bg-[var(--surface-elevated)] px-2 flex items-center justify-between mb-3">
-              <div className="flex gap-1">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("monitor")}
-                  className={`px-2.5 py-1 text-xs rounded border ${activeTab === "monitor" ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"}`}
-                >
-                  {t("regressionMonitor")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("stats")}
-                  className={`px-2.5 py-1 text-xs rounded border ${activeTab === "stats" ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"}`}
-                >
-                  {t("regressionStatistics")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("records")}
-                  className={`px-2.5 py-1 text-xs rounded border ${activeTab === "records" ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"}`}
-                >
-                  {t("regressionLatestRecords")}
-                </button>
-              </div>
-              {activeTab === "records" && (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => applyRecordPreset("failed-triage")}
-                    className="px-2 py-1 text-xs rounded border theme-banner-danger"
-                  >
-                    {t("regressionFailedFirstView")}
-                  </button>
-                  <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                    <input type="checkbox" checked={showFailedOnly} onChange={(e) => setShowFailedOnly(e.target.checked)} />
-                    {t("testFailed")}
-                  </label>
-                </div>
-              )}
-            </div>
+            <RegressionWorkspaceTabChrome
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              showFailedOnly={showFailedOnly}
+              onShowFailedOnlyChange={setShowFailedOnly}
+              onFailedFirstView={() => applyRecordPreset("failed-triage")}
+            />
 
             {activeTab === "monitor" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionPlanCases")}</div>
-                <div className="max-h-[420px] overflow-auto">
-                  {planCasesByCategory.length === 0 ? (
-                    <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-                  ) : (
-                    planCasesByCategory.slice(0, 500).map((x) => (
-                      <div key={x.name} className="text-xs py-1 border-b border-border/30 last:border-b-0">
-                        <div className="font-mono truncate">{x.name}</div>
-                        <div className="text-[10px] text-[var(--text-muted)]">{x.reason} | p{String(x.priority)}</div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionSkipped")}</div>
-                <div className="max-h-[420px] overflow-auto">
-                  {state.plan.skippedCases.length === 0 ? (
-                    <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-                  ) : (
-                    state.plan.skippedCases.slice(0, 500).map((x) => (
-                      <div key={x} className="text-xs py-1 border-b border-border/30 last:border-b-0 font-mono truncate">{x}</div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
+              <RegressionMonitorTab
+                planCasesByCategory={planCasesByCategory}
+                skippedCases={state.plan.skippedCases}
+              />
             )}
 
             {activeTab === "stats" && (
-            <>
-            <div className="grid grid-cols-4 gap-2 mb-3">
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("jitSummaryTotal")}</div>
-                <div className="text-sm">{summary.total}</div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("testPassed")}</div>
-                <div className="text-sm text-[var(--success-text)]">{summary.passed}</div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("testFailed")}</div>
-                <div className="text-sm text-[var(--danger-text)]">{summary.failed}</div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] text-[var(--text-muted)]">{t("successRate")}</div>
-                <div className="text-sm">{pct(summary.passed, summary.total)}</div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionFailByReason")}</div>
-                <div className="max-h-48 overflow-auto">
-                  {summary.failByReason.length === 0 ? (
-                    <div className="text-xs text-[var(--text-muted)]">{t("regressionNoFailedRecord")}</div>
-                  ) : (
-                    summary.failByReason.map((x) => (
-                      <button
-                        type="button"
-                        key={x.key}
-                        className="w-full text-xs flex justify-between py-0.5 hover:bg-[var(--surface-muted)] rounded"
-                        onClick={() => {
-                          setActiveTab("records");
-                          setReasonFilter(x.key);
-                          setStatusFilter("all");
-                          setCategoryFilter("all");
-                          setCaseQuery("");
-                          setShowFailedOnly(false);
-                          setActivePreset("latest");
-                        }}
-                      >
-                        <span className="truncate pr-2">{reasonLabel(x.key)}</span>
-                        <span>{x.count}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="border border-border rounded p-2">
-                <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionPassByCategory")}</div>
-                <div className="max-h-48 overflow-auto">
-                  {summary.passByCategory.length === 0 ? (
-                    <div className="text-xs text-[var(--text-muted)]">{t("regressionNoPassedRecord")}</div>
-                  ) : (
-                    summary.passByCategory.map((x) => (
-                      <button
-                        type="button"
-                        key={x.key}
-                        className="w-full text-xs flex justify-between py-0.5 hover:bg-[var(--surface-muted)] rounded"
-                        onClick={() => {
-                          setActiveTab("records");
-                          setReasonFilter("all");
-                          setStatusFilter("all");
-                          setCategoryFilter(x.key);
-                          setCaseQuery("");
-                          setShowFailedOnly(false);
-                          setActivePreset("latest");
-                        }}
-                      >
-                        <span className="truncate pr-2">{x.key}</span>
-                        <span>{x.count}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-            </>
+              <RegressionStatsTab
+                summary={summary}
+                onOpenRecordsForReason={openRecordsForReason}
+                onOpenRecordsForCategory={openRecordsForCategory}
+              />
             )}
 
             {activeTab === "records" && (
-            <div className="border border-border rounded p-2">
-              <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionLatestRecords")}</div>
-              <div className="grid grid-cols-12 gap-2 mb-2">
-                <div className="col-span-3">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionFilterReason")}</label>
-                  <select
-                    value={reasonFilter}
-                    onChange={(e) => setReasonFilter(e.target.value)}
-                    className="w-full theme-input border px-2 py-1 text-xs rounded"
-                  >
-                    <option value="all">{t("all")}</option>
-                    {reasonOptions.map((x) => (
-                      <option key={x} value={x}>{reasonLabel(x)}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionFilterStatus")}</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="w-full theme-input border px-2 py-1 text-xs rounded"
-                  >
-                    <option value="all">{t("all")}</option>
-                    {statusOptions.map((x) => (
-                      <option key={x} value={x}>{workspaceStatusLabel(x)}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionFilterCategory")}</label>
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="w-full theme-input border px-2 py-1 text-xs rounded"
-                  >
-                    <option value="all">{t("all")}</option>
-                    {categoryOptions.map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionFilterCaseName")}</label>
-                  <input
-                    value={caseQuery}
-                    onChange={(e) => setCaseQuery(e.target.value)}
-                    placeholder={t("searchPlaceholder")}
-                    className="w-full theme-input border px-2 py-1 text-xs rounded"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionSortBy")}</label>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as "time" | "duration" | "name" | "reason" | "category")}
-                    className="w-full theme-input border px-2 py-1 text-xs rounded"
-                  >
-                    <option value="time">{t("regressionSortTime")}</option>
-                    <option value="duration">{t("regressionSortDuration")}</option>
-                    <option value="name">{t("regressionSortName")}</option>
-                    <option value="reason">{t("regressionSortReason")}</option>
-                    <option value="category">{t("regressionSortCategory")}</option>
-                  </select>
-                </div>
-                <div className="col-span-1">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionSortDirection")}</label>
-                  <button
-                    type="button"
-                    onClick={() => setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))}
-                    className="w-full px-2 py-1 text-xs rounded border theme-button-secondary"
-                    title={sortDir}
-                  >
-                    {sortDir === "asc" ? t("ascending") : t("descending")}
-                  </button>
-                </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("view")}</label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReasonFilter("all");
-                      setStatusFilter("all");
-                      setCategoryFilter("all");
-                      setCaseQuery("");
-                      setShowFailedOnly(false);
-                      setFailedFirst(true);
-                      setSortBy("time");
-                      setSortDir("desc");
-                      setActivePreset("latest");
-                      setSelectedRecordKeys([]);
-                      setPageIndex(0);
-                    }}
-                    className="w-full px-2 py-1 text-xs rounded border theme-button-secondary"
-                  >
-                    {t("regressionResetFilters")}
-                  </button>
-                </div>
-              </div>
-              <div className="mb-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
-                <div>{tf("matchCount", { count: visibleRecords.length, files: 1 })}</div>
-                <div className="flex items-center gap-2">
-                  <span className="px-1.5 py-0.5 rounded border border-border">{tf("regressionVisiblePassed", { count: visibleSummary.passed })}</span>
-                  <span className="px-1.5 py-0.5 rounded border border-border">{tf("regressionVisibleFailed", { count: visibleSummary.failed })}</span>
-                  <label className="flex items-center gap-1.5">
-                    <input type="checkbox" checked={failedFirst} onChange={(e) => setFailedFirst(e.target.checked)} />
-                    {t("regressionFailedFirst")}
-                  </label>
-                </div>
-              </div>
-              <div className="mb-2 flex items-center gap-2">
-                {(["latest", "failed-triage", "slowest"] as RecordPreset[]).map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => applyRecordPreset(preset)}
-                    className={`px-2 py-1 text-xs rounded border ${
-                      activePreset === preset ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"
-                    }`}
-                  >
-                    {presetLabel(preset)}
-                  </button>
-                ))}
-                <div className="ml-auto flex items-center gap-2">
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionRecordLimit")}</label>
-                  <input
-                    value={String(recordLimit)}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (!Number.isFinite(n)) return;
-                      setRecordLimit(Math.max(50, Math.min(5000, Math.floor(n))));
-                    }}
-                    className="w-20 theme-input border px-2 py-1 text-xs rounded"
-                  />
-                  <button
-                    type="button"
-                    onClick={exportVisibleCsv}
-                    className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                  >
-                    {t("regressionExportVisibleCsv")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={exportFailedCsv}
-                    className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                  >
-                    {t("regressionExportFailedCsv")}
-                  </button>
-                  <label className="text-[10px] text-[var(--text-muted)]">{t("regressionPageSize")}</label>
-                  <select
-                    value={String(pageSize)}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      setPageSize(n);
-                      setPageIndex(0);
-                    }}
-                    className="theme-input border px-2 py-1 text-xs rounded"
-                  >
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                    <option value="200">200</option>
-                    <option value="500">500</option>
-                  </select>
-                </div>
-              </div>
-              <div className="mb-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={selectAllFiltered}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionSelectAllFiltered")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelectedRecordKeys((prev) => {
-                      const set = new Set(prev);
-                      for (const r of visibleSlice) set.add(recordKeyOf(r));
-                      return Array.from(set);
-                    })
-                  }
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionSelectAllVisible")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedRecordKeys([])}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionClearSelection")}
-                </button>
-                <button
-                  type="button"
-                  onClick={unselectFailed}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionUnselectFailed")}
-                </button>
-                <button
-                  type="button"
-                  onClick={unselectPassed}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionUnselectPassed")}
-                </button>
-                <button
-                  type="button"
-                  onClick={invertVisibleSelection}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionInvertVisibleSelection")}
-                </button>
-                <button
-                  type="button"
-                  onClick={selectByReasonQuick}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionSelectByReason")}
-                </button>
-                <button
-                  type="button"
-                  onClick={selectByStatusQuick}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionSelectByStatus")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => copySelectedCaseNames().catch((e) => setMessage(String(e)))}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionCopyCaseNames")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => copySelectedFailReasons().catch((e) => setMessage(String(e)))}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionCopyFailReasons")}
-                </button>
-                <button
-                  type="button"
-                  onClick={exportSelectedCsv}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionExportSelectedCsv")}
-                </button>
-                <button
-                  type="button"
-                  onClick={exportSelectedJson}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionExportSelectedJson")}
-                </button>
-                <button
-                  type="button"
-                  onClick={exportSelectedBatchListTxt}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionGenerateBatchListTxt")}
-                </button>
-                <button
-                  type="button"
-                  onClick={exportSelectedBatchListJson}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionGenerateBatchListJson")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => copyBatchCliArgs().catch((e) => setMessage(String(e)))}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary"
-                >
-                  {t("regressionCopyCliArgs")}
-                </button>
-                <span className="text-[10px] text-[var(--text-muted)]">
-                  {tf("regressionSelectedCount", { count: selectedRecords.length })}
-                </span>
-                <span className="text-[10px] text-[var(--text-muted)] ml-auto">
-                  {tf("regressionPageIndicator", { page: pageIndex + 1, total: totalPages })}
-                </span>
-                <button
-                  type="button"
-                  disabled={pageIndex <= 0}
-                  onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary disabled:opacity-50"
-                >
-                  {t("prevCases")}
-                </button>
-                <button
-                  type="button"
-                  disabled={pageIndex >= totalPages - 1}
-                  onClick={() => setPageIndex((p) => Math.min(totalPages - 1, p + 1))}
-                  className="px-2 py-1 text-xs rounded border theme-button-secondary disabled:opacity-50"
-                >
-                  {t("nextCases")}
-                </button>
-              </div>
-              <div className="mb-2 grid grid-cols-3 gap-2">
-                <div className="border border-border rounded p-2">
-                  <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionSelectedByReason")}</div>
-                  <div className="max-h-24 overflow-auto">
-                    {selectedAgg.reason.length === 0 ? (
-                      <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-                    ) : (
-                      selectedAgg.reason.map((x) => (
-                        <div key={x.key} className="text-xs flex justify-between py-0.5">
-                          <span className="truncate pr-2">{reasonLabel(x.key)}</span>
-                          <span>{x.count}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div className="border border-border rounded p-2">
-                  <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionSelectedByStatus")}</div>
-                  <div className="max-h-24 overflow-auto">
-                    {selectedAgg.status.length === 0 ? (
-                      <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-                    ) : (
-                      selectedAgg.status.map((x) => (
-                        <div key={x.key} className="text-xs flex justify-between py-0.5">
-                          <span className="truncate pr-2">{workspaceStatusLabel(x.key)}</span>
-                          <span>{x.count}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div className="border border-border rounded p-2">
-                  <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionSelectedByCategory")}</div>
-                  <div className="max-h-24 overflow-auto">
-                    {selectedAgg.category.length === 0 ? (
-                      <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-                    ) : (
-                      selectedAgg.category.map((x) => (
-                        <div key={x.key} className="text-xs flex justify-between py-0.5">
-                          <span className="truncate pr-2">{x.key}</span>
-                          <span>{x.count}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="mb-2 border border-border rounded p-2">
-                <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionBatchTemplateFields")}</div>
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {BATCH_FIELD_OPTIONS.map((opt) => {
-                    const active = selectedBatchFields.includes(opt.key);
-                    return (
-                      <button
-                        key={opt.key}
-                        type="button"
-                        onClick={() =>
-                          setSelectedBatchFields((prev) => {
-                            if (active) {
-                              if (prev.length <= 1) return prev;
-                              return prev.filter((x) => x !== opt.key);
-                            }
-                            return [...prev, opt.key];
-                          })
-                        }
-                        className={`px-2 py-0.5 text-[10px] rounded border ${
-                          active ? "bg-primary/20 text-primary border-primary/30" : "theme-button-secondary"
-                        }`}
-                      >
-                        {t(opt.labelKey)}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="text-[10px] uppercase text-[var(--text-muted)] mb-1">{t("regressionBatchPreview")}</div>
-                <div className="max-h-24 overflow-auto border border-border/50 rounded bg-[var(--surface-muted)] p-2">
-                  {selectedBatchPreview.length === 0 ? (
-                    <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-                  ) : (
-                    selectedBatchPreview.map((line, idx) => (
-                      <div key={`preview-${idx}`} className="text-[10px] font-mono truncate" title={line}>
-                        {line}
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="mt-2 grid grid-cols-12 gap-2">
-                  <div className="col-span-6">
-                    <label className="text-[10px] text-[var(--text-muted)]">{t("regressionCliCommandPrefix")}</label>
-                    <input
-                      value={cliCommandPrefix}
-                      onChange={(e) => setCliCommandPrefix(e.target.value)}
-                      className="w-full theme-input border px-2 py-1 text-xs rounded"
-                      placeholder="modai-worker run-batch"
-                    />
-                  </div>
-                  <div className="col-span-3">
-                    <label className="text-[10px] text-[var(--text-muted)]">{t("regressionCliCaseMode")}</label>
-                    <select
-                      value={cliCaseMode}
-                      onChange={(e) => setCliCaseMode(e.target.value as CliCaseMode)}
-                      className="w-full theme-input border px-2 py-1 text-xs rounded"
-                    >
-                      <option value="combined">{t("regressionCliCaseModeCombined")}</option>
-                      <option value="repeated">{t("regressionCliCaseModeRepeated")}</option>
-                    </select>
-                  </div>
-                  <div className="col-span-3">
-                    <label className="text-[10px] text-[var(--text-muted)]">{t("regressionCliShardSize")}</label>
-                    <input
-                      value={cliShardSizeRaw}
-                      onChange={(e) => setCliShardSizeRaw(e.target.value)}
-                      className="w-full theme-input border px-2 py-1 text-xs rounded"
-                    />
-                  </div>
-                  <div className="col-span-12 text-[10px] text-[var(--text-muted)]">
-                    {tf("regressionCliShardCount", { count: cliCommands.length })}
-                  </div>
-                </div>
-                <div className="text-[10px] uppercase text-[var(--text-muted)] mt-2 mb-1">{t("regressionCliPreview")}</div>
-                <div className="max-h-24 overflow-auto border border-border/50 rounded bg-[var(--surface-muted)] p-2">
-                  {cliCommands.length === 0 ? (
-                    <div className="text-xs text-[var(--text-muted)]">{t("none")}</div>
-                  ) : (
-                    cliCommands.map((line, idx) => (
-                      <div key={`cli-${idx}`} className="text-[10px] font-mono truncate" title={line}>
-                        {line}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="max-h-[520px] overflow-auto">
-                {visibleRecords.length === 0 ? (
-                  <div className="text-xs text-[var(--text-muted)]">{t("regressionNoRecordsYet")}</div>
-                ) : (
-                  <>
-                  <div className="sticky top-0 z-10 grid grid-cols-12 gap-2 px-2 py-1 text-[10px] uppercase text-[var(--text-muted)] bg-[var(--surface-elevated)] border-b border-border">
-                    <div className="col-span-1">{t("select")}</div>
-                    <div className="col-span-4">{t("name")}</div>
-                    <div className="col-span-2">{t("regressionFilterCategory")}</div>
-                    <div className="col-span-2">{t("status")}</div>
-                    <div className="col-span-2">{t("exitLabel")}</div>
-                    <div className="col-span-1">{t("durationLabel")}</div>
-                  </div>
-                  {visibleSlice.map((r, localIdx) => (
-                    <div key={recordKeyOf(r)} className="grid grid-cols-12 gap-2 px-2 py-1 text-xs border-b border-border/30 last:border-b-0">
-                      <div className="col-span-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedRecordKeys.includes(recordKeyOf(r))}
-                          onChange={(e) => {
-                            const key = recordKeyOf(r);
-                            const absoluteIdx = pageIndex * pageSize + localIdx;
-                            const shift = (window.event as MouseEvent | undefined)?.shiftKey ?? false;
-                            setSelectedRecordKeys((prev) => {
-                              if (!shift || lastClickedIndex === null) {
-                                if (e.target.checked) {
-                                  if (prev.includes(key)) return prev;
-                                  return [...prev, key];
-                                }
-                                return prev.filter((x) => x !== key);
-                              }
-                              const [a, b] = absoluteIdx >= lastClickedIndex ? [lastClickedIndex, absoluteIdx] : [absoluteIdx, lastClickedIndex];
-                              const keysInRange = cappedRecords.slice(a, b + 1).map((x) => recordKeyOf(x));
-                              const set = new Set(prev);
-                              if (e.target.checked) {
-                                for (const k of keysInRange) set.add(k);
-                              } else {
-                                for (const k of keysInRange) set.delete(k);
-                              }
-                              return Array.from(set);
-                            });
-                            setLastClickedIndex(absoluteIdx);
-                          }}
-                        />
-                      </div>
-                      <div className="col-span-4">
-                        <div className="font-mono truncate" title={r.caseName}>{r.caseName}</div>
-                        <div className="text-[10px] text-[var(--text-muted)] truncate" title={reasonLabel(r.reason)}>{reasonLabel(r.reason)}</div>
-                      </div>
-                      <div className="col-span-2 text-[var(--text-muted)] truncate" title={r.parsedCategory}>{r.parsedCategory}</div>
-                      <div className="col-span-2">
-                        <span className={r.actualOk ? "text-[var(--success-text)]" : "text-[var(--danger-text)]"}>
-                          {r.actualOk ? t("testPassed") : t("testFailed")}
-                        </span>
-                      </div>
-                      <div className="col-span-2 text-[var(--text-muted)]">{String(r.exitCode)}</div>
-                      <div className="col-span-1 text-[var(--text-muted)]">{r.durationMs}ms</div>
-                    </div>
-                  ))
-                  }
-                  </>
-                )}
-              </div>
-            </div>
+              <RegressionRecordsTab
+                reasonFilter={reasonFilter}
+                setReasonFilter={setReasonFilter}
+                reasonOptions={reasonOptions}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                statusOptions={statusOptions}
+                categoryFilter={categoryFilter}
+                setCategoryFilter={setCategoryFilter}
+                categoryOptions={categoryOptions}
+                caseQuery={caseQuery}
+                setCaseQuery={setCaseQuery}
+                sortBy={sortBy}
+                setSortBy={setSortBy}
+                sortDir={sortDir}
+                setSortDir={setSortDir}
+                showFailedOnly={showFailedOnly}
+                setShowFailedOnly={setShowFailedOnly}
+                failedFirst={failedFirst}
+                setFailedFirst={setFailedFirst}
+                visibleRecords={visibleRecords}
+                visibleSummary={visibleSummary}
+                applyRecordPreset={applyRecordPreset}
+                activePreset={activePreset}
+                recordLimit={recordLimit}
+                setRecordLimit={setRecordLimit}
+                exportVisibleCsv={exportVisibleCsv}
+                exportFailedCsv={exportFailedCsv}
+                pageSize={pageSize}
+                setPageSize={setPageSize}
+                pageIndex={pageIndex}
+                setPageIndex={setPageIndex}
+                totalPages={totalPages}
+                selectAllFiltered={selectAllFiltered}
+                visibleSlice={visibleSlice}
+                cappedRecords={cappedRecords}
+                setSelectedRecordKeys={setSelectedRecordKeys}
+                unselectFailed={unselectFailed}
+                unselectPassed={unselectPassed}
+                invertVisibleSelection={invertVisibleSelection}
+                selectByReasonQuick={selectByReasonQuick}
+                selectByStatusQuick={selectByStatusQuick}
+                copySelectedCaseNames={copySelectedCaseNames}
+                copySelectedFailReasons={copySelectedFailReasons}
+                exportSelectedCsv={exportSelectedCsv}
+                exportSelectedJson={exportSelectedJson}
+                exportSelectedBatchListTxt={exportSelectedBatchListTxt}
+                exportSelectedBatchListJson={exportSelectedBatchListJson}
+                copyBatchCliArgs={copyBatchCliArgs}
+                onUserError={(msg) => setMessage(msg)}
+                selectedRecordsCount={selectedRecords.length}
+                selectedAgg={selectedAgg}
+                selectedBatchFields={selectedBatchFields}
+                setSelectedBatchFields={setSelectedBatchFields}
+                selectedBatchPreview={selectedBatchPreview}
+                cliCommandPrefix={cliCommandPrefix}
+                setCliCommandPrefix={setCliCommandPrefix}
+                cliCaseMode={cliCaseMode}
+                setCliCaseMode={setCliCaseMode}
+                cliShardSizeRaw={cliShardSizeRaw}
+                setCliShardSizeRaw={setCliShardSizeRaw}
+                cliCommands={cliCommands}
+                selectedRecordKeys={selectedRecordKeys}
+                lastClickedIndex={lastClickedIndex}
+                setLastClickedIndex={setLastClickedIndex}
+                resetFilters={resetRecordFilters}
+              />
             )}
           </>
         )}

@@ -1,4 +1,17 @@
-// Diagram data extraction and apply for Modelica visual programming.
+mod types;
+mod equation;
+
+pub use types::*;
+pub use equation::*;
+
+/// New `.mo` source plus optional warning when `.modai/diagram-state.json` persistence fails.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyDiagramEditsOutput {
+    pub new_source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
 
 use rustmodlica::annotation::{
     self, format_icon_diagram_record, IconDiagramAnnotation, LineAnnotation, Placement, Point,
@@ -12,115 +25,89 @@ use rustmodlica::unparse;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ComponentInstance {
-    pub name: String,
-    pub type_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub placement: Option<Placement>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<IconDiagramAnnotation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rotation: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin: Option<Point>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<Vec<ParamValue>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub connector_kind: Option<String>,
-    #[serde(default)]
-    pub is_input: bool,
-    #[serde(default)]
-    pub is_output: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParamValue {
-    pub name: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Connection {
-    pub from: String,
-    pub to: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub line: Option<LineAnnotation>,
-}
-
-/// (x, y) in diagram coordinates.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LayoutPoint {
-    pub x: f64,
-    pub y: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiagramModel {
-    pub model_name: String,
-    pub components: Vec<ComponentInstance>,
-    pub connections: Vec<Connection>,
-    /// Component instance name -> position for diagram layout persistence.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub layout: Option<HashMap<String, LayoutPoint>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagram_annotation: Option<IconDiagramAnnotation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon_annotation: Option<IconDiagramAnnotation>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphicalModelState {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub layout: Option<HashMap<String, LayoutPoint>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagram_annotation: Option<IconDiagramAnnotation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon_annotation: Option<IconDiagramAnnotation>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphicalDocumentModel {
-    pub model_name: String,
-    pub components: Vec<ComponentInstance>,
-    pub connections: Vec<Connection>,
-    pub graphical: GraphicalModelState,
-}
-
-impl GraphicalDocumentModel {
-    fn from_diagram_model(diagram: DiagramModel) -> Self {
-        Self {
-            model_name: diagram.model_name,
-            components: diagram.components,
-            connections: diagram.connections,
-            graphical: GraphicalModelState {
-                layout: diagram.layout,
-                diagram_annotation: diagram.diagram_annotation,
-                icon_annotation: diagram.icon_annotation,
-            },
-        }
-    }
-
-    fn into_diagram_model(self) -> DiagramModel {
-        DiagramModel {
-            model_name: self.model_name,
-            components: self.components,
-            connections: self.connections,
-            layout: self.graphical.layout,
-            diagram_annotation: self.graphical.diagram_annotation,
-            icon_annotation: self.graphical.icon_annotation,
-        }
-    }
-}
+use std::time::Duration;
 
 const STATE_FILE_NAME: &str = ".modai/diagram-state.json";
 const LEGACY_LAYOUT_FILE_NAME: &str = ".modai/diagram-layout.json";
+/// Matches `COORD_KEY_DECIMALS` in `structureEditor/docSync.ts`.
+const COORD_DECIMALS: i32 = 4;
+const MAX_DIAGRAM_STATE_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
+fn round_coord_f64(n: f64) -> f64 {
+    let f = 10_f64.powi(COORD_DECIMALS);
+    (n * f).round() / f
+}
+
+fn round_layout_point(p: &LayoutPoint) -> LayoutPoint {
+    LayoutPoint {
+        x: round_coord_f64(p.x),
+        y: round_coord_f64(p.y),
+    }
+}
+
+fn round_line_annotation(line: &LineAnnotation) -> LineAnnotation {
+    LineAnnotation {
+        points: line
+            .points
+            .iter()
+            .map(|p| Point {
+                x: round_coord_f64(p.x),
+                y: round_coord_f64(p.y),
+            })
+            .collect(),
+        color: line.color.clone(),
+        thickness: line.thickness,
+        pattern: line.pattern.clone(),
+        smooth: line.smooth.clone(),
+    }
+}
+
+fn round_persistent_state_in_place(state: &mut DiagramPersistentState) {
+    for v in state.layout.values_mut() {
+        *v = round_layout_point(v);
+    }
+    for line in state.connection_lines.values_mut() {
+        *line = round_line_annotation(line);
+    }
+}
+
+fn round_persistent_state(state: &DiagramPersistentState) -> DiagramPersistentState {
+    let mut out = state.clone();
+    round_persistent_state_in_place(&mut out);
+    out
+}
+
+/// Rejects path traversal and absolute paths; `relative_path` is a project-relative file path.
+fn validate_relative_path(relative_path: &str) -> Result<(), String> {
+    let s = relative_path.trim();
+    if s.is_empty() {
+        return Err("relative path is empty".to_string());
+    }
+    let norm = normalize_relative_path(s);
+    if norm.starts_with('/') {
+        return Err("relative path must not be absolute".to_string());
+    }
+    if norm.contains(':') {
+        return Err("relative path is invalid".to_string());
+    }
+    for part in norm.split('/') {
+        if part == ".." {
+            return Err("relative path must not contain parent segments".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn read_state_file_limited(path: &Path) -> Result<String, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_DIAGRAM_STATE_FILE_BYTES {
+        return Err(format!(
+            "diagram state file exceeds {} bytes",
+            MAX_DIAGRAM_STATE_FILE_BYTES
+        ));
+    }
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,7 +139,7 @@ fn load_legacy_layout_from_file(
     relative_path: &str,
 ) -> Option<HashMap<String, LayoutPoint>> {
     let path = legacy_layout_file_path(project_dir);
-    let content = std::fs::read_to_string(&path).ok()?;
+    let content = read_state_file_limited(&path).ok()?;
     let all: HashMap<String, HashMap<String, LayoutPoint>> =
         serde_json::from_str(&content).ok()?;
     all.get(&normalize_relative_path(relative_path)).cloned()
@@ -162,16 +149,32 @@ fn load_persistent_state(
     project_dir: &str,
     relative_path: &str,
 ) -> Option<DiagramPersistentState> {
+    validate_relative_path(relative_path).ok()?;
     let path = state_file_path(project_dir);
-    let content = std::fs::read_to_string(&path).ok()?;
-    let all: BTreeMap<String, DiagramPersistentState> = serde_json::from_str(&content).ok()?;
-    let key = normalize_relative_path(relative_path);
-    if let Some(state) = all.get(&key) {
-        return Some(state.clone());
+    if path.exists() {
+        match read_state_file_limited(&path) {
+            Ok(content) => {
+                if let Ok(all) = serde_json::from_str::<BTreeMap<String, DiagramPersistentState>>(&content)
+                {
+                    let key = normalize_relative_path(relative_path);
+                    if let Some(mut state) = all.get(&key).cloned() {
+                        round_persistent_state_in_place(&mut state);
+                        return Some(state);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(target: "modai_diagram", "diagram state file not loaded: {}", e);
+            }
+        }
     }
-    load_legacy_layout_from_file(project_dir, relative_path).map(|layout| DiagramPersistentState {
-        layout: layout.into_iter().collect(),
-        ..DiagramPersistentState::default()
+    load_legacy_layout_from_file(project_dir, relative_path).map(|layout| {
+        let mut state = DiagramPersistentState {
+            layout: layout.into_iter().collect(),
+            ..DiagramPersistentState::default()
+        };
+        round_persistent_state_in_place(&mut state);
+        state
     })
 }
 
@@ -181,12 +184,25 @@ async fn load_persistent_state_async(
     project_dir: &str,
     relative_path: &str,
 ) -> Option<DiagramPersistentState> {
+    validate_relative_path(relative_path).ok()?;
     let path = state_file_path(project_dir);
-    if let Ok(content) = tokio::fs::read_to_string(&path).await {
-        if let Ok(all) = serde_json::from_str::<BTreeMap<String, DiagramPersistentState>>(&content) {
-            let key = normalize_relative_path(relative_path);
-            if let Some(state) = all.get(&key) {
-                return Some(state.clone());
+    if let Ok(meta) = tokio::fs::metadata(&path).await {
+        if meta.len() > MAX_DIAGRAM_STATE_FILE_BYTES {
+            tracing::warn!(
+                target: "modai_diagram",
+                "diagram state file too large: {} bytes",
+                meta.len()
+            );
+            return None;
+        }
+        if let Ok(content) = tokio::fs::read_to_string(&path).await {
+            if let Ok(all) = serde_json::from_str::<BTreeMap<String, DiagramPersistentState>>(&content)
+            {
+                let key = normalize_relative_path(relative_path);
+                if let Some(mut state) = all.get(&key).cloned() {
+                    round_persistent_state_in_place(&mut state);
+                    return Some(state);
+                }
             }
         }
     }
@@ -198,13 +214,24 @@ async fn load_legacy_layout_from_file_async(
     relative_path: &str,
 ) -> Option<DiagramPersistentState> {
     let path = legacy_layout_file_path(project_dir);
+    let meta = tokio::fs::metadata(&path).await.ok()?;
+    if meta.len() > MAX_DIAGRAM_STATE_FILE_BYTES {
+        tracing::warn!(
+            target: "modai_diagram",
+            "legacy diagram layout file too large: {} bytes",
+            meta.len()
+        );
+        return None;
+    }
     let content = tokio::fs::read_to_string(&path).await.ok()?;
     let all: HashMap<String, HashMap<String, LayoutPoint>> = serde_json::from_str(&content).ok()?;
     let layout = all.get(&normalize_relative_path(relative_path))?.clone();
-    Some(DiagramPersistentState {
+    let mut state = DiagramPersistentState {
         layout: layout.into_iter().collect(),
         ..DiagramPersistentState::default()
-    })
+    };
+    round_persistent_state_in_place(&mut state);
+    Some(state)
 }
 
 fn save_persistent_state(
@@ -212,16 +239,27 @@ fn save_persistent_state(
     relative_path: &str,
     state: &DiagramPersistentState,
 ) -> Result<(), String> {
+    validate_relative_path(relative_path)?;
+    let state = round_persistent_state(state);
     let path = state_file_path(project_dir);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let key = normalize_relative_path(relative_path);
-    let mut all: BTreeMap<String, DiagramPersistentState> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default();
-    all.insert(key, state.clone());
+    let mut all: BTreeMap<String, DiagramPersistentState> = match read_state_file_limited(&path) {
+        Ok(c) => serde_json::from_str(&c).unwrap_or_default(),
+        Err(e) => {
+            if path.exists() {
+                tracing::warn!(
+                    target: "modai_diagram",
+                    "could not read existing diagram state for merge: {}",
+                    e
+                );
+            }
+            BTreeMap::new()
+        }
+    };
+    all.insert(key, state);
     let content = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok(())
@@ -621,6 +659,8 @@ fn get_diagram_data_from_source_impl(
     };
     let mut diagram = extract_diagram_from_model(&m, project_dir);
     if let (Some(pdir), Some(rpath)) = (project_dir, relative_path) {
+        validate_relative_path(rpath).map_err(|e| e.to_string())?;
+        tracing::info!(target: "modai_diagram", "diagram data for {}", rpath);
         let state_opt = match persistent_hint {
             None => load_persistent_state(pdir, rpath),
             Some(pre) => pre,
@@ -642,7 +682,7 @@ fn get_diagram_data_from_source_impl(
                 }
             }
         } else {
-            let _ = save_persistent_state(
+            if let Err(e) = save_persistent_state(
                 pdir,
                 rpath,
                 &DiagramPersistentState {
@@ -664,7 +704,13 @@ fn get_diagram_data_from_source_impl(
                     diagram_annotation: diagram.diagram_annotation.clone(),
                     icon_annotation: diagram.icon_annotation.clone(),
                 },
-            );
+            ) {
+                tracing::warn!(
+                    target: "modai_diagram",
+                    "failed to save initial diagram persistent state: {}",
+                    e
+                );
+            }
         }
     }
     Ok(diagram)
@@ -684,26 +730,37 @@ pub async fn load_and_build_graphical_document_from_source(
     project_dir: Option<String>,
     relative_path: Option<String>,
 ) -> Result<GraphicalDocumentModel, String> {
+    if let (Some(_), Some(r)) = (&project_dir, &relative_path) {
+        validate_relative_path(r).map_err(|e| e.to_string())?;
+    }
     let persistent_hint: Option<Option<DiagramPersistentState>> =
         match (&project_dir, &relative_path) {
             (Some(p), Some(r)) => Some(load_persistent_state_async(p, r).await),
             _ => None,
         };
-    tokio::task::spawn_blocking(move || {
-        get_diagram_data_from_source_impl(
-            &source,
-            project_dir.as_deref(),
-            relative_path.as_deref(),
-            persistent_hint,
-        )
-        .map(GraphicalDocumentModel::from_diagram_model)
-    })
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        async move {
+            tokio::task::spawn_blocking(move || {
+                get_diagram_data_from_source_impl(
+                    &source,
+                    project_dir.as_deref(),
+                    relative_path.as_deref(),
+                    persistent_hint,
+                )
+                .map(GraphicalDocumentModel::from_diagram_model)
+            })
+            .await
+            .map_err(|e| format!("join error: {e}"))?
+        },
+    )
     .await
-    .map_err(|e| format!("join error: {e}"))?
+    .map_err(|_| "diagram load timed out after 30s".to_string())?
 }
 
 /// Reads file and returns diagram data.
 pub fn get_diagram_data(project_dir: &str, relative_path: &str) -> Result<DiagramModel, String> {
+    validate_relative_path(relative_path).map_err(|e| e.to_string())?;
     let path = std::path::Path::new(project_dir).join(relative_path);
     let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     get_diagram_data_from_source(&source, Some(project_dir), Some(relative_path))
@@ -881,7 +938,7 @@ pub fn apply_diagram_edits(
     icon_annotation: Option<&IconDiagramAnnotation>,
     project_dir: Option<&str>,
     relative_path: Option<&str>,
-) -> Result<String, String> {
+) -> Result<ApplyDiagramEditsOutput, String> {
     let item = parser::parse(source).map_err(|e| e.to_string())?;
     let mut m = match item {
         ClassItem::Model(model) => model,
@@ -891,7 +948,10 @@ pub fn apply_diagram_edits(
     m.declarations = merge_declarations(&m.declarations, components);
     m.equations = merge_connections(&m.equations, connections);
 
+    let mut persistent_warning: Option<String> = None;
     if let (Some(pdir), Some(rpath)) = (project_dir, relative_path) {
+        validate_relative_path(rpath).map_err(|e| e.to_string())?;
+        tracing::info!(target: "modai_diagram", "apply_diagram_edits for {}", rpath);
         let state = DiagramPersistentState {
             layout: layout
                 .cloned()
@@ -910,7 +970,17 @@ pub fn apply_diagram_edits(
             diagram_annotation: diagram_annotation.cloned(),
             icon_annotation: icon_annotation.cloned(),
         };
-        let _ = save_persistent_state(pdir, rpath, &state);
+        if let Err(e) = save_persistent_state(pdir, rpath, &state) {
+            tracing::warn!(
+                target: "modai_diagram",
+                "failed to save diagram persistent state after edits: {}",
+                e
+            );
+            persistent_warning = Some(format!(
+                "Failed to save .modai diagram state (layout persists in editor only until fixed): {}",
+                e
+            ));
+        }
     }
     let inner_base = m
         .annotation
@@ -946,7 +1016,10 @@ pub fn apply_diagram_edits(
         Some(format!("annotation({});", items.join(", ")))
     };
 
-    Ok(unparse::model_to_mo(&m))
+    Ok(ApplyDiagramEditsOutput {
+        new_source: unparse::model_to_mo(&m),
+        warning: persistent_warning,
+    })
 }
 
 pub fn apply_graphical_document_edits(
@@ -954,7 +1027,7 @@ pub fn apply_graphical_document_edits(
     document: &GraphicalDocumentModel,
     project_dir: Option<&str>,
     relative_path: Option<&str>,
-) -> Result<String, String> {
+) -> Result<ApplyDiagramEditsOutput, String> {
     let diagram = document.clone().into_diagram_model();
     apply_diagram_edits(
         source,
@@ -966,165 +1039,4 @@ pub fn apply_graphical_document_edits(
         project_dir,
         relative_path,
     )
-}
-
-// --- Equation extraction and editing for graphical equation editor ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EquationEntry {
-    pub id: String,
-    pub text: String,
-    #[serde(default)]
-    pub is_when: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VariableDecl {
-    pub name: String,
-    pub type_name: String,
-    pub variability: String,
-    pub start_value: String,
-    pub unit: String,
-    pub description: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelEquationsAndVars {
-    pub model_name: String,
-    pub variables: Vec<VariableDecl>,
-    pub equations: Vec<EquationEntry>,
-}
-
-pub fn extract_equations_from_source(source: &str) -> Result<ModelEquationsAndVars, String> {
-    let item = parser::parse(source).map_err(|e| e.to_string())?;
-    let m = match item {
-        ClassItem::Model(model) => model,
-        ClassItem::Function(_) => return Err("File defines a function, not a model".to_string()),
-    };
-
-    let mut variables = Vec::new();
-    for decl in &m.declarations {
-        let variability = if decl.is_parameter {
-            "parameter"
-        } else {
-            "variable"
-        };
-        let start_value = decl
-            .start_value
-            .as_ref()
-            .map(|v| format!("{:?}", v))
-            .unwrap_or_default();
-        variables.push(VariableDecl {
-            name: decl.name.clone(),
-            type_name: decl.type_name.clone(),
-            variability: variability.to_string(),
-            start_value,
-            unit: String::new(),
-            description: String::new(),
-        });
-    }
-
-    let mut equations = Vec::new();
-    for (idx, eq) in m.equations.iter().enumerate() {
-        let text = unparse::equation_to_string(eq);
-        let is_when = matches!(eq, Equation::When(_, _, _));
-        equations.push(EquationEntry {
-            id: format!("eq_{}", idx),
-            text,
-            is_when,
-        });
-    }
-
-    Ok(ModelEquationsAndVars {
-        model_name: m.name.clone(),
-        variables,
-        equations,
-    })
-}
-
-pub fn apply_equation_edits(
-    source: &str,
-    variables: &[VariableDecl],
-    equations: &[EquationEntry],
-) -> Result<String, String> {
-    let item = parser::parse(source).map_err(|e| e.to_string())?;
-    let mut m = match item {
-        ClassItem::Model(model) => model,
-        ClassItem::Function(_) => return Err("File defines a function, not a model".to_string()),
-    };
-
-    let existing_component_names: HashSet<&str> = m
-        .declarations
-        .iter()
-        .filter(|d| !d.is_parameter)
-        .map(|d| d.name.as_str())
-        .collect();
-
-    let mut new_decls: Vec<Declaration> = Vec::new();
-    for var in variables {
-        if existing_component_names.contains(var.name.as_str()) {
-            if let Some(existing) = m.declarations.iter().find(|d| d.name == var.name) {
-                new_decls.push(existing.clone());
-                continue;
-            }
-        }
-        let start_val = if var.start_value.is_empty() {
-            None
-        } else {
-            Some(Expression::var(&var.start_value))
-        };
-        let decl = Declaration {
-            name: var.name.clone(),
-            type_name: var.type_name.clone(),
-            replaceable: false,
-            constrainedby_type: None,
-            is_parameter: var.variability == "parameter",
-            is_flow: false,
-            is_stream: false,
-            is_discrete: false,
-            is_input: false,
-            is_output: false,
-            is_inner: false,
-            is_outer: false,
-            is_public: false,
-            is_protected: false,
-            start_value: start_val,
-            array_size: None,
-            modifications: vec![],
-            is_rest: false,
-            annotation: None,
-            condition: None,
-        };
-        new_decls.push(decl);
-    }
-
-    for existing in &m.declarations {
-        if !variables.iter().any(|v| v.name == existing.name) {
-            if existing_component_names.contains(existing.name.as_str()) {
-                new_decls.push(existing.clone());
-            }
-        }
-    }
-
-    m.declarations = new_decls;
-
-    let mut new_eqs: Vec<Equation> = Vec::new();
-    for eq_entry in equations {
-        let text = eq_entry.text.trim();
-        if text.is_empty() {
-            continue;
-        }
-        let eq_source = format!("model _Tmp\nequation\n  {};\nend _Tmp;\n", text.trim_end_matches(';'));
-        if let Ok(ClassItem::Model(tmp)) = parser::parse(&eq_source) {
-            for parsed_eq in tmp.equations {
-                new_eqs.push(parsed_eq);
-            }
-        }
-    }
-    m.equations = new_eqs;
-
-    Ok(unparse::model_to_mo(&m))
 }

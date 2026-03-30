@@ -4,12 +4,12 @@
  */
 
 import type {
+  AnnotationColor,
+  AnnotationPoint,
+  CoordinateSystem,
   GraphicItem,
   IconDiagramAnnotation,
-  AnnotationPoint,
-  AnnotationColor,
-  CoordinateSystem,
-} from "../components/DiagramSvgRenderer";
+} from "../components/diagramGraphicTypes";
 import { graphicOuterTransformSvg, patternStringToStrokeDasharray } from "../components/DiagramSvgRenderer";
 
 export interface ExportOptions {
