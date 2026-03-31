@@ -486,6 +486,33 @@ pub(super) fn collect_external_calls(
     }
     let mut out = Vec::new();
     for call_site in names {
+        // Avoid mis-classifying builtin operators as external calls.
+        // In particular, the unqualified TestLib.* fallback below would otherwise map
+        // `sample(...)` / clock-derived operators to TestLib stubs (if present) and force
+        // the JIT down the generic Import path, which can panic on missing symbols.
+        let lower = call_site.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "sample"
+                | "interval"
+                | "subsample"
+                | "supersample"
+                | "shiftsample"
+                | "backsample"
+                | "hold"
+                | "previous"
+                | "ones"
+                | "zeros"
+                | "fill"
+                | "pre"
+                | "edge"
+                | "change"
+                | "assert"
+                | "terminate"
+                | "size"
+        ) {
+            continue;
+        }
         // Do not skip on `is_builtin_function` here: that helper treats any
         // package-qualified name with an uppercase first segment (e.g. TestLib.*)
         // as a "builtin", which would drop real external declarations from EXT

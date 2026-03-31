@@ -19,8 +19,80 @@ fn global_array_sizes_cache() -> &'static RwLock<HashMap<String, Arc<HashMap<Str
     GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+fn perf_trace_enabled() -> bool {
+    std::env::var("RUSTMODLICA_PERF_TRACE")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+#[derive(Default, Clone)]
+struct CacheCounters {
+    hits: u64,
+    misses: u64,
+    evictions: u64,
+}
+
+static COUNTERS: OnceLock<RwLock<CacheCounters>> = OnceLock::new();
+
+fn counters() -> &'static RwLock<CacheCounters> {
+    COUNTERS.get_or_init(|| RwLock::new(CacheCounters::default()))
+}
+
+fn inc_hit() {
+    if !perf_trace_enabled() {
+        return;
+    }
+    if let Ok(mut c) = counters().write() {
+        c.hits += 1;
+    }
+}
+
+fn inc_miss() {
+    if !perf_trace_enabled() {
+        return;
+    }
+    if let Ok(mut c) = counters().write() {
+        c.misses += 1;
+    }
+}
+
+fn inc_evict() {
+    if !perf_trace_enabled() {
+        return;
+    }
+    if let Ok(mut c) = counters().write() {
+        c.evictions += 1;
+    }
+}
+
 fn mem_cache_get(key: &str) -> Option<Arc<HashMap<String, usize>>> {
+    // Optional TTL: when enabled, clear thread-local cache entries periodically to avoid staleness
+    // in long-lived IDE processes. Default is off to keep behavior unchanged.
+    const TTL_ENV: &str = "RUSTMODLICA_FLATTEN_CACHE_TTL_MS";
+    thread_local! {
+        static LOCAL_LAST_CLEAR_MS: std::cell::Cell<u128> = std::cell::Cell::new(0);
+    }
+    if let Ok(ttl_str) = std::env::var(TTL_ENV) {
+        if let Ok(ttl_ms) = ttl_str.trim().parse::<u128>() {
+            if ttl_ms > 0 {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let last = LOCAL_LAST_CLEAR_MS.with(|c| c.get());
+                if last == 0 || now.saturating_sub(last) >= ttl_ms {
+                    LOCAL_LAST_CLEAR_MS.with(|c| c.set(now));
+                    LOCAL_ARRAY_SIZES_CACHE.with(|c| c.borrow_mut().clear());
+                }
+            }
+        }
+    }
     if let Some(v) = LOCAL_ARRAY_SIZES_CACHE.with(|c| c.borrow().get(key).cloned()) {
+        inc_hit();
         return Some(v);
     }
     if let Ok(g) = global_array_sizes_cache().read() {
@@ -29,9 +101,11 @@ fn mem_cache_get(key: &str) -> Option<Arc<HashMap<String, usize>>> {
             LOCAL_ARRAY_SIZES_CACHE.with(|c| {
                 c.borrow_mut().insert(key.to_string(), v.clone());
             });
+            inc_hit();
             return Some(v);
         }
     }
+    inc_miss();
     None
 }
 
@@ -46,6 +120,7 @@ fn mem_cache_put(key: &str, sizes: Arc<HashMap<String, usize>>) {
             // Remove an arbitrary key (HashMap iteration order is fine for a soft bound).
             if let Some(k) = g.keys().next().cloned() {
                 g.remove(&k);
+                inc_evict();
             }
         }
         g.insert(key.to_string(), sizes);

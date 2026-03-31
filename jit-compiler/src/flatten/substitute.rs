@@ -7,6 +7,7 @@ use super::expressions::{eval_const_expr, expr_to_path};
 pub struct SubstituteCache {
     cache: HashMap<*const Expression, Expression>,
     max_size: usize,
+    order: Vec<*const Expression>,
 }
 
 impl SubstituteCache {
@@ -14,6 +15,7 @@ impl SubstituteCache {
         Self {
             cache: HashMap::with_capacity(max_size.min(4096)),
             max_size,
+            order: Vec::with_capacity(max_size.min(4096)),
         }
     }
 }
@@ -306,20 +308,39 @@ impl super::Flattener {
             }
             Expression::Number(_) => expr.clone(),
             Expression::StringLiteral(_) => expr.clone(),
-            Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
-                Box::new(self.substitute_cached_inner(lhs, context, visiting, cache)),
-                op.clone(),
-                Box::new(self.substitute_cached_inner(rhs, context, visiting, cache)),
-            ),
-            Expression::Call(func, args) => Expression::Call(
-                func.clone(),
-                args.iter()
-                    .map(|a| self.substitute_cached_inner(a, context, visiting, cache))
-                    .collect(),
-            ),
-            Expression::Der(arg) => Expression::Der(Box::new(
-                self.substitute_cached_inner(arg, context, visiting, cache),
-            )),
+            Expression::BinaryOp(lhs, op, rhs) => {
+                let new_lhs = self.substitute_cached_inner(lhs, context, visiting, cache);
+                let new_rhs = self.substitute_cached_inner(rhs, context, visiting, cache);
+                if new_lhs == **lhs && new_rhs == **rhs {
+                    expr.clone()
+                } else {
+                    Expression::BinaryOp(Box::new(new_lhs), op.clone(), Box::new(new_rhs))
+                }
+            }
+            Expression::Call(func, args) => {
+                let mut changed = false;
+                let mut new_args: Vec<Expression> = Vec::with_capacity(args.len());
+                for (i, a) in args.iter().enumerate() {
+                    let na = self.substitute_cached_inner(a, context, visiting, cache);
+                    if na != args[i] {
+                        changed = true;
+                    }
+                    new_args.push(na);
+                }
+                if !changed {
+                    expr.clone()
+                } else {
+                    Expression::Call(func.clone(), new_args)
+                }
+            }
+            Expression::Der(arg) => {
+                let new_arg = self.substitute_cached_inner(arg, context, visiting, cache);
+                if new_arg == **arg {
+                    expr.clone()
+                } else {
+                    Expression::Der(Box::new(new_arg))
+                }
+            }
             Expression::ArrayAccess(arr, idx) => {
                 let new_arr = self.substitute_cached_inner(arr, context, visiting, cache);
                 let new_idx = self.substitute_cached_inner(idx, context, visiting, cache);
@@ -396,72 +417,137 @@ impl super::Flattener {
                         return val;
                     }
                 }
-                Expression::Dot(Box::new(new_base), member.clone())
+                if new_base == **base {
+                    expr.clone()
+                } else {
+                    Expression::Dot(Box::new(new_base), member.clone())
+                }
             }
-            Expression::If(cond, t_expr, f_expr) => Expression::If(
-                Box::new(self.substitute_cached_inner(cond, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(t_expr, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(f_expr, context, visiting, cache)),
-            ),
-            Expression::Range(start, step, end) => Expression::Range(
-                Box::new(self.substitute_cached_inner(start, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(step, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(end, context, visiting, cache)),
-            ),
-            Expression::ArrayLiteral(exprs) => Expression::ArrayLiteral(
-                exprs
-                    .iter()
-                    .map(|e| self.substitute_cached_inner(e, context, visiting, cache))
-                    .collect(),
-            ),
+            Expression::If(cond, t_expr, f_expr) => {
+                let nc = self.substitute_cached_inner(cond, context, visiting, cache);
+                let nt = self.substitute_cached_inner(t_expr, context, visiting, cache);
+                let nf = self.substitute_cached_inner(f_expr, context, visiting, cache);
+                if nc == **cond && nt == **t_expr && nf == **f_expr {
+                    expr.clone()
+                } else {
+                    Expression::If(Box::new(nc), Box::new(nt), Box::new(nf))
+                }
+            }
+            Expression::Range(start, step, end) => {
+                let ns = self.substitute_cached_inner(start, context, visiting, cache);
+                let nst = self.substitute_cached_inner(step, context, visiting, cache);
+                let ne = self.substitute_cached_inner(end, context, visiting, cache);
+                if ns == **start && nst == **step && ne == **end {
+                    expr.clone()
+                } else {
+                    Expression::Range(Box::new(ns), Box::new(nst), Box::new(ne))
+                }
+            }
+            Expression::ArrayLiteral(exprs) => {
+                let mut changed = false;
+                let mut out_v = Vec::with_capacity(exprs.len());
+                for (i, e) in exprs.iter().enumerate() {
+                    let ne = self.substitute_cached_inner(e, context, visiting, cache);
+                    if ne != exprs[i] {
+                        changed = true;
+                    }
+                    out_v.push(ne);
+                }
+                if !changed {
+                    expr.clone()
+                } else {
+                    Expression::ArrayLiteral(out_v)
+                }
+            }
             Expression::ArrayComprehension {
-                expr,
+                expr: inner_expr,
                 iter_var,
                 iter_range,
             } => {
-                let range_sub = self.substitute_cached_inner(iter_range, context, visiting, cache);
-                let expr_sub = self.substitute_cached_inner(expr, context, visiting, cache);
+                let range_sub =
+                    self.substitute_cached_inner(iter_range, context, visiting, cache);
+                let expr_sub = self.substitute_cached_inner(inner_expr, context, visiting, cache);
                 // Keep cached substitution conservative: do not expand comprehensions here.
                 // Comprehension expansion is handled by the main substitute paths where a full
                 // context stack is available.
-                Expression::ArrayComprehension {
-                    expr: Box::new(expr_sub),
-                    iter_var: iter_var.clone(),
-                    iter_range: Box::new(range_sub),
+                if range_sub == **iter_range && expr_sub == **inner_expr {
+                    expr.clone()
+                } else {
+                    Expression::ArrayComprehension {
+                        expr: Box::new(expr_sub),
+                        iter_var: iter_var.clone(),
+                        iter_range: Box::new(range_sub),
+                    }
                 }
             }
-            Expression::Sample(inner) => Expression::Sample(Box::new(
-                self.substitute_cached_inner(inner, context, visiting, cache),
-            )),
-            Expression::Interval(inner) => Expression::Interval(Box::new(
-                self.substitute_cached_inner(inner, context, visiting, cache),
-            )),
-            Expression::Hold(inner) => Expression::Hold(Box::new(
-                self.substitute_cached_inner(inner, context, visiting, cache),
-            )),
-            Expression::Previous(inner) => Expression::Previous(Box::new(
-                self.substitute_cached_inner(inner, context, visiting, cache),
-            )),
+            Expression::Sample(inner) => {
+                let ni = self.substitute_cached_inner(inner, context, visiting, cache);
+                if ni == **inner { expr.clone() } else { Expression::Sample(Box::new(ni)) }
+            }
+            Expression::Interval(inner) => {
+                let ni = self.substitute_cached_inner(inner, context, visiting, cache);
+                if ni == **inner { expr.clone() } else { Expression::Interval(Box::new(ni)) }
+            }
+            Expression::Hold(inner) => {
+                let ni = self.substitute_cached_inner(inner, context, visiting, cache);
+                if ni == **inner { expr.clone() } else { Expression::Hold(Box::new(ni)) }
+            }
+            Expression::Previous(inner) => {
+                let ni = self.substitute_cached_inner(inner, context, visiting, cache);
+                if ni == **inner { expr.clone() } else { Expression::Previous(Box::new(ni)) }
+            }
             Expression::SubSample(c, n) => Expression::SubSample(
-                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+                {
+                    let nc = self.substitute_cached_inner(c, context, visiting, cache);
+                    if nc == **c { c.clone() } else { Box::new(nc) }
+                },
+                {
+                    let nn = self.substitute_cached_inner(n, context, visiting, cache);
+                    if nn == **n { n.clone() } else { Box::new(nn) }
+                },
             ),
             Expression::SuperSample(c, n) => Expression::SuperSample(
-                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+                {
+                    let nc = self.substitute_cached_inner(c, context, visiting, cache);
+                    if nc == **c { c.clone() } else { Box::new(nc) }
+                },
+                {
+                    let nn = self.substitute_cached_inner(n, context, visiting, cache);
+                    if nn == **n { n.clone() } else { Box::new(nn) }
+                },
             ),
             Expression::ShiftSample(c, n) => Expression::ShiftSample(
-                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+                {
+                    let nc = self.substitute_cached_inner(c, context, visiting, cache);
+                    if nc == **c { c.clone() } else { Box::new(nc) }
+                },
+                {
+                    let nn = self.substitute_cached_inner(n, context, visiting, cache);
+                    if nn == **n { n.clone() } else { Box::new(nn) }
+                },
             ),
             Expression::BackSample(c, n) => Expression::BackSample(
-                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
-                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+                {
+                    let nc = self.substitute_cached_inner(c, context, visiting, cache);
+                    if nc == **c { c.clone() } else { Box::new(nc) }
+                },
+                {
+                    let nn = self.substitute_cached_inner(n, context, visiting, cache);
+                    if nn == **n { n.clone() } else { Box::new(nn) }
+                },
             ),
         };
 
-        if cache.cache.len() < cache.max_size {
-            cache.cache.insert(ptr, out.clone());
+        if cache.max_size > 0 {
+            if cache.cache.len() >= cache.max_size && !cache.order.is_empty() {
+                // FIFO eviction (good enough to bound memory; avoids unbounded growth in IDE sessions).
+                let old = cache.order.remove(0);
+                cache.cache.remove(&old);
+            }
+            if cache.cache.len() < cache.max_size {
+                cache.cache.insert(ptr, out.clone());
+                cache.order.push(ptr);
+            }
         }
         out
     }

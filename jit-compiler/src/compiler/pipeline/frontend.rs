@@ -56,7 +56,7 @@ pub(crate) fn flatten_and_inline(
         flattener.loader.register_path(model_name, p);
     }
     flattener.loader.set_quiet(quiet);
-    let mut flat_model = flattener.flatten(root_model, model_name)?;
+    let mut flat_model = flattener.flatten_with_mode(root_model, model_name)?;
     log_stage_timing(stage_trace, "flatten", started_at);
 
     if let Some(cache_root) = flatten_cache::flatten_cache_dir() {

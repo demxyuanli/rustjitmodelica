@@ -9,9 +9,9 @@ use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
 use super::builtin::try_compile_builtin_placeholder_constant;
 use super::helpers::{
-    abi_params_short, import_call_abi_tag, jit_dot_trace_enabled, jit_import_debug_enabled,
-    jit_var_fallback_trace, lookup_or_insert_import, modelica_constants_dot_member,
-    modelica_constants_flat_variable, pre_scalar_name_bound,
+    abi_params_short, import_call_abi_tag, jit_builtin_fallback_warn_once, jit_dot_trace_enabled,
+    jit_import_debug_enabled, jit_var_fallback_trace, lookup_or_insert_import,
+    modelica_constants_dot_member, modelica_constants_flat_variable, pre_scalar_name_bound,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use crate::jit::jit_policy::{hysteresis_record_value, lookup_pre_variable_fallback};
@@ -194,6 +194,8 @@ pub(super) fn compile_pre_expression(
                     }
                     _ => {}
                 }
+                // Do not fall through to generic external import path for size().
+                return Ok(builder.ins().f64const(1.0));
             }
             if func_name == "pre" {
                 if args.len() != 1 {
@@ -203,6 +205,24 @@ pub(super) fn compile_pre_expression(
             }
             if let Some(v) = try_compile_builtin_placeholder_constant(func_name, builder) {
                 return Ok(v);
+            }
+
+            // In validate-mode JIT, avoid importing unknown call-site names (can panic if the
+            // host symbol is missing). Degrade to a placeholder result instead.
+            let is_external_modelica = ctx
+                .external_modelica_names
+                .map(|s| s.contains(func_name))
+                .unwrap_or(false);
+            if !is_external_modelica
+                && !crate::jit::native::builtin_jit_symbol_names()
+                    .iter()
+                    .any(|&n| n == func_name)
+            {
+                jit_builtin_fallback_warn_once(func_name, "unknown-import-pre");
+                if args.is_empty() {
+                    return Ok(builder.ins().f64const(0.0));
+                }
+                return compile_pre_expression(&args[0], ctx, builder);
             }
             let ptr_type = ctx.module.target_config().pointer_type();
             let mut sig = ctx.module.make_signature();

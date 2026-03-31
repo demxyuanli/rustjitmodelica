@@ -502,39 +502,45 @@ pub(super) fn compile(
             let _ = maybe_coverage_target_warning_message()?;
         }
 
-        let mut known_at_initial = HashSet::new();
-        known_at_initial.insert("time".to_string());
-        for p in &param_vars {
-            known_at_initial.insert(p.clone());
-        }
-        let initial_info =
-            analyze_initial_equations(&flat_model.initial_equations, &known_at_initial);
-        if initial_info.is_underdetermined
-            && initial_info.equation_count > 0
-            && opts.warnings_level != "none"
-        {
-            compiler.warnings.push(WarningInfo {
-                path: model_file_path.clone(),
-                line: 0,
-                column: 0,
-                message: format!(
-                    "initial equation system underdetermined ({} equations, {} unknowns); consistent initialization may be incomplete",
-                    initial_info.equation_count, initial_info.variable_count
-                ),
-                source: None,
-            });
-        }
-        if initial_info.is_overdetermined && opts.warnings_level != "none" {
-            compiler.warnings.push(WarningInfo {
-                path: model_file_path.clone(),
-                line: 0,
-                column: 0,
-                message: format!(
-                    "initial equation system overdetermined ({} equations, {} unknowns)",
-                    initial_info.equation_count, initial_info.variable_count
-                ),
-                source: None,
-            });
+        // `initial_info` is used by later simulation-only stages. Keep a safe default for
+        // non-Full validation modes.
+        let mut initial_variable_count = 0usize;
+        if ValidationMode::parse(compiler.options.validation_mode.as_str()) == ValidationMode::Full {
+            let mut known_at_initial = HashSet::new();
+            known_at_initial.insert("time".to_string());
+            for p in &param_vars {
+                known_at_initial.insert(p.clone());
+            }
+            let initial_info =
+                analyze_initial_equations(&flat_model.initial_equations, &known_at_initial);
+            initial_variable_count = initial_info.variable_count;
+            if initial_info.is_underdetermined
+                && initial_info.equation_count > 0
+                && opts.warnings_level != "none"
+            {
+                compiler.warnings.push(WarningInfo {
+                    path: model_file_path.clone(),
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "initial equation system underdetermined ({} equations, {} unknowns); consistent initialization may be incomplete",
+                        initial_info.equation_count, initial_info.variable_count
+                    ),
+                    source: None,
+                });
+            }
+            if initial_info.is_overdetermined && opts.warnings_level != "none" {
+                compiler.warnings.push(WarningInfo {
+                    path: model_file_path.clone(),
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "initial equation system overdetermined ({} equations, {} unknowns)",
+                        initial_info.equation_count, initial_info.variable_count
+                    ),
+                    source: None,
+                });
+            }
         }
         let algebraic_loops = alg_equations
             .iter()
@@ -592,7 +598,7 @@ pub(super) fn compile(
             diff_equations.len(),
             &alg_equations,
             flat_model.initial_equations.len(),
-            initial_info.variable_count,
+            initial_variable_count,
             when_equation_count,
             differential_index,
             constraint_equation_count,

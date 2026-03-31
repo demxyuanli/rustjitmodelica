@@ -45,6 +45,12 @@ pub enum ValidationMode {
 }
 
 impl ValidationMode {
+    /// Execution contract (used by validate-only callers that stop at `--validate-tier=analyze`):
+    /// - `Full`: run the full flatten pipeline.
+    /// - `QuickStructure` / `SuperFast`: keep output sufficient for variable/equation analysis
+    ///   (incl. initial equations and clocked-variable inference used by classification), but may
+    ///   skip work that is only needed for later simulation/JIT phases (e.g. initial algorithms).
+    ///   Constant propagation passes are additionally reduced in `decl_expand.rs`.
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "quick" | "quickstructure" | "quick_structure" => Self::QuickStructure,
@@ -98,6 +104,16 @@ impl Flattener {
         root: &mut Arc<Model>,
         root_name: &str,
     ) -> Result<FlattenedModel, FlattenError> {
+        self.flatten_with_mode(root, root_name)
+    }
+
+    /// Mode-aware flatten pipeline. For validate-only analyze-tier usage, reduced modes skip work
+    /// that does not affect structural analysis results.
+    pub fn flatten_with_mode(
+        &mut self,
+        root: &mut Arc<Model>,
+        root_name: &str,
+    ) -> Result<FlattenedModel, FlattenError> {
         let root_path = root_name.replace('/', ".");
         self.flatten_inheritance(root, root_path.as_str())?;
         redeclare::validate_modification_prefixes_in_model(root.as_ref())?;
@@ -123,9 +139,13 @@ impl Flattener {
         self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
         self.expand_equations(model, "", &mut flat);
         self.expand_algorithms(model, "", &mut flat);
+        // Initial equations affect variable classification (previous() scanning).
         self.expand_initial_equations(model, "", &mut flat);
-        self.expand_initial_algorithms(model, "", &mut flat);
+        if matches!(self.validation_mode, ValidationMode::Full) {
+            self.expand_initial_algorithms(model, "", &mut flat);
+        }
         resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+        // Clocked-variable inference affects discrete classification in analysis.
         self.infer_clocked_variables(&mut flat);
         Ok(flat)
     }

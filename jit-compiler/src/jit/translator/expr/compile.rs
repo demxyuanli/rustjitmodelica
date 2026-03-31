@@ -12,8 +12,9 @@ use crate::diag::fallback_counter;
 use super::builtin::try_compile_builtin_call;
 use super::helpers::{
     abi_params_short, import_call_abi_tag, jit_dot_fallback_zero_enabled, jit_dot_trace_enabled,
-    jit_import_debug_enabled, jit_scalar_name_bound, jit_var_fallback_trace, lookup_or_insert_import,
-    modelica_constants_dot_member, modelica_constants_flat_variable,
+    jit_builtin_fallback_warn_once, jit_import_debug_enabled, jit_scalar_name_bound,
+    jit_var_fallback_trace, lookup_or_insert_import, modelica_constants_dot_member,
+    modelica_constants_flat_variable,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use super::pre::compile_pre_expression;
@@ -386,6 +387,10 @@ pub(super) fn compile_expression_rec(
                     }
                     _ => {}
                 }
+                // If we can't infer the size statically, do not fall through to the generic
+                // external import path (which would require a host symbol `size`).
+                // Degrade to 1.0 to keep validation/JIT robust.
+                return Ok(builder.ins().f64const(1.0));
             }
             if func_name == "pre" {
                 if args.len() != 1 {
@@ -467,6 +472,25 @@ pub(super) fn compile_expression_rec(
                 builder.ins().call(func_ref, &[msg_val]);
                 return Ok(builder.ins().f64const(0.0));
             }
+
+            // In validate-mode JIT, avoid importing unknown call-site names, which would
+            // require a host symbol and can panic inside cranelift-jit if missing.
+            let is_external_modelica = ctx
+                .external_modelica_names
+                .map(|s| s.contains(func_name))
+                .unwrap_or(false);
+            if !is_external_modelica
+                && !crate::jit::native::builtin_jit_symbol_names()
+                    .iter()
+                    .any(|&n| n == func_name)
+            {
+                jit_builtin_fallback_warn_once(func_name, "unknown-import");
+                if args.is_empty() {
+                    return Ok(builder.ins().f64const(0.0));
+                }
+                return compile_expression_rec(&args[0], ctx, builder);
+            }
+
             let ptr_type = ctx.module.target_config().pointer_type();
             let mut sig = ctx.module.make_signature();
             let mut arg_vals = Vec::new();
