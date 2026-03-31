@@ -1,11 +1,20 @@
 # Semantic Coverage Matrix
 
-Last updated: 2026-03-24
+Last updated: 2026-03-29
 
 ## Scope
 
 This matrix tracks semantic coverage used by both `README.md` and `update.md`.
 Target: semantic coverage >= 98%, Modelica 3.4 core coverage = 100%.
+
+Modelica 3.4 core gate is tracked in the structured companion matrix:
+`scripts/modelica34_core_coverage_matrix.txt`.
+
+## Full Feature Support Matrix (OMC-aligned)
+
+This file intentionally tracks only the enforced semantic gates. For a broader, user-facing
+feature boundary matrix (pass/partial/missing) with code and regression references, see:
+[`JIT_DEVELOPMENT_ANALYSIS.md` (Feature Support Matrix)](../../JIT_DEVELOPMENT_ANALYSIS.md#811-modelica-feature-support-matrix-omc-aligned)
 
 ## Coverage Items
 

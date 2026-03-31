@@ -540,8 +540,49 @@ extern "C" fn rustmodlica_sample(t: f64, interval: f64) -> f64 {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn sample(t: f64, interval: f64) -> f64 {
+    rustmodlica_sample(t, interval)
+}
+
+// SYNC builtins (first-version numeric semantics, matching C codegen expr_emit.rs)
+#[no_mangle]
+pub extern "C" fn interval(x: f64) -> f64 {
+    x
+}
+
+#[no_mangle]
+pub extern "C" fn subSample(clock: f64, factor: f64) -> f64 {
+    clock * factor
+}
+
+#[no_mangle]
+pub extern "C" fn superSample(clock: f64, factor: f64) -> f64 {
+    if factor == 0.0 {
+        clock
+    } else {
+        clock / factor
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn shiftSample(clock: f64, n: f64) -> f64 {
+    clock + n
+}
+
+#[no_mangle]
+pub extern "C" fn hold(x: f64) -> f64 {
+    x
+}
+
+#[no_mangle]
+pub extern "C" fn previous(x: f64) -> f64 {
+    x
+}
+
 pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("rustmodlica_sample", rustmodlica_sample as *const u8);
+    builder.symbol("sample", sample as *const u8);
     // Register symbols for math functions
     builder.symbol("sin", f64::sin as *const u8);
     builder.symbol("cos", f64::cos as *const u8);
@@ -571,6 +612,14 @@ pub fn register_symbols(builder: &mut JITBuilder) {
     builder.symbol("div", modelica_div as *const u8);
     builder.symbol("integer", modelica_integer as *const u8);
     builder.symbol("smooth", modelica_smooth as *const u8);
+
+    // SYNC builtins
+    builder.symbol("interval", interval as *const u8);
+    builder.symbol("subSample", subSample as *const u8);
+    builder.symbol("superSample", superSample as *const u8);
+    builder.symbol("shiftSample", shiftSample as *const u8);
+    builder.symbol("hold", hold as *const u8);
+    builder.symbol("previous", previous as *const u8);
 
     // Modelica.Math Aliases
     builder.symbol("Modelica.Math.sin", f64::sin as *const u8);
@@ -652,6 +701,7 @@ pub fn register_symbols(builder: &mut JITBuilder) {
 pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     let mut set = std::collections::HashSet::new();
     set.insert("rustmodlica_sample");
+    set.insert("sample");
     set.insert("sin");
     set.insert("cos");
     set.insert("tan");
@@ -678,6 +728,12 @@ pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     set.insert("div");
     set.insert("integer");
     set.insert("smooth");
+    set.insert("interval");
+    set.insert("subSample");
+    set.insert("superSample");
+    set.insert("shiftSample");
+    set.insert("hold");
+    set.insert("previous");
     set.insert("Modelica.Math.sin");
     set.insert("Modelica.Math.cos");
     set.insert("Modelica.Math.tan");

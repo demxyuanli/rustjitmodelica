@@ -313,10 +313,9 @@ struct FunctionBuiltinRulesFile {
 
 fn load_function_builtin_rules() -> FunctionBuiltinPolicy {
     let mut rules: Vec<FunctionBuiltinRule> =
-        serde_json::from_str::<FunctionBuiltinRulesFile>(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/default_function_builtin_rules.json"
-        )))
+        serde_json::from_str::<FunctionBuiltinRulesFile>(include_str!(
+            "default_function_builtin_rules.json"
+        ))
         .map(|f| f.rules)
         .unwrap_or_default();
 

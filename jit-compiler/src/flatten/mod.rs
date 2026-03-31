@@ -37,6 +37,23 @@ pub use self::expressions::{
 pub use self::param_expr_eval::{eval_const_expr_with_array_sizes, eval_const_expr_with_param_exprs};
 pub use self::structures::FlattenedModel;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationMode {
+    Full,
+    QuickStructure,
+    SuperFast,
+}
+
+impl ValidationMode {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "quick" | "quickstructure" | "quick_structure" => Self::QuickStructure,
+            "superfast" | "super_fast" => Self::SuperFast,
+            _ => Self::Full,
+        }
+    }
+}
+
 pub(crate) struct ExpandTarget<'a> {
     pub equations: &'a mut Vec<Equation>,
     pub algorithms: &'a mut Vec<AlgorithmStatement>,
@@ -50,6 +67,9 @@ pub struct Flattener {
     pub name_cache: crate::string_intern::StringInterner,
     /// When true, `constrainedby` uses legacy string matching when a loader is available.
     pub coarse_constrainedby_only: bool,
+    /// Validation mode controls how aggressively we approximate expensive constant propagation
+    /// during validation-only workflows. Default: Full.
+    pub validation_mode: ValidationMode,
     /// When array dimension expression is not a compile-time constant, fail instead of scalar fallback.
     pub array_size_policy: ArraySizePolicy,
     /// Flat-base-name -> dimension; merged before legacy/scalar fallback (see `load_array_sizes_json`).
@@ -65,6 +85,7 @@ impl Flattener {
             loader: ModelLoader::new(),
             name_cache: crate::string_intern::StringInterner::new(),
             coarse_constrainedby_only: false,
+            validation_mode: ValidationMode::Full,
             array_size_policy: ArraySizePolicy::default(),
             external_array_sizes: HashMap::new(),
             warnings_level: "all".to_string(),

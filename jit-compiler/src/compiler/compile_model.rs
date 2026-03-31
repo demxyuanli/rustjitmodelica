@@ -14,6 +14,7 @@ use crate::diag::fallback_counter;
 use crate::diag::fallback_counter::FallbackCounterSnapshot;
 use crate::diag::fallback_registry;
 use crate::flatten::ArraySizePolicy;
+use crate::flatten::ValidationMode;
 use crate::i18n;
 use crate::jit::native::builtin_jit_symbol_names;
 use crate::jit::Jit;
@@ -368,6 +369,7 @@ pub(super) fn compile(
             stage_trace,
             snap_path,
             compiler.options.coarse_constrainedby_only,
+            ValidationMode::parse(compiler.options.validation_mode.as_str()),
             array_size_policy,
             array_sizes_path,
             compiler.options.warnings_level.as_str(),

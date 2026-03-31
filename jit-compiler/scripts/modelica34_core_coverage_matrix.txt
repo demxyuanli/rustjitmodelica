@@ -1,0 +1,20 @@
+Modelica 3.4 Core Coverage Matrix
+Last updated: 2026-03-29
+target_modelica34_percent,100
+
+item,code_entry,regression_entry,status,target,current,gap,enforced
+clock_sample_interval_parse_path,src/parser/expression.rs,omc_regression_sync_signal.mos,pass,100,100,0,yes
+clock_partition_inference,src/flatten/clock_infer.rs,omc_regression_sync_signal.mos,pass,100,100,0,yes
+event_queue_unified_dispatch,src/simulation/events.rs|src/simulation.rs,omc_regression_if_for.mos,pass,100,100,0,yes
+subsuper_shift_jit_semantics,src/jit/translator/expr/compile.rs,omc_regression_sync_super_shift.mos,pass,100,100,0,yes
+strict_mos_control_flow,src/script.rs,omc_regression_if_for.mos|omc_regression_elseif_nested_for.mos,pass,100,100,0,yes
+strict_mos_range_iteration,src/script.rs|src/parser/mos_parse.rs,omc_regression_for_range.mos|omc_regression_reverse_range.mos,pass,100,100,0,yes
+simulate_named_argument_bridge,src/script.rs,omc_regression_named_simulate.mos|omc_regression_simulate_named_combo.mos,pass,100,100,0,yes
+mixed_positional_named_simulate_bridge,src/script.rs,omc_regression_mixed_simulate_args.mos,pass,100,100,0,yes
+sync_expr_c_codegen_bridge,src/compiler/c_codegen/expr_emit.rs,cargo_check,pass,100,100,0,yes
+sync_expr_eval_bridge,src/expr_eval.rs,cargo_check,pass,100,100,0,yes
+newton_tearing_symbolic_dense,src/jit/translator/equation/solvable_tearing.rs,omc_regression_newton_symbolic_dense.mos,pass,100,100,0,yes
+newton_npath_sparse_fallback,src/jit/translator/equation/solvable_general_dense.rs|src/jit/translator/equation/solvable_general_sparse.rs,omc_regression_newton_symbolic_sparse.mos,pass,100,100,0,yes
+instream_actualstream_minimal,src/jit/translator/expr/builtin.rs,omc_regression_stream_semantics.mos,pass,100,100,0,yes
+algorithm_when_elsewhen_closure,src/parser/algorithm.rs|src/jit/translator/algorithm.rs,omc_regression_algorithm_elsewhen.mos,pass,100,100,0,yes
+stream_direction_switch_mvp,src/flatten/connections.rs|src/jit/translator/expr/builtin.rs,omc_regression_direction_switch_stream.mos,pass,100,100,0,yes

@@ -46,7 +46,7 @@ pub struct ValidationAnalyzedSummary {
     pub diff_equation_count: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompilerOptions {
     pub backend_dae_info: bool,
     pub index_reduction_method: String,
@@ -86,6 +86,10 @@ pub struct CompilerOptions {
     pub array_sizes_json: Option<String>,
     /// When set and `RUSTMODLICA_JIT_POLICY_JSON` is unset, JIT loads this policy overlay path before the first JIT compile in the process.
     pub jit_policy_json: Option<String>,
+    /// Validation-only speed/accuracy trade-off: "full" | "quick" | "superfast".
+    /// Default is "full". This is intentionally a string to keep CLI/API wiring simple.
+    #[serde(default)]
+    pub validation_mode: String,
     /// Tiered validation: stop after parse, flatten, or analysis instead of running JIT.
     pub compile_stop: CompileStopPhase,
 }
@@ -149,6 +153,7 @@ impl Default for CompilerOptions {
             array_size_policy: "legacy".to_string(),
             array_sizes_json: None,
             jit_policy_json: None,
+            validation_mode: "full".to_string(),
             compile_stop: CompileStopPhase::Full,
         }
     }
@@ -682,6 +687,7 @@ impl Compiler {
             stage_trace,
             snap_path,
             self.options.coarse_constrainedby_only,
+            crate::flatten::ValidationMode::parse(self.options.validation_mode.as_str()),
             array_size_policy,
             array_sizes_path,
             self.options.warnings_level.as_str(),

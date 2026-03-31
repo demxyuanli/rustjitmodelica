@@ -3,6 +3,21 @@ use std::collections::HashMap;
 
 use super::expressions::{eval_const_expr, expr_to_path};
 
+#[derive(Debug)]
+pub struct SubstituteCache {
+    cache: HashMap<*const Expression, Expression>,
+    max_size: usize,
+}
+
+impl SubstituteCache {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(max_size.min(4096)),
+            max_size,
+        }
+    }
+}
+
 fn expand_range_indices(start: &Expression, step: &Expression, end: &Expression) -> Option<Vec<i64>> {
     let start_val = eval_const_expr(start)? as i64;
     let step_val = eval_const_expr(step)? as i64;
@@ -242,6 +257,213 @@ impl super::Flattener {
             }
             other => other,
         }
+    }
+
+    fn substitute_cached_inner(
+        &mut self,
+        expr: &Expression,
+        context: &HashMap<String, Expression>,
+        visiting: &mut std::collections::HashSet<String>,
+        cache: &mut SubstituteCache,
+    ) -> Expression {
+        let ptr = expr as *const Expression;
+        if let Some(v) = cache.cache.get(&ptr) {
+            return v.clone();
+        }
+        let out = match expr {
+            Expression::Variable(id) => {
+                let name = crate::string_intern::resolve_id(*id);
+                if visiting.contains(&name) {
+                    expr.clone()
+                } else if let Some(val) = context.get(&name) {
+                    if matches!(val, Expression::Variable(inner_id) if *inner_id == *id) {
+                        val.clone()
+                    } else {
+                        visiting.insert(name.clone());
+                        let v = self.substitute_cached_inner(val, context, visiting, cache);
+                        visiting.remove(&name);
+                        v
+                    }
+                } else {
+                    let path = if name.contains('.') {
+                        name.clone()
+                    } else if name.starts_with("Modelica_") {
+                        name.replace("Modelica_", "Modelica.")
+                            .replace("Constants_", "Constants.")
+                    } else {
+                        String::new()
+                    };
+                    if !path.is_empty() {
+                        if let Some(val) = self.resolve_global_constant(&path) {
+                            val
+                        } else {
+                            expr.clone()
+                        }
+                    } else {
+                        expr.clone()
+                    }
+                }
+            }
+            Expression::Number(_) => expr.clone(),
+            Expression::StringLiteral(_) => expr.clone(),
+            Expression::BinaryOp(lhs, op, rhs) => Expression::BinaryOp(
+                Box::new(self.substitute_cached_inner(lhs, context, visiting, cache)),
+                op.clone(),
+                Box::new(self.substitute_cached_inner(rhs, context, visiting, cache)),
+            ),
+            Expression::Call(func, args) => Expression::Call(
+                func.clone(),
+                args.iter()
+                    .map(|a| self.substitute_cached_inner(a, context, visiting, cache))
+                    .collect(),
+            ),
+            Expression::Der(arg) => Expression::Der(Box::new(
+                self.substitute_cached_inner(arg, context, visiting, cache),
+            )),
+            Expression::ArrayAccess(arr, idx) => {
+                let new_arr = self.substitute_cached_inner(arr, context, visiting, cache);
+                let new_idx = self.substitute_cached_inner(idx, context, visiting, cache);
+                if let (Expression::Variable(id), Expression::Number(n)) = (&new_arr, &new_idx) {
+                    let name = crate::string_intern::resolve_id(*id);
+                    let n_int = *n as i64;
+                    Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, n_int)))
+                } else if let (Expression::Variable(id), Expression::Range(start, step, end)) =
+                    (&new_arr, &new_idx)
+                {
+                    let name = crate::string_intern::resolve_id(*id);
+                    if let Some(indices) = expand_range_indices(start, step, end) {
+                        Expression::ArrayLiteral(
+                            indices
+                                .into_iter()
+                                .map(|n| {
+                                    Expression::Variable(crate::string_intern::intern(&format!(
+                                        "{}_{}",
+                                        name, n
+                                    )))
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
+                    }
+                } else if let Expression::Variable(id) = &new_arr {
+                    if let Some(suf) = flat_index_suffix_for_scalar_name(&new_idx) {
+                        let name = crate::string_intern::resolve_id(*id);
+                        Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, suf)))
+                    } else {
+                        Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
+                    }
+                } else if let (Expression::ArrayLiteral(elements), Expression::Number(n)) =
+                    (&new_arr, &new_idx)
+                {
+                    let n_usize = *n as usize;
+                    let idx0 = if n_usize == 0 && !elements.is_empty() {
+                        0
+                    } else if n_usize >= 1 && n_usize <= elements.len() {
+                        n_usize - 1
+                    } else {
+                        elements.len()
+                    };
+                    if idx0 < elements.len() {
+                        elements[idx0].clone()
+                    } else {
+                        Expression::Number(0.0)
+                    }
+                } else if let (Expression::ArrayLiteral(elements), Expression::Range(start, step, end)) =
+                    (&new_arr, &new_idx)
+                {
+                    if let Some(indices) = expand_range_indices(start, step, end) {
+                        let mut out = Vec::new();
+                        for n in indices {
+                            let n_usize = n as usize;
+                            if n_usize >= 1 && n_usize <= elements.len() {
+                                out.push(elements[n_usize - 1].clone());
+                            }
+                        }
+                        Expression::ArrayLiteral(out)
+                    } else {
+                        Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
+                    }
+                } else {
+                    Expression::ArrayAccess(Box::new(new_arr), Box::new(new_idx))
+                }
+            }
+            Expression::Dot(base, member) => {
+                let new_base = self.substitute_cached_inner(base, context, visiting, cache);
+                if let Some(base_path) = expr_to_path(&new_base) {
+                    let full_path = format!("{}.{}", base_path, member);
+                    if let Some(val) = self.resolve_global_constant(&full_path) {
+                        return val;
+                    }
+                }
+                Expression::Dot(Box::new(new_base), member.clone())
+            }
+            Expression::If(cond, t_expr, f_expr) => Expression::If(
+                Box::new(self.substitute_cached_inner(cond, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(t_expr, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(f_expr, context, visiting, cache)),
+            ),
+            Expression::Range(start, step, end) => Expression::Range(
+                Box::new(self.substitute_cached_inner(start, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(step, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(end, context, visiting, cache)),
+            ),
+            Expression::ArrayLiteral(exprs) => Expression::ArrayLiteral(
+                exprs
+                    .iter()
+                    .map(|e| self.substitute_cached_inner(e, context, visiting, cache))
+                    .collect(),
+            ),
+            Expression::ArrayComprehension {
+                expr,
+                iter_var,
+                iter_range,
+            } => {
+                let range_sub = self.substitute_cached_inner(iter_range, context, visiting, cache);
+                let expr_sub = self.substitute_cached_inner(expr, context, visiting, cache);
+                // Keep cached substitution conservative: do not expand comprehensions here.
+                // Comprehension expansion is handled by the main substitute paths where a full
+                // context stack is available.
+                Expression::ArrayComprehension {
+                    expr: Box::new(expr_sub),
+                    iter_var: iter_var.clone(),
+                    iter_range: Box::new(range_sub),
+                }
+            }
+            Expression::Sample(inner) => Expression::Sample(Box::new(
+                self.substitute_cached_inner(inner, context, visiting, cache),
+            )),
+            Expression::Interval(inner) => Expression::Interval(Box::new(
+                self.substitute_cached_inner(inner, context, visiting, cache),
+            )),
+            Expression::Hold(inner) => Expression::Hold(Box::new(
+                self.substitute_cached_inner(inner, context, visiting, cache),
+            )),
+            Expression::Previous(inner) => Expression::Previous(Box::new(
+                self.substitute_cached_inner(inner, context, visiting, cache),
+            )),
+            Expression::SubSample(c, n) => Expression::SubSample(
+                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+            ),
+            Expression::SuperSample(c, n) => Expression::SuperSample(
+                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+            ),
+            Expression::ShiftSample(c, n) => Expression::ShiftSample(
+                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+            ),
+            Expression::BackSample(c, n) => Expression::BackSample(
+                Box::new(self.substitute_cached_inner(c, context, visiting, cache)),
+                Box::new(self.substitute_cached_inner(n, context, visiting, cache)),
+            ),
+        };
+
+        if cache.cache.len() < cache.max_size {
+            cache.cache.insert(ptr, out.clone());
+        }
+        out
     }
 
     pub(crate) fn substitute_stack(
@@ -549,5 +771,15 @@ impl super::Flattener {
             out.push(self.substitute_stack(expr, &new_stack));
         }
         Some(Expression::ArrayLiteral(out))
+    }
+
+    pub(crate) fn substitute_cached(
+        &mut self,
+        expr: &Expression,
+        context: &HashMap<String, Expression>,
+        cache: &mut SubstituteCache,
+    ) -> Expression {
+        let mut visiting = std::collections::HashSet::new();
+        self.substitute_cached_inner(expr, context, &mut visiting, cache)
     }
 }

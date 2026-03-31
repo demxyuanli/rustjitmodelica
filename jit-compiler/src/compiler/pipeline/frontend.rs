@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::ast::Model;
 use crate::flatten::flat_snapshot;
 use crate::flatten::flatten_cache;
-use crate::flatten::{ArraySizePolicy, Flattener, load_array_sizes_json_optional};
+use crate::flatten::{ArraySizePolicy, Flattener, ValidationMode, load_array_sizes_json_optional};
 use crate::loader::ModelLoader;
 
 use super::trace::log_stage_timing;
@@ -19,6 +19,7 @@ pub(crate) fn flatten_and_inline(
     stage_trace: bool,
     emit_flat_snapshot: Option<&Path>,
     coarse_constrainedby_only: bool,
+    validation_mode: ValidationMode,
     array_size_policy: ArraySizePolicy,
     array_sizes_json_path: Option<&Path>,
     warnings_level: &str,
@@ -44,6 +45,7 @@ pub(crate) fn flatten_and_inline(
     }
     let mut flattener = Flattener::new();
     flattener.coarse_constrainedby_only = coarse_constrainedby_only;
+    flattener.validation_mode = validation_mode;
     flattener.array_size_policy = array_size_policy;
     flattener.external_array_sizes = external_array_sizes;
     flattener.warnings_level = warnings_level.to_string();

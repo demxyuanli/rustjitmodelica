@@ -1,10 +1,52 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::{OnceLock, RwLock};
+use std::collections::HashMap;
 
 use crate::ast::Model;
 use crate::flatten::FlattenError;
 use crate::flatten::Flattener;
 use crate::loader::ModelLoader;
+
+thread_local! {
+    static LOCAL_CONSTRAINEDBY_CACHE: std::cell::RefCell<HashMap<(String, String, String, String), bool>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+fn global_constrainedby_cache() -> &'static RwLock<HashMap<(String, String, String, String), bool>> {
+    static GLOBAL: OnceLock<RwLock<HashMap<(String, String, String, String), bool>>> = OnceLock::new();
+    GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn cache_get(key: &(String, String, String, String)) -> Option<bool> {
+    if let Some(v) = LOCAL_CONSTRAINEDBY_CACHE.with(|c| c.borrow().get(key).copied()) {
+        return Some(v);
+    }
+    if let Ok(g) = global_constrainedby_cache().read() {
+        if let Some(v) = g.get(key).copied() {
+            LOCAL_CONSTRAINEDBY_CACHE.with(|c| {
+                c.borrow_mut().insert(key.clone(), v);
+            });
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn cache_put(key: (String, String, String, String), value: bool) {
+    LOCAL_CONSTRAINEDBY_CACHE.with(|c| {
+        c.borrow_mut().insert(key.clone(), value);
+    });
+    if let Ok(mut g) = global_constrainedby_cache().write() {
+        const MAX_GLOBAL: usize = 10000;
+        if g.len() >= MAX_GLOBAL && !g.contains_key(&key) {
+            if let Some(k) = g.keys().next().cloned() {
+                g.remove(&k);
+            }
+        }
+        g.insert(key, value);
+    }
+}
 
 fn load_class_for_redeclare(
     loader: &mut ModelLoader,
@@ -84,6 +126,17 @@ pub fn constrainedby_holds_extends(
         return Ok(true);
     }
 
+    // Cache key includes scope context because import resolution is scope-dependent.
+    let key = (
+        new_type_raw.to_string(),
+        constraint_raw.to_string(),
+        import_scope.to_string(),
+        msl_context.to_string(),
+    );
+    if let Some(v) = cache_get(&key) {
+        return Ok(v);
+    }
+
     let target = load_class_for_redeclare(
         loader,
         scope_model,
@@ -121,11 +174,13 @@ pub fn constrainedby_holds_extends(
                 &ext.model_name,
             )?;
             if child.name == target.name {
+                cache_put(key, true);
                 return Ok(true);
             }
             queue.push(child);
         }
     }
 
+    cache_put(key, false);
     Ok(false)
 }

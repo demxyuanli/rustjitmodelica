@@ -23,6 +23,19 @@ if (-not (Test-Path -LiteralPath $outPath)) {
     New-Item -ItemType Directory -Path $outPath | Out-Null
 }
 
+$featuresRaw = [string]$env:RUSTMODLICA_CARGO_FEATURES
+if ([string]::IsNullOrWhiteSpace($featuresRaw)) { $featuresRaw = "sundials" }
+$features = @()
+foreach ($f in $featuresRaw.Split(",")) {
+    $t = $f.Trim()
+    if ($t -ne "") { $features += $t }
+}
+$argFeatures = @()
+if ($features.Count -gt 0) {
+    $argFeatures += "--features"
+    $argFeatures += ($features -join ",")
+}
+
 $csvPath = Join-Path $outPath "deadband_matrix_stability.csv"
 "model,count_deadband,tail_deadband,run1_hash,run2_hash,status,reason" | Set-Content -LiteralPath $csvPath -Encoding UTF8
 
@@ -41,7 +54,9 @@ foreach ($m in $Models) {
                 $argLib += "--lib-path=$lp"
             }
             $scanArgsA = @(
-                "run", "-p", "rustmodlica", "--manifest-path", $manifest, "--features", "sundials", "--release", "--",
+                "run", "-p", "rustmodlica", "--manifest-path", $manifest
+            ) + $argFeatures + @(
+                "--release", "--",
                 "event-scan",
                 "--model=$m",
                 "--count-values=$c",
@@ -56,7 +71,9 @@ foreach ($m in $Models) {
             $null = & cargo @scanArgsA 2>&1
             $e1 = $LASTEXITCODE
             $scanArgsB = @(
-                "run", "-p", "rustmodlica", "--manifest-path", $manifest, "--features", "sundials", "--release", "--",
+                "run", "-p", "rustmodlica", "--manifest-path", $manifest
+            ) + $argFeatures + @(
+                "--release", "--",
                 "event-scan",
                 "--model=$m",
                 "--count-values=$c",

@@ -6,6 +6,51 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, RwLock};
+
+thread_local! {
+    // Session-local (thread-local) cache: fastest path for repeated validates in a long-lived process.
+    static LOCAL_ARRAY_SIZES_CACHE: std::cell::RefCell<HashMap<String, Arc<HashMap<String, usize>>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+fn global_array_sizes_cache() -> &'static RwLock<HashMap<String, Arc<HashMap<String, usize>>>> {
+    static GLOBAL: OnceLock<RwLock<HashMap<String, Arc<HashMap<String, usize>>>>> = OnceLock::new();
+    GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn mem_cache_get(key: &str) -> Option<Arc<HashMap<String, usize>>> {
+    if let Some(v) = LOCAL_ARRAY_SIZES_CACHE.with(|c| c.borrow().get(key).cloned()) {
+        return Some(v);
+    }
+    if let Ok(g) = global_array_sizes_cache().read() {
+        if let Some(v) = g.get(key).cloned() {
+            // Promote into local cache.
+            LOCAL_ARRAY_SIZES_CACHE.with(|c| {
+                c.borrow_mut().insert(key.to_string(), v.clone());
+            });
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn mem_cache_put(key: &str, sizes: Arc<HashMap<String, usize>>) {
+    LOCAL_ARRAY_SIZES_CACHE.with(|c| {
+        c.borrow_mut().insert(key.to_string(), sizes.clone());
+    });
+    if let Ok(mut g) = global_array_sizes_cache().write() {
+        // Simple bounded growth guard (avoid unbounded memory in IDE sessions).
+        const MAX_GLOBAL_ENTRIES: usize = 2048;
+        if g.len() >= MAX_GLOBAL_ENTRIES && !g.contains_key(key) {
+            // Remove an arbitrary key (HashMap iteration order is fine for a soft bound).
+            if let Some(k) = g.keys().next().cloned() {
+                g.remove(&k);
+            }
+        }
+        g.insert(key.to_string(), sizes);
+    }
+}
 
 pub fn flatten_cache_dir() -> Option<PathBuf> {
     std::env::var("RUSTMODLICA_FLATTEN_CACHE_DIR")
@@ -48,6 +93,12 @@ pub fn merge_cached_array_sizes(
     key: &str,
     external: &mut HashMap<String, usize>,
 ) -> Result<(), String> {
+    if let Some(mem) = mem_cache_get(key) {
+        for (k, v) in mem.as_ref() {
+            external.entry(k.clone()).or_insert(*v);
+        }
+        return Ok(());
+    }
     let path = dir.join(format!("{}.array-sizes.json", key));
     if !path.is_file() {
         return Ok(());
@@ -70,6 +121,7 @@ pub fn merge_cached_array_sizes(
         }
         external.insert(k.clone(), n as usize);
     }
+    mem_cache_put(key, Arc::new(external.clone()));
     Ok(())
 }
 
@@ -91,5 +143,6 @@ pub fn write_array_sizes_cache(dir: &Path, key: &str, sizes: &HashMap<String, us
     );
     let text = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    mem_cache_put(key, Arc::new(sizes.clone()));
     Ok(())
 }

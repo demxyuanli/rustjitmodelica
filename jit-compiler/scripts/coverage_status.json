@@ -1,9 +1,13 @@
 {
     "semantic_target_percent":  98,
     "semantic_current_percent":  100,
+    "semantic_passed_items":  14,
+    "semantic_total_items":  14,
     "modelica34_target_percent":  100,
-    "modelica34_current_percent":  0,
+    "modelica34_current_percent":  100,
+    "modelica34_passed_items":  15,
+    "modelica34_total_items":  15,
     "gaps":  [
-                 "Modelica 3.4 core below 100%"
+
              ]
 }

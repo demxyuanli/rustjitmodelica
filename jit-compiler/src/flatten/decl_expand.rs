@@ -6,6 +6,286 @@ use crate::flatten::utils::{is_primitive, resolve_inner_class_alias, resolve_typ
 use crate::flatten::{apply_modification_to_model, ModifyContext};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use super::substitute::SubstituteCache;
+
+fn perf_trace_enabled() -> bool {
+    std::env::var("RUSTMODLICA_PERF_TRACE")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+#[derive(Debug, Default)]
+struct ParamPassOptimizer {
+    param_deps: HashMap<String, HashSet<String>>,
+    stable_params: HashSet<String>,
+    last_change_pass: HashMap<String, usize>,
+    dependents_index: HashMap<String, Vec<String>>,
+}
+
+impl ParamPassOptimizer {
+    fn rebuild_dependency_graph(&mut self, model: &Model) {
+        self.param_deps.clear();
+        self.dependents_index.clear();
+        for decl in &model.declarations {
+            if !decl.is_parameter {
+                continue;
+            }
+            let mut deps: HashSet<String> = HashSet::new();
+            if let Some(val) = decl.start_value.as_ref() {
+                Self::collect_var_refs(val, &mut deps);
+            }
+            deps.remove(&decl.name);
+            self.param_deps.insert(decl.name.clone(), deps);
+        }
+        // Reverse index: param -> dependents
+        for (p, deps) in &self.param_deps {
+            for d in deps {
+                self.dependents_index
+                    .entry(d.clone())
+                    .or_default()
+                    .push(p.clone());
+            }
+        }
+    }
+
+    fn collect_var_refs(expr: &Expression, out: &mut HashSet<String>) {
+        use crate::ast::Expression as E;
+        match expr {
+            E::Variable(id) => {
+                out.insert(crate::string_intern::resolve_id(*id));
+            }
+            E::BinaryOp(l, _, r) => {
+                Self::collect_var_refs(l, out);
+                Self::collect_var_refs(r, out);
+            }
+            E::Call(_, args) => {
+                for a in args {
+                    Self::collect_var_refs(a, out);
+                }
+            }
+            E::Der(inner) => Self::collect_var_refs(inner, out),
+            E::If(c, t, f) => {
+                Self::collect_var_refs(c, out);
+                Self::collect_var_refs(t, out);
+                Self::collect_var_refs(f, out);
+            }
+            E::ArrayAccess(arr, idx) => {
+                Self::collect_var_refs(arr, out);
+                Self::collect_var_refs(idx, out);
+            }
+            E::ArrayLiteral(items) => {
+                for it in items {
+                    Self::collect_var_refs(it, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn optimize_param_passes(
+        &mut self,
+        flattener: &mut Flattener,
+        model: &Model,
+        context: &mut HashMap<String, Expression>,
+        local_array_sizes: &HashMap<String, usize>,
+    ) -> usize {
+        let (max_fast_passes, stability_passes) = match flattener.validation_mode {
+            super::ValidationMode::SuperFast => return 0,
+            super::ValidationMode::QuickStructure => (5usize, 1usize),
+            super::ValidationMode::Full => (32usize, 2usize),
+        };
+
+        self.stable_params.clear();
+        self.last_change_pass.clear();
+        self.rebuild_dependency_graph(model);
+
+        let mut stalled = 0usize;
+        let mut pass = 0usize;
+        while pass < max_fast_passes {
+            let mut sub_cache = SubstituteCache::new(4096);
+            let mut changed_params: Vec<String> = Vec::new();
+            for decl in &model.declarations {
+                if !decl.is_parameter {
+                    continue;
+                }
+                if self.stable_params.contains(&decl.name) {
+                    continue;
+                }
+                let Some(val) = decl.start_value.as_ref() else {
+                    self.stable_params.insert(decl.name.clone());
+                    continue;
+                };
+                if self
+                    .param_deps
+                    .get(&decl.name)
+                    .map(|s| s.is_empty())
+                    .unwrap_or(false)
+                {
+                    self.stable_params.insert(decl.name.clone());
+                    continue;
+                }
+                let sub = flattener.substitute_cached(val, context, &mut sub_cache);
+                if let Some(n) = eval_const_expr_with_param_exprs(&sub, context, local_array_sizes) {
+                    let update = match context.get(&decl.name) {
+                        None => true,
+                        Some(Expression::Number(p)) => (n - p).abs() > 1e-12,
+                        Some(_) => true,
+                    };
+                    if update {
+                        context.insert(decl.name.clone(), Expression::Number(n));
+                        changed_params.push(decl.name.clone());
+                        self.last_change_pass.insert(decl.name.clone(), pass);
+                    }
+                }
+            }
+
+            if changed_params.is_empty() {
+                stalled += 1;
+                if stalled >= stability_passes {
+                    break;
+                }
+            } else {
+                stalled = 0;
+                for changed in &changed_params {
+                    if let Some(deps) = self.dependents_index.get(changed) {
+                        for dep in deps {
+                            self.stable_params.remove(dep);
+                        }
+                    }
+                }
+            }
+
+            for p in self.param_deps.keys() {
+                if self.stable_params.contains(p) {
+                    continue;
+                }
+                let last = *self.last_change_pass.get(p).unwrap_or(&0);
+                if pass.saturating_sub(last) > 5 {
+                    self.stable_params.insert(p.clone());
+                }
+            }
+            pass += 1;
+        }
+        pass
+    }
+}
+
+#[derive(Debug, Default)]
+struct ArrayDimensionOptimizer {
+    computed_dims: HashMap<String, usize>,
+    uncalculable: HashSet<String>,
+}
+
+impl ArrayDimensionOptimizer {
+    fn compute_expr_complexity(expr: &Expression) -> u32 {
+        use crate::ast::Expression as E;
+        match expr {
+            E::Number(_) => 0,
+            E::Variable(_) => 1,
+            E::StringLiteral(_) => 0,
+            E::BinaryOp(l, _, r) => 1 + Self::compute_expr_complexity(l) + Self::compute_expr_complexity(r),
+            E::Call(_, args) => 3 + args.iter().map(Self::compute_expr_complexity).sum::<u32>(),
+            E::If(c, t, f) => {
+                2 + Self::compute_expr_complexity(c)
+                    + Self::compute_expr_complexity(t)
+                    + Self::compute_expr_complexity(f)
+            }
+            E::Der(inner) => 1 + Self::compute_expr_complexity(inner),
+            E::ArrayAccess(a, i) => 2 + Self::compute_expr_complexity(a) + Self::compute_expr_complexity(i),
+            E::ArrayLiteral(items) => 2 + items.iter().map(Self::compute_expr_complexity).sum::<u32>(),
+            _ => 10,
+        }
+    }
+
+    fn optimize_array_dims(
+        &mut self,
+        flattener: &mut Flattener,
+        model: &Model,
+        context: &HashMap<String, Expression>,
+        local_array_sizes: &mut HashMap<String, usize>,
+    ) -> usize {
+        const COMPLEXITY_THRESHOLD: u32 = 5;
+        let max_fast_passes = match flattener.validation_mode {
+            super::ValidationMode::SuperFast => return 0,
+            super::ValidationMode::QuickStructure => 3usize,
+            super::ValidationMode::Full => 16usize,
+        };
+        let perf = perf_trace_enabled();
+        self.computed_dims.clear();
+        self.uncalculable.clear();
+
+        let mut pass = 0usize;
+        while pass < max_fast_passes {
+            let mut sub_cache = SubstituteCache::new(4096);
+            let mut dim_changed = false;
+            for decl in &model.declarations {
+                if local_array_sizes.contains_key(&decl.name) {
+                    continue;
+                }
+                if self.uncalculable.contains(&decl.name) {
+                    continue;
+                }
+                let Some(size_expr) = decl.array_size.as_ref() else {
+                    continue;
+                };
+                if let Some(&n) = self.computed_dims.get(&decl.name) {
+                    local_array_sizes.insert(decl.name.clone(), n);
+                    continue;
+                }
+                if let Expression::Number(n) = size_expr {
+                    let sz = *n as usize;
+                    if sz > 0 {
+                        local_array_sizes.insert(decl.name.clone(), sz);
+                        self.computed_dims.insert(decl.name.clone(), sz);
+                        dim_changed = true;
+                    }
+                    continue;
+                }
+                let complexity = Self::compute_expr_complexity(size_expr);
+                if complexity > COMPLEXITY_THRESHOLD {
+                    self.uncalculable.insert(decl.name.clone());
+                    if perf {
+                        eprintln!(
+                            "[perf] array_dim_skip_complex name={} complexity={}",
+                            decl.name, complexity
+                        );
+                    }
+                    continue;
+                }
+                if let Some(ref cond_expr) = decl.condition {
+                    let cond_sub = flattener.substitute_cached(cond_expr, context, &mut sub_cache);
+                    if let Some(v) =
+                        eval_const_expr_with_param_exprs(&cond_sub, context, local_array_sizes)
+                    {
+                        if v == 0.0 {
+                            continue;
+                        }
+                    }
+                }
+                let sub_expr = flattener.substitute_cached(size_expr, context, &mut sub_cache);
+                if let Some(val) =
+                    eval_const_expr_with_param_exprs(&sub_expr, context, local_array_sizes)
+                {
+                    let n = val as usize;
+                    if n > 0 {
+                        local_array_sizes.insert(decl.name.clone(), n);
+                        self.computed_dims.insert(decl.name.clone(), n);
+                        dim_changed = true;
+                    }
+                }
+            }
+            if !dim_changed {
+                break;
+            }
+            pass += 1;
+        }
+        pass
+    }
+}
 
 impl Flattener {
     pub(super) fn expand_declarations(
@@ -60,73 +340,104 @@ impl Flattener {
                         }
                     }
 
-                    const MAX_PARAM_PASSES: usize = 128;
-                    for _ in 0..MAX_PARAM_PASSES {
-                        let mut changed = false;
-                        for decl in &model.declarations {
-                            if decl.is_parameter {
-                                if let Some(val) = &decl.start_value {
-                                    let sub = self.substitute(val, &context);
-                                    if let Some(n) = eval_const_expr_with_param_exprs(
-                                        &sub,
-                                        &context,
-                                        &local_array_sizes,
-                                    ) {
-                                        let update = match context.get(&decl.name) {
-                                            None => true,
-                                            Some(Expression::Number(p)) => (n - p).abs() > 1e-12,
-                                            Some(_) => true,
-                                        };
-                                        if update {
-                                            context.insert(decl.name.clone(), Expression::Number(n));
-                                            changed = true;
+                    // Parameter propagation is a hot path in validate mode; use a fast optimizer
+                    // first, then fall back to the legacy fixed-point loop if not converged.
+                    let mut param_opt = ParamPassOptimizer::default();
+                    let fast_passes =
+                        param_opt.optimize_param_passes(self, &model, &mut context, &local_array_sizes);
+                    let perf = perf_trace_enabled();
+                    if perf && fast_passes >= 16 {
+                        eprintln!(
+                            "[perf] param_passes_fast={} total_params={} stable_params={}",
+                            fast_passes,
+                            param_opt.param_deps.len(),
+                            param_opt.stable_params.len()
+                        );
+                    }
+                    const MAX_PARAM_PASSES_TOTAL: usize = 128;
+                    if self.validation_mode == super::ValidationMode::Full && fast_passes >= 32 {
+                        for _ in fast_passes..MAX_PARAM_PASSES_TOTAL {
+                            let mut changed = false;
+                            for decl in &model.declarations {
+                                if decl.is_parameter {
+                                    if let Some(val) = &decl.start_value {
+                                        let sub = self.substitute(val, &context);
+                                        if let Some(n) = eval_const_expr_with_param_exprs(
+                                            &sub,
+                                            &context,
+                                            &local_array_sizes,
+                                        ) {
+                                            let update = match context.get(&decl.name) {
+                                                None => true,
+                                                Some(Expression::Number(p)) => (n - p).abs() > 1e-12,
+                                                Some(_) => true,
+                                            };
+                                            if update {
+                                                context.insert(decl.name.clone(), Expression::Number(n));
+                                                changed = true;
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                        if !changed {
-                            break;
+                            if !changed {
+                                break;
+                            }
                         }
                     }
 
-                    const MAX_ARRAY_DIM_PASSES: usize = 64;
-                    for _ in 0..MAX_ARRAY_DIM_PASSES {
-                        let mut dim_changed = false;
-                        for decl in &model.declarations {
-                            if let Some(ref cond_expr) = decl.condition {
-                                let cond_sub = self.substitute(cond_expr, &context);
-                                if let Some(v) = eval_const_expr_with_param_exprs(
-                                    &cond_sub,
+                    // Array dimension inference is another validate hot path; use a fast optimizer
+                    // then fall back to the legacy fixed-point loop if needed.
+                    let mut arr_opt = ArrayDimensionOptimizer::default();
+                    let dim_fast_passes =
+                        arr_opt.optimize_array_dims(self, &model, &context, &mut local_array_sizes);
+                    if perf_trace_enabled() && dim_fast_passes >= 8 {
+                        eprintln!(
+                            "[perf] array_dim_passes_fast={} computed={} uncalculable={}",
+                            dim_fast_passes,
+                            arr_opt.computed_dims.len(),
+                            arr_opt.uncalculable.len()
+                        );
+                    }
+                    const MAX_ARRAY_DIM_PASSES_TOTAL: usize = 64;
+                    if self.validation_mode == super::ValidationMode::Full && dim_fast_passes >= 16 {
+                        for _ in dim_fast_passes..MAX_ARRAY_DIM_PASSES_TOTAL {
+                            let mut dim_changed = false;
+                            for decl in &model.declarations {
+                                if let Some(ref cond_expr) = decl.condition {
+                                    let cond_sub = self.substitute(cond_expr, &context);
+                                    if let Some(v) = eval_const_expr_with_param_exprs(
+                                        &cond_sub,
+                                        &context,
+                                        &local_array_sizes,
+                                    ) {
+                                        if v == 0.0 {
+                                            continue;
+                                        }
+                                    }
+                                }
+                                let Some(size_expr) = decl.array_size.as_ref() else {
+                                    continue;
+                                };
+                                if local_array_sizes.contains_key(&decl.name) {
+                                    continue;
+                                }
+                                let sub_expr = self.substitute(size_expr, &context);
+                                if let Some(val) = eval_const_expr_with_param_exprs(
+                                    &sub_expr,
                                     &context,
                                     &local_array_sizes,
                                 ) {
-                                    if v == 0.0 {
-                                        continue;
+                                    let n = val as usize;
+                                    if n > 0 {
+                                        local_array_sizes.insert(decl.name.clone(), n);
+                                        dim_changed = true;
                                     }
                                 }
                             }
-                            let Some(size_expr) = decl.array_size.as_ref() else {
-                                continue;
-                            };
-                            if local_array_sizes.contains_key(&decl.name) {
-                                continue;
+                            if !dim_changed {
+                                break;
                             }
-                            let sub_expr = self.substitute(size_expr, &context);
-                            if let Some(val) = eval_const_expr_with_param_exprs(
-                                &sub_expr,
-                                &context,
-                                &local_array_sizes,
-                            ) {
-                                let n = val as usize;
-                                if n > 0 {
-                                    local_array_sizes.insert(decl.name.clone(), n);
-                                    dim_changed = true;
-                                }
-                            }
-                        }
-                        if !dim_changed {
-                            break;
                         }
                     }
 

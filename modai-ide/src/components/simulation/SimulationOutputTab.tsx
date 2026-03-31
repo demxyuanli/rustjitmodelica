@@ -255,11 +255,14 @@ export function SimulationOutputTab({
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                void navigator.clipboard.writeText(s.sessionId).then(() => {
-                  onAppendLogLines?.([
-                    `[monitor-replay] copied session id: ${s.sessionId}`,
-                  ]);
-                });
+                void navigator.clipboard
+                  .writeText(s.sessionId)
+                  .then(() => {
+                    onAppendLogLines?.([
+                      `[monitor-replay] copied session id: ${s.sessionId}`,
+                    ]);
+                  })
+                  .catch(() => {});
               }}
             >
               <span className="text-[var(--text)]">{s.sessionId}</span>
