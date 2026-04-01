@@ -218,7 +218,11 @@ impl Flattener {
                 load_candidates.push(same_class);
             }
         }
-        let mut scope = current_qualified.to_string();
+        let mut scope = if current_qualified.contains('/') {
+            current_qualified.replace('/', ".")
+        } else {
+            current_qualified.to_string()
+        };
         while let Some((parent, _)) = scope.rsplit_once('.') {
             let candidate = format!("{}.{}{}", parent, first_component, rest_suffix);
             if !load_candidates.contains(&candidate) {

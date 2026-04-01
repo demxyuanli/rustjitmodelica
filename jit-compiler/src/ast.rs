@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 pub use crate::string_intern::{StringInterner, VarId};
 
 /// Top-level class kind: model (or connector, block, etc.) or function.
@@ -10,7 +12,7 @@ pub enum ClassItem {
     Function(Function),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct Function {
     pub name: String,
@@ -23,7 +25,7 @@ pub struct Function {
     pub external_info: Option<ExternalDecl>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct ExternalDecl {
     pub language: Option<String>,
@@ -57,7 +59,7 @@ impl From<Function> for Model {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct Model {
     pub name: String,
@@ -99,7 +101,7 @@ impl Model {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlgorithmStatement {
     Assignment(Expression, Expression), // lhs := rhs
     /// F3-3: (a, b, ...) := f(x) multi-assign in algorithm section (parse-only unless backend supports).
@@ -126,14 +128,14 @@ pub enum AlgorithmStatement {
     Terminate(Expression),              // terminate(message)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtendsClause {
     pub model_name: String,
     pub modifications: Vec<Modification>,
 }
 
 /// Parsed `redeclare model extends Name` / `redeclare function extends Name` block (declaration section).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RedeclareExtendsBlock {
     pub extends_target: String,
     pub is_function: bool,
@@ -152,7 +154,7 @@ pub struct RedeclareExtendsBlock {
     pub nested_redeclare_extends: Vec<RedeclareExtendsBlock>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Modification {
     pub name: String,
     pub value: Option<Expression>,
@@ -172,7 +174,7 @@ pub struct Modification {
     pub is_operator_function: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Declaration {
     #[allow(dead_code)]
     pub type_name: String,
@@ -206,7 +208,7 @@ pub struct Declaration {
     pub condition: Option<Expression>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Equation {
     Simple(Expression, Expression), // lhs = rhs
     /// F3-3: (lhs1, lhs2, ...) = rhs; multi-output function call
@@ -234,7 +236,7 @@ pub enum Equation {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expression {
     Variable(VarId),
     Number(f64),
@@ -272,7 +274,7 @@ pub enum Expression {
     StringLiteral(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Operator {
     Add,
     Sub,

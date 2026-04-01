@@ -111,6 +111,13 @@ impl ModelLoader {
         self.loaded_paths.insert(name.to_string(), path);
     }
 
+    pub fn loaded_source_paths(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = self.loaded_paths.values().cloned().collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     pub fn add_path(&mut self, path: PathBuf) {
         self.library_paths.push(path);
     }

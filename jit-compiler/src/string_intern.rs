@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 /// Interned variable identifier. Wraps u32 for cheap Copy/Eq/Hash.
 /// Resolve to `&str` via `StringInterner::resolve()` or the global `resolve_id()`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,6 +26,26 @@ impl fmt::Debug for VarId {
 impl fmt::Display for VarId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "v#{}", self.0)
+    }
+}
+
+impl Serialize for VarId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let s = resolve_id(*self);
+        serializer.serialize_str(&s)
+    }
+}
+
+impl<'de> Deserialize<'de> for VarId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(intern(&s))
     }
 }
 

@@ -710,6 +710,7 @@ impl Compiler {
             &mut root_model,
             model_name,
             &mut self.loader,
+            self.options.compile_stop.clone(),
             self.options.quiet,
             stage_trace,
             snap_path,

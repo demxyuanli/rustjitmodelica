@@ -590,12 +590,40 @@ impl Flattener {
                                 continue;
                             }
 
+                            // Use lexical scope for candidate qualification.
+                            // Some MSL libraries reference siblings via relative prefixes (e.g. `Utilities.*`,
+                            // `Analog.*`) and the loader may report `current_qualified` as a relative name.
+                            // When that happens, prefer the root import context as the scope anchor so
+                            // upward qualification can reach `Modelica.*`.
+                            let scope_for_candidates = if current_qualified.is_empty() {
+                                msl_import_context.as_str()
+                            } else if !msl_import_context.is_empty()
+                                && msl_import_context.starts_with("Modelica.")
+                                && !current_qualified.starts_with("Modelica.")
+                            {
+                                msl_import_context.as_str()
+                            } else {
+                                current_qualified
+                            };
                             let load_candidates =
-                                Self::build_load_candidates(&resolved_type, current_qualified);
+                                Self::build_load_candidates(&resolved_type, scope_for_candidates);
+                            if perf_trace_enabled()
+                                && (resolved_type == "Analog.Interfaces.NegativePin"
+                                    || resolved_type.ends_with(".Analog.Interfaces.NegativePin"))
+                            {
+                                eprintln!(
+                                    "[perf] type_load_probe resolved_type={} current={} msl_ctx={} scope={} candidates={:?}",
+                                    resolved_type,
+                                    current_qualified,
+                                    msl_import_context,
+                                    scope_for_candidates,
+                                    load_candidates
+                                );
+                            }
                             let (loaded_type, last_err) = self.try_load_sub_model(
                                 model.as_ref(),
                                 &resolved_type,
-                                current_qualified,
+                                scope_for_candidates,
                                 &load_candidates,
                             );
 

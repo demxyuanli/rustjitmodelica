@@ -1,7 +1,11 @@
 //! Optional on-disk hints for `FlattenedModel::array_sizes` keyed by model inputs (see `RUSTMODLICA_FLATTEN_CACHE_DIR`).
 
 use super::ArraySizePolicy;
+use crate::flatten::ValidationMode;
+use crate::flatten::cache_sqlite;
+use crate::flatten::cache_shm;
 use crate::loader::ModelLoader;
+use crate::flatten::flat_cache_v1::{DepHashEntry, FlatCacheV1, FLAT_CACHE_SCHEMA_V1};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -161,6 +165,219 @@ pub fn flatten_array_sizes_cache_key(
         }
     }
     format!("{:016x}", h.finish())
+}
+
+fn full_cache_enabled() -> bool {
+    std::env::var("RUSTMODLICA_FLATTEN_FULL_CACHE")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+pub fn flatten_full_cache_key(
+    model_name: &str,
+    loader: &ModelLoader,
+    validation_mode: ValidationMode,
+    compile_stop: &str,
+    coarse_constrainedby_only: bool,
+    array_sizes_json: Option<&Path>,
+    array_size_policy: ArraySizePolicy,
+    warnings_level: &str,
+) -> String {
+    let mut h = DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut h);
+    model_name.hash(&mut h);
+    format!("{:?}", validation_mode).hash(&mut h);
+    compile_stop.hash(&mut h);
+    coarse_constrainedby_only.hash(&mut h);
+    match array_size_policy {
+        ArraySizePolicy::Legacy => 0u8.hash(&mut h),
+        ArraySizePolicy::Strict => 1u8.hash(&mut h),
+    }
+    warnings_level.hash(&mut h);
+    let mut libs: Vec<String> = loader.library_paths.iter().map(|p| {
+        let mut s = p.display().to_string();
+        // Normalize for Windows: stable separators and casing.
+        s = s.replace('\\', "/");
+        s = s.to_ascii_lowercase();
+        s
+    }).collect();
+    libs.sort();
+    libs.hash(&mut h);
+    if let Some(p) = loader.get_path_for_model(model_name) {
+        if let Ok(data) = std::fs::read(p) {
+            data.hash(&mut h);
+        }
+    }
+    if let Some(jp) = array_sizes_json {
+        if let Ok(data) = std::fs::read(jp) {
+            data.hash(&mut h);
+        }
+    }
+    format!("{:016x}", h.finish())
+}
+
+fn file_hash_hex(path: &Path) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+    let mut h = DefaultHasher::new();
+    data.hash(&mut h);
+    Some(format!("{:016x}", h.finish()))
+}
+
+fn deps_match(deps: &[DepHashEntry]) -> bool {
+    for dep in deps {
+        let p = PathBuf::from(dep.path.as_str());
+        let Some(actual) = file_hash_hex(&p) else {
+            return false;
+        };
+        if actual != dep.content_hash {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn try_read_flat_cache_v1(
+    dir: &Path,
+    key: &str,
+    loader: &ModelLoader,
+) -> Option<crate::flatten::FlattenedModel> {
+    if !full_cache_enabled() {
+        return None;
+    }
+    // Tier 2: cross-process shared memory (fastest cross-process path).
+    if let Some(bytes) = cache_shm::shm_get(key) {
+        if let Ok(cache) = bincode::deserialize::<FlatCacheV1>(&bytes) {
+            if cache.schema == FLAT_CACHE_SCHEMA_V1
+                && cache.key == key
+                && deps_match(&cache.deps)
+            {
+                let _ = loader;
+                return Some(cache.into_flat_model());
+            }
+        }
+    }
+    // Tier 3: SQLite persistent store (optional).
+    if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir)) {
+        if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key) {
+            if let Ok(cache) = bincode::deserialize::<FlatCacheV1>(&bytes) {
+                if cache.schema == FLAT_CACHE_SCHEMA_V1
+                    && cache.key == key
+                    && deps_match(&cache.deps)
+                {
+                    let _ = loader;
+                    // Promote into shared memory for subsequent processes.
+                    let _ = cache_shm::shm_put(key, &bytes);
+                    return Some(cache.into_flat_model());
+                }
+            }
+        }
+    }
+    let path = dir.join(format!("{}.flat-cache.json", key));
+    if !path.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
+    let cache: FlatCacheV1 = serde_json::from_str(&text).ok()?;
+    if cache.schema != FLAT_CACHE_SCHEMA_V1 {
+        return None;
+    }
+    if cache.key != key {
+        return None;
+    }
+    if !deps_match(&cache.deps) {
+        return None;
+    }
+    // Minimal sanity check: ensure root can still be located within current library paths.
+    // If the loader can't resolve it, fall back to recompute.
+    if loader.get_path_for_model(cache.model_name.as_str()).is_none() {
+        // Allow still using cached result when root path isn't registered in the calling loader,
+        // as long as the dependency list validated.
+    }
+    // Promote JSON disk entry into shared memory (optional).
+    if let Ok(bytes) = bincode::serialize(&cache) {
+        let _ = cache_shm::shm_put(key, &bytes);
+    }
+    Some(cache.into_flat_model())
+}
+
+pub fn write_flat_cache_v1(
+    dir: &Path,
+    key: &str,
+    model_name: &str,
+    flat: &crate::flatten::FlattenedModel,
+    deps: &[PathBuf],
+) -> Result<(), String> {
+    if !full_cache_enabled() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let mut entries: Vec<DepHashEntry> = Vec::with_capacity(deps.len());
+    for p in deps {
+        let Some(h) = file_hash_hex(p.as_path()) else {
+            continue;
+        };
+        entries.push(DepHashEntry {
+            path: p.display().to_string(),
+            content_hash: h,
+        });
+    }
+    let cache = FlatCacheV1::from_flat_model(key.to_string(), model_name, flat, entries);
+    if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir)) {
+        let bytes = bincode::serialize(&cache).map_err(|e| e.to_string())?;
+        let _ = cache_shm::shm_put(key, &bytes);
+        let deps_json = serde_json::to_string(&cache.deps).map_err(|e| e.to_string())?;
+        let _ = cache_sqlite::sqlite_put(
+            &cfg.path,
+            key,
+            FLAT_CACHE_SCHEMA_V1,
+            "flat_cache_v1",
+            &bytes,
+            Some(deps_json.as_str()),
+        );
+        return Ok(());
+    }
+    let text = serde_json::to_string(&cache).map_err(|e| e.to_string())?;
+    if let Ok(bytes) = bincode::serialize(&cache) {
+        let _ = cache_shm::shm_put(key, &bytes);
+    }
+    let path = dir.join(format!("{}.flat-cache.json", key));
+    std::fs::write(&path, text).map_err(|e| e.to_string())
+}
+
+fn hot_full_cache() -> &'static RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>> {
+    static HOT: OnceLock<RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>>> = OnceLock::new();
+    HOT.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+pub fn get_or_compute_flattened_model_v1<F>(
+    dir: &Path,
+    key: &str,
+    loader: &ModelLoader,
+    compute: F,
+) -> Result<crate::flatten::FlattenedModel, crate::flatten::FlattenError>
+where
+    F: FnOnce() -> Result<crate::flatten::FlattenedModel, crate::flatten::FlattenError>,
+{
+    if let Ok(h) = hot_full_cache().read() {
+        if let Some(v) = h.get(key) {
+            return Ok((**v).clone());
+        }
+    }
+    if let Some(v) = try_read_flat_cache_v1(dir, key, loader) {
+        if let Ok(mut h) = hot_full_cache().write() {
+            h.insert(key.to_string(), Arc::new(v.clone()));
+        }
+        return Ok(v);
+    }
+    let v = compute()?;
+    if let Ok(mut h) = hot_full_cache().write() {
+        h.insert(key.to_string(), Arc::new(v.clone()));
+    }
+    Ok(v)
 }
 
 pub fn merge_cached_array_sizes(

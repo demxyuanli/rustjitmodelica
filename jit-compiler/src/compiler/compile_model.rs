@@ -365,6 +365,7 @@ pub(super) fn compile(
             &mut root_model,
             model_name,
             &mut compiler.loader,
+            compiler.options.compile_stop.clone(),
             compiler.options.quiet,
             stage_trace,
             snap_path,

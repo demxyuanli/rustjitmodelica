@@ -1,4 +1,5 @@
 use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression, StringInterner};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// Stable id for a flattened instance or leaf variable (diagnostics / future DefId-style tooling).
@@ -14,7 +15,7 @@ pub struct InstPathRecord {
 }
 
 /// SYNC-2: One clock partition: variables that are updated on the same clock (e.g. same when sample(...) branch).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClockPartition {
     /// Stable id for this partition (e.g. "default", or derived from clock condition).
     pub id: String,
@@ -22,6 +23,7 @@ pub struct ClockPartition {
     pub var_names: HashSet<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct FlattenedModel {
     pub declarations: Vec<Declaration>,
     pub equations: Vec<Equation>,
