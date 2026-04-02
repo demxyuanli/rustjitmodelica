@@ -5,6 +5,7 @@ use crate::jit_validate::artifacts::{
 use crate::jit_validate::{ensure_cache_dir, normalize_model_list, CacheDirPolicy, RunSpec, Scenario};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -233,9 +234,104 @@ fn case_paths(out_dir: &Path, sc_id: &str, model: &str, run_index: usize) -> Cas
     CasePaths {
         perf_json: out_dir.join(format!("perf_{}.json", base)),
         cache_stats_json: out_dir.join(format!("cache_stats_{}.json", base)),
+        dep_graph_json: out_dir.join(format!("dep_graph_{}.json", base)),
         stdout_txt: out_dir.join(format!("stdout_{}.txt", base)),
         stderr_txt: out_dir.join(format!("stderr_{}.txt", base)),
     }
+}
+
+fn file_hash_hex(path: &Path) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    data.hash(&mut h);
+    Some(format!("{:016x}", h.finish()))
+}
+
+fn parse_previous_dep_graph(
+    dep_graph_path: &Path,
+    model: &str,
+    file_to_models: &mut HashMap<String, HashSet<String>>,
+    baseline_hashes: &mut HashMap<String, String>,
+) {
+    let Ok(text) = std::fs::read_to_string(dep_graph_path) else {
+        return;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+    let Some(entries) = v.get("entries").and_then(|x| x.as_array()) else {
+        return;
+    };
+    for entry in entries {
+        let Some(file) = entry.get("file").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let hash = entry
+            .get("content_hash")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string();
+        baseline_hashes.entry(file.to_string()).or_insert(hash);
+        let models = file_to_models
+            .entry(file.to_string())
+            .or_default();
+        models.insert(model.to_string());
+        if let Some(arr) = entry.get("models").and_then(|x| x.as_array()) {
+            for m in arr.iter().filter_map(|x| x.as_str()) {
+                models.insert(m.to_string());
+            }
+        }
+    }
+}
+
+fn incremental_affected_models(out_dir: &Path, candidate_models: &[String]) -> Option<Vec<String>> {
+    let report_path = out_dir.join("report.json");
+    let text = std::fs::read_to_string(report_path).ok()?;
+    let report: ValidatePerfReport = serde_json::from_str(&text).ok()?;
+    let mut file_to_models: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut baseline_hashes: HashMap<String, String> = HashMap::new();
+    for c in &report.cases {
+        let Some(dep_graph) = &c.dep_graph_json else {
+            continue;
+        };
+        let dep_path = resolve_artifact_path(out_dir, dep_graph);
+        parse_previous_dep_graph(&dep_path, c.model.as_str(), &mut file_to_models, &mut baseline_hashes);
+    }
+    if baseline_hashes.is_empty() {
+        return None;
+    }
+    let mut changed_files: Vec<String> = Vec::new();
+    for (file, old_hash) in &baseline_hashes {
+        let p = PathBuf::from(file);
+        let Some(new_hash) = file_hash_hex(&p) else {
+            changed_files.push(file.clone());
+            continue;
+        };
+        if &new_hash != old_hash {
+            changed_files.push(file.clone());
+        }
+    }
+    if changed_files.is_empty() {
+        return Some(candidate_models.to_vec());
+    }
+    let mut affected: HashSet<String> = HashSet::new();
+    for f in changed_files {
+        if let Some(models) = file_to_models.get(&f) {
+            affected.extend(models.iter().cloned());
+        }
+    }
+    if affected.is_empty() {
+        return Some(candidate_models.to_vec());
+    }
+    let mut out: Vec<String> = candidate_models
+        .iter()
+        .filter(|m| affected.contains(m.as_str()))
+        .cloned()
+        .collect();
+    out.sort();
+    out.dedup();
+    Some(out)
 }
 
 fn build_repro_command(
@@ -396,6 +492,11 @@ pub struct ValidatePerfRunner;
 impl ValidatePerfRunner {
     pub fn run(mut spec: RunSpec) -> Result<ValidatePerfReport> {
         spec.models = normalize_model_list(&spec.models);
+        if spec.incremental {
+            if let Some(filtered) = incremental_affected_models(&spec.out_dir, &spec.models) {
+                spec.models = filtered;
+            }
+        }
         std::fs::create_dir_all(&spec.out_dir)
             .with_context(|| format!("create out dir {}", spec.out_dir.display()))?;
 
@@ -472,6 +573,10 @@ impl ValidatePerfRunner {
                         "RUSTMODLICA_CACHE_STATS_JSON".to_string(),
                         paths.cache_stats_json.display().to_string(),
                     );
+                    env_set.insert(
+                        "RUSTMODLICA_DEP_GRAPH_JSON".to_string(),
+                        paths.dep_graph_json.display().to_string(),
+                    );
                     apply_env_to_command(&mut cmd, &env_set, &env_unset);
 
                     let repro = build_repro_command(&spec, sc, &cache_dir, &paths, model);
@@ -497,6 +602,7 @@ impl ValidatePerfRunner {
                         duration_ms,
                         perf_json: Some(paths.perf_json.display().to_string()),
                         cache_stats_json: Some(paths.cache_stats_json.display().to_string()),
+                        dep_graph_json: Some(paths.dep_graph_json.display().to_string()),
                         stdout_path: Some(paths.stdout_txt.display().to_string()),
                         stderr_path: Some(paths.stderr_txt.display().to_string()),
                         repro,

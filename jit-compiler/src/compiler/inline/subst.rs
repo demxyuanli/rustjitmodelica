@@ -188,9 +188,14 @@ fn substitute_expr_impl(expr: &Expression, subst: &HashMap<String, Expression>) 
     }
 }
 
-pub(super) fn substitute_expr(expr: &Expression, subst: &HashMap<String, Expression>) -> Expression {
+pub(super) fn substitute_expr(expr: &Expression, subst: &HashMap<String, Expression>) -> Option<Expression> {
     if subst.is_empty() {
-        return expr.clone();
+        return None;
     }
-    substitute_expr_impl(expr, subst).0
+    let (out, changed) = substitute_expr_impl(expr, subst);
+    if changed {
+        Some(out)
+    } else {
+        None
+    }
 }

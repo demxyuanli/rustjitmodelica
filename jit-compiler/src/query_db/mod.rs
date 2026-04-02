@@ -64,10 +64,29 @@ pub(super) fn query_cache_key(raw_key: &str) -> (bool, String) {
 #[derive(Default, Debug)]
 struct DepCollector {
     files: HashMap<String, String>,
+    models: HashSet<String>,
 }
 
 thread_local! {
     static DEP_STACK: std::cell::RefCell<Vec<DepCollector>> = std::cell::RefCell::new(Vec::new());
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ReverseDepEntry {
+    pub file: String,
+    pub content_hash: String,
+    pub models: Vec<String>,
+}
+
+#[derive(Default)]
+struct ReverseDepStore {
+    file_to_models: HashMap<String, HashSet<String>>,
+    file_hashes: HashMap<String, String>,
+}
+
+fn global_reverse_dep_store() -> &'static RwLock<ReverseDepStore> {
+    static STORE: OnceLock<RwLock<ReverseDepStore>> = OnceLock::new();
+    STORE.get_or_init(|| RwLock::new(ReverseDepStore::default()))
 }
 
 pub(super) fn dep_record_file(path: &str, semantic_hash: &str) {
@@ -77,6 +96,18 @@ pub(super) fn dep_record_file(path: &str, semantic_hash: &str) {
             c.files
                 .entry(path.to_string())
                 .or_insert_with(|| semantic_hash.to_string());
+            if let Ok(mut store) = global_reverse_dep_store().write() {
+                let entry = store
+                    .file_to_models
+                    .entry(path.to_string())
+                    .or_insert_with(HashSet::new);
+                for model in &c.models {
+                    entry.insert(model.clone());
+                }
+                store
+                    .file_hashes
+                    .insert(path.to_string(), semantic_hash.to_string());
+            }
         }
     });
 }
@@ -97,6 +128,16 @@ impl DepScope {
         Self { active: true }
     }
 
+    pub(super) fn begin_for_model(model_name: &str) -> Self {
+        DEP_STACK.with(|s| {
+            let mut st = s.borrow_mut();
+            let mut c = DepCollector::default();
+            c.models.insert(model_name.to_string());
+            st.push(c);
+        });
+        Self { active: true }
+    }
+
     pub(super) fn end(mut self) -> Vec<DepHashEntry> {
         self.active = false;
         let mut v = DEP_STACK.with(|s| s.borrow_mut().pop()).unwrap_or_default();
@@ -108,6 +149,42 @@ impl DepScope {
         out.sort_by(|a, b| a.path.cmp(&b.path));
         out
     }
+}
+
+pub fn affected_models(changed_files: &[PathBuf]) -> Vec<String> {
+    let mut out: HashSet<String> = HashSet::new();
+    if let Ok(store) = global_reverse_dep_store().read() {
+        for p in changed_files {
+            let key = p.display().to_string();
+            if let Some(models) = store.file_to_models.get(&key) {
+                out.extend(models.iter().cloned());
+            }
+        }
+    }
+    let mut v: Vec<String> = out.into_iter().collect();
+    v.sort();
+    v
+}
+
+pub fn reverse_dep_snapshot() -> Vec<ReverseDepEntry> {
+    if let Ok(store) = global_reverse_dep_store().read() {
+        let mut out: Vec<ReverseDepEntry> = store
+            .file_to_models
+            .iter()
+            .map(|(file, models)| {
+                let mut models_v: Vec<String> = models.iter().cloned().collect();
+                models_v.sort();
+                ReverseDepEntry {
+                    file: file.clone(),
+                    content_hash: store.file_hashes.get(file).cloned().unwrap_or_default(),
+                    models: models_v,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.file.cmp(&b.file));
+        return out;
+    }
+    Vec::new()
 }
 
 impl Drop for DepScope {
@@ -366,7 +443,7 @@ fn source_text(db: &dyn QueryDb, model_name: String) -> Arc<SourceText> {
 
 fn parsed_items(db: &dyn QueryDb, model_name: String) -> Arc<ParsedItems> {
     let wall = std::time::Instant::now();
-    let deps_scope = DepScope::begin();
+    let deps_scope = DepScope::begin_for_model(model_name.as_str());
     let st = db.source_text(model_name.clone());
     let libs = db.library_paths();
     let _coarse = db.coarse_constrainedby_only();
@@ -463,7 +540,7 @@ fn parsed_items(db: &dyn QueryDb, model_name: String) -> Arc<ParsedItems> {
 }
 
 fn model_ast(db: &dyn QueryDb, model_name: String) -> Arc<ModelAst> {
-    let deps_scope = DepScope::begin();
+    let deps_scope = DepScope::begin_for_model(model_name.as_str());
     let pi = db.parsed_items(model_name.clone());
     let items = pi.items.as_ref();
 
@@ -648,7 +725,7 @@ pub(super) fn deps_match(deps: &[DepHashEntry]) -> bool {
 
 fn inheritance_flattened(db: &dyn QueryDb, model_name: String) -> ModelPtr {
     let wall = std::time::Instant::now();
-    let deps_scope = DepScope::begin();
+    let deps_scope = DepScope::begin_for_model(model_name.as_str());
     let libs = db.library_paths();
     let coarse = db.coarse_constrainedby_only();
     let st = db.source_text(model_name.clone());
@@ -737,7 +814,7 @@ fn inheritance_flattened(db: &dyn QueryDb, model_name: String) -> ModelPtr {
 
 fn decl_expanded(db: &dyn QueryDb, model_name: String) -> DeclExpandResPtr {
     let wall = std::time::Instant::now();
-    let deps_scope = DepScope::begin();
+    let deps_scope = DepScope::begin_for_model(model_name.as_str());
     let libs = db.library_paths();
     let coarse = db.coarse_constrainedby_only();
     let st = db.source_text(model_name.clone());

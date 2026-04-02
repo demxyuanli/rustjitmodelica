@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -103,27 +103,27 @@ impl Default for StringInterner {
     }
 }
 
-fn global_interner() -> &'static Mutex<StringInterner> {
-    static INTERNER: OnceLock<Mutex<StringInterner>> = OnceLock::new();
-    INTERNER.get_or_init(|| Mutex::new(StringInterner::new()))
+fn global_interner() -> &'static RwLock<StringInterner> {
+    static INTERNER: OnceLock<RwLock<StringInterner>> = OnceLock::new();
+    INTERNER.get_or_init(|| RwLock::new(StringInterner::new()))
 }
 
 /// Intern a string into the global interner, returning a compact VarId.
 pub fn intern(s: &str) -> VarId {
-    global_interner().lock().unwrap().intern(s)
+    global_interner().write().unwrap().intern(s)
 }
 
 /// Resolve a VarId back to its original string (allocates).
 pub fn resolve_id(id: VarId) -> String {
-    global_interner().lock().unwrap().resolve(id).to_string()
+    global_interner().read().unwrap().resolve(id).to_string()
 }
 
 /// Check the global interner without resolving. Returns true if `id` resolves to `s`.
 pub fn var_is(id: VarId, s: &str) -> bool {
-    global_interner().lock().unwrap().resolve(id) == s
+    global_interner().read().unwrap().resolve(id) == s
 }
 
 /// Check if the resolved string starts with a prefix.
 pub fn var_starts_with(id: VarId, prefix: &str) -> bool {
-    global_interner().lock().unwrap().resolve(id).starts_with(prefix)
+    global_interner().read().unwrap().resolve(id).starts_with(prefix)
 }

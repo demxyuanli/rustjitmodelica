@@ -149,6 +149,16 @@ pub struct CompilePerfReport {
     pub inline_pass_algorithms_ms: u64,
     pub inline_pass_initial_algorithms_us: u64,
     pub inline_pass_initial_algorithms_ms: u64,
+    /// Candidate resolution metrics for function inlining.
+    pub inline_resolve_calls: u64,
+    pub inline_resolve_first_hit: u64,
+    pub inline_resolve_candidates_total: u64,
+    pub inline_resolve_probes_total: u64,
+    pub inline_resolve_probe_1: u64,
+    pub inline_resolve_probe_2: u64,
+    pub inline_resolve_probe_3: u64,
+    pub inline_resolve_probe_4: u64,
+    pub inline_resolve_probe_ge5: u64,
     /// Flat model sizes at inline entry (same as `perf_record_add` snapshot keys).
     pub inline_input_declarations: usize,
     pub inline_input_equations: usize,

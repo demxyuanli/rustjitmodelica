@@ -210,6 +210,9 @@ enum JitCommands {
         /// Optional scenario allow-list (comma-delimited): cold_empty_nsCOLD,cold_qcache0,hot_nsA,legacy_salsa0
         #[arg(long, value_delimiter = ',')]
         scenarios: Option<Vec<String>>,
+        /// Incremental mode: only run models affected by changed dependency files.
+        #[arg(long)]
+        incremental: bool,
     },
 }
 
@@ -393,6 +396,7 @@ fn run_cli() -> Result<()> {
                 stage_trace,
                 perf_trace,
                 scenarios,
+                incremental,
             } => {
                 let repo_root = discover_repo_root()?;
                 let exe_path = if let Some(p) = exe {
@@ -419,6 +423,7 @@ fn run_cli() -> Result<()> {
                     perf_trace,
                     scenarios: scenarios_vec,
                     scenario_filter: scenarios.unwrap_or_default(),
+                    incremental,
                 };
                 let report = regress_harness::jit_validate::runner::ValidatePerfRunner::run(spec)?;
                 println!(

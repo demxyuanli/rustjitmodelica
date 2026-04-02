@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::{OnceLock, RwLock};
 use std::time::Instant;
 
 use crate::analysis::analyze_initial_equations;
@@ -61,6 +62,23 @@ fn perf_trace_enabled() -> bool {
             t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false)
+}
+
+#[derive(Clone)]
+struct AnalyzeCacheEntry {
+    summary: ValidationAnalyzedSummary,
+    analyze_ms: u64,
+}
+
+fn analyze_cache() -> &'static RwLock<HashMap<u64, AnalyzeCacheEntry>> {
+    static CACHE: OnceLock<RwLock<HashMap<u64, AnalyzeCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn flat_model_hash(flat_model: &crate::flatten::FlattenedModel) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{:?}", flat_model).hash(&mut h);
+    h.finish()
 }
 
 fn maybe_write_aot_cache_marker(
@@ -411,6 +429,19 @@ pub(super) fn compile(
             *qperf.get("inline_pass_algorithms_us").unwrap_or(&0);
         perf_report.inline_pass_initial_algorithms_us =
             *qperf.get("inline_pass_initial_algorithms_us").unwrap_or(&0);
+        perf_report.inline_resolve_calls = *qperf.get("inline_resolve_calls").unwrap_or(&0);
+        perf_report.inline_resolve_first_hit =
+            *qperf.get("inline_resolve_first_hit").unwrap_or(&0);
+        perf_report.inline_resolve_candidates_total =
+            *qperf.get("inline_resolve_candidates_total").unwrap_or(&0);
+        perf_report.inline_resolve_probes_total =
+            *qperf.get("inline_resolve_probes_total").unwrap_or(&0);
+        perf_report.inline_resolve_probe_1 = *qperf.get("inline_resolve_probe_1").unwrap_or(&0);
+        perf_report.inline_resolve_probe_2 = *qperf.get("inline_resolve_probe_2").unwrap_or(&0);
+        perf_report.inline_resolve_probe_3 = *qperf.get("inline_resolve_probe_3").unwrap_or(&0);
+        perf_report.inline_resolve_probe_4 = *qperf.get("inline_resolve_probe_4").unwrap_or(&0);
+        perf_report.inline_resolve_probe_ge5 =
+            *qperf.get("inline_resolve_probe_ge5").unwrap_or(&0);
         perf_report.inline_input_declarations =
             *qperf.get("inline_input_declarations").unwrap_or(&0) as usize;
         perf_report.inline_input_equations =
@@ -501,6 +532,18 @@ pub(super) fn compile(
                 perf_report.inline_single_output_inlines
             );
             eprintln!(
+                "[perf] inline.resolve calls={} first_hit={} candidates_total={} probes_total={} buckets=[1:{},2:{},3:{},4:{},5+:{}]",
+                perf_report.inline_resolve_calls,
+                perf_report.inline_resolve_first_hit,
+                perf_report.inline_resolve_candidates_total,
+                perf_report.inline_resolve_probes_total,
+                perf_report.inline_resolve_probe_1,
+                perf_report.inline_resolve_probe_2,
+                perf_report.inline_resolve_probe_3,
+                perf_report.inline_resolve_probe_4,
+                perf_report.inline_resolve_probe_ge5
+            );
+            eprintln!(
                 "[perf] inline.pass_ms decl_start_values={} equations={} initial_equations={} algorithms={} initial_algorithms={}",
                 perf_report.inline_pass_decl_start_values_ms,
                 perf_report.inline_pass_equations_ms,
@@ -537,6 +580,22 @@ pub(super) fn compile(
                 }
             }
         }
+        if let Ok(dep_graph_path) = std::env::var("RUSTMODLICA_DEP_GRAPH_JSON") {
+            let p = dep_graph_path.trim();
+            if !p.is_empty() {
+                let deps = crate::query_db::reverse_dep_snapshot();
+                if let Ok(text) = serde_json::to_string(&serde_json::json!({
+                    "model": model_name,
+                    "generated_ms": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
+                    "entries": deps
+                })) {
+                    let _ = std::fs::write(p, text);
+                }
+            }
+        }
         let flat_model = frontend.flat_model;
         if compiler.options.flat_snapshot_only {
             apply_fallback_snapshot(&mut perf_report);
@@ -560,6 +619,18 @@ pub(super) fn compile(
                 i18n::msg("flattened_declarations", &[&total_declarations])
             );
             println!("{}", i18n::msg0("analyzing_variables"));
+        }
+
+        if matches!(compiler.options.compile_stop, CompileStopPhase::Analyze) {
+            let key = flat_model_hash(&flat_model);
+            if let Ok(cache) = analyze_cache().read() {
+                if let Some(entry) = cache.get(&key) {
+                    perf_report.analyze_ms = entry.analyze_ms;
+                    apply_fallback_snapshot(&mut perf_report);
+                    compiler.last_compile_perf = Some(perf_report);
+                    return Ok(CompileOutput::ValidationAnalyzed(entry.summary.clone()));
+                }
+            }
         }
 
         let analyze_t0 = Instant::now();
@@ -716,16 +787,33 @@ pub(super) fn compile(
         }
 
         if matches!(compiler.options.compile_stop, CompileStopPhase::Analyze) {
-            apply_fallback_snapshot(&mut perf_report);
-            compiler.last_compile_perf = Some(perf_report);
-            return Ok(CompileOutput::ValidationAnalyzed(ValidationAnalyzedSummary {
+            let summary = ValidationAnalyzedSummary {
                 state_vars: state_vars_sorted.clone(),
                 output_vars: output_vars.clone(),
                 total_equations,
                 total_declarations,
                 alg_equation_count: alg_equations.len(),
                 diff_equation_count: diff_equations.len(),
-            }));
+            };
+            let key = flat_model_hash(&flat_model);
+            if let Ok(mut cache) = analyze_cache().write() {
+                const MAX_ENTRIES: usize = 256;
+                if cache.len() >= MAX_ENTRIES && !cache.contains_key(&key) {
+                    if let Some(k) = cache.keys().next().cloned() {
+                        cache.remove(&k);
+                    }
+                }
+                cache.insert(
+                    key,
+                    AnalyzeCacheEntry {
+                        summary: summary.clone(),
+                        analyze_ms: perf_report.analyze_ms,
+                    },
+                );
+            }
+            apply_fallback_snapshot(&mut perf_report);
+            compiler.last_compile_perf = Some(perf_report);
+            return Ok(CompileOutput::ValidationAnalyzed(summary));
         }
 
         let symbolic_ode_jacobian = symbolic_ode_jacobian_matrix.is_some();

@@ -73,6 +73,25 @@ pub(crate) fn flatten_and_inline(
         );
         if validate_only && matches!(compile_stop, CompileStopPhase::Analyze) {
             let mem_key = format!("analyze_input_v1:{}", full_key);
+            let inline_mem_key = format!("inline_result_v1:{}", full_key);
+            if let Some(v) = flatten_cache::inline_result_mem_get(inline_mem_key.as_str()) {
+                let flat_model = match Arc::try_unwrap(v) {
+                    Ok(v) => v,
+                    Err(a) => (*a).clone(),
+                };
+                crate::query_db::perf_record_us(
+                    "flatten_wall_us",
+                    started_at.elapsed().as_micros() as u64,
+                );
+                crate::query_db::perf_record_us("inline_wall_us", 0);
+                log_stage_timing(stage_trace, "flatten", started_at);
+                log_stage_timing(stage_trace, "inline", started_at);
+                return Ok(FrontendStage {
+                    total_equations: flat_model.equations.len(),
+                    total_declarations: flat_model.declarations.len(),
+                    flat_model,
+                });
+            }
             if let Some(v) = flatten_cache::analyze_input_mem_get(mem_key.as_str()) {
                 let mut flat_model = match Arc::try_unwrap(v) {
                     Ok(v) => v,
@@ -108,6 +127,10 @@ pub(crate) fn flatten_and_inline(
                     inline_started_at.elapsed().as_micros() as u64,
                 );
                 log_stage_timing(stage_trace, "inline", inline_started_at);
+                flatten_cache::inline_result_mem_put(
+                    inline_mem_key.as_str(),
+                    Arc::new(flat_model.clone()),
+                );
                 return Ok(FrontendStage {
                     total_equations: flat_model.equations.len(),
                     total_declarations: flat_model.declarations.len(),
@@ -140,6 +163,13 @@ pub(crate) fn flatten_and_inline(
                 inline_started_at.elapsed().as_micros() as u64,
             );
             log_stage_timing(stage_trace, "inline", inline_started_at);
+            if validate_only && matches!(compile_stop, CompileStopPhase::Analyze) {
+                let inline_mem_key = format!("inline_result_v1:{}", full_key);
+                flatten_cache::inline_result_mem_put(
+                    inline_mem_key.as_str(),
+                    Arc::new(flat_model.clone()),
+                );
+            }
             return Ok(FrontendStage {
                 total_equations: flat_model.equations.len(),
                 total_declarations: flat_model.declarations.len(),
@@ -304,6 +334,26 @@ pub(crate) fn flatten_and_inline(
         inline_started_at.elapsed().as_micros() as u64,
     );
     log_stage_timing(stage_trace, "inline", inline_started_at);
+    if validate_only && matches!(compile_stop, CompileStopPhase::Analyze) {
+        if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
+            let full_key = flatten_cache::flatten_full_cache_key(
+                model_name,
+                loader,
+                validation_mode,
+                compile_stop_s,
+                coarse_constrainedby_only,
+                array_sizes_json_path,
+                array_size_policy,
+                warnings_level,
+            );
+            let inline_mem_key = format!("inline_result_v1:{}", full_key);
+            flatten_cache::inline_result_mem_put(
+                inline_mem_key.as_str(),
+                Arc::new(flat_model.clone()),
+            );
+            let _ = cache_root;
+        }
+    }
 
     Ok(FrontendStage {
         total_equations: flat_model.equations.len(),

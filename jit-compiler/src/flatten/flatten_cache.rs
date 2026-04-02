@@ -29,6 +29,22 @@ fn global_analyze_input_cache() -> &'static RwLock<HashMap<String, Arc<crate::fl
     GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+fn global_inline_result_cache() -> &'static RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>> {
+    static GLOBAL: OnceLock<RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>>> = OnceLock::new();
+    GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+#[derive(Clone)]
+struct FileHashEntry {
+    modified: Option<std::time::SystemTime>,
+    hash: String,
+}
+
+fn global_file_hash_cache() -> &'static RwLock<HashMap<PathBuf, FileHashEntry>> {
+    static GLOBAL: OnceLock<RwLock<HashMap<PathBuf, FileHashEntry>>> = OnceLock::new();
+    GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
 pub fn analyze_input_mem_get(key: &str) -> Option<Arc<crate::flatten::FlattenedModel>> {
     if let Ok(g) = global_analyze_input_cache().read() {
         return g.get(key).cloned();
@@ -38,6 +54,25 @@ pub fn analyze_input_mem_get(key: &str) -> Option<Arc<crate::flatten::FlattenedM
 
 pub fn analyze_input_mem_put(key: &str, v: Arc<crate::flatten::FlattenedModel>) {
     if let Ok(mut g) = global_analyze_input_cache().write() {
+        const MAX_ENTRIES: usize = 256;
+        if g.len() >= MAX_ENTRIES && !g.contains_key(key) {
+            if let Some(k) = g.keys().next().cloned() {
+                g.remove(&k);
+            }
+        }
+        g.insert(key.to_string(), v);
+    }
+}
+
+pub fn inline_result_mem_get(key: &str) -> Option<Arc<crate::flatten::FlattenedModel>> {
+    if let Ok(g) = global_inline_result_cache().read() {
+        return g.get(key).cloned();
+    }
+    None
+}
+
+pub fn inline_result_mem_put(key: &str, v: Arc<crate::flatten::FlattenedModel>) {
+    if let Ok(mut g) = global_inline_result_cache().write() {
         const MAX_ENTRIES: usize = 256;
         if g.len() >= MAX_ENTRIES && !g.contains_key(key) {
             if let Some(k) = g.keys().next().cloned() {
@@ -274,10 +309,34 @@ pub fn flatten_full_cache_key(
 }
 
 fn file_hash_hex(path: &Path) -> Option<String> {
+    let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    if let Ok(g) = global_file_hash_cache().read() {
+        if let Some(entry) = g.get(path) {
+            if entry.modified == modified {
+                return Some(entry.hash.clone());
+            }
+        }
+    }
     let data = std::fs::read(path).ok()?;
     let mut h = DefaultHasher::new();
     data.hash(&mut h);
-    Some(format!("{:016x}", h.finish()))
+    let hash = format!("{:016x}", h.finish());
+    if let Ok(mut g) = global_file_hash_cache().write() {
+        const MAX_FILE_HASH_ENTRIES: usize = 16384;
+        if g.len() >= MAX_FILE_HASH_ENTRIES && !g.contains_key(path) {
+            if let Some(k) = g.keys().next().cloned() {
+                g.remove(&k);
+            }
+        }
+        g.insert(
+            path.to_path_buf(),
+            FileHashEntry {
+                modified,
+                hash: hash.clone(),
+            },
+        );
+    }
+    Some(hash)
 }
 
 fn deps_match(deps: &[DepHashEntry]) -> bool {

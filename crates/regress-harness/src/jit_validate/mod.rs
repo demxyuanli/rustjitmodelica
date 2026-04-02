@@ -64,6 +64,8 @@ pub struct RunSpec {
     /// Optional allow-list of scenario ids to execute.
     #[serde(default)]
     pub scenario_filter: Vec<String>,
+    #[serde(default)]
+    pub incremental: bool,
 }
 
 pub fn normalize_model_list(models: &[String]) -> Vec<String> {

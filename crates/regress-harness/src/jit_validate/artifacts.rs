@@ -116,6 +116,8 @@ pub struct Case {
     pub duration_ms: u64,
     pub perf_json: Option<String>,
     pub cache_stats_json: Option<String>,
+    #[serde(default)]
+    pub dep_graph_json: Option<String>,
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
     pub repro: Vec<String>,
@@ -129,6 +131,7 @@ pub struct Case {
 pub struct CasePaths {
     pub perf_json: PathBuf,
     pub cache_stats_json: PathBuf,
+    pub dep_graph_json: PathBuf,
     pub stdout_txt: PathBuf,
     pub stderr_txt: PathBuf,
 }

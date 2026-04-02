@@ -56,6 +56,23 @@ impl FlatCacheV1 {
     }
 
     pub fn into_flat_model(self) -> FlattenedModel {
+        let mut interner = crate::string_intern::StringInterner::new();
+        for d in &self.declarations {
+            interner.intern(d.name.as_str());
+        }
+        for k in self.instances.keys() {
+            interner.intern(k.as_str());
+        }
+        for v in self.instances.values() {
+            interner.intern(v.as_str());
+        }
+        for n in &self.clocked_var_names {
+            interner.intern(n.as_str());
+        }
+        for (k, v) in &self.stream_peer_map {
+            interner.intern(k.as_str());
+            interner.intern(v.as_str());
+        }
         FlattenedModel {
             declarations: self.declarations,
             equations: self.equations,
@@ -70,7 +87,7 @@ impl FlatCacheV1 {
             clock_partitions: self.clock_partitions,
             clock_signal_connections: self.clock_signal_connections,
             stream_peer_map: self.stream_peer_map,
-            interner: crate::string_intern::StringInterner::new(),
+            interner,
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),
         }
