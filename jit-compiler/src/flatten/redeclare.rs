@@ -154,14 +154,33 @@ pub fn apply_modification_to_model(
                                 if ctx.use_coarse_constrainedby_only {
                                     coarse_type_satisfies_constraint(t, c)
                                 } else {
-                                    crate::instantiate::constrainedby_holds_extends(
-                                        l,
-                                        model,
-                                        ctx.import_scope_for_types(),
-                                        &ctx.msl_import_context,
-                                        t,
-                                        c,
-                                    )?
+                                    // Prefer query-based constrainedby check when query cache is enabled.
+                                    let query_cache_disabled = std::env::var("RUSTMODLICA_QUERY_CACHE")
+                                        .ok()
+                                        .map(|v| {
+                                            let t = v.trim();
+                                            t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
+                                        })
+                                        .unwrap_or(false);
+                                    if !query_cache_disabled {
+                                        crate::query_db::constrainedby::constrainedby_holds_extends_cached_with_loader(
+                                            l,
+                                            model,
+                                            ctx.import_scope_for_types(),
+                                            &ctx.msl_import_context,
+                                            t,
+                                            c,
+                                        )?
+                                    } else {
+                                        crate::instantiate::constrainedby_holds_extends(
+                                            l,
+                                            model,
+                                            ctx.import_scope_for_types(),
+                                            &ctx.msl_import_context,
+                                            t,
+                                            c,
+                                        )?
+                                    }
                                 }
                             }
                             None => coarse_type_satisfies_constraint(t, c),

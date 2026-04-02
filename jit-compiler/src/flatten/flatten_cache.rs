@@ -6,6 +6,7 @@ use crate::flatten::cache_sqlite;
 use crate::flatten::cache_shm;
 use crate::loader::ModelLoader;
 use crate::flatten::flat_cache_v1::{DepHashEntry, FlatCacheV1, FLAT_CACHE_SCHEMA_V1};
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -21,6 +22,30 @@ thread_local! {
 fn global_array_sizes_cache() -> &'static RwLock<HashMap<String, Arc<HashMap<String, usize>>>> {
     static GLOBAL: OnceLock<RwLock<HashMap<String, Arc<HashMap<String, usize>>>>> = OnceLock::new();
     GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn global_analyze_input_cache() -> &'static RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>> {
+    static GLOBAL: OnceLock<RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>>> = OnceLock::new();
+    GLOBAL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+pub fn analyze_input_mem_get(key: &str) -> Option<Arc<crate::flatten::FlattenedModel>> {
+    if let Ok(g) = global_analyze_input_cache().read() {
+        return g.get(key).cloned();
+    }
+    None
+}
+
+pub fn analyze_input_mem_put(key: &str, v: Arc<crate::flatten::FlattenedModel>) {
+    if let Ok(mut g) = global_analyze_input_cache().write() {
+        const MAX_ENTRIES: usize = 256;
+        if g.len() >= MAX_ENTRIES && !g.contains_key(key) {
+            if let Some(k) = g.keys().next().cloned() {
+                g.remove(&k);
+            }
+        }
+        g.insert(key.to_string(), v);
+    }
 }
 
 fn perf_trace_enabled() -> bool {
@@ -131,12 +156,40 @@ fn mem_cache_put(key: &str, sizes: Arc<HashMap<String, usize>>) {
     }
 }
 
+pub fn array_sizes_cache_counters_snapshot_reset() -> Option<(u64, u64, u64)> {
+    if !perf_trace_enabled() {
+        return None;
+    }
+    if let Ok(mut c) = counters().write() {
+        let out = (c.hits, c.misses, c.evictions);
+        c.hits = 0;
+        c.misses = 0;
+        c.evictions = 0;
+        return Some(out);
+    }
+    None
+}
+
 pub fn flatten_cache_dir() -> Option<PathBuf> {
     std::env::var("RUSTMODLICA_FLATTEN_CACHE_DIR")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
+}
+
+pub const ARRAY_SIZES_CACHE_SCHEMA_V2: &str = "rustmodlica_array_sizes_cache_v2";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArraySizesCacheV2 {
+    pub schema: String,
+    pub key: String,
+    pub sizes: HashMap<String, usize>,
+    pub deps: Vec<DepHashEntry>,
+}
+
+fn array_sizes_cache_v2_key(key: &str) -> String {
+    format!("array_sizes_v2:{}", key)
 }
 
 pub fn flatten_array_sizes_cache_key(
@@ -228,15 +281,25 @@ fn file_hash_hex(path: &Path) -> Option<String> {
 }
 
 fn deps_match(deps: &[DepHashEntry]) -> bool {
+    let t0 = std::time::Instant::now();
     for dep in deps {
         let p = PathBuf::from(dep.path.as_str());
         let Some(actual) = file_hash_hex(&p) else {
+            crate::query_db::perf_record_us(
+                "cache_deps_match_us",
+                t0.elapsed().as_micros() as u64,
+            );
             return false;
         };
         if actual != dep.content_hash {
+            crate::query_db::perf_record_us(
+                "cache_deps_match_us",
+                t0.elapsed().as_micros() as u64,
+            );
             return false;
         }
     }
+    crate::query_db::perf_record_us("cache_deps_match_us", t0.elapsed().as_micros() as u64);
     true
 }
 
@@ -250,7 +313,13 @@ pub fn try_read_flat_cache_v1(
     }
     // Tier 2: cross-process shared memory (fastest cross-process path).
     if let Some(bytes) = cache_shm::shm_get(key) {
+        crate::query_db::perf_record_us("cache_get_us", 0);
+        let t_deser = std::time::Instant::now();
         if let Ok(cache) = bincode::deserialize::<FlatCacheV1>(&bytes) {
+            crate::query_db::perf_record_us(
+                "cache_deserialize_us",
+                t_deser.elapsed().as_micros() as u64,
+            );
             if cache.schema == FLAT_CACHE_SCHEMA_V1
                 && cache.key == key
                 && deps_match(&cache.deps)
@@ -258,12 +327,24 @@ pub fn try_read_flat_cache_v1(
                 let _ = loader;
                 return Some(cache.into_flat_model());
             }
+        } else {
+            crate::query_db::perf_record_us(
+                "cache_deserialize_us",
+                t_deser.elapsed().as_micros() as u64,
+            );
         }
     }
     // Tier 3: SQLite persistent store (optional).
     if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir)) {
-        if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key) {
+        let t_get = std::time::Instant::now();
+        if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key, "flat_cache_v1") {
+            crate::query_db::perf_record_us("cache_get_us", t_get.elapsed().as_micros() as u64);
+            let t_deser = std::time::Instant::now();
             if let Ok(cache) = bincode::deserialize::<FlatCacheV1>(&bytes) {
+                crate::query_db::perf_record_us(
+                    "cache_deserialize_us",
+                    t_deser.elapsed().as_micros() as u64,
+                );
                 if cache.schema == FLAT_CACHE_SCHEMA_V1
                     && cache.key == key
                     && deps_match(&cache.deps)
@@ -273,35 +354,43 @@ pub fn try_read_flat_cache_v1(
                     let _ = cache_shm::shm_put(key, &bytes);
                     return Some(cache.into_flat_model());
                 }
+            } else {
+                crate::query_db::perf_record_us(
+                    "cache_deserialize_us",
+                    t_deser.elapsed().as_micros() as u64,
+                );
             }
         }
     }
+    // Legacy compatibility: read old JSON file and migrate to SHM/SQLite.
     let path = dir.join(format!("{}.flat-cache.json", key));
-    if !path.is_file() {
-        return None;
+    if path.is_file() {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(cache) = serde_json::from_str::<FlatCacheV1>(&text) {
+                if cache.schema == FLAT_CACHE_SCHEMA_V1
+                    && cache.key == key
+                    && deps_match(&cache.deps)
+                {
+                    if let Ok(bytes) = bincode::serialize(&cache) {
+                        let _ = cache_shm::shm_put(key, &bytes);
+                        if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir)) {
+                            let deps_json = serde_json::to_string(&cache.deps).ok();
+                            let _ = cache_sqlite::sqlite_put(
+                                &cfg.path,
+                                key,
+                                FLAT_CACHE_SCHEMA_V1,
+                                "flat_cache_v1",
+                                &bytes,
+                                deps_json.as_deref(),
+                            );
+                        }
+                    }
+                    return Some(cache.into_flat_model());
+                }
+            }
+        }
     }
-    let text = std::fs::read_to_string(&path).ok()?;
-    let cache: FlatCacheV1 = serde_json::from_str(&text).ok()?;
-    if cache.schema != FLAT_CACHE_SCHEMA_V1 {
-        return None;
-    }
-    if cache.key != key {
-        return None;
-    }
-    if !deps_match(&cache.deps) {
-        return None;
-    }
-    // Minimal sanity check: ensure root can still be located within current library paths.
-    // If the loader can't resolve it, fall back to recompute.
-    if loader.get_path_for_model(cache.model_name.as_str()).is_none() {
-        // Allow still using cached result when root path isn't registered in the calling loader,
-        // as long as the dependency list validated.
-    }
-    // Promote JSON disk entry into shared memory (optional).
-    if let Ok(bytes) = bincode::serialize(&cache) {
-        let _ = cache_shm::shm_put(key, &bytes);
-    }
-    Some(cache.into_flat_model())
+    None
 }
 
 pub fn write_flat_cache_v1(
@@ -340,12 +429,10 @@ pub fn write_flat_cache_v1(
         );
         return Ok(());
     }
-    let text = serde_json::to_string(&cache).map_err(|e| e.to_string())?;
-    if let Ok(bytes) = bincode::serialize(&cache) {
-        let _ = cache_shm::shm_put(key, &bytes);
-    }
-    let path = dir.join(format!("{}.flat-cache.json", key));
-    std::fs::write(&path, text).map_err(|e| e.to_string())
+    // No SQLite config available; persist only in shared memory.
+    let bytes = bincode::serialize(&cache).map_err(|e| e.to_string())?;
+    let _ = cache_shm::shm_put(key, &bytes);
+    Ok(())
 }
 
 fn hot_full_cache() -> &'static RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>> {
@@ -391,50 +478,86 @@ pub fn merge_cached_array_sizes(
         }
         return Ok(());
     }
-    let path = dir.join(format!("{}.array-sizes.json", key));
-    if !path.is_file() {
-        return Ok(());
-    }
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let obj = v
-        .get("array_sizes")
-        .and_then(|x| x.as_object())
-        .ok_or_else(|| "cache file missing array_sizes object".to_string())?;
-    for (k, val) in obj {
-        if external.contains_key(k) {
-            continue;
+
+    let k2 = array_sizes_cache_v2_key(key);
+    if let Some(bytes) = cache_shm::shm_get(k2.as_str()) {
+        if let Ok(cache) = bincode::deserialize::<ArraySizesCacheV2>(&bytes) {
+            if cache.schema == ARRAY_SIZES_CACHE_SCHEMA_V2 && cache.key == k2 {
+                for (k, v) in cache.sizes {
+                    external.entry(k).or_insert(v);
+                }
+                mem_cache_put(key, Arc::new(external.clone()));
+                return Ok(());
+            }
         }
-        let n = val
-            .as_u64()
-            .ok_or_else(|| format!("cache array_sizes[\"{}\"] invalid", k))?;
-        if n == 0 || n > usize::MAX as u64 {
-            return Err(format!("cache array_sizes[\"{}\"] out of range", k));
-        }
-        external.insert(k.clone(), n as usize);
     }
-    mem_cache_put(key, Arc::new(external.clone()));
+    if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir)) {
+        if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, k2.as_str(), "array_sizes_v2") {
+            if let Ok(cache) = bincode::deserialize::<ArraySizesCacheV2>(&bytes) {
+                if cache.schema == ARRAY_SIZES_CACHE_SCHEMA_V2 && cache.key == k2 {
+                    let _ = cache_shm::shm_put(k2.as_str(), &bytes);
+                    for (k, v) in cache.sizes {
+                        external.entry(k).or_insert(v);
+                    }
+                    mem_cache_put(key, Arc::new(external.clone()));
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // Legacy compatibility: old per-entry JSON file cache.
+    // Read once and migrate into sqlite/shm to avoid repeated small-file I/O.
+    let legacy_path = dir.join(format!("{}.array-sizes.json", key));
+    if legacy_path.is_file() {
+        if let Ok(text) = std::fs::read_to_string(&legacy_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(obj) = v.get("array_sizes").and_then(|x| x.as_object()) {
+                    let mut migrated: HashMap<String, usize> = HashMap::new();
+                    for (k, val) in obj {
+                        if let Some(n) = val.as_u64() {
+                            if n > 0 && n <= usize::MAX as u64 {
+                                migrated.insert(k.clone(), n as usize);
+                            }
+                        }
+                    }
+                    if !migrated.is_empty() {
+                        for (k, v) in migrated.iter() {
+                            external.entry(k.clone()).or_insert(*v);
+                        }
+                        let _ = write_array_sizes_cache(dir, key, &migrated);
+                        mem_cache_put(key, Arc::new(external.clone()));
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
 pub fn write_array_sizes_cache(dir: &Path, key: &str, sizes: &HashMap<String, usize>) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let path = dir.join(format!("{}.array-sizes.json", key));
-    let mut obj = serde_json::Map::new();
-    let mut inner = serde_json::Map::new();
-    let mut keys: Vec<_> = sizes.keys().collect();
-    keys.sort();
-    for k in keys {
-        if let Some(sz) = sizes.get(k.as_str()) {
-            inner.insert(k.clone(), serde_json::Value::from(*sz as u64));
+    let k2 = array_sizes_cache_v2_key(key);
+    let cache = ArraySizesCacheV2 {
+        schema: ARRAY_SIZES_CACHE_SCHEMA_V2.to_string(),
+        key: k2.clone(),
+        sizes: sizes.clone(),
+        deps: Vec::new(),
+    };
+    if let Ok(bytes) = bincode::serialize(&cache) {
+        let _ = cache_shm::shm_put(k2.as_str(), &bytes);
+        if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir)) {
+            let _ = cache_sqlite::sqlite_put(
+                &cfg.path,
+                k2.as_str(),
+                ARRAY_SIZES_CACHE_SCHEMA_V2,
+                "array_sizes_v2",
+                &bytes,
+                None,
+            );
         }
     }
-    obj.insert(
-        "array_sizes".to_string(),
-        serde_json::Value::Object(inner),
-    );
-    let text = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| e.to_string())?;
     mem_cache_put(key, Arc::new(sizes.clone()));
     Ok(())
 }

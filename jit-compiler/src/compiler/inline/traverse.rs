@@ -1,7 +1,9 @@
 use crate::ast::{AlgorithmStatement, Equation};
+use crate::compiler::pipeline::log_stage_timing;
 use crate::loader::ModelLoader;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::ast::Model;
 use crate::flatten::FlattenedModel;
@@ -198,31 +200,74 @@ pub(super) fn inline_function_calls_in_model(
     flat: &mut FlattenedModel,
     loader: &mut ModelLoader,
     max_depth: u32,
+    stage_trace: bool,
 ) {
+    let n_start = flat
+        .declarations
+        .iter()
+        .filter(|d| d.start_value.is_some())
+        .count() as u64;
+    crate::query_db::perf_record_add("inline_input_declarations", flat.declarations.len() as u64);
+    crate::query_db::perf_record_add("inline_input_equations", flat.equations.len() as u64);
+    crate::query_db::perf_record_add(
+        "inline_input_initial_equations",
+        flat.initial_equations.len() as u64,
+    );
+    crate::query_db::perf_record_add("inline_input_algorithms", flat.algorithms.len() as u64);
+    crate::query_db::perf_record_add(
+        "inline_input_initial_algorithms",
+        flat.initial_algorithms.len() as u64,
+    );
+    crate::query_db::perf_record_add("inline_declarations_with_start_value", n_start);
+
     let mut cache: HashMap<String, Arc<Model>> = HashMap::new();
+
+    let t0 = Instant::now();
     for decl in &mut flat.declarations {
         if let Some(ref sv) = decl.start_value {
             decl.start_value = Some(inline_expr(sv, loader, &mut cache, 0, max_depth));
         }
     }
-    flat.equations = flat
-        .equations
-        .iter()
-        .map(|e| inline_equation(e, loader, &mut cache, max_depth))
-        .collect();
-    flat.initial_equations = flat
-        .initial_equations
-        .iter()
-        .map(|e| inline_equation(e, loader, &mut cache, max_depth))
-        .collect();
-    flat.algorithms = flat
-        .algorithms
-        .iter()
-        .map(|s| inline_algorithm(s, loader, &mut cache, max_depth))
-        .collect();
-    flat.initial_algorithms = flat
-        .initial_algorithms
-        .iter()
-        .map(|s| inline_algorithm(s, loader, &mut cache, max_depth))
-        .collect();
+    crate::query_db::perf_record_us(
+        "inline_pass_decl_start_values_us",
+        t0.elapsed().as_micros() as u64,
+    );
+    log_stage_timing(stage_trace, "inline.decl_start_values", t0);
+
+    let t0 = Instant::now();
+    for e in &mut flat.equations {
+        *e = inline_equation(e, loader, &mut cache, max_depth);
+    }
+    crate::query_db::perf_record_us("inline_pass_equations_us", t0.elapsed().as_micros() as u64);
+    log_stage_timing(stage_trace, "inline.equations", t0);
+
+    let t0 = Instant::now();
+    for e in &mut flat.initial_equations {
+        *e = inline_equation(e, loader, &mut cache, max_depth);
+    }
+    crate::query_db::perf_record_us(
+        "inline_pass_initial_equations_us",
+        t0.elapsed().as_micros() as u64,
+    );
+    log_stage_timing(stage_trace, "inline.initial_equations", t0);
+
+    let t0 = Instant::now();
+    for s in &mut flat.algorithms {
+        *s = inline_algorithm(s, loader, &mut cache, max_depth);
+    }
+    crate::query_db::perf_record_us(
+        "inline_pass_algorithms_us",
+        t0.elapsed().as_micros() as u64,
+    );
+    log_stage_timing(stage_trace, "inline.algorithms", t0);
+
+    let t0 = Instant::now();
+    for s in &mut flat.initial_algorithms {
+        *s = inline_algorithm(s, loader, &mut cache, max_depth);
+    }
+    crate::query_db::perf_record_us(
+        "inline_pass_initial_algorithms_us",
+        t0.elapsed().as_micros() as u64,
+    );
+    log_stage_timing(stage_trace, "inline.initial_algorithms", t0);
 }

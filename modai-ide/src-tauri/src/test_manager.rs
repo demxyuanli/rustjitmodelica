@@ -261,8 +261,7 @@ pub fn run_test_suite(
     let max_retries = 1u32;
     for name in names {
         let mut retries = 0u32;
-        let mut last_result: Option<TestRunResult> = None;
-        loop {
+        let result: TestRunResult = loop {
             let t_start = Instant::now();
             let output = Command::new(&exe)
                 .args(&extra_args)
@@ -292,11 +291,11 @@ pub fn run_test_suite(
                         retries,
                     };
                     let should_retry = !ok && retries < max_retries;
-                    last_result = Some(current);
                     if should_retry {
                         retries += 1;
                         continue;
                     }
+                    break current;
                 }
                 Err(e) => {
                     let current = TestRunResult {
@@ -310,23 +309,20 @@ pub fn run_test_suite(
                         retries,
                     };
                     let should_retry = retries < max_retries;
-                    last_result = Some(current);
                     if should_retry {
                         retries += 1;
                         continue;
                     }
+                    break current;
                 }
             }
-            break;
+        };
+        if result.passed {
+            passed += 1;
+        } else {
+            failed += 1;
         }
-        if let Some(result) = last_result {
-            if result.passed {
-                passed += 1;
-            } else {
-                failed += 1;
-            }
-            results.push(result);
-        }
+        results.push(result);
     }
     Ok(TestSuiteResult {
         total: names.len(),

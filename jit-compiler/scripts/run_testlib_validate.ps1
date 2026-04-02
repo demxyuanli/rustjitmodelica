@@ -61,7 +61,13 @@ function Invoke-ValidateRoot {
     param([string]$ModelName)
     $oldEa = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $raw = & $exe --lib-path=$testLibDir --validate $ModelName 2>&1 | Out-String
+    $mslParent = $jit
+    if (Test-Path -LiteralPath (Join-Path $mslParent "Modelica/package.mo")) {
+        $raw = & $exe --lib-path=$mslParent --lib-path=$testLibDir --validate-tier=analyze --validate $ModelName 2>&1 | Out-String
+    }
+    else {
+        $raw = & $exe --lib-path=$testLibDir --validate-tier=analyze --validate $ModelName 2>&1 | Out-String
+    }
     $ErrorActionPreference = $oldEa
     return $raw
 }
@@ -71,7 +77,13 @@ function Invoke-ValidateNegative {
     $oldEa = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     # negative/*.mo plus library connectors/types at TestLib root (e.g. ConnA for BadConnect)
-    $raw = & $exe --lib-path=$testLibDir --lib-path=$negDir --validate $ModelName 2>&1 | Out-String
+    $mslParent = $jit
+    if (Test-Path -LiteralPath (Join-Path $mslParent "Modelica/package.mo")) {
+        $raw = & $exe --lib-path=$mslParent --lib-path=$testLibDir --lib-path=$negDir --validate-tier=analyze --validate $ModelName 2>&1 | Out-String
+    }
+    else {
+        $raw = & $exe --lib-path=$testLibDir --lib-path=$negDir --validate-tier=analyze --validate $ModelName 2>&1 | Out-String
+    }
     $ErrorActionPreference = $oldEa
     return $raw
 }

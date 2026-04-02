@@ -10,9 +10,10 @@ mod error;
 mod array_size_policy;
 pub(crate) mod flatten_cache;
 mod decl_expand;
-mod cache_sqlite;
-mod cache_shm;
-mod flat_cache_v1;
+pub(crate) mod cache_sqlite;
+pub(crate) mod cache_shm;
+pub(crate) mod flat_cache_v1;
+pub(crate) mod inheritance_cache_v1;
 mod real_fft_sample_points;
 mod param_expr_eval;
 mod import_resolve;
@@ -21,7 +22,7 @@ mod record;
 mod redeclare;
 pub use self::error::FlattenError;
 pub use self::array_size_policy::{load_array_sizes_json, load_array_sizes_json_optional, ArraySizePolicy};
-pub use self::redeclare::{apply_modification_to_model, ModifyContext};
+pub use self::redeclare::{apply_modification_to_model, apply_redeclare_extends_blocks, ModifyContext};
 
 pub mod connections;
 mod expand;
@@ -153,6 +154,97 @@ impl Flattener {
         Ok(flat)
     }
 
+    /// Flatten assuming inheritance was already applied to `root`.
+    /// Intended for query-based workflows that compute inheritance in a separate stage.
+    pub fn flatten_with_mode_preinherited(
+        &mut self,
+        root: &Arc<Model>,
+        root_name: &str,
+    ) -> Result<FlattenedModel, FlattenError> {
+        let root_path = root_name.replace('/', ".");
+        redeclare::validate_modification_prefixes_in_model(root.as_ref())?;
+        let model = root.as_ref();
+        let mut flat = FlattenedModel {
+            declarations: Vec::new(),
+            equations: Vec::new(),
+            algorithms: Vec::new(),
+            initial_equations: Vec::new(),
+            initial_algorithms: Vec::new(),
+            connections: Vec::new(),
+            conditional_connections: Vec::new(),
+            instances: HashMap::new(),
+            array_sizes: HashMap::new(),
+            clocked_var_names: std::collections::HashSet::new(),
+            clock_partitions: Vec::new(),
+            clock_signal_connections: Vec::new(),
+            stream_peer_map: HashMap::new(),
+            interner: StringInterner::new(),
+            inst_records: Vec::new(),
+            path_to_inst: HashMap::new(),
+        };
+        self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
+        self.expand_equations(model, "", &mut flat);
+        self.expand_algorithms(model, "", &mut flat);
+        self.expand_initial_equations(model, "", &mut flat);
+        if matches!(self.validation_mode, ValidationMode::Full) {
+            self.expand_initial_algorithms(model, "", &mut flat);
+        }
+        resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+        self.infer_clocked_variables(&mut flat);
+        Ok(flat)
+    }
+
+    pub(crate) fn decl_expand_preinherited(
+        &mut self,
+        root: Arc<Model>,
+        root_name: &str,
+    ) -> Result<FlattenedModel, FlattenError> {
+        let root_path = root_name.replace('/', ".");
+        let mut flat = FlattenedModel {
+            declarations: Vec::new(),
+            equations: Vec::new(),
+            algorithms: Vec::new(),
+            initial_equations: Vec::new(),
+            initial_algorithms: Vec::new(),
+            connections: Vec::new(),
+            conditional_connections: Vec::new(),
+            instances: HashMap::new(),
+            array_sizes: HashMap::new(),
+            clocked_var_names: std::collections::HashSet::new(),
+            clock_partitions: Vec::new(),
+            clock_signal_connections: Vec::new(),
+            stream_peer_map: HashMap::new(),
+            interner: StringInterner::new(),
+            inst_records: Vec::new(),
+            path_to_inst: HashMap::new(),
+        };
+        self.expand_declarations_with_mode(
+            root,
+            "",
+            &mut flat,
+            Some(root_path.as_str()),
+            crate::flatten::decl_expand::ExpandDeclMode::DeclOnly,
+        )?;
+        Ok(flat)
+    }
+
+    pub(crate) fn eq_expand_root_preinherited(
+        &mut self,
+        root: &Model,
+        flat: &mut FlattenedModel,
+    ) {
+        self.expand_equations(root, "", flat);
+        self.expand_algorithms(root, "", flat);
+        self.expand_initial_equations(root, "", flat);
+        if matches!(self.validation_mode, ValidationMode::Full) {
+            self.expand_initial_algorithms(root, "", flat);
+        }
+    }
+
+    pub(crate) fn infer_clocked_variables_preinherited(&self, flat: &mut FlattenedModel) {
+        self.infer_clocked_variables(flat);
+    }
+
     fn expand_equations(&mut self, model: &Model, prefix: &str, flat: &mut FlattenedModel) {
         let mut context: HashMap<String, Expression> = HashMap::new();
         for decl in &model.declarations {
@@ -163,7 +255,7 @@ impl Flattener {
             }
         }
         let mut context_stack = vec![context];
-        let instances = flat.instances.clone();
+        let instances = &flat.instances;
         let mut target = ExpandTarget {
             equations: &mut flat.equations,
             algorithms: &mut flat.algorithms,
@@ -176,7 +268,7 @@ impl Flattener {
             prefix,
             &mut target,
             &mut context_stack,
-            &instances,
+            instances,
             None,
         );
     }
@@ -191,7 +283,7 @@ impl Flattener {
             }
         }
         let mut context_stack = vec![context];
-        let instances = flat.instances.clone();
+        let instances = &flat.instances;
         let mut target = ExpandTarget {
             equations: &mut flat.initial_equations,
             algorithms: &mut flat.initial_algorithms,
@@ -204,7 +296,7 @@ impl Flattener {
             prefix,
             &mut target,
             &mut context_stack,
-            &instances,
+            instances,
             None,
         );
     }

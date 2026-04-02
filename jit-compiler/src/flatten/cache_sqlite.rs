@@ -52,6 +52,16 @@ fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             last_hit_ms INTEGER NOT NULL,
             hit_count INTEGER NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS cache_kind_stats (
+            kind TEXT PRIMARY KEY,
+            get_count INTEGER NOT NULL,
+            hit_count INTEGER NOT NULL,
+            put_count INTEGER NOT NULL,
+            bytes_put INTEGER NOT NULL,
+            last_get_ms INTEGER NOT NULL,
+            last_put_ms INTEGER NOT NULL
+        );
         "#,
     )?;
     Ok(())
@@ -74,20 +84,44 @@ fn global_conn(path: &Path) -> Result<&'static Mutex<Connection>, rusqlite::Erro
     Ok(CONN.get_or_init(|| Mutex::new(conn)))
 }
 
-pub fn sqlite_get(path: &Path, key: &str) -> Result<Option<Vec<u8>>, rusqlite::Error> {
+pub fn sqlite_get(path: &Path, key: &str, kind_hint: &str) -> Result<Option<Vec<u8>>, rusqlite::Error> {
     let conn = global_conn(path)?;
     let guard = conn.lock().unwrap();
-    let mut stmt = guard.prepare("SELECT blob FROM cache_entries WHERE key = ?1")?;
+    let mut stmt = guard.prepare("SELECT blob, kind FROM cache_entries WHERE key = ?1")?;
     let mut rows = stmt.query(params![key])?;
     if let Some(row) = rows.next()? {
         let blob: Vec<u8> = row.get(0)?;
+        let kind: String = row.get(1)?;
         let now = now_ms();
         let _ = guard.execute(
             "UPDATE cache_entries SET last_hit_ms = ?2, hit_count = hit_count + 1 WHERE key = ?1",
             params![key, now],
         );
+        let _ = guard.execute(
+            r#"
+            INSERT INTO cache_kind_stats(kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+            VALUES(?1, 1, 1, 0, 0, ?2, 0)
+            ON CONFLICT(kind) DO UPDATE SET
+                get_count = get_count + 1,
+                hit_count = hit_count + 1,
+                last_get_ms = excluded.last_get_ms
+            "#,
+            params![kind, now],
+        );
         Ok(Some(blob))
     } else {
+        // Miss: still count the get against the caller's kind hint.
+        let now = now_ms();
+        let _ = guard.execute(
+            r#"
+            INSERT INTO cache_kind_stats(kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+            VALUES(?1, 1, 0, 0, 0, ?2, 0)
+            ON CONFLICT(kind) DO UPDATE SET
+                get_count = get_count + 1,
+                last_get_ms = excluded.last_get_ms
+            "#,
+            params![kind_hint, now],
+        );
         Ok(None)
     }
 }
@@ -115,6 +149,54 @@ pub fn sqlite_put(
         "#,
         params![key, schema, kind, blob, deps_json, now],
     )?;
+    let _ = guard.execute(
+        r#"
+        INSERT INTO cache_kind_stats(kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+        VALUES(?1, 0, 0, 1, ?2, 0, ?3)
+        ON CONFLICT(kind) DO UPDATE SET
+            put_count = put_count + 1,
+            bytes_put = bytes_put + excluded.bytes_put,
+            last_put_ms = excluded.last_put_ms
+        "#,
+        params![kind, blob.len() as i64, now],
+    );
     Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CacheKindStatRow {
+    pub kind: String,
+    pub get_count: i64,
+    pub hit_count: i64,
+    pub put_count: i64,
+    pub bytes_put: i64,
+    pub last_get_ms: i64,
+    pub last_put_ms: i64,
+}
+
+pub fn sqlite_kind_stats(path: &Path) -> Result<Vec<CacheKindStatRow>, rusqlite::Error> {
+    let conn = global_conn(path)?;
+    let guard = conn.lock().unwrap();
+    let mut stmt = guard.prepare(
+        r#"
+        SELECT kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms
+        FROM cache_kind_stats
+        ORDER BY kind ASC
+        "#,
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(CacheKindStatRow {
+            kind: row.get(0)?,
+            get_count: row.get(1)?,
+            hit_count: row.get(2)?,
+            put_count: row.get(3)?,
+            bytes_put: row.get(4)?,
+            last_get_ms: row.get(5)?,
+            last_put_ms: row.get(6)?,
+        });
+    }
+    Ok(out)
 }
 

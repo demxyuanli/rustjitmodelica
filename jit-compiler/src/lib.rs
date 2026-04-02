@@ -28,6 +28,7 @@ pub mod solver;
 pub mod solvable_limits;
 pub mod sparse_solve;
 pub mod string_intern;
+pub mod query_db;
 pub mod unparse;
 
 pub use compiler::{

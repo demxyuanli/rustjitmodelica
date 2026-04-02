@@ -18,6 +18,7 @@ use crate::flatten::ValidationMode;
 use crate::i18n;
 use crate::jit::native::builtin_jit_symbol_names;
 use crate::jit::Jit;
+use crate::flatten::{cache_sqlite, flatten_cache};
 
 use super::{
     c_codegen, collect_all_called_names, collect_external_calls, inline, jacobian,
@@ -258,6 +259,7 @@ pub(super) fn compile(
         let stage_trace = stage_trace_enabled();
         let perf_trace = perf_trace_enabled();
         compiler.last_compile_perf = None;
+        crate::query_db::perf_reset();
 
         compiler.warnings.clear();
         compiler.loader.set_quiet(compiler.options.quiet);
@@ -366,6 +368,7 @@ pub(super) fn compile(
             model_name,
             &mut compiler.loader,
             compiler.options.compile_stop.clone(),
+            compiler.options.validate_only,
             compiler.options.quiet,
             stage_trace,
             snap_path,
@@ -381,6 +384,158 @@ pub(super) fn compile(
                 "[perf] compile_phase.flatten_inline_ms={}",
                 perf_report.flatten_inline_ms
             );
+        }
+        let qperf = crate::query_db::perf_snapshot();
+        perf_report.parse_us = *qperf.get("parse_us").unwrap_or(&0);
+        perf_report.inheritance_us = *qperf.get("inheritance_us").unwrap_or(&0);
+        perf_report.decl_expand_us = *qperf.get("decl_expand_us").unwrap_or(&0);
+        perf_report.eq_expand_us = *qperf.get("eq_expand_us").unwrap_or(&0);
+        perf_report.resolve_connections_us = *qperf.get("resolve_connections_us").unwrap_or(&0);
+        perf_report.clock_infer_us = *qperf.get("clock_infer_us").unwrap_or(&0);
+        perf_report.constrainedby_us = *qperf.get("constrainedby_us").unwrap_or(&0);
+        perf_report.cache_deps_match_us = *qperf.get("cache_deps_match_us").unwrap_or(&0);
+        perf_report.cache_get_us = *qperf.get("cache_get_us").unwrap_or(&0);
+        perf_report.cache_deserialize_us = *qperf.get("cache_deserialize_us").unwrap_or(&0);
+        perf_report.inline_us = *qperf.get("inline_us").unwrap_or(&0);
+        perf_report.inline_substitute_us = *qperf.get("inline_substitute_us").unwrap_or(&0);
+        perf_report.inline_load_model_us = *qperf.get("inline_load_model_us").unwrap_or(&0);
+        perf_report.inline_call_sites = *qperf.get("inline_call_sites").unwrap_or(&0);
+        perf_report.inline_single_output_inlines =
+            *qperf.get("inline_single_output_inlines").unwrap_or(&0);
+        perf_report.inline_pass_decl_start_values_us =
+            *qperf.get("inline_pass_decl_start_values_us").unwrap_or(&0);
+        perf_report.inline_pass_equations_us = *qperf.get("inline_pass_equations_us").unwrap_or(&0);
+        perf_report.inline_pass_initial_equations_us =
+            *qperf.get("inline_pass_initial_equations_us").unwrap_or(&0);
+        perf_report.inline_pass_algorithms_us =
+            *qperf.get("inline_pass_algorithms_us").unwrap_or(&0);
+        perf_report.inline_pass_initial_algorithms_us =
+            *qperf.get("inline_pass_initial_algorithms_us").unwrap_or(&0);
+        perf_report.inline_input_declarations =
+            *qperf.get("inline_input_declarations").unwrap_or(&0) as usize;
+        perf_report.inline_input_equations =
+            *qperf.get("inline_input_equations").unwrap_or(&0) as usize;
+        perf_report.inline_input_initial_equations =
+            *qperf.get("inline_input_initial_equations").unwrap_or(&0) as usize;
+        perf_report.inline_input_algorithms =
+            *qperf.get("inline_input_algorithms").unwrap_or(&0) as usize;
+        perf_report.inline_input_initial_algorithms =
+            *qperf.get("inline_input_initial_algorithms").unwrap_or(&0) as usize;
+        perf_report.inline_declarations_with_start_value =
+            *qperf.get("inline_declarations_with_start_value").unwrap_or(&0) as usize;
+        perf_report.qcache_deps_match_us = *qperf.get("qcache_deps_match_us").unwrap_or(&0);
+        perf_report.flatten_wall_us = *qperf.get("flatten_wall_us").unwrap_or(&0);
+        perf_report.inline_wall_us = *qperf.get("inline_wall_us").unwrap_or(&0);
+        perf_report.snapshot_write_us = *qperf.get("snapshot_write_us").unwrap_or(&0);
+        perf_report.parse_ms = perf_report.parse_us / 1000;
+        perf_report.inheritance_ms = perf_report.inheritance_us / 1000;
+        perf_report.decl_expand_ms = perf_report.decl_expand_us / 1000;
+        perf_report.eq_expand_ms = perf_report.eq_expand_us / 1000;
+        perf_report.resolve_connections_ms = perf_report.resolve_connections_us / 1000;
+        perf_report.clock_infer_ms = perf_report.clock_infer_us / 1000;
+        perf_report.constrainedby_ms = perf_report.constrainedby_us / 1000;
+        perf_report.flatten_wall_ms = perf_report.flatten_wall_us / 1000;
+        perf_report.inline_wall_ms = perf_report.inline_wall_us / 1000;
+        perf_report.snapshot_write_ms = perf_report.snapshot_write_us / 1000;
+        perf_report.inline_substitute_ms = perf_report.inline_substitute_us / 1000;
+        perf_report.inline_load_model_ms = perf_report.inline_load_model_us / 1000;
+        perf_report.inline_pass_decl_start_values_ms =
+            perf_report.inline_pass_decl_start_values_us / 1000;
+        perf_report.inline_pass_equations_ms = perf_report.inline_pass_equations_us / 1000;
+        perf_report.inline_pass_initial_equations_ms =
+            perf_report.inline_pass_initial_equations_us / 1000;
+        perf_report.inline_pass_algorithms_ms = perf_report.inline_pass_algorithms_us / 1000;
+        perf_report.inline_pass_initial_algorithms_ms =
+            perf_report.inline_pass_initial_algorithms_us / 1000;
+        if perf_trace {
+            eprintln!(
+                "[perf] query.parse_ms={} parse_us={}",
+                perf_report.parse_ms, perf_report.parse_us
+            );
+            eprintln!(
+                "[perf] query.inheritance_ms={} inheritance_us={}",
+                perf_report.inheritance_ms, perf_report.inheritance_us
+            );
+            eprintln!(
+                "[perf] query.decl_expand_ms={} decl_expand_us={}",
+                perf_report.decl_expand_ms, perf_report.decl_expand_us
+            );
+            eprintln!(
+                "[perf] query.eq_expand_ms={} eq_expand_us={}",
+                perf_report.eq_expand_ms, perf_report.eq_expand_us
+            );
+            eprintln!(
+                "[perf] query.resolve_connections_ms={} resolve_connections_us={}",
+                perf_report.resolve_connections_ms, perf_report.resolve_connections_us
+            );
+            eprintln!(
+                "[perf] query.clock_infer_ms={} clock_infer_us={}",
+                perf_report.clock_infer_ms, perf_report.clock_infer_us
+            );
+            eprintln!(
+                "[perf] query.constrainedby_ms={} constrainedby_us={}",
+                perf_report.constrainedby_ms, perf_report.constrainedby_us
+            );
+            eprintln!(
+                "[perf] cache.deps_match_us={} cache_get_us={} cache_deserialize_us={} inline_us={}",
+                perf_report.cache_deps_match_us,
+                perf_report.cache_get_us,
+                perf_report.cache_deserialize_us,
+                perf_report.inline_us
+            );
+            eprintln!(
+                "[perf] qcache.deps_match_us={}",
+                perf_report.qcache_deps_match_us
+            );
+            eprintln!(
+                "[perf] wall.flatten_ms={} inline_ms={} snapshot_write_ms={}",
+                perf_report.flatten_wall_ms,
+                perf_report.inline_wall_ms,
+                perf_report.snapshot_write_ms
+            );
+            eprintln!(
+                "[perf] inline.substitute_ms={} load_model_ms={} call_sites={} single_output_inlines={}",
+                perf_report.inline_substitute_ms,
+                perf_report.inline_load_model_ms,
+                perf_report.inline_call_sites,
+                perf_report.inline_single_output_inlines
+            );
+            eprintln!(
+                "[perf] inline.pass_ms decl_start_values={} equations={} initial_equations={} algorithms={} initial_algorithms={}",
+                perf_report.inline_pass_decl_start_values_ms,
+                perf_report.inline_pass_equations_ms,
+                perf_report.inline_pass_initial_equations_ms,
+                perf_report.inline_pass_algorithms_ms,
+                perf_report.inline_pass_initial_algorithms_ms
+            );
+            eprintln!(
+                "[perf] inline.input_counts decls={} eq={} init_eq={} algs={} init_algs={} decls_with_start={}",
+                perf_report.inline_input_declarations,
+                perf_report.inline_input_equations,
+                perf_report.inline_input_initial_equations,
+                perf_report.inline_input_algorithms,
+                perf_report.inline_input_initial_algorithms,
+                perf_report.inline_declarations_with_start_value
+            );
+        }
+        if let Ok(stats_path) = std::env::var("RUSTMODLICA_CACHE_STATS_JSON") {
+            if !stats_path.trim().is_empty() {
+                if let Some(cache_dir) = flatten_cache::flatten_cache_dir() {
+                    if let Some(cfg) = cache_sqlite::sqlite_config(Some(cache_dir.as_path())) {
+                        if let Ok(rows) = cache_sqlite::sqlite_kind_stats(&cfg.path) {
+                            let payload = serde_json::json!({
+                                "model": model_name,
+                                "generated_ms": std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis() as i64)
+                                    .unwrap_or(0),
+                                "rows": rows
+                            });
+                            let _ = std::fs::write(stats_path.trim(), payload.to_string());
+                        }
+                    }
+                }
+            }
         }
         let flat_model = frontend.flat_model;
         if compiler.options.flat_snapshot_only {

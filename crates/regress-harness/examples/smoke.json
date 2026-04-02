@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "cargo_exe": "cargo",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": {
+    "workers": 4,
+    "fail_fast": false
+  },
+  "incremental": {
+    "baseline_path": null,
+    "strategy": "none"
+  },
+  "tiers": {
+    "smoke": {
+      "include_tags": ["smoke"]
+    }
+  },
+  "cases": [
+    {
+      "id": "init_dummy",
+      "kind": "model",
+      "target": "TestLib/InitDummy",
+      "tags": ["smoke"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "init_with_param",
+      "kind": "model",
+      "target": "TestLib/InitWithParam",
+      "tags": ["smoke"],
+      "expect": { "kind": "exit_zero" }
+    }
+  ]
+}

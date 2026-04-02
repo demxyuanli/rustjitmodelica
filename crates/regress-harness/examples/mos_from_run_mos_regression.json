@@ -1,0 +1,201 @@
+{
+    "version":  1,
+    "defaults":  {
+                     "repo_root":  ".",
+                     "rustmodlica_exe":  "jit-compiler/target_regression/release/rustmodlica.exe",
+                     "working_dir":  "jit-compiler",
+                     "cargo_exe":  "cargo",
+                     "cargo_run_prefix":  [
+
+                                          ],
+                     "solver":  "rk4",
+                     "t_end":  10,
+                     "dt":  0.01,
+                     "regression_data_root":  "build/regression_data_mos"
+                 },
+    "execution":  {
+                      "workers":  1,
+                      "fail_fast":  false
+                  },
+    "incremental":  {
+                        "baseline_path":  null,
+                        "strategy":  "none"
+                    },
+    "tiers":  {
+                  "mos":  {
+                              "include_tags":  [
+                                                   "mos"
+                                               ]
+                          }
+              },
+    "cases":  [
+                  {
+                      "id":  "mos_omc_regression_named_simulate",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_named_simulate.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_if_for",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_if_for.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_for_range",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_for_range.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_simulate_named_combo",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_simulate_named_combo.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_elseif_nested_for",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_elseif_nested_for.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_reverse_range",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_reverse_range.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_mixed_simulate_args",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_mixed_simulate_args.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_sync_signal",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_sync_signal.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_sync_super_shift",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_sync_super_shift.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_newton_symbolic_dense",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_newton_symbolic_dense.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_newton_symbolic_sparse",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_newton_symbolic_sparse.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_stream_semantics",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_stream_semantics.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_algorithm_elsewhen",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_algorithm_elsewhen.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "mos_omc_regression_direction_switch_stream",
+                      "kind":  "mos",
+                      "target":  "scripts/omc_regression_direction_switch_stream.mos",
+                      "tags":  [
+                                   "mos",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  }
+              ]
+}

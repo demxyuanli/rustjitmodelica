@@ -3,6 +3,7 @@ use crate::loader::ModelLoader;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::builtin::is_builtin_function;
 use super::function_body::get_function_body;
@@ -10,6 +11,16 @@ use super::record_access::{
     extract_named_record_field, try_extract_record_constructor_dot_field,
 };
 use super::subst::substitute_expr;
+
+fn substitute_expr_inline_prof(expr: &Expression, subst: &HashMap<String, Expression>) -> Expression {
+    let t0 = Instant::now();
+    let out = substitute_expr(expr, subst);
+    crate::query_db::perf_record_us(
+        "inline_substitute_us",
+        t0.elapsed().as_micros() as u64,
+    );
+    out
+}
 
 pub(super) fn subst_merge_params_and_locals(
     params: &HashMap<String, Expression>,
@@ -80,7 +91,18 @@ pub(super) fn try_extract_function_output_dot_field(
     let mut func_model: Option<Arc<Model>> = None;
     let mut resolved_name: Option<String> = None;
     for cand in function_resolution_candidates(func_name) {
-        if let Some(m) = cache.get(&cand).cloned().or_else(|| loader.load_model(&cand).ok()) {
+        if let Some(m) = cache.get(&cand).cloned() {
+            func_model = Some(m);
+            resolved_name = Some(cand);
+            break;
+        }
+        let t0 = Instant::now();
+        let loaded = loader.load_model(&cand).ok();
+        crate::query_db::perf_record_us(
+            "inline_load_model_us",
+            t0.elapsed().as_micros() as u64,
+        );
+        if let Some(m) = loaded {
             func_model = Some(m);
             resolved_name = Some(cand);
             break;
@@ -125,13 +147,13 @@ pub(super) fn try_extract_function_output_dot_field(
                     let name = crate::string_intern::resolve_id(*id);
                     if outputs.contains(&name) {
                         let ctx = subst_merge_params_and_locals(&param_subst, &locals);
-                        let rhs_sub = substitute_expr(rhs, &ctx);
+                        let rhs_sub = substitute_expr_inline_prof(rhs, &ctx);
                         if let Some(e) = extract_named_record_field(&rhs_sub, field) {
                             return Some(e);
                         }
                     } else {
                         let ctx = subst_merge_params_and_locals(&param_subst, &locals);
-                        let rhs_sub = substitute_expr(rhs, &ctx);
+                        let rhs_sub = substitute_expr_inline_prof(rhs, &ctx);
                         locals.insert(name, rhs_sub);
                     }
                 }
@@ -140,7 +162,7 @@ pub(super) fn try_extract_function_output_dot_field(
                         let out = crate::string_intern::resolve_id(*id);
                         if outputs.contains(&out) {
                             let ctx = subst_merge_params_and_locals(&param_subst, &locals);
-                            return Some(substitute_expr(rhs, &ctx));
+                            return Some(substitute_expr_inline_prof(rhs, &ctx));
                         }
                     }
                 }
@@ -161,6 +183,7 @@ pub(super) fn inline_expr(
     use Expression::*;
     match expr {
         Call(name, args) => {
+            crate::query_db::perf_record_add("inline_call_sites", 1);
             let name = name.as_str();
             if depth > max_depth {
                 return Call(
@@ -195,37 +218,41 @@ pub(super) fn inline_expr(
                     return If(Box::new(cond), Box::new(pow_call), Box::new(Number(0.0)));
                 }
             }
+            let args_inlined: Vec<Expression> = args
+                .iter()
+                .map(|a| inline_expr(a, loader, cache, depth + 1, max_depth))
+                .collect();
             let func = if is_builtin_function(name) {
                 None
+            } else if let Some(m) = cache.get(name).cloned() {
+                Some(m)
             } else {
-                cache
-                    .get(name)
-                    .cloned()
-                    .or_else(|| loader.load_model(name).ok())
+                let t0 = Instant::now();
+                let loaded = loader.load_model(name).ok();
+                crate::query_db::perf_record_us(
+                    "inline_load_model_us",
+                    t0.elapsed().as_micros() as u64,
+                );
+                loaded
             };
             if let Some(func_model) = func {
                 if let Some((input_names, outputs)) = get_function_body(func_model.as_ref()) {
-                    if input_names.len() == args.len() && outputs.len() == 1 {
+                    if input_names.len() == args_inlined.len() && outputs.len() == 1 {
                         cache.insert(name.to_string(), Arc::clone(&func_model));
-                        let args_inlined: Vec<Expression> = args
-                            .iter()
-                            .map(|a| inline_expr(a, loader, cache, depth + 1, max_depth))
-                            .collect();
                         let mut subst = HashMap::new();
                         for (i, in_name) in input_names.iter().enumerate() {
                             if i < args_inlined.len() {
                                 subst.insert(in_name.clone(), args_inlined[i].clone());
                             }
                         }
-                        return substitute_expr(&outputs[0].1, &subst);
+                        crate::query_db::perf_record_add("inline_single_output_inlines", 1);
+                        return substitute_expr_inline_prof(&outputs[0].1, &subst);
                     }
                 }
             }
             Call(
                 name.to_string(),
-                args.iter()
-                    .map(|a| inline_expr(a, loader, cache, depth + 1, max_depth))
-                    .collect(),
+                args_inlined,
             )
         }
         Variable(_) | Number(_) => expr.clone(),

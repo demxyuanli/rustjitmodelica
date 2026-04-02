@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rustmodlica.local/schema/regress_config.v1.json",
+  "title": "regress-harness config v1",
+  "type": "object",
+  "required": ["version", "cases"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "includes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional list of other config files to include (relative to this config file or absolute). Included configs are merged first, then the current config overlays defaults/execution/incremental/tiers and appends cases."
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "repo_root": { "type": "string" },
+        "rustmodlica_exe": { "type": "string" },
+        "working_dir": { "type": "string" },
+        "cargo_exe": { "type": "string" },
+        "cargo_run_prefix": { "type": "array", "items": { "type": "string" } },
+        "cargo_run_args": { "type": "array", "items": { "type": "string" }, "description": "Args after `cargo run` (e.g. --features sundials) before `--`." },
+        "cargo_run_models": { "type": "boolean", "description": "When true, run kind:model via cargo run with lock retry/fallback semantics." },
+        "cargo_target_dir_primary": { "type": "string", "description": "Primary cargo --target-dir for cargo-run mode (e.g. target_regression)." },
+        "cargo_target_dir_fallback": { "type": "string", "description": "Optional explicit fallback cargo --target-dir for cargo-run mode." },
+        "cargo_run_max_attempts": { "type": "integer", "minimum": 1, "description": "Max attempts for cargo-run when lock patterns are detected." },
+        "solver": { "type": "string" },
+        "t_end": { "type": "number" },
+        "dt": { "type": "number" },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "regression_data_root": { "type": "string", "description": "Default central data directory; overridden by CLI --data-root / --out-dir" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "workers": { "type": "integer", "minimum": 1 },
+        "fail_fast": { "type": "boolean" }
+      }
+    },
+    "incremental": {
+      "type": "object",
+      "properties": {
+        "baseline_path": { "type": ["string", "null"] },
+        "manifest_path": { "type": ["string", "null"] },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "rerun_failed",
+            "skip_unchanged",
+            "last_structure",
+            "last_structure_rerun_failed"
+          ]
+        }
+      }
+    },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "extends": { "type": "string" },
+          "include_tags": { "type": "array", "items": { "type": "string" } },
+          "case_ids": { "type": "array", "items": { "type": "string" } },
+          "include_globs": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "target"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["model", "mos", "custom_command"] },
+          "target": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "tier": { "type": "string" },
+          "expect": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string", "enum": ["exit_zero", "non_zero", "exit_code"] },
+              "code": { "type": "integer" }
+            }
+          },
+          "extra_rust_args": { "type": "array", "items": { "type": "string" } },
+          "timeout_ms": { "type": "integer" },
+          "working_dir": { "type": "string" },
+          "env": { "type": "object", "additionalProperties": { "type": "string" } },
+          "omc_compare": {
+            "type": "object",
+            "required": ["reference_csv"],
+            "properties": {
+              "reference_csv": { "type": "string" },
+              "max_abs_diff": { "type": "number" }
+            }
+          },
+          "program": { "type": "string" },
+          "args": { "type": "array", "items": { "type": "string" } },
+          "mos_mode": { "type": "string", "enum": ["cargo_run_script"] }
+        }
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ use crate::ast::{Expression, Model};
 use crate::loader::ModelLoader;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub(super) fn extract_named_record_field(expr: &Expression, field: &str) -> Option<Expression> {
     let Expression::Call(_, args) = expr else {
@@ -59,10 +60,17 @@ pub(super) fn search_record_field(
     }
     for ext in &model.extends {
         for parent_cand in super::rewrite::function_resolution_candidates(&ext.model_name) {
-            let parent = cache
-                .get(&parent_cand)
-                .cloned()
-                .or_else(|| loader.load_model(&parent_cand).ok());
+            let parent = if let Some(m) = cache.get(&parent_cand).cloned() {
+                Some(m)
+            } else {
+                let t0 = Instant::now();
+                let loaded = loader.load_model(&parent_cand).ok();
+                crate::query_db::perf_record_us(
+                    "inline_load_model_us",
+                    t0.elapsed().as_micros() as u64,
+                );
+                loaded
+            };
             if let Some(parent_model) = parent {
                 cache.insert(parent_cand, Arc::clone(&parent_model));
                 if !parent_model.is_function {
@@ -89,12 +97,19 @@ pub(super) fn try_extract_record_constructor_dot_field(
         return None;
     }
     for cand in super::rewrite::function_resolution_candidates(ctor_name) {
-        let Some(model) = cache
-            .get(&cand)
-            .cloned()
-            .or_else(|| loader.load_model(&cand).ok())
-        else {
-            continue;
+        let model = if let Some(m) = cache.get(&cand).cloned() {
+            m
+        } else {
+            let t0 = Instant::now();
+            let loaded = loader.load_model(&cand).ok();
+            crate::query_db::perf_record_us(
+                "inline_load_model_us",
+                t0.elapsed().as_micros() as u64,
+            );
+            let Some(m) = loaded else {
+                continue;
+            };
+            m
         };
         cache.insert(cand.clone(), Arc::clone(&model));
         if !model.is_record && model.is_function {

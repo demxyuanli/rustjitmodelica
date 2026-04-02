@@ -6,7 +6,7 @@ pub use crate::string_intern::{StringInterner, VarId};
 
 /// Top-level class kind: model (or connector, block, etc.) or function.
 /// T1-3: Dedicated Function variant for "function ... end function"; parser produces ClassItem::Function, loader converts to Model for pipeline.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClassItem {
     Model(Model),
     Function(Function),

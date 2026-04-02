@@ -268,6 +268,7 @@ pub fn query_components(
     Ok((out, total))
 }
 
+#[allow(dead_code)]
 pub fn get_library_mtime(conn: &Connection, library_id: &str) -> Result<Option<i64>, String> {
     let res = conn.query_row(
         "SELECT last_scanned_mtime FROM lib_meta WHERE library_id = ?1",

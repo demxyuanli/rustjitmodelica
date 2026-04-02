@@ -128,8 +128,8 @@ impl ParamPassOptimizer {
                     self.stable_params.insert(decl.name.clone());
                     continue;
                 }
-                let sub = flattener.substitute_cached(val, context, &mut sub_cache);
-                if let Some(n) = eval_const_expr_with_param_exprs(&sub, context, local_array_sizes) {
+                let sub = flattener.substitute_cached_cow(val, context, &mut sub_cache);
+                if let Some(n) = eval_const_expr_with_param_exprs(sub.as_ref(), context, local_array_sizes) {
                     let update = match context.get(&decl.name) {
                         None => true,
                         Some(Expression::Number(p)) => (n - p).abs() > 1e-12,
@@ -257,18 +257,18 @@ impl ArrayDimensionOptimizer {
                     continue;
                 }
                 if let Some(ref cond_expr) = decl.condition {
-                    let cond_sub = flattener.substitute_cached(cond_expr, context, &mut sub_cache);
+                    let cond_sub = flattener.substitute_cached_cow(cond_expr, context, &mut sub_cache);
                     if let Some(v) =
-                        eval_const_expr_with_param_exprs(&cond_sub, context, local_array_sizes)
+                        eval_const_expr_with_param_exprs(cond_sub.as_ref(), context, local_array_sizes)
                     {
                         if v == 0.0 {
                             continue;
                         }
                     }
                 }
-                let sub_expr = flattener.substitute_cached(size_expr, context, &mut sub_cache);
+                let sub_expr = flattener.substitute_cached_cow(size_expr, context, &mut sub_cache);
                 if let Some(val) =
-                    eval_const_expr_with_param_exprs(&sub_expr, context, local_array_sizes)
+                    eval_const_expr_with_param_exprs(sub_expr.as_ref(), context, local_array_sizes)
                 {
                     let n = val as usize;
                     if n > 0 {
@@ -287,6 +287,12 @@ impl ArrayDimensionOptimizer {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ExpandDeclMode {
+    DeclOnly,
+    DeclAndSubEq,
+}
+
 impl Flattener {
     pub(super) fn expand_declarations(
         &mut self,
@@ -294,6 +300,23 @@ impl Flattener {
         prefix: &str,
         flat: &mut crate::flatten::FlattenedModel,
         current_model_name: Option<&str>,
+    ) -> Result<(), FlattenError> {
+        self.expand_declarations_with_mode(
+            model,
+            prefix,
+            flat,
+            current_model_name,
+            ExpandDeclMode::DeclAndSubEq,
+        )
+    }
+
+    pub(super) fn expand_declarations_with_mode(
+        &mut self,
+        model: Arc<Model>,
+        prefix: &str,
+        flat: &mut crate::flatten::FlattenedModel,
+        current_model_name: Option<&str>,
+        mode: ExpandDeclMode,
     ) -> Result<(), FlattenError> {
         #[derive(Clone)]
         enum Task {
@@ -863,10 +886,12 @@ impl Flattener {
                                 if is_array { Some(i as usize) } else { None },
                             );
 
-                            stack.push(Task::ExpandEquations {
-                                model: Arc::clone(&sub_model),
-                                prefix: full_path.clone(),
-                            });
+                            if mode == ExpandDeclMode::DeclAndSubEq {
+                                stack.push(Task::ExpandEquations {
+                                    model: Arc::clone(&sub_model),
+                                    prefix: full_path.clone(),
+                                });
+                            }
                             stack.push(Task::Process {
                                 model: sub_model,
                                 prefix: full_path,

@@ -1,0 +1,1589 @@
+{
+    "version":  1,
+    "defaults":  {
+                     "repo_root":  ".",
+                     "rustmodlica_exe":  "jit-compiler/target_regression/release/rustmodlica.exe",
+                     "working_dir":  "jit-compiler",
+                     "cargo_exe":  "cargo",
+                     "solver":  "rk4",
+                     "t_end":  10,
+                     "dt":  0.01,
+                     "regression_data_root":  "build/regression_data_testlib"
+                 },
+    "execution":  {
+                      "workers":  4,
+                      "fail_fast":  false
+                  },
+    "incremental":  {
+                        "baseline_path":  null,
+                        "strategy":  "none"
+                    },
+    "tiers":  {
+                  "core":  {
+                               "include_tags":  [
+                                                    "core"
+                                                ]
+                           },
+                  "negative":  {
+                                   "include_tags":  [
+                                                        "negative"
+                                                    ]
+                               }
+              },
+    "cases":  [
+                  {
+                      "id":  "testlib_init_dummy",
+                      "kind":  "model",
+                      "target":  "TestLib/InitDummy",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_init_with_param",
+                      "kind":  "model",
+                      "target":  "TestLib/InitWithParam",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_init_alg",
+                      "kind":  "model",
+                      "target":  "TestLib/InitAlg",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_init_when",
+                      "kind":  "model",
+                      "target":  "TestLib/InitWhen",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_init_two_vars",
+                      "kind":  "model",
+                      "target":  "TestLib/InitTwoVars",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_jacobian_test",
+                      "kind":  "model",
+                      "target":  "TestLib/JacobianTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_algebraic_loop2_eq",
+                      "kind":  "model",
+                      "target":  "TestLib/AlgebraicLoop2Eq",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_solvable_block4_res",
+                      "kind":  "model",
+                      "target":  "TestLib/SolvableBlock4Res",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_algebraic_loop_warn",
+                      "kind":  "model",
+                      "target":  "TestLib/AlgebraicLoopWarn",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_solvable_block_multi_res",
+                      "kind":  "model",
+                      "target":  "TestLib/SolvableBlockMultiRes",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_no_event_test",
+                      "kind":  "model",
+                      "target":  "TestLib/NoEventTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_no_event_in_when",
+                      "kind":  "model",
+                      "target":  "TestLib/NoEventInWhen",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_no_event_in_alg",
+                      "kind":  "model",
+                      "target":  "TestLib/NoEventInAlg",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_terminal_when",
+                      "kind":  "model",
+                      "target":  "TestLib/TerminalWhen",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_simple_function_def",
+                      "kind":  "model",
+                      "target":  "TestLib/SimpleFunctionDef",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_func_inline",
+                      "kind":  "model",
+                      "target":  "TestLib/FuncInline",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_recursive_func",
+                      "kind":  "model",
+                      "target":  "TestLib/RecursiveFunc",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_adaptive_rktest",
+                      "kind":  "model",
+                      "target":  "TestLib/AdaptiveRKTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_small_for",
+                      "kind":  "model",
+                      "target":  "TestLib/SmallFor",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_for_bound1",
+                      "kind":  "model",
+                      "target":  "TestLib/ForBound1",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_big_for",
+                      "kind":  "model",
+                      "target":  "TestLib/BigFor",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_bad_connect",
+                      "kind":  "model",
+                      "target":  "TestLib/BadConnect",
+                      "tags":  [
+                                   "testlib",
+                                   "core",
+                                   "negative"
+                               ],
+                      "expect":  {
+                                     "kind":  "non_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_alias_removal",
+                      "kind":  "model",
+                      "target":  "TestLib/AliasRemoval",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_backend_dae_info",
+                      "kind":  "model",
+                      "target":  "TestLib/BackendDaeInfo",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_constraint_eq",
+                      "kind":  "model",
+                      "target":  "TestLib/ConstraintEq",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_math_builtins",
+                      "kind":  "model",
+                      "target":  "TestLib/MathBuiltins",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_nested_der_test",
+                      "kind":  "model",
+                      "target":  "TestLib/NestedDerTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_annotation_parse",
+                      "kind":  "model",
+                      "target":  "TestLib/AnnotationParse",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_simple_test",
+                      "kind":  "model",
+                      "target":  "TestLib/SimpleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_math_test",
+                      "kind":  "model",
+                      "target":  "TestLib/MathTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_for_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ForTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_when_test",
+                      "kind":  "model",
+                      "target":  "TestLib/WhenTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_bouncing_ball",
+                      "kind":  "model",
+                      "target":  "TestLib/BouncingBall",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_pendulum",
+                      "kind":  "model",
+                      "target":  "TestLib/Pendulum",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 },
+                      "extra_rust_args":  [
+                                              "--index-reduction-method=dummyDerivative"
+                                          ]
+                  },
+                  {
+                      "id":  "testlib_blttest",
+                      "kind":  "model",
+                      "target":  "TestLib/BLTTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_tearing_test",
+                      "kind":  "model",
+                      "target":  "TestLib/TearingTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_array_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ArrayTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_array_loop_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ArrayLoopTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_discrete_test",
+                      "kind":  "model",
+                      "target":  "TestLib/DiscreteTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_if_test",
+                      "kind":  "model",
+                      "target":  "TestLib/IfTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_while_test",
+                      "kind":  "model",
+                      "target":  "TestLib/WhileTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_alg_test",
+                      "kind":  "model",
+                      "target":  "TestLib/AlgTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_loop_test",
+                      "kind":  "model",
+                      "target":  "TestLib/LoopTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_library_test",
+                      "kind":  "model",
+                      "target":  "TestLib/LibraryTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_mslblocks_test",
+                      "kind":  "model",
+                      "target":  "TestLib/MSLBlocksTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_msltransfer_function_test",
+                      "kind":  "model",
+                      "target":  "TestLib/MSLTransferFunctionTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_siunits_test",
+                      "kind":  "model",
+                      "target":  "TestLib/SIunitsTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_hierarchical_mod",
+                      "kind":  "model",
+                      "target":  "TestLib/HierarchicalMod",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_nested_connect",
+                      "kind":  "model",
+                      "target":  "TestLib/NestedConnect",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_loop_connect",
+                      "kind":  "model",
+                      "target":  "TestLib/LoopConnect",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_array_connect",
+                      "kind":  "model",
+                      "target":  "TestLib/ArrayConnect",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_circuit",
+                      "kind":  "model",
+                      "target":  "TestLib/Circuit",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_sub",
+                      "kind":  "model",
+                      "target":  "TestLib/Sub",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_parent",
+                      "kind":  "model",
+                      "target":  "TestLib/Parent",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_child",
+                      "kind":  "model",
+                      "target":  "TestLib/Child",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_base",
+                      "kind":  "model",
+                      "target":  "TestLib/Base",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_component",
+                      "kind":  "model",
+                      "target":  "TestLib/Component",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_container",
+                      "kind":  "model",
+                      "target":  "TestLib/Container",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_child_with_mod",
+                      "kind":  "model",
+                      "target":  "TestLib/ChildWithMod",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_main_pin",
+                      "kind":  "model",
+                      "target":  "TestLib/MainPin",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_pin",
+                      "kind":  "model",
+                      "target":  "TestLib/Pin",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_sub_pin",
+                      "kind":  "model",
+                      "target":  "TestLib/SubPin",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_voltage_source",
+                      "kind":  "model",
+                      "target":  "TestLib/VoltageSource",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_resistor",
+                      "kind":  "model",
+                      "target":  "TestLib/Resistor",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_two_pin",
+                      "kind":  "model",
+                      "target":  "TestLib/TwoPin",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_ground",
+                      "kind":  "model",
+                      "target":  "TestLib/Ground",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_bad_syntax",
+                      "kind":  "model",
+                      "target":  "TestLib/BadSyntax",
+                      "tags":  [
+                                   "testlib",
+                                   "core",
+                                   "negative"
+                               ],
+                      "expect":  {
+                                     "kind":  "non_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_unknown_type_error",
+                      "kind":  "model",
+                      "target":  "TestLib/UnknownTypeError",
+                      "tags":  [
+                                   "testlib",
+                                   "core",
+                                   "negative"
+                               ],
+                      "expect":  {
+                                     "kind":  "non_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_overdetermined_index2_warn",
+                      "kind":  "model",
+                      "target":  "TestLib/OverdeterminedIndex2Warn",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_simple_record",
+                      "kind":  "model",
+                      "target":  "TestLib/SimpleRecord",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_simple_block_test",
+                      "kind":  "model",
+                      "target":  "TestLib/SimpleBlockTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_simple_block",
+                      "kind":  "model",
+                      "target":  "TestLib/SimpleBlock",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_record_eq_test",
+                      "kind":  "model",
+                      "target":  "TestLib/RecordEqTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_connect_in_when",
+                      "kind":  "model",
+                      "target":  "TestLib/ConnectInWhen",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_func",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputFunc",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_nested_expr",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputNestedExpr",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_mixed_array_scalar",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputMixedArrayScalar",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_assign_record",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiAssignRecord",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_assign_comprehension",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiAssignComprehension",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_matrix_outer_product",
+                      "kind":  "model",
+                      "target":  "TestLib/MatrixOuterProduct",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_matrix_identity",
+                      "kind":  "model",
+                      "target":  "TestLib/MatrixIdentity",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_matrix_skew",
+                      "kind":  "model",
+                      "target":  "TestLib/MatrixSkew",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_mixed_multi_target_safe_pass",
+                      "kind":  "model",
+                      "target":  "TestLib/MixedMultiTargetSafePass",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_shape_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputShapeMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_record_shape_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputRecordShapeMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output2_darray_shape_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutput2DArrayShapeMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_comprehension_shape_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputComprehensionShapeMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_record_nested_array_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputRecordNestedArrayMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_cross_layer_comprehension_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputCrossLayerComprehensionMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_output_complex_lhs_field_store",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiOutputComplexLhsFieldStore",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_deep_record_nested_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/DeepRecordNestedMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_mixed_nested_lhs_field_store_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/MixedNestedLhsFieldStoreMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_mixed_multi_target_field_store_fail",
+                      "kind":  "model",
+                      "target":  "TestLib/MixedMultiTargetFieldStoreFail",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_cross_module_comprehension_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/CrossModuleComprehensionMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_cross_module_record_composite_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/CrossModuleRecordCompositeMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_alias_chain_type_mismatch",
+                      "kind":  "model",
+                      "target":  "TestLib/AliasChainTypeMismatch",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_multi_top_combined",
+                      "kind":  "model",
+                      "target":  "TestLib/MultiTopCombined",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_pre_edge_change",
+                      "kind":  "model",
+                      "target":  "TestLib/PreEdgeChange",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_if_eq_test",
+                      "kind":  "model",
+                      "target":  "TestLib/IfEqTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_assert_terminate_test",
+                      "kind":  "model",
+                      "target":  "TestLib/AssertTerminateTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_pkg_a_pkg_b_inner",
+                      "kind":  "model",
+                      "target":  "TestLib/PkgA.PkgB.Inner",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_type_alias_test",
+                      "kind":  "model",
+                      "target":  "TestLib/TypeAliasTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_replaceable_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ReplaceableTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_operator_function_short_class_decl",
+                      "kind":  "model",
+                      "target":  "TestLib/OperatorFunctionShortClassDecl",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_redeclare_operator_function_extends_decl",
+                      "kind":  "model",
+                      "target":  "TestLib/RedeclareOperatorFunctionExtendsDecl",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_expandable_connector_alias_use",
+                      "kind":  "model",
+                      "target":  "TestLib/ExpandableConnectorAliasUse",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_partition_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedPartitionTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_two_rates",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedTwoRates",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "modelicatest_jit_stress_sync_om_compare",
+                      "kind":  "model",
+                      "target":  "ModelicaTest.JitStress.SyncOmCompare",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_hold_previous_test",
+                      "kind":  "model",
+                      "target":  "TestLib/HoldPreviousTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_interval_clock_test",
+                      "kind":  "model",
+                      "target":  "TestLib/IntervalClockTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_default_arg_test",
+                      "kind":  "model",
+                      "target":  "TestLib/DefaultArgTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_reinit_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ReinitTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_ext_lib_annotation_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ExtLibAnnotationTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_array_arg_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ArrayArgTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_ext_func_array_arg_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ExtFuncArrayArgTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_ext_func_string_arg_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ExtFuncStringArgTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_sub_super_shift_sample_test",
+                      "kind":  "model",
+                      "target":  "TestLib/SubSuperShiftSampleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_back_sample_clock_test",
+                      "kind":  "model",
+                      "target":  "TestLib/BackSampleClockTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_start_and_sub_sample_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedStartAndSubSampleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_start_and_back_sample_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedStartAndBackSampleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_start_shift_then_back_sample_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedStartShiftThenBackSampleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_start_shift_then_super_sample_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedStartShiftThenSuperSampleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_start_and_super_sample_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedStartAndSuperSampleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_start_shift_then_sub_sample_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedStartShiftThenSubSampleTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_clocked_invalid_factor_clamp_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ClockedInvalidFactorClampTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_else_when_priority_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ElseWhenPriorityTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_reinit_in_when_test",
+                      "kind":  "model",
+                      "target":  "TestLib/ReinitInWhenTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  },
+                  {
+                      "id":  "testlib_rest_param_test",
+                      "kind":  "model",
+                      "target":  "TestLib/RestParamTest",
+                      "tags":  [
+                                   "testlib",
+                                   "core"
+                               ],
+                      "expect":  {
+                                     "kind":  "exit_zero"
+                                 }
+                  }
+              ]
+}

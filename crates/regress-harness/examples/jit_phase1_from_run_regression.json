@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "includes": [
+    "testlib_from_run_regression.json"
+  ],
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "jit-compiler/target_regression/release/rustmodlica.exe",
+    "working_dir": "jit-compiler",
+    "cargo_exe": "cargo",
+    "cargo_run_prefix": [],
+    "cargo_run_args": ["--features", "sundials"],
+    "cargo_run_models": true,
+    "cargo_target_dir_primary": "target_regression",
+    "cargo_run_max_attempts": 3,
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01,
+    "regression_data_root": "build/regression_data_jit_phase1"
+  },
+  "execution": {
+    "workers": 4,
+    "fail_fast": false
+  },
+  "incremental": {
+    "baseline_path": null,
+    "strategy": "none"
+  },
+  "tiers": {
+    "phase1": {
+      "include_tags": ["jit-phase1"]
+    },
+    "jit_rules": {
+      "include_tags": ["jit-rules"]
+    },
+    "script_mode": {
+      "include_tags": ["script-mode"]
+    },
+    "emitc_sync": {
+      "include_tags": ["emit-c", "sync"]
+    }
+  },
+  "cases": [
+    {
+      "id": "jit_rules_testlib_validate_batch",
+      "kind": "custom_command",
+      "target": "JIT_RULES/TestLibValidateBatch",
+      "program": "regress-harness",
+      "args": [
+        "jit",
+        "testlib-validate",
+        "--cargo-target-subdir",
+        "target_regression"
+      ],
+      "tags": ["jit-phase1", "jit-rules"],
+      "expect": { "kind": "exit_zero" },
+      "timeout_ms": 1200000
+    },
+    {
+      "id": "script_mode_init_dummy",
+      "kind": "custom_command",
+      "target": "SCRIPT/init_dummy",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "init_dummy"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_init_with_param_setparam",
+      "kind": "custom_command",
+      "target": "SCRIPT/init_with_param_setparam",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "init_with_param_setparam"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_multi_model_use",
+      "kind": "custom_command",
+      "target": "SCRIPT/multi_model_use",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "multi_model_use"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_set_start_value",
+      "kind": "custom_command",
+      "target": "SCRIPT/set_start_value",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "set_start_value"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_get_parameter",
+      "kind": "custom_command",
+      "target": "SCRIPT/get_parameter",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "get_parameter"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_set_stop_time",
+      "kind": "custom_command",
+      "target": "SCRIPT/set_stop_time",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "set_stop_time"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_set_tolerance",
+      "kind": "custom_command",
+      "target": "SCRIPT/set_tolerance",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "set_tolerance"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_save_result",
+      "kind": "custom_command",
+      "target": "SCRIPT/save_result",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "save_result"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_plot",
+      "kind": "custom_command",
+      "target": "SCRIPT/plot",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "plot"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_eval",
+      "kind": "custom_command",
+      "target": "SCRIPT/eval",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "eval"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_load_class",
+      "kind": "custom_command",
+      "target": "SCRIPT/load_class",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "load_class"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "script_mode_switch_model",
+      "kind": "custom_command",
+      "target": "SCRIPT/switch_model",
+      "program": "regress-harness",
+      "args": ["jit", "script-mode", "--case", "switch_model"],
+      "tags": ["jit-phase1", "script-mode"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "emit_c_recursive_func",
+      "kind": "custom_command",
+      "target": "EMITC/RecursiveFunc",
+      "program": "regress-harness",
+      "args": ["jit", "emit-c-recursive-func"],
+      "tags": ["jit-phase1", "emit-c"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "emit_c_string_arg_ext_func",
+      "kind": "custom_command",
+      "target": "FUNC-7/EmitC/StringArgExtFunc",
+      "program": "regress-harness",
+      "args": [
+        "jit",
+        "emit-c-string-arg-ext-func",
+        "--cargo-target-subdir",
+        "target_regression"
+      ],
+      "tags": ["jit-phase1", "emit-c"],
+      "expect": { "kind": "exit_zero" },
+      "timeout_ms": 600000
+    },
+    {
+      "id": "sync_2_clocked_partition_backend_info",
+      "kind": "custom_command",
+      "target": "SYNC-2/ClockedPartitionTest",
+      "program": "regress-harness",
+      "args": [
+        "jit",
+        "backend-dae-info-clocked-partition",
+        "--cargo-target-subdir",
+        "target_regression"
+      ],
+      "tags": ["jit-phase1", "sync"],
+      "expect": { "kind": "exit_zero" },
+      "timeout_ms": 600000
+    }
+  ]
+}

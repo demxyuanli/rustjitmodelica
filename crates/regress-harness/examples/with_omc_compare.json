@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "target/release/rustmodlica.exe",
+    "working_dir": "jit-compiler",
+    "cargo_exe": "cargo",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": { "workers": 1, "fail_fast": false },
+  "incremental": { "baseline_path": null, "strategy": "none" },
+  "tiers": {},
+  "cases": [
+    {
+      "id": "direction_switch_stream_omc",
+      "kind": "model",
+      "target": "TestLib/DirectionSwitchStream",
+      "tags": ["omc"],
+      "expect": { "kind": "exit_zero" },
+      "omc_compare": {
+        "reference_csv": "jit-compiler/omc_direction_switch_stream.csv",
+        "max_abs_diff": 1e-9
+      }
+    }
+  ]
+}
