@@ -1,5 +1,5 @@
 use crate::jit_validate::artifacts::{
-    Case, CasePaths, GitInfo, HostInfo, PerfStats, RunManifest, ScenarioResolved,
+    Case, CasePaths, GitInfo, HostInfo, LayerStats, PerfStats, RunManifest, ScenarioResolved,
     Summary, TraceFlags, ValidatePerfReport,
 };
 use crate::jit_validate::{ensure_cache_dir, normalize_model_list, CacheDirPolicy, RunSpec, Scenario};
@@ -68,6 +68,31 @@ struct ParsedCompilePerf {
     inline_substitute_ms: u64,
     inline_load_model_ms: u64,
     cache_deserialize_ms: u64,
+    cache_l0_hits: u64,
+    cache_l1_hits: u64,
+    cache_l2_hits: u64,
+    deps_mismatch: u64,
+    cache_scope_stage_hits: BTreeMap<String, BTreeMap<String, u64>>,
+    cache_scope_stage_misses: BTreeMap<String, BTreeMap<String, u64>>,
+    cache_scope_stage_invalidations: BTreeMap<String, BTreeMap<String, u64>>,
+}
+
+fn parse_scope_stage_map(c: &serde_json::Value, key: &str) -> BTreeMap<String, BTreeMap<String, u64>> {
+    let mut out: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
+    if let Some(obj) = c.get(key).and_then(|x| x.as_object()) {
+        for (scope, stage_map) in obj {
+            let mut stage_stats = BTreeMap::new();
+            if let Some(stages) = stage_map.as_object() {
+                for (stage, n) in stages {
+                    if let Some(v) = n.as_u64() {
+                        stage_stats.insert(stage.clone(), v);
+                    }
+                }
+            }
+            out.insert(scope.clone(), stage_stats);
+        }
+    }
+    out
 }
 
 fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf> {
@@ -75,6 +100,9 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let c = v.get("compile_perf")?;
     let u = |key: &str| json_get_u64(c, key).unwrap_or(0);
+    let scope_stage_hits = parse_scope_stage_map(c, "cache_scope_stage_hits");
+    let scope_stage_misses = parse_scope_stage_map(c, "cache_scope_stage_misses");
+    let scope_stage_invalidations = parse_scope_stage_map(c, "cache_scope_stage_invalidations");
     Some(ParsedCompilePerf {
         flatten_inline_ms: json_get_u64(c, "flatten_inline_ms")?,
         flatten_wall_ms: u("flatten_wall_ms"),
@@ -84,6 +112,13 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
         inline_substitute_ms: u("inline_substitute_ms"),
         inline_load_model_ms: u("inline_load_model_ms"),
         cache_deserialize_ms: u("cache_deserialize_us") / 1000,
+        cache_l0_hits: u("cache_l0_hits"),
+        cache_l1_hits: u("cache_l1_hits"),
+        cache_l2_hits: u("cache_l2_hits"),
+        deps_mismatch: u("deps_mismatch"),
+        cache_scope_stage_hits: scope_stage_hits,
+        cache_scope_stage_misses: scope_stage_misses,
+        cache_scope_stage_invalidations: scope_stage_invalidations,
     })
 }
 
@@ -141,6 +176,44 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                     &mut s.cache_deserialize_ms_max,
                     m.cache_deserialize_ms,
                 );
+                let layers = s.cache_layer_stats.get_or_insert_with(BTreeMap::new);
+                let l0 = layers.entry("L0".to_string()).or_insert_with(LayerStats::default);
+                l0.hits += m.cache_l0_hits;
+                let l1 = layers.entry("L1".to_string()).or_insert_with(LayerStats::default);
+                l1.hits += m.cache_l1_hits;
+                let l2 = layers.entry("L2".to_string()).or_insert_with(LayerStats::default);
+                l2.hits += m.cache_l2_hits;
+                if m.deps_mismatch > 0
+                    && !l2.recompute_reasons.iter().any(|r| r == "deps_mismatch")
+                {
+                    l2.recompute_reasons.push("deps_mismatch".to_string());
+                }
+                for (scope, stage_hits) in &m.cache_scope_stage_hits {
+                    let layer = layers
+                        .entry(scope.clone())
+                        .or_insert_with(LayerStats::default);
+                    for (stage, count) in stage_hits {
+                        *layer.stage_hits.entry(stage.clone()).or_insert(0) += *count;
+                    }
+                }
+                for (scope, stage_misses) in &m.cache_scope_stage_misses {
+                    let layer = layers
+                        .entry(scope.clone())
+                        .or_insert_with(LayerStats::default);
+                    for (stage, count) in stage_misses {
+                        layer.misses += *count;
+                        *layer.stage_misses.entry(stage.clone()).or_insert(0) += *count;
+                    }
+                }
+                for (scope, stage_invalidations) in &m.cache_scope_stage_invalidations {
+                    let layer = layers
+                        .entry(scope.clone())
+                        .or_insert_with(LayerStats::default);
+                    for (stage, count) in stage_invalidations {
+                        layer.invalidations += *count;
+                        *layer.stage_invalidations.entry(stage.clone()).or_insert(0) += *count;
+                    }
+                }
                 if c.run_index == 1 {
                     s.run1_flatten_inline_ms = Some(m.flatten_inline_ms);
                     s.run1_decl_expand_ms = Some(m.decl_expand_ms);

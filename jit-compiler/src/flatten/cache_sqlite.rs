@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use crate::cache::cache_scope::CacheScope;
 
 #[derive(Debug, Clone)]
 pub struct SqliteCacheConfig {
@@ -26,6 +27,16 @@ pub fn sqlite_config(cache_dir: Option<&Path>) -> Option<SqliteCacheConfig> {
     Some(SqliteCacheConfig {
         path,
     })
+}
+
+pub fn sqlite_config_for_scope(scope: CacheScope, cache_dir: Option<&Path>) -> Option<SqliteCacheConfig> {
+    if !parse_bool_env("RUSTMODLICA_CACHE_SQLITE") {
+        return None;
+    }
+    let dir = cache_dir?;
+    let scoped = scope.resolve_dir(dir);
+    let path = scoped.join(scope.sqlite_db_name());
+    Some(SqliteCacheConfig { path })
 }
 
 fn conn_for_path(path: &Path) -> Result<Connection, rusqlite::Error> {
@@ -134,9 +145,21 @@ pub fn sqlite_put(
     blob: &[u8],
     deps_json: Option<&str>,
 ) -> Result<(), rusqlite::Error> {
+    sqlite_put_atomic(path, key, schema, kind, blob, deps_json)
+}
+
+pub fn sqlite_put_atomic(
+    path: &Path,
+    key: &str,
+    schema: &str,
+    kind: &str,
+    blob: &[u8],
+    deps_json: Option<&str>,
+) -> Result<(), rusqlite::Error> {
     let conn = global_conn(path)?;
     let guard = conn.lock().unwrap();
     let now = now_ms();
+    guard.execute_batch("BEGIN IMMEDIATE")?;
     guard.execute(
         r#"
         INSERT INTO cache_entries(key, schema, kind, blob, deps_json, created_ms, last_hit_ms, hit_count)
@@ -160,6 +183,7 @@ pub fn sqlite_put(
         "#,
         params![kind, blob.len() as i64, now],
     );
+    guard.execute_batch("COMMIT")?;
     Ok(())
 }
 
@@ -198,5 +222,14 @@ pub fn sqlite_kind_stats(path: &Path) -> Result<Vec<CacheKindStatRow>, rusqlite:
         });
     }
     Ok(out)
+}
+
+pub fn sqlite_invalidate_scope(path: &Path) -> Result<(), rusqlite::Error> {
+    let conn = global_conn(path)?;
+    let guard = conn.lock().unwrap();
+    guard.execute_batch("BEGIN IMMEDIATE")?;
+    guard.execute("DELETE FROM cache_entries", [])?;
+    guard.execute_batch("COMMIT")?;
+    Ok(())
 }
 

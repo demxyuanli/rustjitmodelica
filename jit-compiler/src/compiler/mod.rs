@@ -8,6 +8,7 @@ mod compile_model;
 mod solvable_scale_warn;
 
 use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,13 @@ pub struct CompilePerfReport {
     pub cache_get_us: u64,
     pub cache_deserialize_us: u64,
     pub qcache_deps_match_us: u64,
+    pub cache_l0_hits: u64,
+    pub cache_l1_hits: u64,
+    pub cache_l2_hits: u64,
+    pub deps_mismatch: u64,
+    pub cache_scope_stage_hits: BTreeMap<String, BTreeMap<String, u64>>,
+    pub cache_scope_stage_misses: BTreeMap<String, BTreeMap<String, u64>>,
+    pub cache_scope_stage_invalidations: BTreeMap<String, BTreeMap<String, u64>>,
     pub inline_us: u64,
     /// Aggregate time in `substitute_expr` during inline (`rewrite` / record dot extraction).
     pub inline_substitute_us: u64,

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
@@ -62,6 +63,30 @@ fn perf_trace_enabled() -> bool {
             t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false)
+}
+
+fn build_cache_scope_stage_map(
+    qperf: &std::collections::HashMap<String, u64>,
+    prefix: &str,
+) -> BTreeMap<String, BTreeMap<String, u64>> {
+    let mut out: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
+    for (k, v) in qperf {
+        if !k.starts_with(prefix) {
+            continue;
+        }
+        let tail = &k[prefix.len()..];
+        let mut parts = tail.splitn(2, ':');
+        let Some(scope) = parts.next() else {
+            continue;
+        };
+        let Some(stage) = parts.next() else {
+            continue;
+        };
+        out.entry(scope.to_string())
+            .or_default()
+            .insert(stage.to_string(), *v);
+    }
+    out
 }
 
 #[derive(Clone)]
@@ -455,6 +480,14 @@ pub(super) fn compile(
         perf_report.inline_declarations_with_start_value =
             *qperf.get("inline_declarations_with_start_value").unwrap_or(&0) as usize;
         perf_report.qcache_deps_match_us = *qperf.get("qcache_deps_match_us").unwrap_or(&0);
+        perf_report.cache_l0_hits = *qperf.get("cache_L0_hits").unwrap_or(&0);
+        perf_report.cache_l1_hits = *qperf.get("cache_L1_hits").unwrap_or(&0);
+        perf_report.cache_l2_hits = *qperf.get("cache_L2_hits").unwrap_or(&0);
+        perf_report.deps_mismatch = *qperf.get("cache_deps_mismatch").unwrap_or(&0);
+    perf_report.cache_scope_stage_hits = build_cache_scope_stage_map(&qperf, "cache_stage_hits:");
+    perf_report.cache_scope_stage_misses = build_cache_scope_stage_map(&qperf, "cache_stage_misses:");
+    perf_report.cache_scope_stage_invalidations =
+        build_cache_scope_stage_map(&qperf, "cache_stage_invalidations:");
         perf_report.flatten_wall_us = *qperf.get("flatten_wall_us").unwrap_or(&0);
         perf_report.inline_wall_us = *qperf.get("inline_wall_us").unwrap_or(&0);
         perf_report.snapshot_write_us = *qperf.get("snapshot_write_us").unwrap_or(&0);

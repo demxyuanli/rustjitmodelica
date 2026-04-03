@@ -4,6 +4,7 @@ pub mod analysis;
 pub mod annotation;
 pub mod api;
 pub mod ast;
+pub mod cache;
 pub mod backend_dae;
 pub mod compiler;
 pub mod diag;

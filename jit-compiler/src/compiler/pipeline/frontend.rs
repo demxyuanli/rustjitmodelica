@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::ast::Model;
+use crate::cache::cache_scope::CacheScope;
+use crate::cache::invalidation::{invalidation_action, InvalidationAction, InvalidationTrigger};
 use crate::flatten::flat_snapshot;
 use crate::flatten::flatten_cache;
 use crate::flatten::{ArraySizePolicy, Flattener, ValidationMode, load_array_sizes_json_optional};
@@ -14,6 +16,49 @@ use crate::compiler::CompileStopPhase;
 
 use super::trace::log_stage_timing;
 use super::types::{CompilerResult, FrontendStage};
+
+fn apply_cache_invalidation_if_requested(cache_root: &Path) {
+    let trigger = std::env::var("RUSTMODLICA_CACHE_INVALIDATE_TRIGGER")
+        .ok()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if trigger.is_empty() {
+        return;
+    }
+    let trigger = match trigger.as_str() {
+        "source" => InvalidationTrigger::SourceChanged,
+        "dep" => InvalidationTrigger::DepChanged,
+        "compile_flags" => InvalidationTrigger::CompileFlagsChanged,
+        "toolchain" => InvalidationTrigger::ToolchainChanged,
+        "permission" => InvalidationTrigger::PermissionContextChanged,
+        _ => InvalidationTrigger::IrEpochChanged,
+    };
+    let action = invalidation_action(trigger, CacheScope::Project);
+    match action {
+        InvalidationAction::None => {}
+        InvalidationAction::SoftInvalidate | InvalidationAction::HardInvalidate => {
+            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(
+                CacheScope::Project,
+                Some(cache_root),
+            ) {
+                let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+            }
+            let project_dir = CacheScope::Project.resolve_dir(cache_root);
+            let _ = std::fs::remove_dir_all(project_dir);
+        }
+        InvalidationAction::WholeBucketDrop => {
+            for scope in [CacheScope::GlobalStd, CacheScope::UserExt, CacheScope::Project] {
+                if let Some(cfg) =
+                    crate::flatten::cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(cache_root))
+                {
+                    let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+                }
+                let dir = scope.resolve_dir(cache_root);
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
+    }
+}
 
 fn salsa_query_path_enabled(validate_only: bool) -> bool {
     match std::env::var("RUSTMODLICA_SALSA") {
@@ -61,6 +106,7 @@ pub(crate) fn flatten_and_inline(
             format!("array_sizes_json: {}", e).into()
         })?;
     if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
+        apply_cache_invalidation_if_requested(cache_root.as_path());
         let full_key = flatten_cache::flatten_full_cache_key(
             model_name,
             loader,

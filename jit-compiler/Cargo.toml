@@ -43,3 +43,4 @@ faer = { version = "0.24", default-features = false, features = ["std", "sparse-
 libc = { version = "0.2", optional = true }
 sundials-sys = { version = "0.6.2", optional = true, default-features = false, features = ["cvode", "ida", "kinsol"] }
 salsa = "0.16.1"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }

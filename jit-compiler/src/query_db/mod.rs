@@ -1,4 +1,7 @@
 use crate::ast::{ClassItem, Model};
+use crate::cache::cache_key::{CacheKeyV2, CacheStage, CompileFlagsKey};
+use crate::cache::cache_scope::{classify_model_scope, CacheScope};
+use crate::cache::closure_hash;
 use crate::loader_compat::{early_compat, EarlyCompat};
 use crate::parser;
 use crate::flatten::{cache_shm, cache_sqlite, flatten_cache};
@@ -59,6 +62,39 @@ pub(super) fn query_cache_key(raw_key: &str) -> (bool, String) {
             }
         }
     }
+}
+
+pub(super) fn key_with_policy(qualified_key: String) -> (bool, String) {
+    query_cache_key(qualified_key.as_str())
+}
+
+fn flags_for_query_stage(db: &dyn QueryDb) -> CompileFlagsKey {
+    CompileFlagsKey {
+        validation_mode: db.validation_mode().as_ref().clone(),
+        compile_stop: db.compile_stop().as_ref().clone(),
+        coarse_constrainedby_only: db.coarse_constrainedby_only(),
+        array_size_policy: 0,
+        warnings_level: String::new(),
+        target_platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+    }
+}
+
+pub(super) fn scope_from_path(path: &str, model_name: &str) -> CacheScope {
+    let by_path = if path.is_empty() {
+        CacheScope::Project
+    } else {
+        classify_model_scope(Path::new(path))
+    };
+    if !matches!(by_path, CacheScope::Project) {
+        return by_path;
+    }
+    if model_name.starts_with("Modelica.") {
+        return CacheScope::GlobalStd;
+    }
+    if model_name.starts_with("ModelicaTest.") {
+        return CacheScope::UserExt;
+    }
+    CacheScope::Project
 }
 
 #[derive(Default, Debug)]
@@ -448,24 +484,23 @@ fn parsed_items(db: &dyn QueryDb, model_name: String) -> Arc<ParsedItems> {
     let libs = db.library_paths();
     let _coarse = db.coarse_constrainedby_only();
 
-    let mut hk = std::collections::hash_map::DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut hk);
-    "parse_v1".hash(&mut hk);
-    model_name.hash(&mut hk);
-    let mut libs_norm: Vec<String> = libs.iter().map(|s| normalize_lib_path(s)).collect();
-    libs_norm.sort();
-    libs_norm.hash(&mut hk);
     let root_hash = semantic_hash_text(st.text.as_str());
-    root_hash.hash(&mut hk);
-    let (cache_enabled, key) = query_cache_key(format!("parse_v1:{:016x}", hk.finish()).as_str());
+    let scope = scope_from_path(st.path.as_str(), model_name.as_str());
+    let key_v2 = CacheKeyV2::builder(CacheStage::Parse, scope.clone(), model_name.as_str())
+        .libs_from_paths(libs.as_ref())
+        .root_content_hash(root_hash)
+        .compile_flags(flags_for_query_stage(db))
+        .build();
+    let (cache_enabled, key) = key_with_policy(key_v2.to_qualified_key());
 
     if cache_enabled {
         if let Some(bytes) = cache_shm::shm_get(key.as_str()) {
             if let Ok(cache) = bincode::deserialize::<ParseCacheV1>(&bytes) {
                 if cache.schema == PARSE_CACHE_SCHEMA_V1
                     && cache.key == key
-                    && deps_match(&cache.deps)
+                    && cache_deps_match_for_stage(&scope, "parse", &cache.deps)
                 {
+                    perf::record_cache_event(scope.prefix(), "parse", perf::CacheEvent::Hit);
                     dep_record_deps(&cache.deps);
                     perf::record_us("parse_us", wall.elapsed().as_micros() as u64);
                     return Arc::new(ParsedItems {
@@ -477,13 +512,14 @@ fn parsed_items(db: &dyn QueryDb, model_name: String) -> Arc<ParsedItems> {
             }
         }
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
                 if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key.as_str(), "parse_v1") {
                     if let Ok(cache) = bincode::deserialize::<ParseCacheV1>(&bytes) {
                         if cache.schema == PARSE_CACHE_SCHEMA_V1
                             && cache.key == key
-                            && deps_match(&cache.deps)
+                            && cache_deps_match_for_stage(&scope, "parse", &cache.deps)
                         {
+                            perf::record_cache_event(scope.prefix(), "parse", perf::CacheEvent::Hit);
                             let _ = cache_shm::shm_put(key.as_str(), &bytes);
                         dep_record_deps(&cache.deps);
                             perf::record_us("parse_us", wall.elapsed().as_micros() as u64);
@@ -504,9 +540,10 @@ fn parsed_items(db: &dyn QueryDb, model_name: String) -> Arc<ParsedItems> {
         Err(_e) => Vec::new(),
     };
     let deps = deps_scope.end();
+    perf::record_cache_event(scope.prefix(), "parse", perf::CacheEvent::Miss);
     if cache_enabled {
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
                 let cache = ParseCacheV1 {
                     schema: PARSE_CACHE_SCHEMA_V1.to_string(),
                     key: key.clone(),
@@ -516,6 +553,7 @@ fn parsed_items(db: &dyn QueryDb, model_name: String) -> Arc<ParsedItems> {
                     deps: deps.clone(),
                 };
                 if let Ok(bytes) = bincode::serialize(&cache) {
+                    perf::record_cache_event(scope.prefix(), "parse", perf::CacheEvent::Write);
                     let _ = cache_shm::shm_put(key.as_str(), &bytes);
                     let deps_json = serde_json::to_string(&deps).ok();
                     let _ = cache_sqlite::sqlite_put(
@@ -541,23 +579,28 @@ fn parsed_items(db: &dyn QueryDb, model_name: String) -> Arc<ParsedItems> {
 
 fn model_ast(db: &dyn QueryDb, model_name: String) -> Arc<ModelAst> {
     let deps_scope = DepScope::begin_for_model(model_name.as_str());
+    let libs = db.library_paths();
     let pi = db.parsed_items(model_name.clone());
     let items = pi.items.as_ref();
+    let st = db.source_text(model_name.clone());
+    let root_hash = semantic_hash_text(st.text.as_str());
 
-    let mut hk = std::collections::hash_map::DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut hk);
-    "model_ast_v1".hash(&mut hk);
-    model_name.hash(&mut hk);
-    pi.path.as_str().hash(&mut hk);
-    let (cache_enabled, key) = query_cache_key(format!("model_ast_v1:{:016x}", hk.finish()).as_str());
+    let scope = scope_from_path(st.path.as_str(), model_name.as_str());
+    let key_v2 = CacheKeyV2::builder(CacheStage::ModelAst, scope.clone(), model_name.as_str())
+        .libs_from_paths(libs.as_ref())
+        .root_content_hash(root_hash)
+        .compile_flags(flags_for_query_stage(db))
+        .build();
+    let (cache_enabled, key) = key_with_policy(key_v2.to_qualified_key());
 
     if cache_enabled {
         if let Some(bytes) = cache_shm::shm_get(key.as_str()) {
             if let Ok(cache) = bincode::deserialize::<ModelAstCacheV1>(&bytes) {
                 if cache.schema == MODEL_AST_CACHE_SCHEMA_V1
                     && cache.key == key
-                    && deps_match(&cache.deps)
+                    && cache_deps_match_for_stage(&scope, "model_ast", &cache.deps)
                 {
+                    perf::record_cache_event(scope.prefix(), "model_ast", perf::CacheEvent::Hit);
                     dep_record_deps(&cache.deps);
                     return Arc::new(ModelAst {
                         model_name,
@@ -568,13 +611,14 @@ fn model_ast(db: &dyn QueryDb, model_name: String) -> Arc<ModelAst> {
             }
         }
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
                 if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key.as_str(), "model_ast_v1") {
                     if let Ok(cache) = bincode::deserialize::<ModelAstCacheV1>(&bytes) {
                         if cache.schema == MODEL_AST_CACHE_SCHEMA_V1
                             && cache.key == key
-                            && deps_match(&cache.deps)
+                            && cache_deps_match_for_stage(&scope, "model_ast", &cache.deps)
                         {
+                            perf::record_cache_event(scope.prefix(), "model_ast", perf::CacheEvent::Hit);
                             let _ = cache_shm::shm_put(key.as_str(), &bytes);
                         dep_record_deps(&cache.deps);
                             return Arc::new(ModelAst {
@@ -627,10 +671,11 @@ fn model_ast(db: &dyn QueryDb, model_name: String) -> Arc<ModelAst> {
         }
     };
     let deps = deps_scope.end();
+    perf::record_cache_event(scope.prefix(), "model_ast", perf::CacheEvent::Miss);
 
     if cache_enabled {
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
                 let cache = ModelAstCacheV1 {
                     schema: MODEL_AST_CACHE_SCHEMA_V1.to_string(),
                     key: key.clone(),
@@ -640,6 +685,7 @@ fn model_ast(db: &dyn QueryDb, model_name: String) -> Arc<ModelAst> {
                     deps: deps.clone(),
                 };
                 if let Ok(bytes) = bincode::serialize(&cache) {
+                    perf::record_cache_event(scope.prefix(), "model_ast", perf::CacheEvent::Write);
                     let _ = cache_shm::shm_put(key.as_str(), &bytes);
                     let deps_json = serde_json::to_string(&deps).ok();
                     let _ = cache_sqlite::sqlite_put(
@@ -691,8 +737,7 @@ pub(super) fn semantic_hash_file_cached(path: &Path) -> Option<String> {
         }
     }
 
-    let data = std::fs::read_to_string(path).ok()?;
-    let hash = semantic_hash_text(data.as_str());
+    let hash = closure_hash::unified_file_hash(path)?;
     if let Ok(mut g) = cache.write() {
         g.insert(
             key,
@@ -708,19 +753,20 @@ pub(super) fn semantic_hash_file_cached(path: &Path) -> Option<String> {
 
 pub(super) fn deps_match(deps: &[DepHashEntry]) -> bool {
     let t0 = std::time::Instant::now();
-    for dep in deps {
-        let p = PathBuf::from(dep.path.as_str());
-        let Some(actual) = semantic_hash_file_cached(&p) else {
-            perf::record_us("qcache_deps_match_us", t0.elapsed().as_micros() as u64);
-            return false;
-        };
-        if actual != dep.content_hash {
-            perf::record_us("qcache_deps_match_us", t0.elapsed().as_micros() as u64);
-            return false;
-        }
+    let ok = closure_hash::deps_match(deps);
+    if !ok {
+        perf::record_cache_event("L2", "deps", perf::CacheEvent::DepsMismatch);
     }
     perf::record_us("qcache_deps_match_us", t0.elapsed().as_micros() as u64);
-    true
+    ok
+}
+
+pub(super) fn cache_deps_match_for_stage(scope: &CacheScope, stage: &str, deps: &[DepHashEntry]) -> bool {
+    let ok = deps_match(deps);
+    if !ok {
+        perf::record_cache_event(scope.prefix(), stage, perf::CacheEvent::Invalidate);
+    }
+    ok
 }
 
 fn inheritance_flattened(db: &dyn QueryDb, model_name: String) -> ModelPtr {
@@ -729,26 +775,25 @@ fn inheritance_flattened(db: &dyn QueryDb, model_name: String) -> ModelPtr {
     let libs = db.library_paths();
     let coarse = db.coarse_constrainedby_only();
     let st = db.source_text(model_name.clone());
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut h);
-    "inheritance_v1".hash(&mut h);
-    model_name.hash(&mut h);
-    coarse.hash(&mut h);
-    let mut libs_norm: Vec<String> = libs.iter().map(|s| normalize_lib_path(s)).collect();
-    libs_norm.sort();
-    libs_norm.hash(&mut h);
     let root_hash = semantic_hash_text(st.text.as_str());
-    root_hash.hash(&mut h);
-    let (cache_enabled, key) =
-        query_cache_key(format!("inheritance_v1:{:016x}", h.finish()).as_str());
+    let scope = scope_from_path(st.path.as_str(), model_name.as_str());
+    let mut flags = flags_for_query_stage(db);
+    flags.coarse_constrainedby_only = coarse;
+    let key_v2 = CacheKeyV2::builder(CacheStage::Inheritance, scope.clone(), model_name.as_str())
+        .libs_from_paths(libs.as_ref())
+        .root_content_hash(root_hash)
+        .compile_flags(flags)
+        .build();
+    let (cache_enabled, key) = key_with_policy(key_v2.to_qualified_key());
 
     if cache_enabled {
         if let Some(bytes) = cache_shm::shm_get(key.as_str()) {
             if let Ok(cache) = bincode::deserialize::<InheritanceCacheV1>(&bytes) {
                 if cache.schema == INHERITANCE_CACHE_SCHEMA_V1
                     && cache.key == key
-                    && deps_match(&cache.deps)
+                    && cache_deps_match_for_stage(&scope, "inheritance", &cache.deps)
                 {
+                    perf::record_cache_event(scope.prefix(), "inheritance", perf::CacheEvent::Hit);
                     dep_record_deps(&cache.deps);
                     perf::record_us("inheritance_us", wall.elapsed().as_micros() as u64);
                     return ModelPtr(cache.into_model_arc());
@@ -756,13 +801,14 @@ fn inheritance_flattened(db: &dyn QueryDb, model_name: String) -> ModelPtr {
             }
         }
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
             if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key.as_str(), "inheritance_v1") {
                     if let Ok(cache) = bincode::deserialize::<InheritanceCacheV1>(&bytes) {
                         if cache.schema == INHERITANCE_CACHE_SCHEMA_V1
                             && cache.key == key
-                            && deps_match(&cache.deps)
+                            && cache_deps_match_for_stage(&scope, "inheritance", &cache.deps)
                         {
+                            perf::record_cache_event(scope.prefix(), "inheritance", perf::CacheEvent::Hit);
                             let _ = cache_shm::shm_put(key.as_str(), &bytes);
                         dep_record_deps(&cache.deps);
                             perf::record_us("inheritance_us", wall.elapsed().as_micros() as u64);
@@ -785,9 +831,10 @@ fn inheritance_flattened(db: &dyn QueryDb, model_name: String) -> ModelPtr {
     let _ = inheritance::flatten_inheritance_pure(db, &mut out, model_name.as_str(), &mut deps, &mut seen);
     perf::record_us("inheritance_us", wall.elapsed().as_micros() as u64);
     let deps = deps_scope.end();
+    perf::record_cache_event(scope.prefix(), "inheritance", perf::CacheEvent::Miss);
     if cache_enabled {
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
                 let cache = InheritanceCacheV1::new(
                     key.clone(),
                     model_name.as_str(),
@@ -795,6 +842,7 @@ fn inheritance_flattened(db: &dyn QueryDb, model_name: String) -> ModelPtr {
                     deps.clone(),
                 );
                 if let Ok(bytes) = bincode::serialize(&cache) {
+                    perf::record_cache_event(scope.prefix(), "inheritance", perf::CacheEvent::Write);
                     let _ = cache_shm::shm_put(key.as_str(), &bytes);
                     let deps_json = serde_json::to_string(&deps).ok();
                     let _ = cache_sqlite::sqlite_put(
@@ -818,26 +866,25 @@ fn decl_expanded(db: &dyn QueryDb, model_name: String) -> DeclExpandResPtr {
     let libs = db.library_paths();
     let coarse = db.coarse_constrainedby_only();
     let st = db.source_text(model_name.clone());
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut h);
-    "decl_expand_v1".hash(&mut h);
-    model_name.hash(&mut h);
-    coarse.hash(&mut h);
-    let mut libs_norm: Vec<String> = libs.iter().map(|s| normalize_lib_path(s)).collect();
-    libs_norm.sort();
-    libs_norm.hash(&mut h);
     let root_hash = semantic_hash_text(st.text.as_str());
-    root_hash.hash(&mut h);
-    let (cache_enabled, key) =
-        query_cache_key(format!("decl_expand_v1:{:016x}", h.finish()).as_str());
+    let scope = scope_from_path(st.path.as_str(), model_name.as_str());
+    let mut flags = flags_for_query_stage(db);
+    flags.coarse_constrainedby_only = coarse;
+    let key_v2 = CacheKeyV2::builder(CacheStage::DeclExpand, scope.clone(), model_name.as_str())
+        .libs_from_paths(libs.as_ref())
+        .root_content_hash(root_hash)
+        .compile_flags(flags)
+        .build();
+    let (cache_enabled, key) = key_with_policy(key_v2.to_qualified_key());
 
     if cache_enabled {
         if let Some(bytes) = cache_shm::shm_get(key.as_str()) {
             if let Ok(cache) = bincode::deserialize::<decl_expand::DeclExpandCacheV1>(&bytes) {
                 if cache.schema == decl_expand::DECL_EXPAND_CACHE_SCHEMA_V1
                     && cache.key == key
-                    && deps_match(&cache.deps)
+                    && cache_deps_match_for_stage(&scope, "decl_expand", &cache.deps)
                 {
+                    perf::record_cache_event(scope.prefix(), "decl_expand", perf::CacheEvent::Hit);
                     dep_record_deps(&cache.deps);
                     perf::record_us("decl_expand_us", wall.elapsed().as_micros() as u64);
                     return DeclExpandResPtr(Arc::new(decl_expand::DeclExpandResult {
@@ -848,15 +895,16 @@ fn decl_expanded(db: &dyn QueryDb, model_name: String) -> DeclExpandResPtr {
             }
         }
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
             if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key.as_str(), "decl_expand_v1") {
                     if let Ok(cache) =
                         bincode::deserialize::<decl_expand::DeclExpandCacheV1>(&bytes)
                     {
                         if cache.schema == decl_expand::DECL_EXPAND_CACHE_SCHEMA_V1
                             && cache.key == key
-                            && deps_match(&cache.deps)
+                            && cache_deps_match_for_stage(&scope, "decl_expand", &cache.deps)
                         {
+                            perf::record_cache_event(scope.prefix(), "decl_expand", perf::CacheEvent::Hit);
                             let _ = cache_shm::shm_put(key.as_str(), &bytes);
                         dep_record_deps(&cache.deps);
                             perf::record_us("decl_expand_us", wall.elapsed().as_micros() as u64);
@@ -914,10 +962,11 @@ fn decl_expanded(db: &dyn QueryDb, model_name: String) -> DeclExpandResPtr {
     };
 
     let deps = deps_scope.end();
+    perf::record_cache_event(scope.prefix(), "decl_expand", perf::CacheEvent::Miss);
 
     if cache_enabled {
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config(Some(dir.as_path())) {
+            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
                 let cache = decl_expand::DeclExpandCacheV1 {
                     schema: decl_expand::DECL_EXPAND_CACHE_SCHEMA_V1.to_string(),
                     key: key.clone(),
@@ -927,6 +976,7 @@ fn decl_expanded(db: &dyn QueryDb, model_name: String) -> DeclExpandResPtr {
                     deps: deps.clone(),
                 };
                 if let Ok(bytes) = bincode::serialize(&cache) {
+                    perf::record_cache_event(scope.prefix(), "decl_expand", perf::CacheEvent::Write);
                     let _ = cache_shm::shm_put(key.as_str(), &bytes);
                     let deps_json = serde_json::to_string(&deps).ok();
                     let _ = cache_sqlite::sqlite_put(

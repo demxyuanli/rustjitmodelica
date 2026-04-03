@@ -97,6 +97,22 @@ pub struct ModelPerfStats {
     pub best_after_run1_flatten_inline_ms: Option<u64>,
     pub run1_decl_expand_ms: Option<u64>,
     pub best_after_run1_decl_expand_ms: Option<u64>,
+    #[serde(default)]
+    pub cache_layer_stats: Option<BTreeMap<String, LayerStats>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LayerStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub invalidations: u64,
+    pub recompute_reasons: Vec<String>,
+    #[serde(default)]
+    pub stage_hits: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub stage_misses: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub stage_invalidations: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
