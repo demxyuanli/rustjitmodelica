@@ -101,12 +101,19 @@ $libT = Join-Path $jitRoot "ModelicaTest"
 Push-Location $jitRoot
 try {
     $sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-    $vOut = & $exe --validate --validate-tier=analyze --lib-path=$libM --lib-path=$libT "Modelica.Blocks.Sources.Sine" 2>&1
-    $vExit = $LASTEXITCODE
+    # Native tools may log to stderr; with ErrorAction Stop, merged stderr records would terminate the script.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $vOut = & $exe --validate --validate-tier=analyze --lib-path=$libM --lib-path=$libT "Modelica.Blocks.Sources.Sine" 2>&1
+        $vExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     $sw3.Stop()
     Write-Host ("Validate exit={0} wall_ms={1}" -f $vExit, $sw3.ElapsedMilliseconds)
     if ($vExit -ne 0) {
-        $vOut | ForEach-Object { Write-Host $_ }
+        $vOut | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } } | ForEach-Object { Write-Host $_ }
         Write-Error "Standalone validate failed"
         exit 1
     }

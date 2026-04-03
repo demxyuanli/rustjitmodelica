@@ -45,6 +45,7 @@ fn apply_cache_invalidation_if_requested(cache_root: &Path) {
             }
             let project_dir = CacheScope::Project.resolve_dir(cache_root);
             let _ = std::fs::remove_dir_all(project_dir);
+            crate::flatten::cache_sqlite::sqlite_connection_pool_clear();
         }
         InvalidationAction::WholeBucketDrop => {
             for scope in [CacheScope::GlobalStd, CacheScope::UserExt, CacheScope::Project] {
@@ -56,6 +57,11 @@ fn apply_cache_invalidation_if_requested(cache_root: &Path) {
                 let dir = scope.resolve_dir(cache_root);
                 let _ = std::fs::remove_dir_all(dir);
             }
+            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config(Some(cache_root)) {
+                let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+                let _ = std::fs::remove_file(&cfg.path);
+            }
+            crate::flatten::cache_sqlite::sqlite_connection_pool_clear();
         }
     }
 }
@@ -106,6 +112,7 @@ pub(crate) fn flatten_and_inline(
             format!("array_sizes_json: {}", e).into()
         })?;
     if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
+        flatten_cache::sync_flatten_cache_root_ir_epoch(cache_root.as_path());
         apply_cache_invalidation_if_requested(cache_root.as_path());
         let full_key = flatten_cache::flatten_full_cache_key(
             model_name,

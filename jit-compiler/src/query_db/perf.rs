@@ -56,7 +56,15 @@ pub fn record_cache_event(scope: &str, stage: &str, event: CacheEvent) {
             "L1" => record_add("cache_L1_misses", 1),
             _ => record_add("cache_L2_misses", 1),
         },
-        CacheEvent::Write => record_add("cache_writes", 1),
+        CacheEvent::Write => {
+            record_add("cache_writes", 1);
+            match scope {
+                "L0" => record_add("cache_L0_writes", 1),
+                "L1" => record_add("cache_L1_writes", 1),
+                _ => record_add("cache_L2_writes", 1),
+            }
+            record_add(format!("cache_stage_writes:{}:{}", scope, stage), 1);
+        }
         CacheEvent::Invalidate => {
             record_add("cache_invalidates", 1);
             record_add(format!("cache_stage_invalidations:{}:{}", scope, stage), 1);

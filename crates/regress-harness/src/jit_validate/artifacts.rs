@@ -109,12 +109,18 @@ pub struct ModelPerfStats {
     pub cache_array_sizes_layer_hits: BTreeMap<String, u64>,
     #[serde(default)]
     pub cache_array_sizes_layer_misses: BTreeMap<String, u64>,
+    /// Aggregated `query_cache_counters` from `RUSTMODLICA_CACHE_STATS_JSON` (summed over runs).
+    #[serde(default)]
+    pub cache_query_counters: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LayerStats {
     pub hits: u64,
     pub misses: u64,
+    /// SQLite / cross-process cache rows written (from compile perf `cache_l*_writes`).
+    #[serde(default)]
+    pub writes: u64,
     pub invalidations: u64,
     pub recompute_reasons: Vec<String>,
     #[serde(default)]

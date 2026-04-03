@@ -12,11 +12,11 @@
 | Mechanism | Env / entry | Role |
 |-----------|-------------|------|
 | Query + layered SQLite | `RUSTMODLICA_CACHE_SQLITE=1`, `RUSTMODLICA_QUERY_CACHE_NAMESPACE`, optional disable `RUSTMODLICA_QUERY_CACHE=0` | AST / `query_db` reuse across processes |
-| Flatten on-disk hints | `RUSTMODLICA_FLATTEN_CACHE_DIR`, `RUSTMODLICA_FLATTEN_FULL_CACHE`, `RUSTMODLICA_FLATTEN_CACHE_TTL_MS` | Flattened model hints; TTL / invalidation via `RUSTMODLICA_CACHE_INVALIDATE_TRIGGER` (see `frontend.rs`) |
+| Flatten on-disk hints | `RUSTMODLICA_FLATTEN_CACHE_DIR` (optional; default `<install_root>/cache` via `current_exe` or `RUSTMODLICA_INSTALL_ROOT`), `RUSTMODLICA_FLATTEN_FULL_CACHE`, `RUSTMODLICA_FLATTEN_CACHE_TTL_MS` | Flattened model hints; TTL / invalidation via `RUSTMODLICA_CACHE_INVALIDATE_TRIGGER` (see `frontend.rs`) |
 | SHM index (optional) | `RUSTMODLICA_CACHE_SHM`, `RUSTMODLICA_CACHE_SHM_NAME`, … | Faster cross-process index; optional for DIR |
 | AOT marker | `RUSTMODLICA_AOT_CACHE_DIR` | Lightweight compile fingerprint markers (not full binary reuse) |
 
-IR / schema generation is already tied to **`IR_SCHEMA_EPOCH`** (`jit-compiler/src/cache/ir_epoch.rs`); any bump must **invalidate** logical cache compatibility.
+IR / schema generation is already tied to **`IR_SCHEMA_EPOCH`** (`jit-compiler/src/cache/ir_epoch.rs`); any bump must **invalidate** logical cache compatibility. When a disk cache root is active (explicit `RUSTMODLICA_FLATTEN_CACHE_DIR` or the default `<install_root>/cache`), the compiler writes **`ir_schema_epoch.txt`** there and, on epoch mismatch, **removes the entire cache root** (SQLite + JSON hints) before continuing, so stale on-disk artifacts are not mixed across IR generations. Set `RUSTMODLICA_FLATTEN_CACHE_DIR=0` to disable the disk root.
 
 ## Private storage layout (proposed)
 
@@ -102,7 +102,7 @@ A **manifest** row per model: key = `(model, solver, dt, t_end, lib_fp, exe_hash
 
 ## Observability
 
-- Reuse existing `RUSTMODLICA_CACHE_STATS_JSON` from validate-perf harness **optionally** in DIR: one stats file per shard under `OutDir` for post-run aggregation.
+- Reuse existing `RUSTMODLICA_CACHE_STATS_JSON` from validate-perf harness **optionally** in DIR: one stats file per shard under `OutDir` for post-run aggregation. Payload includes **`query_cache_counters`** (every in-process `cache_*` counter, including `cache_L0_hits` / `cache_L1_hits` / `cache_L2_hits`, misses, per-layer writes, and `cache_stage_*` breakdown keys), plus **`cache_scope_stage_hits` / `misses` / `invalidations`** maps, and SQLite **`layers` / `rows`** when `RUSTMODLICA_FLATTEN_CACHE_DIR` is set (otherwise those arrays are empty but the file is still written). The JSON includes SQLite `layers`/`rows` when `RUSTMODLICA_FLATTEN_CACHE_DIR` is set, plus **`query_cache_counters`** (all in-process `cache_*` keys from `query_db` perf, including `cache_L0_hits` / `cache_L1_hits` / `cache_L2_hits`, misses, per-layer writes, and `cache_stage_*` breakdowns) and **`cache_scope_stage_*`** maps even when no flatten cache dir is configured.
 - `manifest.json` under `run_key_*` can record: timestamp, worker count, git HEAD, `libraries.lock` hash, list of shard namespaces.
 
 ## Security / hygiene
@@ -125,14 +125,21 @@ A **manifest** row per model: key = `(model, solver, dt, t_end, lib_fp, exe_hash
 
 `.gitignore`: **`build/dir_private_cache/`** (fallback when `LOCALAPPDATA` is missing).
 
+**Sharing cache with the next DIR run or other tools**
+
+- **`-WriteDirCacheEnvScript <path>`** (relative to repo root or absolute): after `Apply-DirPrivateCacheEnv` succeeds, writes a small PowerShell script that sets `RUSTMODLICA_CACHE_SQLITE`, `RUSTMODLICA_QUERY_CACHE_NAMESPACE`, `RUSTMODLICA_FLATTEN_CACHE_DIR`, and `RUSTMODLICA_AOT_CACHE_DIR` for the current `run_<key>`. Dot-source it in the same shell before `rustmodlica --validate` or another driver so the **same** query/flatten namespace is reused without re-running DIR.
+- **`scripts/run_dir_cache_shared_smoke.ps1`**: three-step smoke — (1) DIR with `-UsePrivateCache` and a fixed `build\dir_cache_shared_test` root, (2) second DIR pass with a different `-OutDir` but the same `PrivateCacheRoot`, (3) dot-source `build\dir_cache_shared_env.ps1` and run `rustmodlica --validate` on a small model. Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_dir_cache_shared_smoke.ps1` (optional `-MaxCases`, `-Root`).
+
 ## Residual checklist
 
-1. (Optional) Document env vars in team onboarding beyond `docs/regression/README.md`.
+1. (Optional) Extend team onboarding with env vars; validate-perf / `report.json` cache fields are summarized in `docs/regression/README.md`.
 2. Phase-2 manifest short-circuit remains **not implemented** (off by default in design).
+3. Rollout plan residual: optional SHM **segment** pools per scope (keys already carry `L0`/`L1`/`L2` via `CacheKeyV2`); `sqlite_put_batch` and Phase-5 transaction/IR-epoch work are in tree — see `three-layer-cache-rollout_9b931642.plan.md` for Phase-4 row-level **Done** notes.
 
 ## Related files
 
-- `run_modelica_dir_regression.ps1` — DIR driver, parallel shards.
+- `run_modelica_dir_regression.ps1` — DIR driver, parallel shards; `-WriteDirCacheEnvScript` for exported env.
+- `scripts/run_dir_cache_shared_smoke.ps1` — shared-cache smoke (two DIR out-dirs + standalone validate).
 - `jit-compiler/src/flatten/flatten_cache.rs`, `flatten/cache_sqlite.rs`, `query_db/mod.rs` — cache behavior.
 - `jit-compiler/src/compiler/pipeline/frontend.rs` — invalidation trigger.
 - `baseline/<YYYYMMDD>/metrics.json` — baseline comparisons (orthogonal to cache).

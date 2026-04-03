@@ -483,6 +483,9 @@ pub(super) fn compile(
         perf_report.cache_l0_hits = *qperf.get("cache_L0_hits").unwrap_or(&0);
         perf_report.cache_l1_hits = *qperf.get("cache_L1_hits").unwrap_or(&0);
         perf_report.cache_l2_hits = *qperf.get("cache_L2_hits").unwrap_or(&0);
+        perf_report.cache_l0_writes = *qperf.get("cache_L0_writes").unwrap_or(&0);
+        perf_report.cache_l1_writes = *qperf.get("cache_L1_writes").unwrap_or(&0);
+        perf_report.cache_l2_writes = *qperf.get("cache_L2_writes").unwrap_or(&0);
         perf_report.deps_mismatch = *qperf.get("cache_deps_mismatch").unwrap_or(&0);
     perf_report.cache_scope_stage_hits = build_cache_scope_stage_map(&qperf, "cache_stage_hits:");
     perf_report.cache_scope_stage_misses = build_cache_scope_stage_map(&qperf, "cache_stage_misses:");
@@ -595,14 +598,14 @@ pub(super) fn compile(
             );
         }
         if let Ok(stats_path) = std::env::var("RUSTMODLICA_CACHE_STATS_JSON") {
-            if !stats_path.trim().is_empty() {
+            let stats_path = stats_path.trim();
+            if !stats_path.is_empty() {
+                let mut layers: Vec<cache_sqlite::CacheStatsLayerExport> = Vec::new();
                 if let Some(cache_dir) = flatten_cache::flatten_cache_dir() {
-                    let mut layers =
+                    layers =
                         cache_sqlite::export_sqlite_kind_stats_layers(cache_dir.as_path());
                     if layers.is_empty() {
-                        if let Some(cfg) =
-                            cache_sqlite::sqlite_config(Some(cache_dir.as_path()))
-                        {
+                        if let Some(cfg) = cache_sqlite::sqlite_config(Some(cache_dir.as_path())) {
                             if let Ok(rows) = cache_sqlite::sqlite_kind_stats(&cfg.path) {
                                 layers.push(cache_sqlite::CacheStatsLayerExport {
                                     tier: "legacy".to_string(),
@@ -612,21 +615,30 @@ pub(super) fn compile(
                             }
                         }
                     }
-                    let rows: Vec<cache_sqlite::CacheKindStatRow> = layers
-                        .iter()
-                        .flat_map(|l| l.rows.iter().cloned())
-                        .collect();
-                    let payload = serde_json::json!({
-                        "model": model_name,
-                        "generated_ms": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as i64)
-                            .unwrap_or(0),
-                        "layers": layers,
-                        "rows": rows
-                    });
-                    let _ = std::fs::write(stats_path.trim(), payload.to_string());
                 }
+                let rows: Vec<cache_sqlite::CacheKindStatRow> = layers
+                    .iter()
+                    .flat_map(|l| l.rows.iter().cloned())
+                    .collect();
+                let query_counters: serde_json::Map<String, serde_json::Value> = qperf
+                    .iter()
+                    .filter(|(k, _)| k.starts_with("cache_"))
+                    .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+                    .collect();
+                let payload = serde_json::json!({
+                    "model": model_name,
+                    "generated_ms": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
+                    "layers": layers,
+                    "rows": rows,
+                    "query_cache_counters": query_counters,
+                    "cache_scope_stage_hits": perf_report.cache_scope_stage_hits,
+                    "cache_scope_stage_misses": perf_report.cache_scope_stage_misses,
+                    "cache_scope_stage_invalidations": perf_report.cache_scope_stage_invalidations,
+                });
+                let _ = std::fs::write(stats_path, payload.to_string());
             }
         }
         if let Ok(dep_graph_path) = std::env::var("RUSTMODLICA_DEP_GRAPH_JSON") {

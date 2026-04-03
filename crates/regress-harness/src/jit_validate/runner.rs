@@ -71,6 +71,9 @@ struct ParsedCompilePerf {
     cache_l0_hits: u64,
     cache_l1_hits: u64,
     cache_l2_hits: u64,
+    cache_l0_writes: u64,
+    cache_l1_writes: u64,
+    cache_l2_writes: u64,
     deps_mismatch: u64,
     cache_scope_stage_hits: BTreeMap<String, BTreeMap<String, u64>>,
     cache_scope_stage_misses: BTreeMap<String, BTreeMap<String, u64>>,
@@ -127,6 +130,9 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
         cache_l0_hits: u("cache_l0_hits"),
         cache_l1_hits: u("cache_l1_hits"),
         cache_l2_hits: u("cache_l2_hits"),
+        cache_l0_writes: u("cache_l0_writes"),
+        cache_l1_writes: u("cache_l1_writes"),
+        cache_l2_writes: u("cache_l2_writes"),
         deps_mismatch: u("deps_mismatch"),
         cache_scope_stage_hits: scope_stage_hits,
         cache_scope_stage_misses: scope_stage_misses,
@@ -134,9 +140,85 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
     })
 }
 
+/// `RUSTMODLICA_CACHE_STATS_JSON` payload: `query_cache_counters` plus optional top-level scope/stage maps.
+fn parse_cache_stats_json(path: &Path) -> Option<(BTreeMap<String, u64>, BTreeMap<String, BTreeMap<String, u64>>, BTreeMap<String, BTreeMap<String, u64>>, BTreeMap<String, BTreeMap<String, u64>>)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let mut counters = BTreeMap::new();
+    if let Some(obj) = v.get("query_cache_counters").and_then(|x| x.as_object()) {
+        for (k, val) in obj {
+            if let Some(n) = val.as_u64() {
+                counters.insert(k.clone(), n);
+            }
+        }
+    }
+    let hits = parse_scope_stage_map(&v, "cache_scope_stage_hits");
+    let misses = parse_scope_stage_map(&v, "cache_scope_stage_misses");
+    let inv = parse_scope_stage_map(&v, "cache_scope_stage_invalidations");
+    Some((counters, hits, misses, inv))
+}
+
 fn update_min_max(opt_min: &mut Option<u64>, opt_max: &mut Option<u64>, v: u64) {
     *opt_min = Some(opt_min.map(|x| x.min(v)).unwrap_or(v));
     *opt_max = Some(opt_max.map(|x| x.max(v)).unwrap_or(v));
+}
+
+fn rollup_cache_layer_totals(stats: &PerfStats) -> (u64, u64, u64, u64, u64, u64) {
+    let mut l0h = 0u64;
+    let mut l1h = 0u64;
+    let mut l2h = 0u64;
+    let mut l0w = 0u64;
+    let mut l1w = 0u64;
+    let mut l2w = 0u64;
+    for by_model in stats.by_scenario.values() {
+        for m in by_model.values() {
+            if let Some(layers) = &m.cache_layer_stats {
+                if let Some(v) = layers.get("L0") {
+                    l0h += v.hits;
+                    l0w += v.writes;
+                }
+                if let Some(v) = layers.get("L1") {
+                    l1h += v.hits;
+                    l1w += v.writes;
+                }
+                if let Some(v) = layers.get("L2") {
+                    l2h += v.hits;
+                    l2w += v.writes;
+                }
+            }
+        }
+    }
+    (l0h, l1h, l2h, l0w, l1w, l2w)
+}
+
+fn format_validate_perf_cache_rollup(stats: &PerfStats) -> Option<String> {
+    let (l0h, l1h, l2h, l0w, l1w, l2w) = rollup_cache_layer_totals(stats);
+    if l0h == 0 && l1h == 0 && l2h == 0 && l0w == 0 && l1w == 0 && l2w == 0 {
+        return None;
+    }
+    let mut qc_keys: HashSet<String> = HashSet::new();
+    let mut qc_sum = 0u64;
+    for by_model in stats.by_scenario.values() {
+        for m in by_model.values() {
+            for (k, v) in &m.cache_query_counters {
+                qc_keys.insert(k.clone());
+                qc_sum += *v;
+            }
+        }
+    }
+    let qc_note = if !qc_keys.is_empty() {
+        format!(
+            " query_cache_counter_distinct_keys={} query_cache_counter_sum={}",
+            qc_keys.len(),
+            qc_sum
+        )
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "jit-validate-perf cache rollup: L0 hits={} writes={} L1 hits={} writes={} L2 hits={} writes={}{}",
+        l0h, l0w, l1h, l1w, l2h, l2w, qc_note
+    ))
 }
 
 fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
@@ -149,9 +231,11 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
         let s = by_model.entry(c.model.clone()).or_default();
         s.runs += 1;
         update_min_max(&mut s.duration_ms_min, &mut s.duration_ms_max, c.duration_ms);
+        let mut got_compile_perf = false;
         if let Some(p) = c.perf_json.as_ref() {
             let path = resolve_artifact_path(out_dir, p);
             if let Some(m) = parse_compile_perf_metrics(&path) {
+                got_compile_perf = true;
                 update_min_max(
                     &mut s.flatten_inline_ms_min,
                     &mut s.flatten_inline_ms_max,
@@ -191,10 +275,13 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                 let layers = s.cache_layer_stats.get_or_insert_with(BTreeMap::new);
                 let l0 = layers.entry("L0".to_string()).or_insert_with(LayerStats::default);
                 l0.hits += m.cache_l0_hits;
+                l0.writes += m.cache_l0_writes;
                 let l1 = layers.entry("L1".to_string()).or_insert_with(LayerStats::default);
                 l1.hits += m.cache_l1_hits;
+                l1.writes += m.cache_l1_writes;
                 let l2 = layers.entry("L2".to_string()).or_insert_with(LayerStats::default);
                 l2.hits += m.cache_l2_hits;
+                l2.writes += m.cache_l2_writes;
                 if m.deps_mismatch > 0
                     && !l2.recompute_reasons.iter().any(|r| r == "deps_mismatch")
                 {
@@ -259,6 +346,63 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                         s.best_after_run1_decl_expand_ms
                             .map(|x| x.min(m.decl_expand_ms))
                             .unwrap_or(m.decl_expand_ms),
+                    );
+                }
+            }
+        }
+        if let Some(p) = c.cache_stats_json.as_ref() {
+            let path = resolve_artifact_path(out_dir, p);
+            if let Some((qc, cs_hits, cs_misses, cs_inv)) = parse_cache_stats_json(&path) {
+                for (k, v) in qc {
+                    *s.cache_query_counters.entry(k).or_insert(0) += v;
+                }
+                if !got_compile_perf {
+                    let layers = s.cache_layer_stats.get_or_insert_with(BTreeMap::new);
+                    for (scope, stage_hits) in &cs_hits {
+                        let layer = layers
+                            .entry(scope.clone())
+                            .or_insert_with(LayerStats::default);
+                        for (stage, count) in stage_hits {
+                            *layer.stage_hits.entry(stage.clone()).or_insert(0) += *count;
+                        }
+                    }
+                    for (scope, stage_misses) in &cs_misses {
+                        let layer = layers
+                            .entry(scope.clone())
+                            .or_insert_with(LayerStats::default);
+                        for (stage, count) in stage_misses {
+                            layer.misses += *count;
+                            *layer.stage_misses.entry(stage.clone()).or_insert(0) += *count;
+                        }
+                    }
+                    for (scope, stage_inv) in &cs_inv {
+                        let layer = layers
+                            .entry(scope.clone())
+                            .or_insert_with(LayerStats::default);
+                        for (stage, count) in stage_inv {
+                            layer.invalidations += *count;
+                            *layer.stage_invalidations.entry(stage.clone()).or_insert(0) += *count;
+                        }
+                    }
+                    add_scope_stage_counts_into(
+                        &cs_hits,
+                        "flat_full",
+                        &mut s.cache_flat_full_layer_hits,
+                    );
+                    add_scope_stage_counts_into(
+                        &cs_misses,
+                        "flat_full",
+                        &mut s.cache_flat_full_layer_misses,
+                    );
+                    add_scope_stage_counts_into(
+                        &cs_hits,
+                        "array_sizes",
+                        &mut s.cache_array_sizes_layer_hits,
+                    );
+                    add_scope_stage_counts_into(
+                        &cs_misses,
+                        "array_sizes",
+                        &mut s.cache_array_sizes_layer_misses,
                     );
                 }
             }
@@ -737,6 +881,9 @@ impl ValidatePerfRunner {
 
         // Keep the report stable even if caller wants to post-process.
         write_json_pretty(&spec.out_dir.join("report.json"), &report)?;
+        if let Some(line) = format_validate_perf_cache_rollup(&report.stats) {
+            println!("{}", line);
+        }
         if report.summary.failed > 0 {
             let mut f = std::fs::File::create(spec.out_dir.join("FAILURES.txt"))?;
             writeln!(

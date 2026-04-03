@@ -52,21 +52,6 @@ fn query_cache_policy() -> QueryCachePolicy {
     QueryCachePolicy::Enabled { namespace: ns }
 }
 
-#[allow(dead_code)]
-#[deprecated(note = "use key_with_policy with fully-qualified v2 key")]
-pub(super) fn query_cache_key(raw_key: &str) -> (bool, String) {
-    match query_cache_policy() {
-        QueryCachePolicy::Disabled => (false, raw_key.to_string()),
-        QueryCachePolicy::Enabled { namespace } => {
-            if namespace.is_empty() {
-                (true, raw_key.to_string())
-            } else {
-                (true, format!("{}:{}", namespace, raw_key))
-            }
-        }
-    }
-}
-
 pub(super) fn key_with_policy(qualified_key: String) -> (bool, String) {
     match query_cache_policy() {
         QueryCachePolicy::Disabled => (false, qualified_key),

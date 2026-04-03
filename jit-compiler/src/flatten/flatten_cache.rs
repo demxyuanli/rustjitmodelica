@@ -1,4 +1,4 @@
-//! Optional on-disk hints for `FlattenedModel::array_sizes` keyed by model inputs (see `RUSTMODLICA_FLATTEN_CACHE_DIR`).
+//! On-disk flatten / query cache under `<install_root>/cache` by default (override with `RUSTMODLICA_FLATTEN_CACHE_DIR`).
 
 use super::ArraySizePolicy;
 use crate::cache::cache_key::{CacheKeyV2, CacheStage, CompileFlagsKey};
@@ -195,12 +195,91 @@ pub fn array_sizes_cache_counters_snapshot_reset() -> Option<(u64, u64, u64)> {
     None
 }
 
+/// Software install root: `RUSTMODLICA_INSTALL_ROOT`, else directory of `current_exe`, stepping out of a final `bin` segment.
+fn software_install_root() -> Option<PathBuf> {
+    const ROOT_ENV: &str = "RUSTMODLICA_INSTALL_ROOT";
+    if let Ok(s) = std::env::var(ROOT_ENV) {
+        let t = s.trim();
+        if !t.is_empty() {
+            return Some(PathBuf::from(t));
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent()?.to_path_buf();
+    if dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.eq_ignore_ascii_case("bin"))
+        .unwrap_or(false)
+    {
+        dir.pop();
+    }
+    Some(dir)
+}
+
+fn default_flatten_cache_dir() -> Option<PathBuf> {
+    software_install_root().map(|r| r.join("cache"))
+}
+
+/// On-disk cache root for flatten hints, SQLite tiers, and IR epoch stamp.
+///
+/// - If `RUSTMODLICA_FLATTEN_CACHE_DIR` is set to a non-empty path, that path is used.
+/// - If it is unset or empty, uses `<software_install_root>/cache` (see [`software_install_root`]).
+/// - Set `RUSTMODLICA_FLATTEN_CACHE_DIR` to `0`, `false`, `no`, or `none` to disable the disk root.
 pub fn flatten_cache_dir() -> Option<PathBuf> {
-    std::env::var("RUSTMODLICA_FLATTEN_CACHE_DIR")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+    const ENV: &str = "RUSTMODLICA_FLATTEN_CACHE_DIR";
+    match std::env::var(ENV) {
+        Ok(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                default_flatten_cache_dir()
+            } else if t == "0"
+                || t.eq_ignore_ascii_case("false")
+                || t.eq_ignore_ascii_case("no")
+                || t.eq_ignore_ascii_case("none")
+            {
+                None
+            } else {
+                Some(PathBuf::from(t))
+            }
+        }
+        Err(_) => default_flatten_cache_dir(),
+    }
+}
+
+const IR_SCHEMA_EPOCH_STAMP: &str = "ir_schema_epoch.txt";
+
+fn clear_flatten_mem_caches_for_disk_purge() {
+    LOCAL_ARRAY_SIZES_CACHE.with(|c| c.borrow_mut().clear());
+    if let Ok(mut g) = global_array_sizes_cache().write() {
+        g.clear();
+    }
+    if let Ok(mut g) = global_analyze_input_cache().write() {
+        g.clear();
+    }
+    if let Ok(mut g) = global_inline_result_cache().write() {
+        g.clear();
+    }
+}
+
+/// If `ir_schema_epoch.txt` under the cache root disagrees with [`crate::cache::ir_epoch::IR_SCHEMA_EPOCH`],
+/// drops the entire cache directory tree (SQLite + JSON hints), clears pooled DB handles and in-process
+/// flatten mem caches, then writes the stamp. If the stamp is missing, creates the root and writes it
+/// without deleting existing files (first use or pre-stamp caches).
+pub fn sync_flatten_cache_root_ir_epoch(cache_root: &Path) {
+    use crate::cache::ir_epoch::IR_SCHEMA_EPOCH;
+    let stamp_path = cache_root.join(IR_SCHEMA_EPOCH_STAMP);
+    let want = IR_SCHEMA_EPOCH.to_string();
+    if let Ok(s) = std::fs::read_to_string(&stamp_path) {
+        if s.trim() == want.as_str() {
+            return;
+        }
+        clear_flatten_mem_caches_for_disk_purge();
+        cache_sqlite::sqlite_connection_pool_clear();
+        let _ = std::fs::remove_dir_all(cache_root);
+    }
+    let _ = std::fs::create_dir_all(cache_root);
+    let _ = std::fs::write(&stamp_path, format!("{}\n", want));
 }
 
 pub const ARRAY_SIZES_CACHE_SCHEMA_V2: &str = "rustmodlica_array_sizes_cache_v2";

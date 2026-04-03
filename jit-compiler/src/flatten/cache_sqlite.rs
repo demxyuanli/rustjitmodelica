@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -72,10 +72,10 @@ fn column_exists(conn: &Connection, table: &str, col: &str) -> Result<bool, rusq
     Ok(false)
 }
 
-fn migrate_cache_kind_stats_v1_to_v2(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
+fn migrate_cache_kind_stats_v1_to_v2(conn: &mut Connection) -> Result<(), rusqlite::Error> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
         r#"
-        BEGIN IMMEDIATE;
         ALTER TABLE cache_kind_stats RENAME TO cache_kind_stats_old;
         CREATE TABLE cache_kind_stats (
             scope TEXT NOT NULL,
@@ -92,12 +92,13 @@ fn migrate_cache_kind_stats_v1_to_v2(conn: &Connection) -> Result<(), rusqlite::
         SELECT 'legacy', kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms
         FROM cache_kind_stats_old;
         DROP TABLE cache_kind_stats_old;
-        COMMIT;
         "#,
-    )
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
-fn ensure_cache_entries(conn: &Connection, db_path: &Path) -> Result<(), rusqlite::Error> {
+fn ensure_cache_entries(conn: &mut Connection, db_path: &Path) -> Result<(), rusqlite::Error> {
     if !table_exists(conn, "cache_entries")? {
         conn.execute_batch(
             r#"
@@ -127,7 +128,7 @@ fn ensure_cache_entries(conn: &Connection, db_path: &Path) -> Result<(), rusqlit
     Ok(())
 }
 
-fn ensure_cache_kind_stats(conn: &Connection) -> Result<(), rusqlite::Error> {
+fn ensure_cache_kind_stats(conn: &mut Connection) -> Result<(), rusqlite::Error> {
     if !table_exists(conn, "cache_kind_stats")? {
         conn.execute_batch(
             r#"
@@ -152,7 +153,7 @@ fn ensure_cache_kind_stats(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-fn init_schema(conn: &Connection, db_path: &Path) -> Result<(), rusqlite::Error> {
+fn init_schema(conn: &mut Connection, db_path: &Path) -> Result<(), rusqlite::Error> {
     ensure_cache_entries(conn, db_path)?;
     ensure_cache_kind_stats(conn)?;
     Ok(())
@@ -176,16 +177,27 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn global_conn(path: &Path) -> Result<Arc<Mutex<Connection>>, rusqlite::Error> {
+fn connection_pool() -> &'static Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>> {
     static CONNS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> = OnceLock::new();
+    CONNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drop all pooled [`Connection`] handles (e.g. after deleting SQLite files on disk).
+pub fn sqlite_connection_pool_clear() {
+    if let Ok(mut g) = connection_pool().lock() {
+        g.clear();
+    }
+}
+
+fn global_conn(path: &Path) -> Result<Arc<Mutex<Connection>>, rusqlite::Error> {
     let key = path.to_path_buf();
-    let map = CONNS.get_or_init(|| Mutex::new(HashMap::new()));
+    let map = connection_pool();
     let mut g = map.lock().unwrap();
     if let Some(c) = g.get(&key) {
         return Ok(Arc::clone(c));
     }
-    let conn = conn_for_path(path)?;
-    init_schema(&conn, path)?;
+    let mut conn = conn_for_path(path)?;
+    init_schema(&mut conn, path)?;
     let arc = Arc::new(Mutex::new(conn));
     g.insert(key, Arc::clone(&arc));
     Ok(arc)
@@ -244,6 +256,14 @@ pub fn sqlite_put(
     sqlite_put_atomic(path, key, schema, kind, blob, deps_json)
 }
 
+pub struct SqliteCachePut<'a> {
+    pub key: &'a str,
+    pub schema: &'a str,
+    pub kind: &'a str,
+    pub blob: &'a [u8],
+    pub deps_json: Option<&'a str>,
+}
+
 pub fn sqlite_put_atomic(
     path: &Path,
     key: &str,
@@ -252,36 +272,55 @@ pub fn sqlite_put_atomic(
     blob: &[u8],
     deps_json: Option<&str>,
 ) -> Result<(), rusqlite::Error> {
+    sqlite_put_batch(
+        path,
+        &[SqliteCachePut {
+            key,
+            schema,
+            kind,
+            blob,
+            deps_json,
+        }],
+    )
+}
+
+/// Single `BEGIN IMMEDIATE` transaction for multiple cache rows (same DB file).
+pub fn sqlite_put_batch(path: &Path, puts: &[SqliteCachePut<'_>]) -> Result<(), rusqlite::Error> {
+    if puts.is_empty() {
+        return Ok(());
+    }
     let conn = global_conn(path)?;
-    let guard = conn.lock().unwrap();
+    let mut guard = conn.lock().unwrap();
     let scope = scope_tag_for_db_path(path);
     let now = now_ms();
-    guard.execute_batch("BEGIN IMMEDIATE")?;
-    guard.execute(
-        r#"
-        INSERT INTO cache_entries(key, scope, schema, kind, blob, deps_json, created_ms, last_hit_ms, hit_count)
-        VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 0)
-        ON CONFLICT(key) DO UPDATE SET
-            scope=excluded.scope,
-            schema=excluded.schema,
-            kind=excluded.kind,
-            blob=excluded.blob,
-            deps_json=excluded.deps_json
-        "#,
-        params![key, scope, schema, kind, blob, deps_json, now],
-    )?;
-    let _ = guard.execute(
-        r#"
-        INSERT INTO cache_kind_stats(scope, kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
-        VALUES(?1, ?2, 0, 0, 1, ?3, 0, ?4)
-        ON CONFLICT(scope, kind) DO UPDATE SET
-            put_count = put_count + 1,
-            bytes_put = bytes_put + excluded.bytes_put,
-            last_put_ms = excluded.last_put_ms
-        "#,
-        params![scope, kind, blob.len() as i64, now],
-    );
-    guard.execute_batch("COMMIT")?;
+    let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for p in puts {
+        tx.execute(
+            r#"
+            INSERT INTO cache_entries(key, scope, schema, kind, blob, deps_json, created_ms, last_hit_ms, hit_count)
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 0)
+            ON CONFLICT(key) DO UPDATE SET
+                scope=excluded.scope,
+                schema=excluded.schema,
+                kind=excluded.kind,
+                blob=excluded.blob,
+                deps_json=excluded.deps_json
+            "#,
+            params![p.key, scope, p.schema, p.kind, p.blob, p.deps_json, now],
+        )?;
+        let _ = tx.execute(
+            r#"
+            INSERT INTO cache_kind_stats(scope, kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+            VALUES(?1, ?2, 0, 0, 1, ?3, 0, ?4)
+            ON CONFLICT(scope, kind) DO UPDATE SET
+                put_count = put_count + 1,
+                bytes_put = bytes_put + excluded.bytes_put,
+                last_put_ms = excluded.last_put_ms
+            "#,
+            params![scope, p.kind, p.blob.len() as i64, now],
+        );
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -368,12 +407,13 @@ pub fn sqlite_kind_stats(path: &Path) -> Result<Vec<CacheKindStatRow>, rusqlite:
     Ok(out)
 }
 
+/// Wipes all rows in this SQLite file (one file per tier in layered mode).
 pub fn sqlite_invalidate_scope(path: &Path) -> Result<(), rusqlite::Error> {
     let conn = global_conn(path)?;
-    let guard = conn.lock().unwrap();
-    guard.execute_batch("BEGIN IMMEDIATE")?;
-    guard.execute("DELETE FROM cache_entries", [])?;
-    let _ = guard.execute("DELETE FROM cache_kind_stats", []);
-    guard.execute_batch("COMMIT")?;
+    let mut guard = conn.lock().unwrap();
+    let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute("DELETE FROM cache_entries", [])?;
+    let _ = tx.execute("DELETE FROM cache_kind_stats", []);
+    tx.commit()?;
     Ok(())
 }
