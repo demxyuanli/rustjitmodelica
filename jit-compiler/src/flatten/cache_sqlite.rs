@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, OpenFlags};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use crate::cache::cache_scope::CacheScope;
 
 #[derive(Debug, Clone)]
@@ -50,32 +51,122 @@ fn conn_for_path(path: &Path) -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
-fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+fn table_exists(conn: &Connection, name: &str) -> Result<bool, rusqlite::Error> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        params![name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+fn column_exists(conn: &Connection, table: &str, col: &str) -> Result<bool, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == col {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn migrate_cache_kind_stats_v1_to_v2(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS cache_entries (
-            key TEXT PRIMARY KEY,
-            schema TEXT NOT NULL,
+        BEGIN IMMEDIATE;
+        ALTER TABLE cache_kind_stats RENAME TO cache_kind_stats_old;
+        CREATE TABLE cache_kind_stats (
+            scope TEXT NOT NULL,
             kind TEXT NOT NULL,
-            blob BLOB NOT NULL,
-            deps_json TEXT,
-            created_ms INTEGER NOT NULL,
-            last_hit_ms INTEGER NOT NULL,
-            hit_count INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS cache_kind_stats (
-            kind TEXT PRIMARY KEY,
             get_count INTEGER NOT NULL,
             hit_count INTEGER NOT NULL,
             put_count INTEGER NOT NULL,
             bytes_put INTEGER NOT NULL,
             last_get_ms INTEGER NOT NULL,
-            last_put_ms INTEGER NOT NULL
+            last_put_ms INTEGER NOT NULL,
+            PRIMARY KEY (scope, kind)
         );
+        INSERT INTO cache_kind_stats (scope, kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+        SELECT 'legacy', kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms
+        FROM cache_kind_stats_old;
+        DROP TABLE cache_kind_stats_old;
+        COMMIT;
         "#,
-    )?;
+    )
+}
+
+fn ensure_cache_entries(conn: &Connection, db_path: &Path) -> Result<(), rusqlite::Error> {
+    if !table_exists(conn, "cache_entries")? {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE cache_entries (
+                key TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                schema TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                blob BLOB NOT NULL,
+                deps_json TEXT,
+                created_ms INTEGER NOT NULL,
+                last_hit_ms INTEGER NOT NULL,
+                hit_count INTEGER NOT NULL
+            );
+            "#,
+        )?;
+        return Ok(());
+    }
+    if !column_exists(conn, "cache_entries", "scope")? {
+        conn.execute(
+            "ALTER TABLE cache_entries ADD COLUMN scope TEXT NOT NULL DEFAULT 'legacy'",
+            [],
+        )?;
+        let tag = scope_tag_for_db_path(db_path);
+        conn.execute("UPDATE cache_entries SET scope = ?1", params![tag])?;
+    }
     Ok(())
+}
+
+fn ensure_cache_kind_stats(conn: &Connection) -> Result<(), rusqlite::Error> {
+    if !table_exists(conn, "cache_kind_stats")? {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE cache_kind_stats (
+                scope TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                get_count INTEGER NOT NULL,
+                hit_count INTEGER NOT NULL,
+                put_count INTEGER NOT NULL,
+                bytes_put INTEGER NOT NULL,
+                last_get_ms INTEGER NOT NULL,
+                last_put_ms INTEGER NOT NULL,
+                PRIMARY KEY (scope, kind)
+            );
+            "#,
+        )?;
+        return Ok(());
+    }
+    if !column_exists(conn, "cache_kind_stats", "scope")? {
+        migrate_cache_kind_stats_v1_to_v2(conn)?;
+    }
+    Ok(())
+}
+
+fn init_schema(conn: &Connection, db_path: &Path) -> Result<(), rusqlite::Error> {
+    ensure_cache_entries(conn, db_path)?;
+    ensure_cache_kind_stats(conn)?;
+    Ok(())
+}
+
+pub(crate) fn scope_tag_for_db_path(path: &Path) -> &'static str {
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some("cache-std.sqlite") => "L0",
+        Some("cache-user.sqlite") => "L1",
+        Some("cache-project.sqlite") => "L2",
+        Some("rustmodlica-cache.sqlite") => "legacy",
+        Some(_) => "other",
+        None => "legacy",
+    }
 }
 
 fn now_ms() -> i64 {
@@ -85,19 +176,25 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn global_conn(path: &Path) -> Result<&'static Mutex<Connection>, rusqlite::Error> {
-    static CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
-    if let Some(c) = CONN.get() {
-        return Ok(c);
+fn global_conn(path: &Path) -> Result<Arc<Mutex<Connection>>, rusqlite::Error> {
+    static CONNS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> = OnceLock::new();
+    let key = path.to_path_buf();
+    let map = CONNS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = map.lock().unwrap();
+    if let Some(c) = g.get(&key) {
+        return Ok(Arc::clone(c));
     }
     let conn = conn_for_path(path)?;
-    init_schema(&conn)?;
-    Ok(CONN.get_or_init(|| Mutex::new(conn)))
+    init_schema(&conn, path)?;
+    let arc = Arc::new(Mutex::new(conn));
+    g.insert(key, Arc::clone(&arc));
+    Ok(arc)
 }
 
 pub fn sqlite_get(path: &Path, key: &str, kind_hint: &str) -> Result<Option<Vec<u8>>, rusqlite::Error> {
     let conn = global_conn(path)?;
     let guard = conn.lock().unwrap();
+    let scope = scope_tag_for_db_path(path);
     let mut stmt = guard.prepare("SELECT blob, kind FROM cache_entries WHERE key = ?1")?;
     let mut rows = stmt.query(params![key])?;
     if let Some(row) = rows.next()? {
@@ -110,28 +207,27 @@ pub fn sqlite_get(path: &Path, key: &str, kind_hint: &str) -> Result<Option<Vec<
         );
         let _ = guard.execute(
             r#"
-            INSERT INTO cache_kind_stats(kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
-            VALUES(?1, 1, 1, 0, 0, ?2, 0)
-            ON CONFLICT(kind) DO UPDATE SET
+            INSERT INTO cache_kind_stats(scope, kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+            VALUES(?1, ?2, 1, 1, 0, 0, ?3, 0)
+            ON CONFLICT(scope, kind) DO UPDATE SET
                 get_count = get_count + 1,
                 hit_count = hit_count + 1,
                 last_get_ms = excluded.last_get_ms
             "#,
-            params![kind, now],
+            params![scope, kind, now],
         );
         Ok(Some(blob))
     } else {
-        // Miss: still count the get against the caller's kind hint.
         let now = now_ms();
         let _ = guard.execute(
             r#"
-            INSERT INTO cache_kind_stats(kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
-            VALUES(?1, 1, 0, 0, 0, ?2, 0)
-            ON CONFLICT(kind) DO UPDATE SET
+            INSERT INTO cache_kind_stats(scope, kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+            VALUES(?1, ?2, 1, 0, 0, 0, ?3, 0)
+            ON CONFLICT(scope, kind) DO UPDATE SET
                 get_count = get_count + 1,
                 last_get_ms = excluded.last_get_ms
             "#,
-            params![kind_hint, now],
+            params![scope, kind_hint, now],
         );
         Ok(None)
     }
@@ -158,30 +254,32 @@ pub fn sqlite_put_atomic(
 ) -> Result<(), rusqlite::Error> {
     let conn = global_conn(path)?;
     let guard = conn.lock().unwrap();
+    let scope = scope_tag_for_db_path(path);
     let now = now_ms();
     guard.execute_batch("BEGIN IMMEDIATE")?;
     guard.execute(
         r#"
-        INSERT INTO cache_entries(key, schema, kind, blob, deps_json, created_ms, last_hit_ms, hit_count)
-        VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6, 0)
+        INSERT INTO cache_entries(key, scope, schema, kind, blob, deps_json, created_ms, last_hit_ms, hit_count)
+        VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 0)
         ON CONFLICT(key) DO UPDATE SET
+            scope=excluded.scope,
             schema=excluded.schema,
             kind=excluded.kind,
             blob=excluded.blob,
             deps_json=excluded.deps_json
         "#,
-        params![key, schema, kind, blob, deps_json, now],
+        params![key, scope, schema, kind, blob, deps_json, now],
     )?;
     let _ = guard.execute(
         r#"
-        INSERT INTO cache_kind_stats(kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
-        VALUES(?1, 0, 0, 1, ?2, 0, ?3)
-        ON CONFLICT(kind) DO UPDATE SET
+        INSERT INTO cache_kind_stats(scope, kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms)
+        VALUES(?1, ?2, 0, 0, 1, ?3, 0, ?4)
+        ON CONFLICT(scope, kind) DO UPDATE SET
             put_count = put_count + 1,
             bytes_put = bytes_put + excluded.bytes_put,
             last_put_ms = excluded.last_put_ms
         "#,
-        params![kind, blob.len() as i64, now],
+        params![scope, kind, blob.len() as i64, now],
     );
     guard.execute_batch("COMMIT")?;
     Ok(())
@@ -189,6 +287,7 @@ pub fn sqlite_put_atomic(
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CacheKindStatRow {
+    pub scope: String,
     pub kind: String,
     pub get_count: i64,
     pub hit_count: i64,
@@ -198,27 +297,72 @@ pub struct CacheKindStatRow {
     pub last_put_ms: i64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CacheStatsLayerExport {
+    pub tier: String,
+    pub db_path: String,
+    pub rows: Vec<CacheKindStatRow>,
+}
+
+/// Per-tier `cache_kind_stats` when the DB file already exists (does not create empty DBs).
+pub fn export_sqlite_kind_stats_layers(cache_dir: &Path) -> Vec<CacheStatsLayerExport> {
+    if !parse_bool_env("RUSTMODLICA_CACHE_SQLITE") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for scope in [
+        CacheScope::GlobalStd,
+        CacheScope::UserExt,
+        CacheScope::Project,
+    ] {
+        if let Some(cfg) = sqlite_config_for_scope(scope.clone(), Some(cache_dir)) {
+            if cfg.path.is_file() {
+                if let Ok(rows) = sqlite_kind_stats(&cfg.path) {
+                    out.push(CacheStatsLayerExport {
+                        tier: scope.prefix().to_string(),
+                        db_path: cfg.path.display().to_string(),
+                        rows,
+                    });
+                }
+            }
+        }
+    }
+    if let Some(cfg) = sqlite_config(Some(cache_dir)) {
+        if cfg.path.is_file() {
+            if let Ok(rows) = sqlite_kind_stats(&cfg.path) {
+                out.push(CacheStatsLayerExport {
+                    tier: "legacy".to_string(),
+                    db_path: cfg.path.display().to_string(),
+                    rows,
+                });
+            }
+        }
+    }
+    out
+}
+
 pub fn sqlite_kind_stats(path: &Path) -> Result<Vec<CacheKindStatRow>, rusqlite::Error> {
     let conn = global_conn(path)?;
     let guard = conn.lock().unwrap();
     let mut stmt = guard.prepare(
         r#"
-        SELECT kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms
+        SELECT scope, kind, get_count, hit_count, put_count, bytes_put, last_get_ms, last_put_ms
         FROM cache_kind_stats
-        ORDER BY kind ASC
+        ORDER BY scope ASC, kind ASC
         "#,
     )?;
     let mut rows = stmt.query([])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         out.push(CacheKindStatRow {
-            kind: row.get(0)?,
-            get_count: row.get(1)?,
-            hit_count: row.get(2)?,
-            put_count: row.get(3)?,
-            bytes_put: row.get(4)?,
-            last_get_ms: row.get(5)?,
-            last_put_ms: row.get(6)?,
+            scope: row.get(0)?,
+            kind: row.get(1)?,
+            get_count: row.get(2)?,
+            hit_count: row.get(3)?,
+            put_count: row.get(4)?,
+            bytes_put: row.get(5)?,
+            last_get_ms: row.get(6)?,
+            last_put_ms: row.get(7)?,
         });
     }
     Ok(out)
@@ -229,7 +373,7 @@ pub fn sqlite_invalidate_scope(path: &Path) -> Result<(), rusqlite::Error> {
     let guard = conn.lock().unwrap();
     guard.execute_batch("BEGIN IMMEDIATE")?;
     guard.execute("DELETE FROM cache_entries", [])?;
+    let _ = guard.execute("DELETE FROM cache_kind_stats", []);
     guard.execute_batch("COMMIT")?;
     Ok(())
 }
-

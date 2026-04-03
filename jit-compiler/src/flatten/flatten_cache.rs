@@ -2,7 +2,8 @@
 
 use super::ArraySizePolicy;
 use crate::cache::cache_key::{CacheKeyV2, CacheStage, CompileFlagsKey};
-use crate::cache::cache_scope::{classify_model_scope, CacheScope};
+use crate::cache::cache_scope::{classify_model_scope, scope_from_storage_key, sqlite_scope_lookup_chain, CacheScope};
+use crate::query_db::{record_cache_event, CacheEvent};
 use crate::cache::closure_hash;
 use crate::flatten::ValidationMode;
 use crate::flatten::cache_sqlite;
@@ -13,13 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
-fn infer_scope_from_deps(deps: &[PathBuf]) -> CacheScope {
-    deps.first()
-        .map(|p| classify_model_scope(p.as_path()))
-        .unwrap_or(CacheScope::Project)
-}
-
-
 thread_local! {
     // Session-local (thread-local) cache: fastest path for repeated validates in a long-lived process.
     static LOCAL_ARRAY_SIZES_CACHE: std::cell::RefCell<HashMap<String, Arc<HashMap<String, usize>>>> =
@@ -248,24 +242,13 @@ pub fn flatten_array_sizes_cache_key(
     };
     flags.warnings_level = warnings_level.to_string();
     flags.compile_stop = "flatten".to_string();
-    if let Some(p) = loader.get_path_for_model(model_name) {
-        if let Some(h) = closure_hash::unified_file_hash(&p) {
-            root_hash = h;
-        }
-    }
     if let Some(jp) = array_sizes_json {
         if let Some(h) = closure_hash::unified_file_hash(jp) {
             root_hash.push_str(h.as_str());
         }
     }
     CacheKeyV2::builder(CacheStage::ArraySizes, scope, model_name)
-        .libs_from_paths(
-            &loader
-                .library_paths
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>(),
-        )
+        .libs_from_path_bufs(loader.library_paths.as_slice())
         .root_content_hash(root_hash)
         .compile_flags(flags)
         .build()
@@ -320,13 +303,7 @@ pub fn flatten_full_cache_key(
         target_platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
     };
     CacheKeyV2::builder(CacheStage::FlatFull, scope, model_name)
-        .libs_from_paths(
-            &loader
-                .library_paths
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>(),
-        )
+        .libs_from_path_bufs(loader.library_paths.as_slice())
         .root_content_hash(root_hash)
         .compile_flags(flags)
         .build()
@@ -351,6 +328,7 @@ pub fn try_read_flat_cache_v1(
     if !full_cache_enabled() {
         return None;
     }
+    let scope_pf = scope_from_storage_key(key).prefix();
     // Tier 2: cross-process shared memory (fastest cross-process path).
     if let Some(bytes) = cache_shm::shm_get(key) {
         crate::query_db::perf_record_us("cache_get_us", 0);
@@ -365,6 +343,7 @@ pub fn try_read_flat_cache_v1(
                 && deps_match(&cache.deps)
             {
                 let _ = loader;
+                record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
                 return Some(cache.into_flat_model());
             }
         } else {
@@ -374,32 +353,37 @@ pub fn try_read_flat_cache_v1(
             );
         }
     }
-    // Tier 3: SQLite persistent store (optional).
-    if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(dir)) {
+    // Tier 3: SQLite persistent store (optional): L2 -> L1 -> L0 on miss.
+    let primary = scope_from_storage_key(key);
+    for scope in sqlite_scope_lookup_chain(primary) {
+        let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) else {
+            continue;
+        };
         let t_get = std::time::Instant::now();
-        if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key, "flat_cache_v1") {
-            crate::query_db::perf_record_us("cache_get_us", t_get.elapsed().as_micros() as u64);
-            let t_deser = std::time::Instant::now();
-            if let Ok(cache) = bincode::deserialize::<FlatCacheV1>(&bytes) {
-                crate::query_db::perf_record_us(
-                    "cache_deserialize_us",
-                    t_deser.elapsed().as_micros() as u64,
-                );
-                if cache.schema == FLAT_CACHE_SCHEMA_V1
-                    && cache.key == key
-                    && deps_match(&cache.deps)
-                {
-                    let _ = loader;
-                    // Promote into shared memory for subsequent processes.
-                    let _ = cache_shm::shm_put(key, &bytes);
-                    return Some(cache.into_flat_model());
-                }
-            } else {
-                crate::query_db::perf_record_us(
-                    "cache_deserialize_us",
-                    t_deser.elapsed().as_micros() as u64,
-                );
+        let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key, "flat_cache_v1") else {
+            continue;
+        };
+        crate::query_db::perf_record_us("cache_get_us", t_get.elapsed().as_micros() as u64);
+        let t_deser = std::time::Instant::now();
+        if let Ok(cache) = bincode::deserialize::<FlatCacheV1>(&bytes) {
+            crate::query_db::perf_record_us(
+                "cache_deserialize_us",
+                t_deser.elapsed().as_micros() as u64,
+            );
+            if cache.schema == FLAT_CACHE_SCHEMA_V1
+                && cache.key == key
+                && deps_match(&cache.deps)
+            {
+                let _ = loader;
+                let _ = cache_shm::shm_put(key, &bytes);
+                record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
+                return Some(cache.into_flat_model());
             }
+        } else {
+            crate::query_db::perf_record_us(
+                "cache_deserialize_us",
+                t_deser.elapsed().as_micros() as u64,
+            );
         }
     }
     // Legacy compatibility: read old JSON file and migrate to SHM/SQLite.
@@ -413,7 +397,9 @@ pub fn try_read_flat_cache_v1(
                 {
                     if let Ok(bytes) = bincode::serialize(&cache) {
                         let _ = cache_shm::shm_put(key, &bytes);
-                        if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(dir)) {
+                        if let Some(cfg) =
+                            cache_sqlite::sqlite_config_for_scope(scope_from_storage_key(key), Some(dir))
+                        {
                             let deps_json = serde_json::to_string(&cache.deps).ok();
                             let _ = cache_sqlite::sqlite_put(
                                 &cfg.path,
@@ -425,11 +411,13 @@ pub fn try_read_flat_cache_v1(
                             );
                         }
                     }
+                    record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
                     return Some(cache.into_flat_model());
                 }
             }
         }
     }
+    record_cache_event(scope_pf, "flat_full", CacheEvent::Miss);
     None
 }
 
@@ -455,7 +443,8 @@ pub fn write_flat_cache_v1(
         });
     }
     let cache = FlatCacheV1::from_flat_model(key.to_string(), model_name, flat, entries);
-    let scope = infer_scope_from_deps(deps);
+    let scope = scope_from_storage_key(key);
+    let scope_pf = scope.prefix();
     if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) {
         let bytes = bincode::serialize(&cache).map_err(|e| e.to_string())?;
         let _ = cache_shm::shm_put(key, &bytes);
@@ -468,11 +457,13 @@ pub fn write_flat_cache_v1(
             &bytes,
             Some(deps_json.as_str()),
         );
+        record_cache_event(scope_pf, "flat_full", CacheEvent::Write);
         return Ok(());
     }
     // No SQLite config available; persist only in shared memory.
     let bytes = bincode::serialize(&cache).map_err(|e| e.to_string())?;
     let _ = cache_shm::shm_put(key, &bytes);
+    record_cache_event(scope_pf, "flat_full", CacheEvent::Write);
     Ok(())
 }
 
@@ -490,8 +481,10 @@ pub fn get_or_compute_flattened_model_v1<F>(
 where
     F: FnOnce() -> Result<crate::flatten::FlattenedModel, crate::flatten::FlattenError>,
 {
+    let scope_pf = scope_from_storage_key(key).prefix();
     if let Ok(h) = hot_full_cache().read() {
         if let Some(v) = h.get(key) {
+            record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
             return Ok((**v).clone());
         }
     }
@@ -513,10 +506,12 @@ pub fn merge_cached_array_sizes(
     key: &str,
     external: &mut HashMap<String, usize>,
 ) -> Result<(), String> {
+    let scope_pf = scope_from_storage_key(key).prefix();
     if let Some(mem) = mem_cache_get(key) {
         for (k, v) in mem.as_ref() {
             external.entry(k.clone()).or_insert(*v);
         }
+        record_cache_event(scope_pf, "array_sizes", CacheEvent::Hit);
         return Ok(());
     }
 
@@ -528,21 +523,28 @@ pub fn merge_cached_array_sizes(
                     external.entry(k).or_insert(v);
                 }
                 mem_cache_put(key, Arc::new(external.clone()));
+                record_cache_event(scope_pf, "array_sizes", CacheEvent::Hit);
                 return Ok(());
             }
         }
     }
-    if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(dir)) {
-        if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, k2.as_str(), "array_sizes_v2") {
-            if let Ok(cache) = bincode::deserialize::<ArraySizesCacheV2>(&bytes) {
-                if cache.schema == ARRAY_SIZES_CACHE_SCHEMA_V2 && cache.key == k2 {
-                    let _ = cache_shm::shm_put(k2.as_str(), &bytes);
-                    for (k, v) in cache.sizes {
-                        external.entry(k).or_insert(v);
-                    }
-                    mem_cache_put(key, Arc::new(external.clone()));
-                    return Ok(());
+    let primary = scope_from_storage_key(k2.as_str());
+    for scope in sqlite_scope_lookup_chain(primary) {
+        let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) else {
+            continue;
+        };
+        let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, k2.as_str(), "array_sizes_v2") else {
+            continue;
+        };
+        if let Ok(cache) = bincode::deserialize::<ArraySizesCacheV2>(&bytes) {
+            if cache.schema == ARRAY_SIZES_CACHE_SCHEMA_V2 && cache.key == k2 {
+                let _ = cache_shm::shm_put(k2.as_str(), &bytes);
+                for (k, v) in cache.sizes {
+                    external.entry(k).or_insert(v);
                 }
+                mem_cache_put(key, Arc::new(external.clone()));
+                record_cache_event(scope_pf, "array_sizes", CacheEvent::Hit);
+                return Ok(());
             }
         }
     }
@@ -568,12 +570,15 @@ pub fn merge_cached_array_sizes(
                         }
                         let _ = write_array_sizes_cache(dir, key, &migrated);
                         mem_cache_put(key, Arc::new(external.clone()));
+                        record_cache_event(scope_pf, "array_sizes", CacheEvent::Hit);
+                        return Ok(());
                     }
                 }
             }
         }
     }
 
+    record_cache_event(scope_pf, "array_sizes", CacheEvent::Miss);
     Ok(())
 }
 
@@ -587,8 +592,11 @@ pub fn write_array_sizes_cache(dir: &Path, key: &str, sizes: &HashMap<String, us
         deps: Vec::new(),
     };
     if let Ok(bytes) = bincode::serialize(&cache) {
+        let scope_pf = scope_from_storage_key(k2.as_str()).prefix();
         let _ = cache_shm::shm_put(k2.as_str(), &bytes);
-        if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(dir)) {
+        if let Some(cfg) =
+            cache_sqlite::sqlite_config_for_scope(scope_from_storage_key(k2.as_str()), Some(dir))
+        {
             let _ = cache_sqlite::sqlite_put(
                 &cfg.path,
                 k2.as_str(),
@@ -598,6 +606,7 @@ pub fn write_array_sizes_cache(dir: &Path, key: &str, sizes: &HashMap<String, us
                 None,
             );
         }
+        record_cache_event(scope_pf, "array_sizes", CacheEvent::Write);
     }
     mem_cache_put(key, Arc::new(sizes.clone()));
     Ok(())

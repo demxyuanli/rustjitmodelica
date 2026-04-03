@@ -1,6 +1,21 @@
+//! Cross-process shared-memory cache tier.
+//!
+//! Segment OS identifiers embed [`crate::cache::ir_epoch::IR_SCHEMA_EPOCH`]. When the epoch is
+//! bumped, new processes use a fresh segment namespace so stale serialized blobs are not reused.
+//!
+//! Record keys stored in the arena must match the strings passed to [`shm_get`] / [`shm_put`].
+//! Callers should use qualified keys from [`crate::cache::cache_key::CacheKeyV2::to_qualified_key`]
+//! (they include `L0` / `L1` / `L2` scope) and any `RUSTMODLICA_QUERY_CACHE_NAMESPACE` prefix applied
+//! by the query cache layer.
+//!
+//! Index entries use a stable 64-bit hash of the full key string ([`hash_key64`]); writers update
+//! the arena before publishing `seg`/`off`/`len`, and readers verify the embedded key bytes match.
+
+use crate::cache::ir_epoch::IR_SCHEMA_EPOCH;
 use shared_memory::{Shmem, ShmemConf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
+use xxhash_rust::xxh64::Xxh64;
 
 const MAGIC: u32 = 0x4D_4F_44_43; // "MODC"
 const VERSION: u32 = 1;
@@ -24,7 +39,7 @@ fn shm_base_name() -> String {
 }
 
 fn shm_seg_name(seg: u32) -> String {
-    format!("{}_v{}_seg{}", shm_base_name(), VERSION, seg)
+    format!("{}_e{}_v{}_seg{}", shm_base_name(), IR_SCHEMA_EPOCH, VERSION, seg)
 }
 
 #[repr(C)]
@@ -149,10 +164,9 @@ fn state() -> Option<&'static ShmState> {
 }
 
 fn hash_key64(key: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.hash(&mut h);
-    h.finish()
+    let mut h = Xxh64::new(0);
+    h.update(key.as_bytes());
+    h.digest()
 }
 
 fn pack_record(key: &str, payload: &[u8]) -> Vec<u8> {

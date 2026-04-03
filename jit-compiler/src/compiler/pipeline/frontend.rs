@@ -250,12 +250,7 @@ pub(crate) fn flatten_and_inline(
     let salsa_enabled = salsa_query_path_enabled(validate_only);
     if salsa_enabled {
         let mut db = query_db::Database::default();
-        let libs: Vec<String> = loader
-            .library_paths
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect();
-        db.set_library_paths(std::sync::Arc::new(libs));
+        db.set_library_paths(std::sync::Arc::new(loader.library_paths.clone()));
         db.set_coarse_constrainedby_only(coarse_constrainedby_only);
         db.set_compile_stop(std::sync::Arc::new(compile_stop_s.to_string()));
         db.set_validation_mode(std::sync::Arc::new(format!("{:?}", validation_mode)));
@@ -265,12 +260,7 @@ pub(crate) fn flatten_and_inline(
     let mut flat_model = if salsa_enabled {
         // Prefer query-based composition when enabled.
         let mut db = query_db::Database::default();
-        let libs: Vec<String> = loader
-            .library_paths
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect();
-        db.set_library_paths(std::sync::Arc::new(libs));
+        db.set_library_paths(std::sync::Arc::new(loader.library_paths.clone()));
         db.set_coarse_constrainedby_only(coarse_constrainedby_only);
         db.set_compile_stop(std::sync::Arc::new(compile_stop_s.to_string()));
         db.set_validation_mode(std::sync::Arc::new(format!("{:?}", validation_mode)));

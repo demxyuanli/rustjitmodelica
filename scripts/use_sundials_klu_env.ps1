@@ -1,6 +1,6 @@
 param(
     [string]$VcpkgRoot = "D:/repos/vcpkg",
-    [string]$Command = "cargo build -p rustmodlica --features sundials,sundials-klu"
+    [string]$Command = ""
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +38,12 @@ $env:CMAKE_ARGS = @(
     "-DBTF_LIBRARY=$libRootPosix/btf.lib",
     "-DSUITESPARSE_CONFIG_LIBRARY=$libRootPosix/suitesparseconfig.lib"
 ) -join " "
+
+$featuresRaw = [string]$env:RUSTMODLICA_CARGO_FEATURES
+if ([string]::IsNullOrWhiteSpace($Command)) {
+    if ([string]::IsNullOrWhiteSpace($featuresRaw)) { $featuresRaw = "sundials,sundials-klu" }
+    $Command = "cargo build -p rustmodlica --features $featuresRaw"
+}
 
 Write-Host "Configured SuiteSparse/KLU environment from: $installedPosix"
 Write-Host "Running command: $Command"

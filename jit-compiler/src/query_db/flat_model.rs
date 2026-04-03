@@ -33,7 +33,7 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
     let mut flags = flags_for_query_stage(db);
     flags.coarse_constrainedby_only = coarse;
     let key_v2 = CacheKeyV2::builder(CacheStage::FlatModelQ, scope.clone(), model_name.as_str())
-        .libs_from_paths(libs.as_ref())
+        .libs_from_path_bufs(libs.as_slice())
         .root_content_hash(root_hash)
         .compile_flags(flags)
         .build();
@@ -61,30 +61,29 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
             }
         }
         if let Some(dir) = crate::flatten::flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) =
-                crate::flatten::cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path()))
-            {
-                if let Ok(Some(bytes)) =
-                    crate::flatten::cache_sqlite::sqlite_get(&cfg.path, key.as_str(), "flat_model_q_v1")
-                {
-                    if let Ok(cache) = bincode::deserialize::<FlatModelQCacheV1>(&bytes) {
-                        if cache.schema == FLAT_MODEL_Q_SCHEMA_V1
-                            && cache.key == key
-                            && cache_deps_match_for_stage(&scope, "flat_model_q", &cache.deps)
-                        {
-                            crate::query_db::perf::record_cache_event(
-                                scope.prefix(),
-                                "flat_model_q",
-                                crate::query_db::perf::CacheEvent::Hit,
-                            );
-                            let _ = crate::flatten::cache_shm::shm_put(key.as_str(), &bytes);
+            if let Some(bytes) = super::sqlite_get_with_scope_chain(
+                dir.as_path(),
+                scope.clone(),
+                key.as_str(),
+                "flat_model_q_v1",
+            ) {
+                if let Ok(cache) = bincode::deserialize::<FlatModelQCacheV1>(&bytes) {
+                    if cache.schema == FLAT_MODEL_Q_SCHEMA_V1
+                        && cache.key == key
+                        && cache_deps_match_for_stage(&scope, "flat_model_q", &cache.deps)
+                    {
+                        crate::query_db::perf::record_cache_event(
+                            scope.prefix(),
+                            "flat_model_q",
+                            crate::query_db::perf::CacheEvent::Hit,
+                        );
+                        let _ = crate::flatten::cache_shm::shm_put(key.as_str(), &bytes);
                         super::dep_record_deps(&cache.deps);
-                            let flat = Arc::new(cache.flat.into_flat_model());
-                            return super::FlatModelResPtr(Arc::new(FlatModelResult {
-                                flat: Some(flat),
-                                err: None,
-                            }));
-                        }
+                        let flat = Arc::new(cache.flat.into_flat_model());
+                        return super::FlatModelResPtr(Arc::new(FlatModelResult {
+                            flat: Some(flat),
+                            err: None,
+                        }));
                     }
                 }
             }
@@ -217,8 +216,8 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
         flattener.coarse_constrainedby_only = coarse;
         flattener.validation_mode = ValidationMode::parse(db.validation_mode().as_str());
         flattener.warnings_level = "all".to_string();
-        for p in libs.as_ref() {
-            flattener.loader.add_path(p.into());
+        for p in libs.iter() {
+            flattener.loader.add_path(p.clone());
         }
         let root_path = model_name.replace('/', ".");
         let t_conn = std::time::Instant::now();

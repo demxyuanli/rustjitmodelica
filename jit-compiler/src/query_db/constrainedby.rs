@@ -169,7 +169,7 @@ pub fn constrainedby_holds_extends_q(
         scope.clone(),
         input.scope_model_name.as_str(),
     )
-    .libs_from_paths(libs.as_ref())
+    .libs_from_path_bufs(libs.as_slice())
     .root_content_hash(format!(
         "{}|{}|{}|{}|{}",
         input.import_scope,
@@ -204,31 +204,32 @@ pub fn constrainedby_holds_extends_q(
             }
         }
         if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
-                if let Ok(Some(bytes)) =
-                    cache_sqlite::sqlite_get(&cfg.path, key.as_str(), "constrainedby_v1")
-                {
-                    if let Ok(cache) = bincode::deserialize::<ConstrainedByCacheV1>(&bytes) {
-                        if cache.schema == CONSTRAINEDBY_CACHE_SCHEMA_V1
-                            && cache.key == key
-                            && super::cache_deps_match_for_stage(&scope, "constrainedby", &cache.deps)
-                        {
-                            crate::query_db::perf::record_cache_event(
-                                scope.prefix(),
-                                "constrainedby",
-                                crate::query_db::perf::CacheEvent::Hit,
-                            );
-                            let _ = cache_shm::shm_put(key.as_str(), &bytes);
-                            super::dep_record_deps(&cache.deps);
-                            crate::query_db::perf::record_us(
-                                "constrainedby_us",
-                                wall.elapsed().as_micros() as u64,
-                            );
-                            return ConstrainedByResPtr(Arc::new(ConstrainedByResult {
-                                out: cache.out,
-                                err: None,
-                            }));
-                        }
+            if let Some(bytes) = super::sqlite_get_with_scope_chain(
+                dir.as_path(),
+                scope.clone(),
+                key.as_str(),
+                "constrainedby_v1",
+            ) {
+                if let Ok(cache) = bincode::deserialize::<ConstrainedByCacheV1>(&bytes) {
+                    if cache.schema == CONSTRAINEDBY_CACHE_SCHEMA_V1
+                        && cache.key == key
+                        && super::cache_deps_match_for_stage(&scope, "constrainedby", &cache.deps)
+                    {
+                        crate::query_db::perf::record_cache_event(
+                            scope.prefix(),
+                            "constrainedby",
+                            crate::query_db::perf::CacheEvent::Hit,
+                        );
+                        let _ = cache_shm::shm_put(key.as_str(), &bytes);
+                        super::dep_record_deps(&cache.deps);
+                        crate::query_db::perf::record_us(
+                            "constrainedby_us",
+                            wall.elapsed().as_micros() as u64,
+                        );
+                        return ConstrainedByResPtr(Arc::new(ConstrainedByResult {
+                            out: cache.out,
+                            err: None,
+                        }));
                     }
                 }
             }
@@ -297,9 +298,8 @@ pub fn constrainedby_holds_extends_cached_with_loader(
     new_type_raw: &str,
     constraint_raw: &str,
 ) -> Result<bool, FlattenError> {
-    let libs: Vec<String> = loader.library_paths.iter().map(|p| p.display().to_string()).collect();
     let mut db = crate::query_db::Database::default();
-    db.set_library_paths(Arc::new(libs));
+    db.set_library_paths(Arc::new(loader.library_paths.clone()));
     db.set_coarse_constrainedby_only(false);
     let input = ConstrainedByInput {
         scope_model_name: scope_model.name.clone(),

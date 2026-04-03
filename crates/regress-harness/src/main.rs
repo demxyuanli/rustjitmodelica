@@ -32,7 +32,6 @@ mod sparse_dense;
 mod event_scan_matrix;
 mod coverage_status;
 mod ui;
-mod jit_validate;
 mod jit_phase1;
 mod jit_script_mode;
 
@@ -314,7 +313,7 @@ fn run_cli() -> Result<()> {
         Some(Commands::Jit { command }) => match command {
             JitCommands::TestlibValidate { cargo_target_subdir } => {
                 let repo_root = discover_repo_root()?;
-                let s = jit_validate::legacy::testlib_validate_batch(
+                let s = regress_harness::jit_validate::legacy::testlib_validate_batch(
                     &repo_root,
                     cargo_target_subdir.as_deref(),
                 )?;

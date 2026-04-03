@@ -49,7 +49,7 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         scope.clone(),
         model_name.as_str(),
     )
-    .libs_from_paths(libs.as_ref())
+    .libs_from_path_bufs(libs.as_slice())
     .root_content_hash(root_hash)
     .compile_flags(CompileFlagsKey {
         validation_mode: format!("{validation_mode:?}"),
@@ -87,31 +87,32 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
             }
         }
         if let Some(dir) = crate::flatten::flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
-                if let Ok(Some(bytes)) =
-                    crate::flatten::cache_sqlite::sqlite_get(&cfg.path, key.as_str(), "eq_expand_v1")
-                {
-                    if let Ok(cache) = bincode::deserialize::<EqExpandCacheV1>(&bytes) {
-                        if cache.schema == EQ_EXPAND_CACHE_SCHEMA_V1
-                            && cache.key == key
-                            && super::cache_deps_match_for_stage(&scope, "eq_expand", &cache.deps)
-                        {
-                            crate::query_db::perf::record_cache_event(
-                                scope.prefix(),
-                                "eq_expand",
-                                crate::query_db::perf::CacheEvent::Hit,
-                            );
-                            let _ = crate::flatten::cache_shm::shm_put(key.as_str(), &bytes);
+            if let Some(bytes) = super::sqlite_get_with_scope_chain(
+                dir.as_path(),
+                scope.clone(),
+                key.as_str(),
+                "eq_expand_v1",
+            ) {
+                if let Ok(cache) = bincode::deserialize::<EqExpandCacheV1>(&bytes) {
+                    if cache.schema == EQ_EXPAND_CACHE_SCHEMA_V1
+                        && cache.key == key
+                        && super::cache_deps_match_for_stage(&scope, "eq_expand", &cache.deps)
+                    {
+                        crate::query_db::perf::record_cache_event(
+                            scope.prefix(),
+                            "eq_expand",
+                            crate::query_db::perf::CacheEvent::Hit,
+                        );
+                        let _ = crate::flatten::cache_shm::shm_put(key.as_str(), &bytes);
                         super::dep_record_deps(&cache.deps);
-                            crate::query_db::perf::record_us(
-                                "eq_expand_us",
-                                wall.elapsed().as_micros() as u64,
-                            );
-                            return super::EqExpandResPtr(Arc::new(EqExpandResult {
-                                out: cache.out,
-                                err: cache.err,
-                            }));
-                        }
+                        crate::query_db::perf::record_us(
+                            "eq_expand_us",
+                            wall.elapsed().as_micros() as u64,
+                        );
+                        return super::EqExpandResPtr(Arc::new(EqExpandResult {
+                            out: cache.out,
+                            err: cache.err,
+                        }));
                     }
                 }
             }
@@ -140,8 +141,8 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
     flattener.validation_mode = validation_mode;
     flattener.array_size_policy = ArraySizePolicy::default();
     flattener.warnings_level = "all".to_string();
-    for p in libs.as_ref() {
-        flattener.loader.add_path(p.into());
+    for p in libs.iter() {
+        flattener.loader.add_path(p.clone());
     }
     flattener.loader.set_quiet(true);
 

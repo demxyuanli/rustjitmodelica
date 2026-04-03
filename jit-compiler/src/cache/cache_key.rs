@@ -116,15 +116,31 @@ pub struct CacheKeyV2Builder {
     key: CacheKeyV2,
 }
 
+fn libs_closure_digest_from_normalized(mut normalized: Vec<String>) -> String {
+    normalized.sort_unstable();
+    let mut h = Xxh64::new(0);
+    for p in normalized {
+        h.update(p.as_bytes());
+    }
+    format!("{:016x}", h.digest())
+}
+
 impl CacheKeyV2Builder {
     pub fn libs_from_paths(mut self, libs: &[String]) -> Self {
-        let mut normalized: Vec<String> = libs.iter().map(|s| normalize_path_for_key(Path::new(s))).collect();
-        normalized.sort();
-        let mut h = Xxh64::new(0);
-        for p in normalized {
-            h.update(p.as_bytes());
-        }
-        self.key.libs_closure_hash = format!("{:016x}", h.digest());
+        let normalized: Vec<String> = libs
+            .iter()
+            .map(|s| normalize_path_for_key(Path::new(s.as_str())))
+            .collect();
+        self.key.libs_closure_hash = libs_closure_digest_from_normalized(normalized);
+        self
+    }
+
+    pub fn libs_from_path_bufs(mut self, libs: &[std::path::PathBuf]) -> Self {
+        let normalized: Vec<String> = libs
+            .iter()
+            .map(|p| normalize_path_for_key(p.as_path()))
+            .collect();
+        self.key.libs_closure_hash = libs_closure_digest_from_normalized(normalized);
         self
     }
 

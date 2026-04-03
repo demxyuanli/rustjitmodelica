@@ -597,19 +597,35 @@ pub(super) fn compile(
         if let Ok(stats_path) = std::env::var("RUSTMODLICA_CACHE_STATS_JSON") {
             if !stats_path.trim().is_empty() {
                 if let Some(cache_dir) = flatten_cache::flatten_cache_dir() {
-                    if let Some(cfg) = cache_sqlite::sqlite_config(Some(cache_dir.as_path())) {
-                        if let Ok(rows) = cache_sqlite::sqlite_kind_stats(&cfg.path) {
-                            let payload = serde_json::json!({
-                                "model": model_name,
-                                "generated_ms": std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_millis() as i64)
-                                    .unwrap_or(0),
-                                "rows": rows
-                            });
-                            let _ = std::fs::write(stats_path.trim(), payload.to_string());
+                    let mut layers =
+                        cache_sqlite::export_sqlite_kind_stats_layers(cache_dir.as_path());
+                    if layers.is_empty() {
+                        if let Some(cfg) =
+                            cache_sqlite::sqlite_config(Some(cache_dir.as_path()))
+                        {
+                            if let Ok(rows) = cache_sqlite::sqlite_kind_stats(&cfg.path) {
+                                layers.push(cache_sqlite::CacheStatsLayerExport {
+                                    tier: "legacy".to_string(),
+                                    db_path: cfg.path.display().to_string(),
+                                    rows,
+                                });
+                            }
                         }
                     }
+                    let rows: Vec<cache_sqlite::CacheKindStatRow> = layers
+                        .iter()
+                        .flat_map(|l| l.rows.iter().cloned())
+                        .collect();
+                    let payload = serde_json::json!({
+                        "model": model_name,
+                        "generated_ms": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0),
+                        "layers": layers,
+                        "rows": rows
+                    });
+                    let _ = std::fs::write(stats_path.trim(), payload.to_string());
                 }
             }
         }

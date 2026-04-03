@@ -95,6 +95,18 @@ fn parse_scope_stage_map(c: &serde_json::Value, key: &str) -> BTreeMap<String, B
     out
 }
 
+fn add_scope_stage_counts_into(
+    src: &BTreeMap<String, BTreeMap<String, u64>>,
+    stage: &str,
+    dst: &mut BTreeMap<String, u64>,
+) {
+    for (scope, stages) in src {
+        if let Some(n) = stages.get(stage) {
+            *dst.entry(scope.clone()).or_insert(0) += *n;
+        }
+    }
+}
+
 fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf> {
     let text = std::fs::read_to_string(perf_json_path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -104,7 +116,7 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
     let scope_stage_misses = parse_scope_stage_map(c, "cache_scope_stage_misses");
     let scope_stage_invalidations = parse_scope_stage_map(c, "cache_scope_stage_invalidations");
     Some(ParsedCompilePerf {
-        flatten_inline_ms: json_get_u64(c, "flatten_inline_ms")?,
+        flatten_inline_ms: u("flatten_inline_ms"),
         flatten_wall_ms: u("flatten_wall_ms"),
         inline_wall_ms: u("inline_wall_ms"),
         decl_expand_ms: u("decl_expand_ms"),
@@ -214,6 +226,26 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                         *layer.stage_invalidations.entry(stage.clone()).or_insert(0) += *count;
                     }
                 }
+                add_scope_stage_counts_into(
+                    &m.cache_scope_stage_hits,
+                    "flat_full",
+                    &mut s.cache_flat_full_layer_hits,
+                );
+                add_scope_stage_counts_into(
+                    &m.cache_scope_stage_misses,
+                    "flat_full",
+                    &mut s.cache_flat_full_layer_misses,
+                );
+                add_scope_stage_counts_into(
+                    &m.cache_scope_stage_hits,
+                    "array_sizes",
+                    &mut s.cache_array_sizes_layer_hits,
+                );
+                add_scope_stage_counts_into(
+                    &m.cache_scope_stage_misses,
+                    "array_sizes",
+                    &mut s.cache_array_sizes_layer_misses,
+                );
                 if c.run_index == 1 {
                     s.run1_flatten_inline_ms = Some(m.flatten_inline_ms);
                     s.run1_decl_expand_ms = Some(m.decl_expand_ms);

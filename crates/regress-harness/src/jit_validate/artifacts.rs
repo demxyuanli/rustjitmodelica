@@ -99,6 +99,16 @@ pub struct ModelPerfStats {
     pub best_after_run1_decl_expand_ms: Option<u64>,
     #[serde(default)]
     pub cache_layer_stats: Option<BTreeMap<String, LayerStats>>,
+    /// Hits per scope (L0/L1/L2) for JIT flatten full cache (`cache_stage_*:Lx:flat_full`).
+    #[serde(default)]
+    pub cache_flat_full_layer_hits: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub cache_flat_full_layer_misses: BTreeMap<String, u64>,
+    /// Hits per scope for array size merge hint cache (`cache_stage_*:Lx:array_sizes`).
+    #[serde(default)]
+    pub cache_array_sizes_layer_hits: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub cache_array_sizes_layer_misses: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

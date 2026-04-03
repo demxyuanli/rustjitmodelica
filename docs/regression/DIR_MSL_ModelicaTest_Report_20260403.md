@@ -4,7 +4,7 @@
 
 This report summarizes the **directory-scale** run produced by `run_modelica_dir_regression.ps1` with merged output in `build_modelica_dir_regress/summary.txt` (parallel shards, run logs stamped `20260403_0013xx`–`001357`).
 
-**Baseline bundle (separate from this narrative):** `build/regression_baseline/dir_20260403/` — machine-oriented artifacts for diffing and archival (`metrics.json`, full failure list, connector excerpt, log index).
+**Baseline bundle (separate from this narrative):** `baseline/20260403/` — machine-oriented artifacts for diffing and archival (`metrics.json`, full failure list, connector excerpt, log index).
 
 ## Executive summary
 
@@ -48,7 +48,7 @@ Under `run_modelica_dir_regression.ps1`, **any `!!` line increments the failure 
 
 ## Thematic clusters (non-exhaustive)
 
-1. **`FLATTEN_INCOMPATIBLE_CONNECTOR`** — **5** failures, all under `ModelicaTest.MultiBody.Forces.*`: `Interfaces.Frame_resolve` vs `Modelica.Mechanics.MultiBody.Interfaces.Frame_resolve`. Full lines are copied to `build/regression_baseline/dir_20260403/excerpt_flatten_incompatible_connector.txt`.
+1. **`FLATTEN_INCOMPATIBLE_CONNECTOR`** — **5** failures, all under `ModelicaTest.MultiBody.Forces.*`: `Interfaces.Frame_resolve` vs `Modelica.Mechanics.MultiBody.Interfaces.Frame_resolve`. Full lines are copied to `baseline/20260403/excerpt_flatten_incompatible_connector.txt`.
 2. **Fluid** — many `Modelica.Fluid.*` and `ModelicaTest.Fluid.*` failures with `sim_failed` or abrupt process exit; see domain sample counts in `metrics.json`.
 3. **Magnetic / electrical machines** — recurring `exit=-1073740791` on FundamentalWave and QuasiStatic machine examples.
 4. **Parallel shard 5** — `parallel_summary_missing` and `parallel_worker_failed` indicate **one worker did not produce a clean shard summary**; treat as **infra noise** until re-run confirms.
@@ -56,7 +56,7 @@ Under `run_modelica_dir_regression.ps1`, **any `!!` line increments the failure 
 ## Key logs to open first
 
 1. **Merged index:** `build_modelica_dir_regress/summary.txt`
-2. **Structured index:** `build/regression_baseline/dir_20260403/KEY_LOGS.md`
+2. **Structured index:** `baseline/20260403/KEY_LOGS.md`
 3. **Per-case timing / CSV gate:** `build_modelica_dir_regress/parallel_shard_*/runlog_20260403_*.csv`
 4. **Deep dive on a single model:** matching `build_modelica_dir_regress/parallel_shard_*/logs/<ModelName>.log`
 
@@ -64,10 +64,10 @@ Under `run_modelica_dir_regression.ps1`, **any `!!` line increments the failure 
 
 1. **Re-run or inspect shard 5** (`parallel_shard_5`) to see if the parallel failure is transient (AV, OOM, file lock).
 2. **Triage `ModelicaTest.MultiBody.Forces.*` connector typing** as a single fix may collapse five failures.
-3. **Compare future runs** against `build/regression_baseline/dir_20260403/metrics.json` (diff `totals`, `failed_by_prefix`, and domain samples).
+3. **Compare future runs** against `baseline/20260403/metrics.json` (diff `totals`, `failed_by_prefix`, and domain samples).
 
 ## Related documents
 
-- Baseline bundle: `build/regression_baseline/dir_20260403/`
+- Baseline bundle: `baseline/20260403/`
 - Upstream script: `run_modelica_dir_regression.ps1`
 - Full regression wrapper: `run_regression.ps1` (DIR stage)

@@ -82,3 +82,52 @@ pub fn classify_model_scope(lib_path: &Path) -> CacheScope {
     }
     CacheScope::Project
 }
+
+/// Resolves scope from a storage key produced by [`crate::cache::cache_key::CacheKeyV2::to_qualified_key`]
+/// (and optional `RUSTMODLICA_QUERY_CACHE_NAMESPACE` prefix).
+pub fn scope_from_storage_key(key: &str) -> CacheScope {
+    fn from_token(t: &str) -> Option<CacheScope> {
+        if t == CacheScope::GlobalStd.prefix() {
+            Some(CacheScope::GlobalStd)
+        } else if t == CacheScope::UserExt.prefix() {
+            Some(CacheScope::UserExt)
+        } else if t == CacheScope::Project.prefix() {
+            Some(CacheScope::Project)
+        } else {
+            None
+        }
+    }
+    let mut it = key.split(':');
+    let Some(first) = it.next() else {
+        return CacheScope::Project;
+    };
+    if let Some(s) = from_token(first) {
+        return s;
+    }
+    if let Some(second) = it.next() {
+        if let Some(s) = from_token(second) {
+            return s;
+        }
+    }
+    for t in key.split(':') {
+        if let Some(s) = from_token(t) {
+            return s;
+        }
+    }
+    CacheScope::Project
+}
+
+/// SQLite tier lookup: preferred scope first, then outward (L2 -> L1 -> L0).
+pub fn sqlite_scope_lookup_chain(primary: CacheScope) -> impl Iterator<Item = CacheScope> {
+    match primary {
+        CacheScope::Project => [
+            Some(CacheScope::Project),
+            Some(CacheScope::UserExt),
+            Some(CacheScope::GlobalStd),
+        ],
+        CacheScope::UserExt => [Some(CacheScope::UserExt), Some(CacheScope::GlobalStd), None],
+        CacheScope::GlobalStd => [Some(CacheScope::GlobalStd), None, None],
+    }
+    .into_iter()
+    .flatten()
+}
