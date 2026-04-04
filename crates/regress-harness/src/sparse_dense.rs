@@ -60,6 +60,9 @@ pub struct BenchRow {
     pub status: String,
     pub wall_ms: i128,
     pub compile_jit_ms: Option<i64>,
+    /// Track B: same measurement window as `jit_ms` (`codegen_wall_ms` from compile perf JSON).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compile_codegen_wall_ms: Option<i64>,
     pub blt_guard_triggered: Option<bool>,
     pub perf_json: String,
     pub result_csv: String,
@@ -129,6 +132,10 @@ pub fn bench_sparse_dense(
                 .as_ref()
                 .and_then(|v| v.get("jit_ms"))
                 .and_then(|x| x.as_i64());
+            let compile_codegen_wall_ms = cp
+                .as_ref()
+                .and_then(|v| v.get("codegen_wall_ms"))
+                .and_then(|x| x.as_i64());
             let blt_guard_triggered = cp
                 .as_ref()
                 .and_then(|v| v.get("blt_degrade_guard_triggered"))
@@ -141,6 +148,7 @@ pub fn bench_sparse_dense(
                 status,
                 wall_ms,
                 compile_jit_ms,
+                compile_codegen_wall_ms,
                 blt_guard_triggered,
                 perf_json: perf_path.to_string_lossy().to_string(),
                 result_csv: result_path.to_string_lossy().to_string(),
@@ -149,16 +157,19 @@ pub fn bench_sparse_dense(
     }
 
     let mut csv = String::new();
-    csv.push_str("model,path_preference,exit_code,status,wall_ms,compile_jit_ms,blt_degrade_guard_triggered,perf_json,result_csv\n");
+    csv.push_str("model,path_preference,exit_code,status,wall_ms,compile_jit_ms,compile_codegen_wall_ms,blt_degrade_guard_triggered,perf_json,result_csv\n");
     for r in &rows {
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{}\n",
             r.model,
             r.path_preference,
             r.exit_code,
             r.status,
             r.wall_ms,
             r.compile_jit_ms
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "".to_string()),
+            r.compile_codegen_wall_ms
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "".to_string()),
             r.blt_guard_triggered
@@ -198,6 +209,8 @@ pub struct SummaryRow {
     pub sample_count: usize,
     pub wall_ms_median: f64,
     pub compile_jit_ms_median: f64,
+    #[serde(default)]
+    pub compile_codegen_wall_ms_median: f64,
     pub blt_guard_filter: String,
 }
 
@@ -235,9 +248,11 @@ pub fn summarize_sparse_dense(
         if !header.contains("model") {
             continue;
         }
+        let extended = header.contains("compile_codegen_wall_ms");
         for line in it {
             let cols = line.split(',').map(|s| s.trim()).collect::<Vec<_>>();
-            if cols.len() < 9 {
+            let min_cols = if extended { 10 } else { 9 };
+            if cols.len() < min_cols {
                 continue;
             }
             let model = cols[0].to_string();
@@ -250,8 +265,18 @@ pub fn summarize_sparse_dense(
             }
             let path_preference = cols[1].to_string();
             let wall_ms = cols[4].parse::<i128>().unwrap_or(-1);
-            let compile_jit_ms = cols[5].parse::<i64>().ok();
-            let blt_guard_triggered = cols[6].parse::<bool>().ok();
+            let (compile_jit_ms, compile_codegen_wall_ms, blt_i, perf_i, res_i) = if extended {
+                (
+                    cols[5].parse::<i64>().ok(),
+                    cols[6].parse::<i64>().ok(),
+                    7usize,
+                    8usize,
+                    9usize,
+                )
+            } else {
+                (cols[5].parse::<i64>().ok(), None, 6usize, 7usize, 8usize)
+            };
+            let blt_guard_triggered = cols[blt_i].parse::<bool>().ok();
 
             if blt_guard_filter == "non_triggered" && blt_guard_triggered.unwrap_or(true) {
                 continue;
@@ -267,9 +292,10 @@ pub fn summarize_sparse_dense(
                 status,
                 wall_ms,
                 compile_jit_ms,
+                compile_codegen_wall_ms,
                 blt_guard_triggered,
-                perf_json: cols[7].to_string(),
-                result_csv: cols[8].to_string(),
+                perf_json: cols[perf_i].to_string(),
+                result_csv: cols[res_i].to_string(),
             });
         }
     }
@@ -295,14 +321,20 @@ pub fn summarize_sparse_dense(
             .iter()
             .filter_map(|r| r.compile_jit_ms.map(|v| v as f64))
             .collect::<Vec<_>>();
+        let codegen_vals = group
+            .iter()
+            .filter_map(|r| r.compile_codegen_wall_ms.map(|v| v as f64))
+            .collect::<Vec<_>>();
         let wall_med = median(wall_vals).unwrap_or(0.0);
         let jit_med = median(jit_vals).unwrap_or(0.0);
+        let codegen_med = median(codegen_vals).unwrap_or(0.0);
         out_rows.push(SummaryRow {
             model,
             path_preference: pref,
             sample_count: group.len(),
             wall_ms_median: (wall_med * 1000.0).round() / 1000.0,
             compile_jit_ms_median: (jit_med * 1000.0).round() / 1000.0,
+            compile_codegen_wall_ms_median: (codegen_med * 1000.0).round() / 1000.0,
             blt_guard_filter: blt_guard_filter.to_string(),
         });
     }
@@ -313,15 +345,16 @@ pub fn summarize_sparse_dense(
     let json_path = output_dir.join(format!("sparse_dense_summary_{stamp}.json"));
 
     let mut csv = String::new();
-    csv.push_str("model,path_preference,sample_count,wall_ms_median,compile_jit_ms_median,blt_guard_filter\n");
+    csv.push_str("model,path_preference,sample_count,wall_ms_median,compile_jit_ms_median,compile_codegen_wall_ms_median,blt_guard_filter\n");
     for r in &out_rows {
         csv.push_str(&format!(
-            "{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{}\n",
             r.model,
             r.path_preference,
             r.sample_count,
             r.wall_ms_median,
             r.compile_jit_ms_median,
+            r.compile_codegen_wall_ms_median,
             r.blt_guard_filter
         ));
     }

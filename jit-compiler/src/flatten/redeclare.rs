@@ -1,6 +1,7 @@
 //! Inheritance modifiers, `redeclare`, `constrainedby` (coarse or extends-closure), and `redeclare model extends` merging.
 
 use crate::ast::{Model, Modification, RedeclareExtendsBlock};
+use crate::flatten::ValidationMode;
 use crate::loader::ModelLoader;
 
 use super::FlattenError;
@@ -14,6 +15,9 @@ pub struct ModifyContext {
     pub strict_unresolved_modification: bool,
     /// When true and a loader is present, use legacy string heuristic instead of extends-closure.
     pub use_coarse_constrainedby_only: bool,
+    /// Matches compiler `--validate-tier` / salsa `compile_stop` input ("full", "analyze", ...).
+    pub compile_stop_label: String,
+    pub validation_mode: ValidationMode,
 }
 
 impl Default for ModifyContext {
@@ -23,17 +27,26 @@ impl Default for ModifyContext {
             msl_import_context: String::new(),
             strict_unresolved_modification: false,
             use_coarse_constrainedby_only: false,
+            compile_stop_label: "full".to_string(),
+            validation_mode: ValidationMode::Full,
         }
     }
 }
 
 impl ModifyContext {
-    pub fn for_extends_scope(qualified_class: &str, coarse_constrainedby_only: bool) -> Self {
+    pub fn for_extends_scope(
+        qualified_class: &str,
+        coarse_constrainedby_only: bool,
+        validation_mode: ValidationMode,
+        compile_stop_label: &str,
+    ) -> Self {
         Self {
             current_qualified: qualified_class.to_string(),
             msl_import_context: qualified_class.to_string(),
             strict_unresolved_modification: false,
             use_coarse_constrainedby_only: coarse_constrainedby_only,
+            compile_stop_label: compile_stop_label.to_string(),
+            validation_mode,
         }
     }
 
@@ -41,12 +54,16 @@ impl ModifyContext {
         current_qualified: &str,
         msl_import_context: &str,
         coarse_constrainedby_only: bool,
+        validation_mode: ValidationMode,
+        compile_stop_label: &str,
     ) -> Self {
         Self {
             current_qualified: current_qualified.to_string(),
             msl_import_context: msl_import_context.to_string(),
             strict_unresolved_modification: false,
             use_coarse_constrainedby_only: coarse_constrainedby_only,
+            compile_stop_label: compile_stop_label.to_string(),
+            validation_mode,
         }
     }
 
@@ -163,14 +180,23 @@ pub fn apply_modification_to_model(
                                         })
                                         .unwrap_or(false);
                                     if !query_cache_disabled {
-                                        crate::query_db::constrainedby::constrainedby_holds_extends_cached_with_loader(
-                                            l,
-                                            model,
-                                            ctx.import_scope_for_types(),
-                                            &ctx.msl_import_context,
-                                            t,
-                                            c,
-                                        )?
+                                        {
+                                            let scope_q = if !ctx.current_qualified.is_empty() {
+                                                ctx.current_qualified.as_str()
+                                            } else {
+                                                model.name.as_str()
+                                            };
+                                            crate::query_db::constrainedby::constrainedby_holds_extends_cached_with_loader(
+                                                l,
+                                                scope_q,
+                                                ctx.import_scope_for_types(),
+                                                &ctx.msl_import_context,
+                                                t,
+                                                c,
+                                                ctx.validation_mode,
+                                                ctx.compile_stop_label.as_str(),
+                                            )?
+                                        }
                                     } else {
                                         crate::instantiate::constrainedby_holds_extends(
                                             l,

@@ -13,6 +13,9 @@ pub struct JitValidateOptions {
     pub coarse_constrainedby_only: Option<bool>,
     /// `full` | `parse` | `flatten` | `analyze` — validation stops after this tier (JIT only for `full`).
     pub validation_tier: Option<String>,
+    /// When provenance is available after flatten, run `analyze_change_impact` for these flattened parameter names (analysis only).
+    #[serde(default)]
+    pub param_change_impact_probe: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

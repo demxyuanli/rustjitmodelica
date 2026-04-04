@@ -139,6 +139,7 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
     let mut flattener = Flattener::new();
     flattener.coarse_constrainedby_only = coarse;
     flattener.validation_mode = validation_mode;
+    flattener.compile_stop_label = db.compile_stop().as_ref().clone();
     flattener.array_size_policy = ArraySizePolicy::default();
     flattener.warnings_level = "all".to_string();
     for p in libs.iter() {

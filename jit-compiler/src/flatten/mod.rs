@@ -87,6 +87,8 @@ pub struct Flattener {
     pub external_array_sizes: HashMap<String, usize>,
     /// Mirrors compiler `warnings_level`: "all" | "none" | "error" (affects array-size warnings in legacy mode).
     pub warnings_level: String,
+    /// Same strings as salsa `compile_stop` input: "full", "parse", "flatten", "analyze".
+    pub compile_stop_label: String,
 }
 
 impl Flattener {
@@ -100,6 +102,7 @@ impl Flattener {
             array_size_policy: ArraySizePolicy::default(),
             external_array_sizes: HashMap::new(),
             warnings_level: "all".to_string(),
+            compile_stop_label: "full".to_string(),
         }
     }
 

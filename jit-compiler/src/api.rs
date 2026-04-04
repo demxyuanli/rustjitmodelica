@@ -1,5 +1,7 @@
+use crate::analysis::{provenance_index_from_flat_model, ImpactAnalysisResult, ProvenanceIndex};
 use crate::compiler::{CompileOutput, CompileStopPhase, Compiler, CompilerOptions};
 use crate::diag::WarningInfo;
+use crate::flatten::FlattenedModel;
 use crate::simulation::{run_simulation_collect, SimulationResult};
 use std::path::PathBuf;
 
@@ -179,4 +181,20 @@ pub fn simulate_from_source(
 /// in-process reverse dependency index; see [`crate::query_db::affected_models`].
 pub fn affected_models_for_changed_files(changed_files: &[PathBuf]) -> Vec<String> {
     crate::query_db::affected_models(changed_files)
+}
+
+/// Impact of changing flattened parameter names against a pre-built provenance index (analysis / IDE only).
+pub fn analyze_change_impact(
+    provenance: &ProvenanceIndex,
+    changed_params: &[String],
+) -> ImpactAnalysisResult {
+    provenance.analyze_param_change_names(changed_params)
+}
+
+/// Build [`ProvenanceIndex`] from a flattened model (optional root `.mo` path for `source_file` hints).
+pub fn provenance_index_for_flat_model(
+    flat: &FlattenedModel,
+    root_source_file: Option<&str>,
+) -> ProvenanceIndex {
+    provenance_index_from_flat_model(flat, root_source_file)
 }

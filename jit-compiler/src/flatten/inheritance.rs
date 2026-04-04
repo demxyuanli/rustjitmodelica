@@ -83,8 +83,12 @@ impl Flattener {
                 }
             }
             };
-            let mod_ctx =
-                ModifyContext::for_extends_scope(&qual, self.coarse_constrainedby_only);
+            let mod_ctx = ModifyContext::for_extends_scope(
+                &qual,
+                self.coarse_constrainedby_only,
+                self.validation_mode,
+                self.compile_stop_label.as_str(),
+            );
             for modification in &clause.modifications {
                 apply_modification_to_model(
                     Arc::make_mut(&mut base_model),

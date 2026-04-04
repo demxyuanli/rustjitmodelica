@@ -246,6 +246,9 @@ enum JitCommands {
         /// Incremental mode: only run models affected by changed dependency files.
         #[arg(long)]
         incremental: bool,
+        /// Delete all out_dir/cache_* before running (reproducible L2 state across A/B compares).
+        #[arg(long)]
+        purge_scenario_caches: bool,
     },
 }
 
@@ -438,6 +441,7 @@ fn run_cli() -> Result<()> {
                 perf_trace,
                 scenarios,
                 incremental,
+                purge_scenario_caches,
             } => {
                 let repo_root = discover_repo_root()?;
                 let exe_path = if let Some(p) = exe {
@@ -465,6 +469,7 @@ fn run_cli() -> Result<()> {
                     scenarios: scenarios_vec,
                     scenario_filter: scenarios.unwrap_or_default(),
                     incremental,
+                    purge_scenario_caches,
                 };
                 let report = regress_harness::jit_validate::runner::ValidatePerfRunner::run(spec)?;
                 println!(

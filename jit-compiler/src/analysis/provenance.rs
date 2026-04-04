@@ -11,8 +11,13 @@
 //!
 //! **关键约束**：运行时参数 `p` 变化不应触发 codegen，只需更新内存中的参数向量。
 
+use crate::ast::{Equation, Expression};
+use crate::flatten::FlattenedModel;
+use crate::string_intern::resolve_id;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+
+use super::variable_collection::collect_vars_eq;
 
 /// Provenance information for a single equation in a flattened model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -374,6 +379,177 @@ impl ProvenanceBuilder {
             instance_types: self.instance_types,
         }
     }
+}
+
+/// Serializable impact summary for API / IDE (sorted for stable output).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImpactAnalysisResult {
+    pub affected_vars: Vec<String>,
+    pub affected_equation_indices: Vec<usize>,
+    pub requires_full_reflatten: bool,
+    pub reflatten_reason: Option<String>,
+}
+
+impl From<ChangeImpact> for ImpactAnalysisResult {
+    fn from(c: ChangeImpact) -> Self {
+        let mut vars: Vec<String> = c.affected_vars.into_iter().collect();
+        vars.sort();
+        let mut eqs: Vec<usize> = c.affected_equations.into_iter().collect();
+        eqs.sort_unstable();
+        Self {
+            affected_vars: vars,
+            affected_equation_indices: eqs,
+            requires_full_reflatten: c.requires_full_reflatten,
+            reflatten_reason: c.reflatten_reason,
+        }
+    }
+}
+
+impl ProvenanceIndex {
+    /// Impact of changing the given flattened parameter names (analysis only; not a codegen skip guarantee).
+    pub fn analyze_param_change_names(&self, changed_params: &[String]) -> ImpactAnalysisResult {
+        let refs: Vec<&str> = changed_params.iter().map(|s| s.as_str()).collect();
+        self.compute_param_change_impact(&refs[..]).into()
+    }
+}
+
+fn lhs_solved_name(lhs: &Expression) -> Option<String> {
+    match lhs {
+        Expression::Variable(id) => Some(resolve_id(*id)),
+        Expression::Der(inner) => {
+            if let Expression::Variable(id) = inner.as_ref() {
+                Some(format!("der_{}", resolve_id(*id)))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn collect_solves(eq: &Equation) -> Vec<String> {
+    match eq {
+        Equation::Simple(lhs, _) => lhs_solved_name(lhs).into_iter().collect(),
+        Equation::MultiAssign(lhss, _) => lhss.iter().filter_map(lhs_solved_name).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn prov_expr_short(e: &Expression) -> String {
+    match e {
+        Expression::Variable(id) => resolve_id(*id),
+        Expression::Der(inner) => format!("der({})", prov_expr_short(inner)),
+        Expression::Number(x) => format!("{}", x),
+        Expression::BinaryOp(l, op, r) => {
+            let op_str = match op {
+                crate::ast::Operator::Add => "+",
+                crate::ast::Operator::Sub => "-",
+                crate::ast::Operator::Mul => "*",
+                crate::ast::Operator::Div => "/",
+                _ => "?",
+            };
+            format!("{} {} {}", prov_expr_short(l), op_str, prov_expr_short(r))
+        }
+        _ => "...".to_string(),
+    }
+}
+
+fn prov_eq_label(eq: &Equation, index: usize) -> String {
+    match eq {
+        Equation::Simple(lhs, rhs) => {
+            let l = prov_expr_short(lhs);
+            let r = prov_expr_short(rhs);
+            if l.len() + r.len() < 50 {
+                format!("{} = {}", l, r)
+            } else {
+                format!("eq[{}]", index)
+            }
+        }
+        _ => format!("eq[{}]", index),
+    }
+}
+
+fn longest_instance_prefix(
+    var_names: &[String],
+    instances: &HashMap<String, String>,
+) -> Option<String> {
+    let mut best: Option<String> = None;
+    for path in instances.keys() {
+        let path_s = path.as_str();
+        for v in var_names {
+            if v.as_str() == path_s
+                || v.starts_with(&format!("{}_", path_s))
+                || v.starts_with(&format!("{}.", path_s))
+            {
+                if best.as_ref().map_or(true, |b| path.len() > b.len()) {
+                    best = Some(path.clone());
+                }
+                break;
+            }
+        }
+    }
+    best
+}
+
+/// Build a full provenance index from a post-inline (or any) flattened model.
+pub fn provenance_index_from_flat_model(
+    flat: &FlattenedModel,
+    root_source_file: Option<&str>,
+) -> ProvenanceIndex {
+    let mut builder = ProvenanceBuilder::new();
+    for d in &flat.declarations {
+        if d.is_parameter {
+            builder.register_parameter(d.name.as_str());
+        }
+    }
+    for (path, ty) in &flat.instances {
+        builder.register_instance(path.as_str(), ty.as_str());
+    }
+
+    let src = root_source_file.map(|s| s.to_string());
+
+    fn record_eq(
+        builder: &mut ProvenanceBuilder,
+        flat: &FlattenedModel,
+        idx: usize,
+        eq: &Equation,
+        is_initial: bool,
+        src: &Option<String>,
+    ) {
+        let mut all = HashSet::new();
+        collect_vars_eq(eq, &mut all);
+        let solves = collect_solves(eq);
+        let solve_set: HashSet<String> = solves.iter().cloned().collect();
+        let mut depends: Vec<String> = all.into_iter().filter(|v| !solve_set.contains(v)).collect();
+        depends.sort();
+        let mut solves_sorted = solves;
+        solves_sorted.sort();
+        let is_when = matches!(eq, Equation::When(..));
+        let label = prov_eq_label(eq, idx);
+        let mut scope_vars: Vec<String> = depends.clone();
+        scope_vars.extend(solves_sorted.iter().cloned());
+        let inst = longest_instance_prefix(&scope_vars, &flat.instances);
+        builder.record_equation(
+            idx,
+            label,
+            src.clone(),
+            inst,
+            depends,
+            solves_sorted,
+            is_initial,
+            is_when,
+        );
+    }
+
+    for (i, eq) in flat.equations.iter().enumerate() {
+        record_eq(&mut builder, flat, i, eq, false, &src);
+    }
+    let base = flat.equations.len();
+    for (j, eq) in flat.initial_equations.iter().enumerate() {
+        record_eq(&mut builder, flat, base + j, eq, true, &src);
+    }
+
+    builder.build()
 }
 
 #[cfg(test)]

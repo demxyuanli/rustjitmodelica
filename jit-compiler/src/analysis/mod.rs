@@ -26,7 +26,8 @@ pub use solvable_sparsity::{
     build_solvable_block_sparse_pattern, SolvableBlockSparsePattern, SolvableBlockSparseStats,
 };
 pub use provenance::{
-    ChangeImpact, ProvenanceBuilder, ProvenanceIndex, ProvenanceStats,
+    provenance_index_from_flat_model, ChangeImpact, ImpactAnalysisResult, ProvenanceBuilder,
+    ProvenanceIndex, ProvenanceStats,
 };
 
 #[derive(Clone, Default)]

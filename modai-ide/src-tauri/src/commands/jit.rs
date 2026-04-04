@@ -50,6 +50,20 @@ pub struct JitValidateResult {
     pub validation_stop_phase: Option<String>,
     /// True when stopped before JIT (`parse` / `flatten` / `analyze`).
     pub validation_partial: bool,
+    /// Equation/component provenance summary and optional param-impact probe (after flatten+inline tiers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<JitProvenanceReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JitProvenanceReport {
+    pub equation_count: usize,
+    pub variable_count: usize,
+    pub parameter_closure_count: usize,
+    pub instance_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub param_change_impact: Option<rustmodlica::ImpactAnalysisResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,10 +407,17 @@ fn build_compile_trace(
     if let Some(p) = perf {
         lines.push(format!("compile: load_model {} ms", p.load_model_ms));
         lines.push(format!("compile: flatten_inline {} ms", p.flatten_inline_ms));
+        lines.push(format!(
+            "compile: trackA flatten_wall_us={} inline_wall_us={}",
+            p.flatten_wall_us, p.inline_wall_us
+        ));
         lines.push(format!("compile: analyze {} ms", p.analyze_ms));
         lines.push(format!("compile: backend_dae {} ms", p.backend_dae_ms));
         lines.push(format!("compile: external_resolve {} ms", p.external_resolve_ms));
-        lines.push(format!("compile: jit {} ms", p.jit_ms));
+        lines.push(format!(
+            "compile: trackB codegen_wall_us={} codegen_wall_ms={} jit_ms={}",
+            p.codegen_wall_us, p.codegen_wall_ms, p.jit_ms
+        ));
         lines.push(format!(
             "compile: layout states={} discrete={} params={} alg_eq={} diff_eq={}",
             p.state_count,
@@ -488,6 +509,7 @@ fn jit_validate_result_body(
     compile_trace: Vec<String>,
     validation_stop_phase: Option<String>,
     validation_partial: bool,
+    provenance: Option<JitProvenanceReport>,
 ) -> JitValidateResult {
     JitValidateResult {
         schema_version: JIT_API_SCHEMA_VERSION.to_string(),
@@ -500,7 +522,26 @@ fn jit_validate_result_body(
         compile_trace,
         validation_stop_phase,
         validation_partial,
+        provenance,
     }
+}
+
+fn build_provenance_report(
+    compiler: &rustmodlica::Compiler,
+    param_probe: Option<&Vec<String>>,
+) -> Option<JitProvenanceReport> {
+    let ix = compiler.last_provenance_index.as_ref()?;
+    let st = ix.stats();
+    let param_change_impact = param_probe
+        .filter(|v| !v.is_empty())
+        .map(|params| rustmodlica::analyze_change_impact(ix.as_ref(), params));
+    Some(JitProvenanceReport {
+        equation_count: st.equation_count,
+        variable_count: st.variable_count,
+        parameter_closure_count: st.parameter_count,
+        instance_count: st.instance_count,
+        param_change_impact,
+    })
 }
 
 fn resolve_model_name(source: &str, requested: Option<&String>) -> Result<String, String> {
@@ -577,6 +618,10 @@ fn with_loader_paths(
 fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, String> {
     let _timer = ScopedTimer::new("jit_validate");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
+    let param_impact_probe: Option<Vec<String>> = request
+        .options
+        .as_ref()
+        .and_then(|o| o.param_change_impact_probe.clone());
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
     compiler.options.validate_only = true;
@@ -588,6 +633,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
     let result = compiler.compile_from_source(&model_name, &request.code);
     let warnings = compiler.take_warnings();
     let perf = compiler.take_compile_perf_report();
+    let provenance = build_provenance_report(&compiler, param_impact_probe.as_ref());
     match result {
         Ok(rustmodlica::CompileOutput::FunctionRun(_)) => {
             let compile_trace = build_compile_trace(perf.as_ref(), 0, 0);
@@ -601,6 +647,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
                 compile_trace,
                 Some("full".to_string()),
                 false,
+                provenance,
             ))
         }
         Ok(rustmodlica::CompileOutput::Simulation(artifacts)) => {
@@ -621,6 +668,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
                 compile_trace,
                 Some("full".to_string()),
                 false,
+                provenance,
             ))
         }
         Ok(rustmodlica::CompileOutput::FlatSnapshotDone) => {
@@ -635,6 +683,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
                 compile_trace,
                 Some("full".to_string()),
                 false,
+                provenance,
             ))
         }
         Ok(rustmodlica::CompileOutput::ValidationParseOk) => {
@@ -649,6 +698,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
                 compile_trace,
                 Some("parse".to_string()),
                 true,
+                provenance,
             ))
         }
         Ok(rustmodlica::CompileOutput::ValidationFlattenOk { .. }) => {
@@ -663,6 +713,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
                 compile_trace,
                 Some("flatten".to_string()),
                 true,
+                provenance,
             ))
         }
         Ok(rustmodlica::CompileOutput::ValidationAnalyzed(s)) => {
@@ -683,6 +734,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
                 compile_trace,
                 Some("analyze".to_string()),
                 true,
+                provenance,
             ))
         }
         Err(err) => {
@@ -699,6 +751,7 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
                 compile_trace,
                 None,
                 false,
+                provenance,
             ))
         }
     }

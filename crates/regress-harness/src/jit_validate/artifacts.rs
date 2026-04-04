@@ -16,6 +16,8 @@ pub struct RunManifest {
     pub validation_mode: String,
     pub trace: TraceFlags,
     pub scenarios: Vec<ScenarioResolved>,
+    #[serde(default)]
+    pub purge_scenario_caches: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -74,8 +76,26 @@ pub struct ModelPerfStats {
     pub flatten_inline_ms_max: Option<u64>,
     pub flatten_wall_ms_min: Option<u64>,
     pub flatten_wall_ms_max: Option<u64>,
+    /// Track A (microseconds): `compile_perf.flatten_wall_us`.
+    #[serde(default)]
+    pub flatten_wall_us_min: Option<u64>,
+    #[serde(default)]
+    pub flatten_wall_us_max: Option<u64>,
     pub inline_wall_ms_min: Option<u64>,
     pub inline_wall_ms_max: Option<u64>,
+    #[serde(default)]
+    pub inline_wall_us_min: Option<u64>,
+    #[serde(default)]
+    pub inline_wall_us_max: Option<u64>,
+    /// Track B: `compile_perf.codegen_wall_ms` (same window as `jit_ms`).
+    #[serde(default)]
+    pub codegen_wall_ms_min: Option<u64>,
+    #[serde(default)]
+    pub codegen_wall_ms_max: Option<u64>,
+    #[serde(default)]
+    pub codegen_wall_us_min: Option<u64>,
+    #[serde(default)]
+    pub codegen_wall_us_max: Option<u64>,
     pub decl_expand_ms_min: Option<u64>,
     pub decl_expand_ms_max: Option<u64>,
     pub eq_expand_ms_min: Option<u64>,

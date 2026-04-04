@@ -112,7 +112,12 @@ pub(super) fn flatten_inheritance_pure(
             }
         };
 
-        let mod_ctx = ModifyContext::for_extends_scope(&qual, db.coarse_constrainedby_only());
+        let mod_ctx = ModifyContext::for_extends_scope(
+            &qual,
+            db.coarse_constrainedby_only(),
+            crate::flatten::ValidationMode::parse(db.validation_mode().as_str()),
+            db.compile_stop().as_ref().as_str(),
+        );
         for modification in &clause.modifications {
             apply_modification_to_model(
                 Arc::make_mut(&mut base_model),

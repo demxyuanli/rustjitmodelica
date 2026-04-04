@@ -68,6 +68,25 @@ pub(crate) fn collect_vars_eq(eq: &Equation, vars: &mut HashSet<String>) {
             collect_vars_expr(msg, vars);
         }
         Equation::Terminate(msg) => collect_vars_expr(msg, vars),
+        Equation::SolvableBlock {
+            unknowns,
+            tearing_var,
+            equations,
+            residuals,
+        } => {
+            for u in unknowns {
+                vars.insert(u.clone());
+            }
+            if let Some(t) = tearing_var {
+                vars.insert(t.clone());
+            }
+            for sub in equations {
+                collect_vars_eq(sub, vars);
+            }
+            for r in residuals {
+                collect_vars_expr(r, vars);
+            }
+        }
         _ => {}
     }
 }

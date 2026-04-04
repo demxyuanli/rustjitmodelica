@@ -657,6 +657,7 @@ pub(super) fn compile(
                 }
             }
         }
+        compiler.last_provenance_index = Some(frontend.provenance_index.clone());
         let flat_model = frontend.flat_model;
         if compiler.options.flat_snapshot_only {
             apply_fallback_snapshot(&mut perf_report);
@@ -1386,8 +1387,18 @@ pub(super) fn compile(
             &newton_tearing_var_names,
             &external_names,
         );
-        perf_report.jit_ms = jit_t0.elapsed().as_millis() as u64;
+        let jit_elapsed = jit_t0.elapsed();
+        perf_report.jit_ms = jit_elapsed.as_millis() as u64;
+        perf_report.codegen_wall_us = jit_elapsed.as_micros() as u64;
+        perf_report.codegen_wall_ms = perf_report.codegen_wall_us / 1000;
         if perf_trace {
+            eprintln!(
+                "[perf] tracks trackA_flatten_wall_us={} trackA_inline_wall_us={} trackB_codegen_wall_us={} trackB_jit_ms={}",
+                perf_report.flatten_wall_us,
+                perf_report.inline_wall_us,
+                perf_report.codegen_wall_us,
+                perf_report.jit_ms
+            );
             eprintln!("[perf] compile_phase.jit_ms={}", perf_report.jit_ms);
         }
 

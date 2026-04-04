@@ -885,6 +885,8 @@ impl Flattener {
                                 current_qualified,
                                 &msl_import_context,
                                 self.coarse_constrainedby_only,
+                                self.validation_mode,
+                                self.compile_stop_label.as_str(),
                             );
                             for modification in &decl.modifications {
                                 apply_modification_to_model(

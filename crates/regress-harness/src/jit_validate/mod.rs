@@ -66,6 +66,9 @@ pub struct RunSpec {
     pub scenario_filter: Vec<String>,
     #[serde(default)]
     pub incremental: bool,
+    /// Before running scenarios, delete every `out_dir/cache_*` directory (fresh on-disk tier state).
+    #[serde(default)]
+    pub purge_scenario_caches: bool,
 }
 
 pub fn normalize_model_list(models: &[String]) -> Vec<String> {

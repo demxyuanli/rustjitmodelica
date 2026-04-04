@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::ast::{Equation, Expression};
+use crate::analysis::{BlockCausalityInfo, ProvenanceIndex};
 use crate::compiler::jacobian;
 use crate::flatten::FlattenedModel;
 use crate::jit::ArrayInfo;
-use crate::analysis::BlockCausalityInfo;
 
 pub(crate) type CompilerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -12,6 +13,7 @@ pub(crate) struct FrontendStage {
     pub flat_model: FlattenedModel,
     pub total_equations: usize,
     pub total_declarations: usize,
+    pub provenance_index: Arc<ProvenanceIndex>,
 }
 
 pub(crate) struct VariableLayout {

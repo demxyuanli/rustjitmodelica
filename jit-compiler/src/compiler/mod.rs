@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::analysis::ProvenanceIndex;
 use crate::ast::{AlgorithmStatement, Equation, Expression, Model};
 use crate::backend_dae::ClockPartition as BackendClockPartition;
 use crate::diag::WarningInfo;
@@ -180,6 +181,9 @@ pub struct CompilePerfReport {
     pub analyze_ms: u64,
     pub backend_dae_ms: u64,
     pub external_resolve_ms: u64,
+    /// Track B: wall time for Cranelift JIT compile (`jit.compile`), microseconds (pair with `jit_ms`).
+    pub codegen_wall_us: u64,
+    pub codegen_wall_ms: u64,
     pub jit_ms: u64,
     pub state_count: usize,
     pub discrete_count: usize,
@@ -251,6 +255,8 @@ pub struct Compiler {
     pub interner: crate::string_intern::StringInterner,
     /// Structured compile-time performance report for the last compile call.
     pub last_compile_perf: Option<CompilePerfReport>,
+    /// Equation/component provenance for the last successful flatten+inline (same flat as last compile).
+    pub last_provenance_index: Option<Arc<ProvenanceIndex>>,
 }
 
 impl Default for ExternalLibs {
@@ -728,6 +734,7 @@ impl Compiler {
             external_symbol_ptrs: HashMap::new(),
             interner: crate::string_intern::StringInterner::new(),
             last_compile_perf: None,
+            last_provenance_index: None,
         }
     }
 
@@ -784,7 +791,7 @@ impl Compiler {
             .as_deref()
             .map(std::path::Path::new);
         let array_size_policy = ArraySizePolicy::parse(self.options.array_size_policy.as_str());
-        let flat_model = flatten_and_inline(
+        let stage = flatten_and_inline(
             &mut root_model,
             model_name,
             &mut self.loader,
@@ -798,8 +805,9 @@ impl Compiler {
             array_size_policy,
             array_sizes_path,
             self.options.warnings_level.as_str(),
-        )?
-        .flat_model;
+        )?;
+        self.last_provenance_index = Some(stage.provenance_index.clone());
+        let flat_model = stage.flat_model;
         Ok(equation_graph::build_equation_graph(&flat_model, mode))
     }
 

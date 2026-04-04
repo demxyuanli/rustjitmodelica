@@ -62,7 +62,11 @@ fn resolve_artifact_path(out_dir: &Path, p: &str) -> PathBuf {
 struct ParsedCompilePerf {
     flatten_inline_ms: u64,
     flatten_wall_ms: u64,
+    flatten_wall_us: u64,
     inline_wall_ms: u64,
+    inline_wall_us: u64,
+    codegen_wall_ms: u64,
+    codegen_wall_us: u64,
     decl_expand_ms: u64,
     eq_expand_ms: u64,
     inline_substitute_ms: u64,
@@ -121,7 +125,11 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
     Some(ParsedCompilePerf {
         flatten_inline_ms: u("flatten_inline_ms"),
         flatten_wall_ms: u("flatten_wall_ms"),
+        flatten_wall_us: u("flatten_wall_us"),
         inline_wall_ms: u("inline_wall_ms"),
+        inline_wall_us: u("inline_wall_us"),
+        codegen_wall_ms: u("codegen_wall_ms"),
+        codegen_wall_us: u("codegen_wall_us"),
         decl_expand_ms: u("decl_expand_ms"),
         eq_expand_ms: u("eq_expand_ms"),
         inline_substitute_ms: u("inline_substitute_ms"),
@@ -191,6 +199,56 @@ fn rollup_cache_layer_totals(stats: &PerfStats) -> (u64, u64, u64, u64, u64, u64
     (l0h, l1h, l2h, l0w, l1w, l2w)
 }
 
+fn format_validate_perf_track_ab(stats: &PerfStats) -> Option<String> {
+    let mut f_us_min: Option<u64> = None;
+    let mut f_us_max: Option<u64> = None;
+    let mut i_us_min: Option<u64> = None;
+    let mut i_us_max: Option<u64> = None;
+    let mut c_ms_min: Option<u64> = None;
+    let mut c_ms_max: Option<u64> = None;
+    let mut c_us_min: Option<u64> = None;
+    let mut c_us_max: Option<u64> = None;
+    for by_model in stats.by_scenario.values() {
+        for m in by_model.values() {
+            if let Some(v) = m.flatten_wall_us_min {
+                f_us_min = Some(f_us_min.map(|x| x.min(v)).unwrap_or(v));
+            }
+            if let Some(v) = m.flatten_wall_us_max {
+                f_us_max = Some(f_us_max.map(|x| x.max(v)).unwrap_or(v));
+            }
+            if let Some(v) = m.inline_wall_us_min {
+                i_us_min = Some(i_us_min.map(|x| x.min(v)).unwrap_or(v));
+            }
+            if let Some(v) = m.inline_wall_us_max {
+                i_us_max = Some(i_us_max.map(|x| x.max(v)).unwrap_or(v));
+            }
+            if let Some(v) = m.codegen_wall_ms_min {
+                c_ms_min = Some(c_ms_min.map(|x| x.min(v)).unwrap_or(v));
+            }
+            if let Some(v) = m.codegen_wall_ms_max {
+                c_ms_max = Some(c_ms_max.map(|x| x.max(v)).unwrap_or(v));
+            }
+            if let Some(v) = m.codegen_wall_us_min {
+                c_us_min = Some(c_us_min.map(|x| x.min(v)).unwrap_or(v));
+            }
+            if let Some(v) = m.codegen_wall_us_max {
+                c_us_max = Some(c_us_max.map(|x| x.max(v)).unwrap_or(v));
+            }
+        }
+    }
+    if f_us_min.is_none()
+        && i_us_min.is_none()
+        && c_ms_min.is_none()
+        && c_us_min.is_none()
+    {
+        return None;
+    }
+    Some(format!(
+        "jit-validate-perf trackA: flatten_wall_us min/max={:?}/{:?} inline_wall_us min/max={:?}/{:?} | trackB: codegen_wall_ms min/max={:?}/{:?} codegen_wall_us min/max={:?}/{:?}",
+        f_us_min, f_us_max, i_us_min, i_us_max, c_ms_min, c_ms_max, c_us_min, c_us_max
+    ))
+}
+
 fn format_validate_perf_cache_rollup(stats: &PerfStats) -> Option<String> {
     let (l0h, l1h, l2h, l0w, l1w, l2w) = rollup_cache_layer_totals(stats);
     if l0h == 0 && l1h == 0 && l2h == 0 && l0w == 0 && l1w == 0 && l2w == 0 {
@@ -247,9 +305,29 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                     m.flatten_wall_ms,
                 );
                 update_min_max(
+                    &mut s.flatten_wall_us_min,
+                    &mut s.flatten_wall_us_max,
+                    m.flatten_wall_us,
+                );
+                update_min_max(
                     &mut s.inline_wall_ms_min,
                     &mut s.inline_wall_ms_max,
                     m.inline_wall_ms,
+                );
+                update_min_max(
+                    &mut s.inline_wall_us_min,
+                    &mut s.inline_wall_us_max,
+                    m.inline_wall_us,
+                );
+                update_min_max(
+                    &mut s.codegen_wall_ms_min,
+                    &mut s.codegen_wall_ms_max,
+                    m.codegen_wall_ms,
+                );
+                update_min_max(
+                    &mut s.codegen_wall_us_min,
+                    &mut s.codegen_wall_us_max,
+                    m.codegen_wall_us,
                 );
                 update_min_max(
                     &mut s.decl_expand_ms_min,
@@ -631,7 +709,27 @@ fn build_manifest(spec: &RunSpec, scenarios: &[ScenarioResolved]) -> RunManifest
             perf_trace: spec.perf_trace,
         },
         scenarios: scenarios.to_vec(),
+        purge_scenario_caches: spec.purge_scenario_caches,
     }
+}
+
+/// Remove `out_dir/cache_*` directories so each bench starts without leftover SQLite/SHM from prior runs.
+fn purge_scenario_cache_subdirs(out_dir: &std::path::Path) -> anyhow::Result<()> {
+    let rd = std::fs::read_dir(out_dir)
+        .with_context(|| format!("read out dir {}", out_dir.display()))?;
+    for ent in rd {
+        let ent = ent.with_context(|| format!("read entry in {}", out_dir.display()))?;
+        let p = ent.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let name = ent.file_name();
+        let Some(ns) = name.to_str() else { continue };
+        if ns.starts_with("cache_") {
+            std::fs::remove_dir_all(&p).with_context(|| format!("remove {}", p.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn scenario_env_resolved(sc: &Scenario, cache_dir: &Path, trace: &TraceFlags) -> (BTreeMap<String, String>, Vec<String>) {
@@ -749,6 +847,13 @@ impl ValidatePerfRunner {
         }
         std::fs::create_dir_all(&spec.out_dir)
             .with_context(|| format!("create out dir {}", spec.out_dir.display()))?;
+        if spec.purge_scenario_caches {
+            purge_scenario_cache_subdirs(&spec.out_dir)?;
+            eprintln!(
+                "[jit-validate-perf] purge_scenario_caches: removed cache_* under {}",
+                spec.out_dir.display()
+            );
+        }
 
         let trace = TraceFlags {
             stage_trace: spec.stage_trace,
@@ -882,6 +987,9 @@ impl ValidatePerfRunner {
 
         // Keep the report stable even if caller wants to post-process.
         write_json_pretty(&spec.out_dir.join("report.json"), &report)?;
+        if let Some(line) = format_validate_perf_track_ab(&report.stats) {
+            println!("{}", line);
+        }
         if let Some(line) = format_validate_perf_cache_rollup(&report.stats) {
             println!("{}", line);
         }

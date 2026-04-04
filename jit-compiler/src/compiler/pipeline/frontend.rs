@@ -17,6 +17,26 @@ use crate::compiler::CompileStopPhase;
 use super::trace::log_stage_timing;
 use super::types::{CompilerResult, FrontendStage};
 
+fn frontend_stage_from_flat(
+    flat_model: crate::flatten::FlattenedModel,
+    model_name: &str,
+    loader: &ModelLoader,
+) -> FrontendStage {
+    let src = loader
+        .get_path_for_model(model_name)
+        .map(|p| p.display().to_string());
+    let provenance_index = Arc::new(crate::analysis::provenance_index_from_flat_model(
+        &flat_model,
+        src.as_deref(),
+    ));
+    FrontendStage {
+        total_equations: flat_model.equations.len(),
+        total_declarations: flat_model.declarations.len(),
+        flat_model,
+        provenance_index,
+    }
+}
+
 fn apply_cache_invalidation_if_requested(cache_root: &Path) {
     let trigger = std::env::var("RUSTMODLICA_CACHE_INVALIDATE_TRIGGER")
         .ok()
@@ -139,11 +159,7 @@ pub(crate) fn flatten_and_inline(
                 crate::query_db::perf_record_us("inline_wall_us", 0);
                 log_stage_timing(stage_trace, "flatten", started_at);
                 log_stage_timing(stage_trace, "inline", started_at);
-                return Ok(FrontendStage {
-                    total_equations: flat_model.equations.len(),
-                    total_declarations: flat_model.declarations.len(),
-                    flat_model,
-                });
+                return Ok(frontend_stage_from_flat(flat_model, model_name, loader));
             }
             if let Some(v) = flatten_cache::analyze_input_mem_get(mem_key.as_str()) {
                 let mut flat_model = match Arc::try_unwrap(v) {
@@ -184,11 +200,7 @@ pub(crate) fn flatten_and_inline(
                     inline_mem_key.as_str(),
                     Arc::new(flat_model.clone()),
                 );
-                return Ok(FrontendStage {
-                    total_equations: flat_model.equations.len(),
-                    total_declarations: flat_model.declarations.len(),
-                    flat_model,
-                });
+                return Ok(frontend_stage_from_flat(flat_model, model_name, loader));
             }
         }
         if let Some(mut flat_model) =
@@ -233,11 +245,7 @@ pub(crate) fn flatten_and_inline(
                     Arc::new(flat_model.clone()),
                 );
             }
-            return Ok(FrontendStage {
-                total_equations: flat_model.equations.len(),
-                total_declarations: flat_model.declarations.len(),
-                flat_model,
-            });
+            return Ok(frontend_stage_from_flat(flat_model, model_name, loader));
         }
         // Cache miss diagnostic - flatten will be executed
         eprintln!(
@@ -258,6 +266,7 @@ pub(crate) fn flatten_and_inline(
     let mut flattener = Flattener::new();
     flattener.coarse_constrainedby_only = coarse_constrainedby_only;
     flattener.validation_mode = validation_mode;
+    flattener.compile_stop_label = compile_stop_s.to_string();
     flattener.array_size_policy = array_size_policy;
     flattener.external_array_sizes = external_array_sizes;
     flattener.warnings_level = warnings_level.to_string();
@@ -426,9 +435,5 @@ pub(crate) fn flatten_and_inline(
         }
     }
 
-    Ok(FrontendStage {
-        total_equations: flat_model.equations.len(),
-        total_declarations: flat_model.declarations.len(),
-        flat_model,
-    })
+    Ok(frontend_stage_from_flat(flat_model, model_name, loader))
 }

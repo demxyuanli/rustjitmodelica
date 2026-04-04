@@ -1,3 +1,4 @@
+use crate::analysis::ProvenanceIndex;
 use crate::ast::{ClassItem, Model};
 use crate::cache::cache_key::{CacheKeyV2, CacheStage, CompileFlagsKey};
 use crate::cache::cache_scope::{classify_model_scope, CacheScope};
@@ -18,6 +19,7 @@ mod cache_v1;
 mod decl_expand;
 mod eq_expand;
 mod flat_model;
+mod provenance_q;
 pub(crate) mod constrainedby;
 mod perf;
 pub mod salsa_session;
@@ -294,6 +296,8 @@ pub trait QueryDb: salsa::Database {
     fn decl_expanded(&self, model_name: String) -> DeclExpandResPtr;
     fn eq_expanded(&self, model_name: String) -> EqExpandResPtr;
     fn flattened_model_q(&self, model_name: String) -> FlatModelResPtr;
+    /// Provenance built from the same flat as `flattened_model_q` (Salsa pipeline; not post-`inline` compile).
+    fn provenance_index_q(&self, model_name: String) -> ProvenanceIndexResPtr;
     fn constrainedby_holds_extends_q(&self, input: constrainedby::ConstrainedByInput) -> constrainedby::ConstrainedByResPtr;
 }
 
@@ -399,6 +403,24 @@ impl PartialEq for FlatModelResPtr {
 }
 
 impl Eq for FlatModelResPtr {}
+
+/// Output of [`QueryDb::provenance_index_q`].
+#[derive(Clone, Debug)]
+pub struct ProvenanceQResult {
+    pub index: Option<Arc<ProvenanceIndex>>,
+    pub err: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProvenanceIndexResPtr(pub Arc<ProvenanceQResult>);
+
+impl PartialEq for ProvenanceIndexResPtr {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ProvenanceIndexResPtr {}
 
 fn normalize_modelica_source_for_hash(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -969,7 +991,9 @@ fn decl_expanded(db: &dyn QueryDb, model_name: String) -> DeclExpandResPtr {
     let root = db.inheritance_flattened(model_name.clone()).0;
     let mut flattener = crate::flatten::Flattener::new();
     flattener.coarse_constrainedby_only = coarse;
-    flattener.validation_mode = crate::flatten::ValidationMode::Full;
+    flattener.validation_mode =
+        crate::flatten::ValidationMode::parse(db.validation_mode().as_str());
+    flattener.compile_stop_label = db.compile_stop().as_ref().clone();
     flattener.array_size_policy = crate::flatten::ArraySizePolicy::default();
     flattener.warnings_level = "all".to_string();
     for p in libs.iter() {
@@ -1051,6 +1075,10 @@ fn eq_expanded(db: &dyn QueryDb, model_name: String) -> EqExpandResPtr {
 
 fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> FlatModelResPtr {
     flat_model::flattened_model_q(db, model_name)
+}
+
+fn provenance_index_q(db: &dyn QueryDb, model_name: String) -> ProvenanceIndexResPtr {
+    provenance_q::provenance_index_q(db, model_name)
 }
 
 fn constrainedby_holds_extends_q(

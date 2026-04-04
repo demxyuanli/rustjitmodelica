@@ -1,6 +1,7 @@
 use crate::ast::Model;
 use crate::cache::cache_key::{CacheKeyV2, CacheStage};
 use crate::flatten::flat_cache_v1::DepHashEntry;
+use crate::flatten::ValidationMode;
 use crate::flatten::FlattenError;
 use crate::flatten::{cache_shm, cache_sqlite, flatten_cache};
 use crate::query_db::{flags_for_query_stage, scope_from_path, QueryDb};
@@ -292,17 +293,21 @@ pub fn constrainedby_holds_extends_q(
 
 pub fn constrainedby_holds_extends_cached_with_loader(
     loader: &mut crate::loader::ModelLoader,
-    scope_model: &Model,
+    scope_model_qualified: &str,
     import_scope: &str,
     msl_context: &str,
     new_type_raw: &str,
     constraint_raw: &str,
+    validation_mode: ValidationMode,
+    compile_stop_label: &str,
 ) -> Result<bool, FlattenError> {
     let mut db = crate::query_db::Database::default();
     db.set_library_paths(Arc::new(loader.library_paths.clone()));
     db.set_coarse_constrainedby_only(false);
+    db.set_compile_stop(Arc::new(compile_stop_label.to_string()));
+    db.set_validation_mode(Arc::new(format!("{validation_mode:?}")));
     let input = ConstrainedByInput {
-        scope_model_name: scope_model.name.clone(),
+        scope_model_name: scope_model_qualified.to_string(),
         import_scope: import_scope.to_string(),
         msl_context: msl_context.to_string(),
         new_type_raw: new_type_raw.to_string(),
