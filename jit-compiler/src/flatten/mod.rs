@@ -13,6 +13,7 @@ mod decl_expand;
 pub(crate) mod cache_sqlite;
 pub(crate) mod cache_shm;
 pub(crate) mod flat_cache_v1;
+pub(crate) mod flat_cache_v2;
 pub(crate) mod inheritance_cache_v1;
 mod real_fft_sample_points;
 mod param_expr_eval;
@@ -119,39 +120,135 @@ impl Flattener {
         root_name: &str,
     ) -> Result<FlattenedModel, FlattenError> {
         let root_path = root_name.replace('/', ".");
+        let mode_start = std::time::Instant::now();
+
+        // Emit mode diagnostic for performance analysis
+        if std::env::var("RUSTMODLICA_PERF_TRACE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            eprintln!(
+                "[flatten] START mode={:?} model={}",
+                self.validation_mode,
+                root_path
+            );
+        }
+
         self.flatten_inheritance(root, root_path.as_str())?;
         redeclare::validate_modification_prefixes_in_model(root.as_ref())?;
-        let model = root.as_ref();
-        let mut flat = FlattenedModel {
-            declarations: Vec::new(),
-            equations: Vec::new(),
-            algorithms: Vec::new(),
-            initial_equations: Vec::new(),
-            initial_algorithms: Vec::new(),
-            connections: Vec::new(),
-            conditional_connections: Vec::new(),
-            instances: HashMap::new(),
-            array_sizes: HashMap::new(),
-            clocked_var_names: std::collections::HashSet::new(),
-            clock_partitions: Vec::new(),
-            clock_signal_connections: Vec::new(),
-            stream_peer_map: HashMap::new(),
-            interner: StringInterner::new(),
-            inst_records: Vec::new(),
-            path_to_inst: HashMap::new(),
+
+        let result = match self.validation_mode {
+            ValidationMode::SuperFast => {
+                // SuperFast: Only collect top-level declarations without recursive sub-model loading.
+                // This is the fastest path for structural validation.
+                let model = root.as_ref();
+                let mut flat = FlattenedModel {
+                    declarations: Vec::new(),
+                    equations: Vec::new(),
+                    algorithms: Vec::new(),
+                    initial_equations: Vec::new(),
+                    initial_algorithms: Vec::new(),
+                    connections: Vec::new(),
+                    conditional_connections: Vec::new(),
+                    instances: HashMap::new(),
+                    array_sizes: HashMap::new(),
+                    clocked_var_names: std::collections::HashSet::new(),
+                    clock_partitions: Vec::new(),
+                    clock_signal_connections: Vec::new(),
+                    stream_peer_map: HashMap::new(),
+                    interner: StringInterner::new(),
+                    inst_records: Vec::new(),
+                    path_to_inst: HashMap::new(),
+                };
+                // Only expand top-level declarations (no recursive sub-model loading)
+                self.expand_declarations_super_fast(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
+                // Still need equations for structural analysis
+                self.expand_equations(model, "", &mut flat);
+                // Skip algorithms, initial_equations, initial_algorithms for SuperFast
+                resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+                self.infer_clocked_variables(&mut flat);
+                Ok(flat)
+            }
+            ValidationMode::QuickStructure => {
+                // QuickStructure: Simplified declaration expand with reduced iteration counts.
+                let model = root.as_ref();
+                let mut flat = FlattenedModel {
+                    declarations: Vec::new(),
+                    equations: Vec::new(),
+                    algorithms: Vec::new(),
+                    initial_equations: Vec::new(),
+                    initial_algorithms: Vec::new(),
+                    connections: Vec::new(),
+                    conditional_connections: Vec::new(),
+                    instances: HashMap::new(),
+                    array_sizes: HashMap::new(),
+                    clocked_var_names: std::collections::HashSet::new(),
+                    clock_partitions: Vec::new(),
+                    clock_signal_connections: Vec::new(),
+                    stream_peer_map: HashMap::new(),
+                    interner: StringInterner::new(),
+                    inst_records: Vec::new(),
+                    path_to_inst: HashMap::new(),
+                };
+                self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
+                self.expand_equations(model, "", &mut flat);
+                // Skip algorithms for QuickStructure (not needed for structural analysis)
+                self.expand_initial_equations(model, "", &mut flat);
+                // Skip initial_algorithms for QuickStructure
+                resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+                self.infer_clocked_variables(&mut flat);
+                Ok(flat)
+            }
+            ValidationMode::Full => {
+                // Full: Complete flatten pipeline
+                let model = root.as_ref();
+                let mut flat = FlattenedModel {
+                    declarations: Vec::new(),
+                    equations: Vec::new(),
+                    algorithms: Vec::new(),
+                    initial_equations: Vec::new(),
+                    initial_algorithms: Vec::new(),
+                    connections: Vec::new(),
+                    conditional_connections: Vec::new(),
+                    instances: HashMap::new(),
+                    array_sizes: HashMap::new(),
+                    clocked_var_names: std::collections::HashSet::new(),
+                    clock_partitions: Vec::new(),
+                    clock_signal_connections: Vec::new(),
+                    stream_peer_map: HashMap::new(),
+                    interner: StringInterner::new(),
+                    inst_records: Vec::new(),
+                    path_to_inst: HashMap::new(),
+                };
+                self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
+                self.expand_equations(model, "", &mut flat);
+                self.expand_algorithms(model, "", &mut flat);
+                self.expand_initial_equations(model, "", &mut flat);
+                self.expand_initial_algorithms(model, "", &mut flat);
+                resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+                self.infer_clocked_variables(&mut flat);
+                Ok(flat)
+            }
         };
-        self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
-        self.expand_equations(model, "", &mut flat);
-        self.expand_algorithms(model, "", &mut flat);
-        // Initial equations affect variable classification (previous() scanning).
-        self.expand_initial_equations(model, "", &mut flat);
-        if matches!(self.validation_mode, ValidationMode::Full) {
-            self.expand_initial_algorithms(model, "", &mut flat);
+
+        // Emit completion diagnostic
+        if std::env::var("RUSTMODLICA_PERF_TRACE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            if let Ok(ref flat) = result {
+                eprintln!(
+                    "[flatten] END mode={:?} decls={} eqs={} instances={} us={}",
+                    self.validation_mode,
+                    flat.declarations.len(),
+                    flat.equations.len(),
+                    flat.instances.len(),
+                    mode_start.elapsed().as_micros()
+                );
+            }
         }
-        resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
-        // Clocked-variable inference affects discrete classification in analysis.
-        self.infer_clocked_variables(&mut flat);
-        Ok(flat)
+
+        result
     }
 
     /// Flatten assuming inheritance was already applied to `root`.
@@ -163,35 +260,108 @@ impl Flattener {
     ) -> Result<FlattenedModel, FlattenError> {
         let root_path = root_name.replace('/', ".");
         redeclare::validate_modification_prefixes_in_model(root.as_ref())?;
-        let model = root.as_ref();
-        let mut flat = FlattenedModel {
-            declarations: Vec::new(),
-            equations: Vec::new(),
-            algorithms: Vec::new(),
-            initial_equations: Vec::new(),
-            initial_algorithms: Vec::new(),
-            connections: Vec::new(),
-            conditional_connections: Vec::new(),
-            instances: HashMap::new(),
-            array_sizes: HashMap::new(),
-            clocked_var_names: std::collections::HashSet::new(),
-            clock_partitions: Vec::new(),
-            clock_signal_connections: Vec::new(),
-            stream_peer_map: HashMap::new(),
-            interner: StringInterner::new(),
-            inst_records: Vec::new(),
-            path_to_inst: HashMap::new(),
-        };
-        self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
-        self.expand_equations(model, "", &mut flat);
-        self.expand_algorithms(model, "", &mut flat);
-        self.expand_initial_equations(model, "", &mut flat);
-        if matches!(self.validation_mode, ValidationMode::Full) {
-            self.expand_initial_algorithms(model, "", &mut flat);
+
+        match self.validation_mode {
+            ValidationMode::SuperFast => {
+                let model = root.as_ref();
+                let mut flat = FlattenedModel {
+                    declarations: Vec::new(),
+                    equations: Vec::new(),
+                    algorithms: Vec::new(),
+                    initial_equations: Vec::new(),
+                    initial_algorithms: Vec::new(),
+                    connections: Vec::new(),
+                    conditional_connections: Vec::new(),
+                    instances: HashMap::new(),
+                    array_sizes: HashMap::new(),
+                    clocked_var_names: std::collections::HashSet::new(),
+                    clock_partitions: Vec::new(),
+                    clock_signal_connections: Vec::new(),
+                    stream_peer_map: HashMap::new(),
+                    interner: StringInterner::new(),
+                    inst_records: Vec::new(),
+                    path_to_inst: HashMap::new(),
+                };
+                self.expand_declarations_super_fast(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
+                self.expand_equations(model, "", &mut flat);
+                resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+                self.infer_clocked_variables(&mut flat);
+                Ok(flat)
+            }
+            ValidationMode::QuickStructure => {
+                let model = root.as_ref();
+                let mut flat = FlattenedModel {
+                    declarations: Vec::new(),
+                    equations: Vec::new(),
+                    algorithms: Vec::new(),
+                    initial_equations: Vec::new(),
+                    initial_algorithms: Vec::new(),
+                    connections: Vec::new(),
+                    conditional_connections: Vec::new(),
+                    instances: HashMap::new(),
+                    array_sizes: HashMap::new(),
+                    clocked_var_names: std::collections::HashSet::new(),
+                    clock_partitions: Vec::new(),
+                    clock_signal_connections: Vec::new(),
+                    stream_peer_map: HashMap::new(),
+                    interner: StringInterner::new(),
+                    inst_records: Vec::new(),
+                    path_to_inst: HashMap::new(),
+                };
+                self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
+                self.expand_equations(model, "", &mut flat);
+                self.expand_initial_equations(model, "", &mut flat);
+                resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+                self.infer_clocked_variables(&mut flat);
+                Ok(flat)
+            }
+            ValidationMode::Full => {
+                let model = root.as_ref();
+                let mut flat = FlattenedModel {
+                    declarations: Vec::new(),
+                    equations: Vec::new(),
+                    algorithms: Vec::new(),
+                    initial_equations: Vec::new(),
+                    initial_algorithms: Vec::new(),
+                    connections: Vec::new(),
+                    conditional_connections: Vec::new(),
+                    instances: HashMap::new(),
+                    array_sizes: HashMap::new(),
+                    clocked_var_names: std::collections::HashSet::new(),
+                    clock_partitions: Vec::new(),
+                    clock_signal_connections: Vec::new(),
+                    stream_peer_map: HashMap::new(),
+                    interner: StringInterner::new(),
+                    inst_records: Vec::new(),
+                    path_to_inst: HashMap::new(),
+                };
+                self.expand_declarations(Arc::clone(root), "", &mut flat, Some(root_path.as_str()))?;
+                self.expand_equations(model, "", &mut flat);
+                self.expand_algorithms(model, "", &mut flat);
+                self.expand_initial_equations(model, "", &mut flat);
+                self.expand_initial_algorithms(model, "", &mut flat);
+                resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
+                self.infer_clocked_variables(&mut flat);
+                Ok(flat)
+            }
         }
-        resolve_connections(&mut flat, Some(root_path.as_str()), &self.loader)?;
-        self.infer_clocked_variables(&mut flat);
-        Ok(flat)
+    }
+
+    /// SuperFast declaration expansion: only top-level declarations, no recursive sub-model loading.
+    pub(crate) fn expand_declarations_super_fast(
+        &mut self,
+        model: Arc<Model>,
+        prefix: &str,
+        flat: &mut FlattenedModel,
+        current_model_name: Option<&str>,
+    ) -> Result<(), FlattenError> {
+        self.expand_declarations_with_mode(
+            model,
+            prefix,
+            flat,
+            current_model_name,
+            decl_expand::ExpandDeclMode::SuperFast,
+        )
     }
 
     pub(crate) fn decl_expand_preinherited(

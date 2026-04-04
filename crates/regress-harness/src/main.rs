@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{builder::Styles, Parser, Subcommand};
 use regress_harness::incremental::{merge_ordered, PlanEntry};
 use regress_harness::report::{
     append_ndjson_line, write_manifest, write_report_json, write_summary_compat, RegressManifest,
@@ -40,17 +40,44 @@ use commands::{
     parse_monitor_source, OutputFormat,
 };
 
+const LONG_ABOUT: &str = "\
+JSON-driven regression runner for rustmodlica (parallel execution, incremental plans, reports).
+
+Launch with no subcommand to open an interactive session (terminal-first workflow).";
+
+const AFTER_LONG_HELP: &str = "\
+Command groups:
+  Session        repl (default), no-args entry
+  Workflow       run, plan, list-cases, status, monitor
+  Config         validate-config
+  Agents         agent-context, agent
+  JIT            jit <subcommand>
+  Automation     repl-exec -c \"<one repl line>\"
+
+Tips:
+  Use --no-color when piping or logging to files.
+  In the interactive session, leading '/' is optional (e.g. /help and help).";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "regress-harness",
     version,
-    about = "JSON-driven regression runner."
+    about = "JSON-driven regression runner.",
+    long_about = LONG_ABOUT,
+    after_long_help = AFTER_LONG_HELP,
+    styles = Styles::styled(),
 )]
 struct Cli {
+    /// Disable ANSI colors (also respects env NO_COLOR).
+    #[arg(long, global = true)]
+    no_color: bool,
+    /// Extra diagnostics on stderr (reserved for future use).
+    #[arg(short, long, global = true)]
+    verbose: bool,
     /// Language: en | zh-CN (also supports env RUSTMODLICA_LANG)
     #[arg(long, global = true)]
     lang: Option<String>,
-    /// If omitted, starts a simple interactive menu (inquire-based).
+    /// If omitted, starts an interactive session (inquire REPL).
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -80,22 +107,35 @@ struct HarnessFilterArgs {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Stream-style REPL (classic CLI interaction)
+    /// Interactive REPL (same as launching with no subcommand)
     Repl,
-    /// Validate JSON config (version, duplicate ids)
-    ValidateConfig {
-        #[arg(long)]
-        config: PathBuf,
+    /// Run one REPL-syntax command and exit (for Ink / automation)
+    ReplExec {
+        /// Same input as in the interactive REPL (e.g. `scope list`, `run --config cfg.json`)
+        #[arg(short = 'c', long)]
+        command: String,
     },
-    /// List selected cases (tier/tags) without running
-    ListCases {
+    /// Run cases from JSON config
+    Run {
+        #[command(flatten)]
+        filter: HarnessFilterArgs,
+        #[arg(long)]
+        ndjson: bool,
+        #[arg(long)]
+        summary_compat: bool,
+        /// Log each finished case to stderr
+        #[arg(long)]
+        progress: bool,
+    },
+    /// Show execution plan (incremental) without running
+    Plan {
         #[command(flatten)]
         filter: HarnessFilterArgs,
         #[arg(long, default_value = "human")]
         format: String,
     },
-    /// Show execution plan (incremental) without running
-    Plan {
+    /// List selected cases (tier/tags) without running
+    ListCases {
         #[command(flatten)]
         filter: HarnessFilterArgs,
         #[arg(long, default_value = "human")]
@@ -119,6 +159,11 @@ enum Commands {
         #[arg(long, default_value = "auto")]
         source: String,
     },
+    /// Validate JSON config (version, duplicate ids)
+    ValidateConfig {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Emit machine-readable context for agents (paths, failures, suggested CLI)
     AgentContext {
         #[arg(long, default_value = "build/regression_data")]
@@ -126,22 +171,10 @@ enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// AI agent integration
+    /// AI agent integration (JSON line protocol)
     Agent {
         #[command(subcommand)]
         command: AgentCommands,
-    },
-    /// Run cases from JSON config
-    Run {
-        #[command(flatten)]
-        filter: HarnessFilterArgs,
-        #[arg(long)]
-        ndjson: bool,
-        #[arg(long)]
-        summary_compat: bool,
-        /// Log each finished case to stderr
-        #[arg(long)]
-        progress: bool,
     },
     /// JIT-specific gates and helpers
     Jit {
@@ -151,6 +184,7 @@ enum Commands {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(subcommand_help_heading = "JIT commands")]
 enum JitCommands {
     /// Batch validate TestLib root/negative models (PS1 parity)
     TestlibValidate {
@@ -232,6 +266,7 @@ fn discover_repo_root() -> Result<PathBuf> {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(subcommand_help_heading = "Agent commands")]
 enum AgentCommands {
     /// Start line-based JSON REPL for AI agents
     Repl,
@@ -252,9 +287,16 @@ fn main() {
 
 fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+    if cli.no_color {
+        std::env::set_var("NO_COLOR", "1");
+    }
+    if cli.verbose {
+        std::env::set_var("HARNESS_VERBOSE", "1");
+    }
     i18n::set_language(cli.lang.as_deref());
     match cli.command {
         None | Some(Commands::Repl) => repl::run_repl(),
+        Some(Commands::ReplExec { command }) => repl::run_single_command(&command),
         Some(Commands::ValidateConfig { config }) => cmd_validate_config(&config),
         Some(Commands::ListCases { filter, format }) => {
             cmd_list_cases(

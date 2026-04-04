@@ -46,7 +46,10 @@ fn shm_seg_name(seg: u32) -> String {
 struct HeaderV1 {
     magic: u32,
     version: u32,
-    lock: AtomicU32,
+    /// Read-write lock for cross-process synchronization.
+    /// Bits 0-15: writer flag (0=none, 1=writing)
+    /// Bits 16-31: reader count
+    rwlock: AtomicU32,
     index_cap: u32,
     index_off: u32,
     arena_off: u32,
@@ -54,6 +57,11 @@ struct HeaderV1 {
     current_seg: u32,
     current_off: u32,
 }
+
+const WRITER_MASK: u32 = 0x0000_FFFF;
+#[allow(dead_code)]
+const READER_MASK: u32 = 0xFFFF_0000;
+const READER_ONE: u32 = 0x0001_0000;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -119,7 +127,7 @@ fn init_seg0(seg0: &ShmemWrap) {
         *hdr = HeaderV1 {
             magic: MAGIC,
             version: VERSION,
-            lock: AtomicU32::new(0),
+            rwlock: AtomicU32::new(0),
             index_cap: cap,
             index_off,
             arena_off,
@@ -210,15 +218,28 @@ fn load_seg(seg: u32) -> Option<Shmem> {
         .ok()
 }
 
-fn lock_hdr(hdr: &HeaderV1) {
+/// Acquire read lock for shared access (multiple readers allowed).
+/// Waits until no writer is active, then increments reader count.
+fn lock_read(hdr: &HeaderV1) {
     let mut spins = 0u32;
     loop {
-        if hdr
-            .lock
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            return;
+        let state = hdr.rwlock.load(Ordering::Acquire);
+        // Check if writer is active
+        if (state & WRITER_MASK) == 0 {
+            // Try to increment reader count
+            let new_state = state.wrapping_add(READER_ONE);
+            if hdr
+                .rwlock
+                .compare_exchange(state, new_state, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                // Double-check no writer appeared
+                if hdr.rwlock.load(Ordering::Acquire) & WRITER_MASK == 0 {
+                    return;
+                }
+                // Writer appeared, release read lock and retry
+                hdr.rwlock.fetch_sub(READER_ONE, Ordering::Release);
+            }
         }
         spins += 1;
         if spins % 10_000 == 0 {
@@ -229,8 +250,51 @@ fn lock_hdr(hdr: &HeaderV1) {
     }
 }
 
+/// Release read lock.
+fn unlock_read(hdr: &HeaderV1) {
+    hdr.rwlock.fetch_sub(READER_ONE, Ordering::Release);
+}
+
+/// Acquire write lock for exclusive access (only one writer, no readers).
+/// Waits until no readers or writers are active.
+fn lock_write(hdr: &HeaderV1) {
+    let mut spins = 0u32;
+    loop {
+        let state = hdr.rwlock.load(Ordering::Acquire);
+        // Check if any reader or writer is active
+        if state == 0 {
+            // Try to set writer flag (no need to wait, state was 0)
+            if hdr
+                .rwlock
+                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return;
+            }
+        }
+        spins += 1;
+        if spins % 10_000 == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        } else {
+            std::hint::spin_loop();
+        }
+    }
+}
+
+/// Release write lock.
+fn unlock_write(hdr: &HeaderV1) {
+    hdr.rwlock.store(0, Ordering::Release);
+}
+
+// Legacy aliases for backward compatibility
+#[allow(dead_code)]
+fn lock_hdr(hdr: &HeaderV1) {
+    lock_write(hdr);
+}
+
+#[allow(dead_code)]
 fn unlock_hdr(hdr: &HeaderV1) {
-    hdr.lock.store(0, Ordering::Release);
+    unlock_write(hdr);
 }
 
 pub fn shm_get(key: &str) -> Option<Vec<u8>> {
@@ -239,7 +303,7 @@ pub fn shm_get(key: &str) -> Option<Vec<u8>> {
         init_seg0(&st.seg0);
         let base0 = st.seg0.0.as_ptr() as *mut u8;
         let hdr = &*as_mut::<HeaderV1>(base0, 0);
-        lock_hdr(hdr);
+        lock_read(hdr);  // Use read lock for concurrent reads
         let cap = hdr.index_cap as usize;
         let idx = &*as_slice_mut::<IndexEntryV1>(base0, hdr.index_off, cap);
         let h = hash_key64(key);
@@ -247,7 +311,7 @@ pub fn shm_get(key: &str) -> Option<Vec<u8>> {
         for _ in 0..cap {
             let e = idx[i];
             if e.key_hash == 0 {
-                unlock_hdr(hdr);
+                unlock_read(hdr);
                 return None;
             }
             if e.key_hash == h && e.len > 0 {
@@ -255,18 +319,18 @@ pub fn shm_get(key: &str) -> Option<Vec<u8>> {
                 let start = e.off as usize;
                 let end = start + e.len as usize;
                 if end > seg.len() {
-                    unlock_hdr(hdr);
+                    unlock_read(hdr);
                     return None;
                 }
                 let base = seg.as_ptr() as *mut u8;
                 let bytes = std::slice::from_raw_parts(base.add(start), e.len as usize);
                 let payload = unpack_record(bytes, key)?;
-                unlock_hdr(hdr);
+                unlock_read(hdr);
                 return Some(payload.to_vec());
             }
             i = (i + 1) % cap;
         }
-        unlock_hdr(hdr);
+        unlock_read(hdr);
         None
     }
 }
@@ -280,7 +344,7 @@ pub fn shm_put(key: &str, payload: &[u8]) -> bool {
         init_seg0(&st.seg0);
         let base0 = st.seg0.0.as_ptr() as *mut u8;
         let hdr = &mut *as_mut::<HeaderV1>(base0, 0);
-        lock_hdr(hdr);
+        lock_write(hdr);  // Use write lock for exclusive access
         let cap = hdr.index_cap as usize;
         let idx = &mut *as_slice_mut::<IndexEntryV1>(base0, hdr.index_off, cap);
         let h = hash_key64(key);
@@ -302,7 +366,7 @@ pub fn shm_put(key: &str, payload: &[u8]) -> bool {
         let mut seg = match load_seg(seg_id) {
             Some(s) => s,
             None => {
-                unlock_hdr(hdr);
+                unlock_write(hdr);
                 return false;
             }
         };
@@ -314,12 +378,12 @@ pub fn shm_put(key: &str, payload: &[u8]) -> bool {
             seg = match load_seg(seg_id) {
                 Some(s) => s,
                 None => {
-                    unlock_hdr(hdr);
+                    unlock_write(hdr);
                     return false;
                 }
             };
             if rec_len > seg.len() {
-                unlock_hdr(hdr);
+                unlock_write(hdr);
                 return false;
             }
         }
@@ -329,7 +393,7 @@ pub fn shm_put(key: &str, payload: &[u8]) -> bool {
         idx[i].seg = seg_id;
         idx[i].off = off as u32;
         idx[i].len = rec_len as u32;
-        unlock_hdr(hdr);
+        unlock_write(hdr);
         true
     }
 }

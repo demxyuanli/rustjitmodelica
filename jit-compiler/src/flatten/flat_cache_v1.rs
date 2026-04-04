@@ -5,7 +5,9 @@ use std::collections::HashMap;
 
 pub const FLAT_CACHE_SCHEMA_V1: &str = "rustmodlica_flat_cache_v1";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Dependency hash entry with rkyv support for zero-copy deserialization in V2 cache.
+#[derive(Debug, Clone, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[archive(check_bytes)]
 pub struct DepHashEntry {
     pub path: String,
     pub content_hash: String,
@@ -93,4 +95,3 @@ impl FlatCacheV1 {
         }
     }
 }
-

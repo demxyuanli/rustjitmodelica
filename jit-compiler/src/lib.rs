@@ -40,6 +40,7 @@ pub use string_intern::{StringInterner, VarId};
 pub use equation_graph::{EquationGraph, EquationGraphEdge, EquationGraphNode};
 pub use loader::{LoadError, ModelLoader};
 pub use simulation::{run_simulation, run_simulation_collect, runtime_perf_counters, SimulationResult};
+pub use api::affected_models_for_changed_files;
 #[cfg(feature = "sundials")]
 pub use simulation::{
     kinsol_solve_square_spgmr, parse_linsol_env, KinResidualFn, KinsolCallbackPack, SundialsLinSolKind,

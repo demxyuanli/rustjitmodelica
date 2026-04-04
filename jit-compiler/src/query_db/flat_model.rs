@@ -1,7 +1,6 @@
-use crate::cache::cache_key::{CacheKeyV2, CacheStage};
 use crate::flatten::flat_cache_v1::DepHashEntry;
 use crate::flatten::{FlattenedModel, ValidationMode};
-use crate::query_db::{cache_deps_match_for_stage, flags_for_query_stage, semantic_hash_text, scope_from_path, QueryDb};
+use crate::query_db::{cache_deps_match_for_stage, QueryDb};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -23,21 +22,12 @@ pub struct FlatModelQCacheV1 {
 }
 
 pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatModelResPtr {
+    super::salsa_session::clear_last_flat_model_q_deps();
     let deps_scope = super::DepScope::begin();
     let libs = db.library_paths();
     let coarse = db.coarse_constrainedby_only();
     let compile_stop = db.compile_stop();
-    let st = db.source_text(model_name.clone());
-    let root_hash = semantic_hash_text(st.text.as_str());
-    let scope = scope_from_path(st.path.as_str(), model_name.as_str());
-    let mut flags = flags_for_query_stage(db);
-    flags.coarse_constrainedby_only = coarse;
-    let key_v2 = CacheKeyV2::builder(CacheStage::FlatModelQ, scope.clone(), model_name.as_str())
-        .libs_from_path_bufs(libs.as_slice())
-        .root_content_hash(root_hash)
-        .compile_flags(flags)
-        .build();
-    let (cache_enabled, key) = super::key_with_policy(key_v2.to_qualified_key());
+    let (cache_enabled, key, scope) = super::flat_model_q_cache_key(db, model_name.clone());
 
     if cache_enabled {
         if let Some(bytes) = crate::flatten::cache_shm::shm_get(key.as_str()) {
@@ -52,6 +42,7 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
                         crate::query_db::perf::CacheEvent::Hit,
                     );
                     super::dep_record_deps(&cache.deps);
+                    super::salsa_session::record_last_flat_model_q_deps(cache.deps.clone());
                     let flat = Arc::new(cache.flat.into_flat_model());
                     return super::FlatModelResPtr(Arc::new(FlatModelResult {
                         flat: Some(flat),
@@ -79,6 +70,7 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
                         );
                         let _ = crate::flatten::cache_shm::shm_put(key.as_str(), &bytes);
                         super::dep_record_deps(&cache.deps);
+                        super::salsa_session::record_last_flat_model_q_deps(cache.deps.clone());
                         let flat = Arc::new(cache.flat.into_flat_model());
                         return super::FlatModelResPtr(Arc::new(FlatModelResult {
                             flat: Some(flat),
@@ -287,6 +279,7 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
             }
         }
     }
+    super::salsa_session::record_last_flat_model_q_deps(deps.clone());
     let flat_arc = Arc::new(flat);
     super::FlatModelResPtr(Arc::new(FlatModelResult {
         flat: Some(flat_arc),

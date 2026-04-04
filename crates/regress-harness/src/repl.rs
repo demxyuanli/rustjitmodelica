@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use inquire::ui::{Color, RenderConfig, StyleSheet, Styled};
 use inquire::{CustomUserError, Select, Text};
 use std::path::{Path, PathBuf};
 
@@ -180,6 +181,7 @@ fn command_suggestions(input: &str) -> Result<Vec<String>, CustomUserError> {
     let prefix = input.trim().to_ascii_lowercase();
     let cmds = [
         "help",
+        "/help",
         "scope",
         "scope list",
         "scope use",
@@ -211,6 +213,9 @@ fn command_suggestions(input: &str) -> Result<Vec<String>, CustomUserError> {
         "cd",
         "tree",
         "quit",
+        "/quit",
+        "clear",
+        "/clear",
     ];
     let mut out = Vec::new();
     if prefix.is_empty() {
@@ -227,6 +232,22 @@ fn command_suggestions(input: &str) -> Result<Vec<String>, CustomUserError> {
 
 fn tokenize(line: &str) -> Vec<String> {
     line.split_whitespace().map(|s| s.to_string()).collect()
+}
+
+fn repl_render_config() -> RenderConfig<'static> {
+    if !crate::ui::terminal_styles_enabled() {
+        return RenderConfig::empty();
+    }
+    RenderConfig::default_colored()
+        .with_prompt_prefix(Styled::new(""))
+        .with_help_message(StyleSheet::empty().with_fg(Color::DarkGrey))
+}
+
+fn strip_leading_slash(line: &str) -> &str {
+    match line.strip_prefix('/') {
+        Some(rest) => rest.trim_start(),
+        None => line,
+    }
 }
 
 fn take_flag(args: &[String], name: &str) -> Option<String> {
@@ -269,24 +290,25 @@ fn parse_path(args: &[String], name: &str) -> Option<PathBuf> {
 }
 
 fn print_help() {
-    println!("Commands:");
-    println!("  help | h");
-    println!("  ls                    (list subcommands under current prefix)");
-    println!("  cd <name|..|/>        (enter group, back, or reset)");
-    println!("  tree [path] [--depth N|--all|--select]   (print command tree, collapsible)");
-    println!("  scope list");
-    println!("  scope use <name>    (sets ctx defaults)");
-    println!("  scope gen-config <name>");
-    println!("  profile list");
-    println!("  profile use <name>  (sets ctx defaults)");
-    println!("  profile             (alias for profile list)");
-    println!("  ctx");
-    println!("  set <key> <value>   (keys: repo-root rustmodlica-exe cargo-target-dir config tier tags workers baseline incremental manifest data-root out-dir format)");
-    println!("  unset <key>         (keys: repo-root rustmodlica-exe cargo-target-dir tier tags workers baseline incremental manifest out-dir)");
-    println!("  flags <on|off> <ndjson|summary-compat|progress>");
-    println!("  quit | exit | q");
+    println!("Essentials");
+    println!("  help | h | /help        Command reference");
+    println!("  clear | cls | /clear    Clear the screen");
+    println!("  quit | exit | q | /quit Exit the session");
     println!();
-    println!("Work commands (use ctx defaults; you can override with flags):");
+    println!("Navigation");
+    println!("  ls                    List subcommands under the current prefix");
+    println!("  cd <name|..|/>        Enter a group, go up, or reset to root");
+    println!("  tree [path] [--depth N|--all|--select]   Command tree");
+    println!();
+    println!("Context");
+    println!("  ctx                   Show active defaults");
+    println!("  set <key> <value>     repo-root, rustmodlica-exe, cargo-target-dir, config, tier, tags, workers, baseline, incremental, manifest, data-root, out-dir, format");
+    println!("  unset <key>           Clear a context key");
+    println!("  flags <on|off> <ndjson|summary-compat|progress>");
+    println!("  profile | profile list | profile use <name>");
+    println!("  scope list | scope use <name> | scope gen-config <name>");
+    println!();
+    println!("Regression workflow");
     println!("  validate [--config <path>]");
     println!("  list [--format human|json] [--config <path>] [--tier <tier>] [--tags a,b]");
     println!("  plan [--format human|json] [--config <path>] [--tier <tier>] [--tags a,b] [--workers <n>]");
@@ -311,6 +333,8 @@ fn print_help() {
     println!("                            [--top-n <n>] [--allow-unsupported]");
     println!("  coverage generate-status");
     println!("  coverage gate [--status-json <path>]");
+    println!();
+    println!("(Leading '/' is optional, e.g. `/run` and `run` are equivalent.)");
 }
 
 #[derive(Clone, Copy)]
@@ -479,7 +503,9 @@ fn tree_select_interactive() -> Result<Vec<String>> {
         } else {
             format!("Command tree: {}", path.join("/"))
         };
-        let picked = Select::new(&title, labels).prompt()?;
+        let picked = Select::new(&title, labels)
+            .with_render_config(repl_render_config())
+            .prompt()?;
         if picked == "<exit>" {
             bail!("cancelled");
         }
@@ -553,9 +579,9 @@ fn print_command_tree(path: Option<&str>, depth: usize) -> Result<()> {
 
 fn prompt_label(ctx: &ReplContext) -> String {
     if ctx.cmd_prefix.is_empty() {
-        "regress-harness>".to_string()
+        "> ".to_string()
     } else {
-        format!("regress-harness/{}>", ctx.cmd_prefix.join("/"))
+        format!("{}/> ", ctx.cmd_prefix.join("/"))
     }
 }
 
@@ -621,7 +647,19 @@ fn expand_with_prefix(ctx: &ReplContext, mut tokens: Vec<String>) -> Vec<String>
         return tokens;
     }
     let global = [
-        "help", "h", "ctx", "set", "unset", "flags", "quit", "exit", "q", "ls", "cd",
+        "help",
+        "h",
+        "ctx",
+        "set",
+        "unset",
+        "flags",
+        "quit",
+        "exit",
+        "q",
+        "ls",
+        "cd",
+        "clear",
+        "cls",
     ];
     if tokens
         .get(0)
@@ -739,7 +777,14 @@ fn print_ctx(ctx: &ReplContext) {
 }
 
 fn execute_line(ctx: &mut ReplContext, line: &str) -> Result<bool> {
-    let raw = line.trim();
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(true);
+    }
+    if trimmed.starts_with("//") {
+        return Ok(true);
+    }
+    let raw = strip_leading_slash(trimmed);
     if raw.is_empty() {
         return Ok(true);
     }
@@ -800,6 +845,10 @@ fn execute_line(ctx: &mut ReplContext, line: &str) -> Result<bool> {
             print_help();
             Ok(true)
         }
+        "clear" | "cls" => {
+            crate::ui::clear_screen();
+            Ok(true)
+        }
         "scope" => {
             if rest.is_empty() {
                 profile_list();
@@ -819,7 +868,9 @@ fn execute_line(ctx: &mut ReplContext, line: &str) -> Result<bool> {
                             .iter()
                             .map(|s| format!("{}  -  {}", s.name, s.desc))
                             .collect::<Vec<_>>();
-                        let picked = inquire::Select::new("Select scope", labels).prompt()?;
+                        let picked = inquire::Select::new("Select scope", labels)
+                            .with_render_config(repl_render_config())
+                            .prompt()?;
                         let picked_name = picked
                             .split("  -  ")
                             .next()
@@ -843,7 +894,9 @@ fn execute_line(ctx: &mut ReplContext, line: &str) -> Result<bool> {
                             .iter()
                             .map(|s| format!("{}  -  {}", s.name, s.desc))
                             .collect::<Vec<_>>();
-                        let picked = inquire::Select::new("Select scope", labels).prompt()?;
+                        let picked = inquire::Select::new("Select scope", labels)
+                            .with_render_config(repl_render_config())
+                            .prompt()?;
                         let picked_name = picked
                             .split("  -  ")
                             .next()
@@ -1165,7 +1218,9 @@ fn execute_line(ctx: &mut ReplContext, line: &str) -> Result<bool> {
                             .iter()
                             .map(|s| format!("{}  -  {}", s.name, s.desc))
                             .collect::<Vec<_>>();
-                        let picked = inquire::Select::new("Select scope", labels).prompt()?;
+                        let picked = inquire::Select::new("Select scope", labels)
+                            .with_render_config(repl_render_config())
+                            .prompt()?;
                         let picked_name = picked
                             .split("  -  ")
                             .next()
@@ -1425,13 +1480,25 @@ fn execute_line(ctx: &mut ReplContext, line: &str) -> Result<bool> {
     }
 }
 
+/// Run one REPL-syntax line (same rules as the interactive session) and return.
+/// Used by the `repl-exec` CLI subcommand and external UIs (e.g. Ink).
+pub fn run_single_command(line: &str) -> Result<()> {
+    let mut ctx = ReplContext::default();
+    let _keep = execute_line(&mut ctx, line)?;
+    Ok(())
+}
+
 pub fn run_repl() -> Result<()> {
-    println!("regress-harness repl. Type 'help' for commands.");
+    crate::ui::print_session_intro(env!("CARGO_PKG_VERSION"));
+    if std::env::var("HARNESS_VERBOSE").is_ok() {
+        eprintln!("[harness] verbose enabled (HARNESS_VERBOSE=1)");
+    }
     let mut ctx = ReplContext::default();
     loop {
         let line = Text::new(&prompt_label(&ctx))
             .with_autocomplete(command_suggestions)
-            .with_help_message("Type a command. Use autocomplete.")
+            .with_help_message("Commands or /help · Tab completes · Ctrl+C cancels line")
+            .with_render_config(repl_render_config())
             .prompt();
         let line = match line {
             Ok(v) => v,

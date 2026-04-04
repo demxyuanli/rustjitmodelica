@@ -194,6 +194,16 @@ pub(crate) fn flatten_and_inline(
         if let Some(mut flat_model) =
             flatten_cache::try_read_flat_cache_v1(&cache_root, &full_key, loader)
         {
+            // Cache hit diagnostic with validation mode
+            let hit_elapsed = started_at.elapsed();
+            eprintln!(
+                "[cache] FLAT_HIT mode={:?} key_prefix={}... decls={} eqs={} us={}",
+                validation_mode,
+                &full_key.chars().take(40).collect::<String>(),
+                flat_model.declarations.len(),
+                flat_model.equations.len(),
+                hit_elapsed.as_micros()
+            );
             if stage_trace {
                 eprintln!("[stage] flatten_cache_hit");
             }
@@ -229,6 +239,12 @@ pub(crate) fn flatten_and_inline(
                 flat_model,
             });
         }
+        // Cache miss diagnostic - flatten will be executed
+        eprintln!(
+            "[cache] FLAT_MISS mode={:?} key_prefix={}...",
+            validation_mode,
+            &full_key.chars().take(40).collect::<String>()
+        );
         let key = flatten_cache::flatten_array_sizes_cache_key(
             model_name,
             loader,
@@ -255,33 +271,45 @@ pub(crate) fn flatten_and_inline(
 
     // Query-based flatten: default on for --validate; off for full simulation unless RUSTMODLICA_SALSA=1.
     let salsa_enabled = salsa_query_path_enabled(validate_only);
-    if salsa_enabled {
-        let mut db = query_db::Database::default();
-        db.set_library_paths(std::sync::Arc::new(loader.library_paths.clone()));
-        db.set_coarse_constrainedby_only(coarse_constrainedby_only);
-        db.set_compile_stop(std::sync::Arc::new(compile_stop_s.to_string()));
-        db.set_validation_mode(std::sync::Arc::new(format!("{:?}", validation_mode)));
-        let inherited = db.inheritance_flattened(model_name.replace('/', ".")).0;
-        *root_model = inherited;
-    }
     let mut flat_model = if salsa_enabled {
-        // Prefer query-based composition when enabled.
-        let mut db = query_db::Database::default();
+        let model_key = model_name.replace('/', ".");
+        let mut db = query_db::salsa_session::take_reusable_database(
+            loader,
+            model_key.as_str(),
+            coarse_constrainedby_only,
+            compile_stop_s,
+            validation_mode,
+        )
+        .unwrap_or_default();
         db.set_library_paths(std::sync::Arc::new(loader.library_paths.clone()));
         db.set_coarse_constrainedby_only(coarse_constrainedby_only);
         db.set_compile_stop(std::sync::Arc::new(compile_stop_s.to_string()));
         db.set_validation_mode(std::sync::Arc::new(format!("{:?}", validation_mode)));
-        let res = db.flattened_model_q(model_name.replace('/', ".")).0;
+        let inherited = db.inheritance_flattened(model_key.clone()).0;
+        *root_model = inherited;
+        let res = db.flattened_model_q(model_key.clone()).0;
         if let Some(err) = &res.err {
             return Err(err.clone().into());
         }
         let Some(flat_arc) = &res.flat else {
             return Err("flattened_model_q returned empty result".into());
         };
-        match Arc::try_unwrap(Arc::clone(flat_arc)) {
+        let flat_out = match Arc::try_unwrap(Arc::clone(flat_arc)) {
             Ok(v) => v,
             Err(a) => (*a).clone(),
+        };
+        if let Some(deps) = query_db::salsa_session::take_last_flat_model_q_deps() {
+            query_db::salsa_session::return_database(
+                loader,
+                model_key.as_str(),
+                coarse_constrainedby_only,
+                compile_stop_s,
+                validation_mode,
+                db,
+                deps,
+            );
         }
+        flat_out
     } else if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
         let full_key = flatten_cache::flatten_full_cache_key(
             model_name,

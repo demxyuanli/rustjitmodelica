@@ -1,6 +1,7 @@
 use crate::compiler::{CompileOutput, CompileStopPhase, Compiler, CompilerOptions};
 use crate::diag::WarningInfo;
 use crate::simulation::{run_simulation_collect, SimulationResult};
+use std::path::PathBuf;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -172,4 +173,10 @@ pub fn simulate_from_source(
         &artifacts.clock_partition_schedule,
     )?;
     Ok(result)
+}
+
+/// Returns model names that may need re-validation when the given source paths change. Uses the
+/// in-process reverse dependency index; see [`crate::query_db::affected_models`].
+pub fn affected_models_for_changed_files(changed_files: &[PathBuf]) -> Vec<String> {
+    crate::query_db::affected_models(changed_files)
 }

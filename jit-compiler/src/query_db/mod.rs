@@ -20,6 +20,7 @@ mod eq_expand;
 mod flat_model;
 pub(crate) mod constrainedby;
 mod perf;
+pub mod salsa_session;
 
 pub use perf::{reset as perf_reset, snapshot as perf_snapshot};
 pub use perf::record_add as perf_record_add;
@@ -91,6 +92,28 @@ fn flags_for_query_stage(db: &dyn QueryDb) -> CompileFlagsKey {
         warnings_level: String::new(),
         target_platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
     }
+}
+
+/// Qualified storage key for [`flat_model::flattened_model_q`] (FlatModelQ stage). Shared with
+/// [`salsa_session`] so process-local DB reuse matches on-disk / SHM cache keys.
+pub(super) fn flat_model_q_cache_key(
+    db: &dyn QueryDb,
+    model_name: String,
+) -> (bool, String, CacheScope) {
+    let libs = db.library_paths();
+    let coarse = db.coarse_constrainedby_only();
+    let st = db.source_text(model_name.clone());
+    let root_hash = semantic_hash_text(st.text.as_str());
+    let scope = scope_from_path(st.path.as_str(), model_name.as_str());
+    let mut flags = flags_for_query_stage(db);
+    flags.coarse_constrainedby_only = coarse;
+    let key_v2 = CacheKeyV2::builder(CacheStage::FlatModelQ, scope.clone(), model_name.as_str())
+        .libs_from_path_bufs(libs.as_slice())
+        .root_content_hash(root_hash)
+        .compile_flags(flags)
+        .build();
+    let (cache_enabled, key) = key_with_policy(key_v2.to_qualified_key());
+    (cache_enabled, key, scope)
 }
 
 pub(super) fn scope_from_path(path: &str, model_name: &str) -> CacheScope {
@@ -201,6 +224,9 @@ impl DepScope {
     }
 }
 
+/// Model names associated with the given paths via the reverse dependency store (file path string
+/// keys match `Path::display()`). Populated during query/flatten work in **this process**; use for
+/// incremental re-validation scope in long-lived hosts (IDE, worker). Not persisted across restarts.
 pub fn affected_models(changed_files: &[PathBuf]) -> Vec<String> {
     let mut out: HashSet<String> = HashSet::new();
     if let Ok(store) = global_reverse_dep_store().read() {

@@ -2,6 +2,7 @@ mod blt;
 pub mod derivative;
 mod expression_utils;
 mod initial;
+pub mod provenance;
 mod solvable_sparsity;
 mod variable_collection;
 
@@ -23,6 +24,9 @@ pub(crate) use variable_collection::collect_vars_expr;
 pub use variable_collection::{contains_var, extract_unknowns};
 pub use solvable_sparsity::{
     build_solvable_block_sparse_pattern, SolvableBlockSparsePattern, SolvableBlockSparseStats,
+};
+pub use provenance::{
+    ChangeImpact, ProvenanceBuilder, ProvenanceIndex, ProvenanceStats,
 };
 
 #[derive(Clone, Default)]

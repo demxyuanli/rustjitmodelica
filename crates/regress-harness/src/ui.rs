@@ -10,6 +10,11 @@ fn use_color() -> bool {
     std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err()
 }
 
+/// Whether styled terminal output (prompts, banners) should use ANSI colors.
+pub fn terminal_styles_enabled() -> bool {
+    use_color()
+}
+
 fn style(s: &str, code: &str) -> String {
     if use_color() {
         format!("\x1b[{code}m{s}\x1b[0m")
@@ -93,6 +98,28 @@ pub fn pad_display(s: &str, target_width: usize) -> String {
 
 pub fn clear_screen() {
     print!("\x1b[2J\x1b[H");
+}
+
+pub fn print_session_intro(version: &str) {
+    if !terminal_styles_enabled() {
+        println!("regress-harness {version}");
+        println!("Interactive mode. Type a command, or /help for topics. Ctrl+C exits.");
+        return;
+    }
+    println!(
+        "{}",
+        style(
+            &format!("regress-harness {version} · regression runner"),
+            "1;37"
+        )
+    );
+    println!(
+        "{}",
+        style(
+            "Interactive session · type freely, or /help for commands · Tab completes",
+            "90"
+        )
+    );
 }
 
 pub fn print_banner(title: &str) {

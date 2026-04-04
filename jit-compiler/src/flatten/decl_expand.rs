@@ -289,7 +289,11 @@ impl ArrayDimensionOptimizer {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ExpandDeclMode {
+    /// SuperFast: Only top-level declarations, no recursive sub-model loading
+    SuperFast,
+    /// DeclOnly: Expand declarations but skip sub-equations
     DeclOnly,
+    /// DeclAndSubEq: Full expansion including sub-model equations
     DeclAndSubEq,
 }
 
@@ -569,6 +573,18 @@ impl Flattener {
                             );
                             resolved_type =
                                 Self::normalize_decl_type_name(resolved_type, &pre_inner_alias);
+
+                            // SuperFast mode: skip recursive sub-model loading for non-primitive types
+                            if mode == ExpandDeclMode::SuperFast && !is_primitive(&resolved_type) {
+                                // Just register the instance without loading the sub-model
+                                flat.register_inst_path(
+                                    full_path.clone(),
+                                    resolved_type.clone(),
+                                    if is_array { Some(i as usize) } else { None },
+                                );
+                                flat.instances.insert(full_path.clone(), resolved_type.clone());
+                                continue;
+                            }
 
                             if is_primitive(&resolved_type) {
                                 flat.declarations.push(Declaration {

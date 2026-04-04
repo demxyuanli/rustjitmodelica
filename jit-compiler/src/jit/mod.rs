@@ -8,6 +8,7 @@ use std::mem;
 use std::sync::OnceLock;
 
 pub mod analysis;
+pub mod codegen_cache;
 pub mod context;
 pub mod native;
 pub mod translator;
@@ -113,6 +114,11 @@ pub struct Jit {
     #[allow(dead_code)]
     data_ctx: DataDescription,
     module: JITModule,
+    /// Optional persistent codegen cache for native code reuse.
+    codegen_cache: Option<codegen_cache::CodegenCache>,
+    /// In-memory cache of compiled function pointers keyed by flat model hash.
+    /// This provides fast reuse within the same process even without disk persistence.
+    func_cache: HashMap<String, (CalcDerivsFunc, usize, usize)>,
 }
 
 fn jit_verifier_dump_enabled() -> bool {
@@ -153,11 +159,20 @@ impl Jit {
 
         let module = JITModule::new(builder);
 
+        // Initialize codegen cache if enabled
+        let codegen_cache = if codegen_cache::codegen_cache_enabled() {
+            Some(codegen_cache::CodegenCache::new())
+        } else {
+            None
+        };
+
         Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
             data_ctx: DataDescription::new(),
             module,
+            codegen_cache,
+            func_cache: HashMap::new(),
         }
     }
 
@@ -176,6 +191,55 @@ impl Jit {
         _newton_tearing_var_names: &[String],
         external_modelica_names: &HashSet<String>,
     ) -> Result<(CalcDerivsFunc, usize, usize), String> {
+        // Compute cache key from inputs
+        let cache_key = self.compute_compile_cache_key(
+            state_vars,
+            discrete_vars,
+            param_vars,
+            output_vars,
+            array_info,
+            alg_equations,
+            diff_equations,
+            algorithms,
+            clock_partition_schedule,
+        );
+
+        // Check in-memory cache first
+        if let Some((func, when_count, crossings_count)) = self.func_cache.get(&cache_key) {
+            eprintln!(
+                "[jit] FUNC_CACHE_HIT key_prefix={}... when={} crossings={}",
+                &cache_key.chars().take(16).collect::<String>(),
+                when_count,
+                crossings_count
+            );
+            return Ok((*func, *when_count, *crossings_count));
+        }
+
+        // Check disk cache (codegen_cache) if available
+        if let Some(ref cache) = self.codegen_cache {
+            let flat_hash = codegen_cache::flat_model_hash(
+                "calc_derivs",
+                state_vars,
+                discrete_vars,
+                param_vars,
+                output_vars,
+                array_info,
+                &jit_opt_level_from_env(),
+            );
+            let key = codegen_cache::CodegenCacheKey::new("calc_derivs", &flat_hash, &jit_opt_level_from_env());
+            if let Some(cached) = cache.get(&key) {
+                eprintln!(
+                    "[jit] CODEGEN_CACHE_HIT key={} when={} crossings={}",
+                    &key.stable_hash().chars().take(16).collect::<String>(),
+                    cached.when_count,
+                    cached.crossings_count
+                );
+                // Store in memory cache for future calls
+                self.func_cache.insert(cache_key, (cached.func, cached.when_count, cached.crossings_count));
+                return Ok((cached.func, cached.when_count, cached.crossings_count));
+            }
+        }
+
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(cl_types::F64)); // time
         sig.params
@@ -447,7 +511,128 @@ impl Jit {
 
         let code = self.module.get_finalized_function(func_id);
         let func: CalcDerivsFunc = unsafe { mem::transmute(code) };
+
+        // Store in in-memory cache for reuse
+        eprintln!(
+            "[jit] FUNC_CACHE_MISS key_prefix={}... when={} crossings={}",
+            &cache_key.chars().take(16).collect::<String>(),
+            when_count,
+            crossings_count
+        );
+        self.func_cache.insert(cache_key.clone(), (func, when_count, crossings_count));
+
+        // Save to disk cache if available
+        if let Some(ref cache) = self.codegen_cache {
+            let flat_hash = codegen_cache::flat_model_hash(
+                "calc_derivs",
+                state_vars,
+                discrete_vars,
+                param_vars,
+                output_vars,
+                array_info,
+                &jit_opt_level_from_env(),
+            );
+            let key = codegen_cache::CodegenCacheKey::new("calc_derivs", &flat_hash, &jit_opt_level_from_env());
+
+            // Estimate function size (Cranelift doesn't expose exact size)
+            // Use a reasonable estimate based on equation count
+            let func_size_estimate = 64 * (alg_equations.len() + diff_equations.len() + 1);
+
+            // Get the compiled code bytes
+            let code_bytes = unsafe {
+                std::slice::from_raw_parts(code, func_size_estimate)
+            };
+
+            if let Err(e) = cache.put(&key, code_bytes, 0, func_size_estimate, when_count, crossings_count) {
+                eprintln!("[jit] CODEGEN_CACHE_WRITE_ERROR: {}", e);
+            } else {
+                eprintln!(
+                    "[jit] CODEGEN_CACHE_WRITE key_prefix={}... size={} bytes",
+                    &key.stable_hash().chars().take(16).collect::<String>(),
+                    code_bytes.len()
+                );
+            }
+        }
+
         Ok((func, when_count, crossings_count))
+    }
+
+    /// Compute a stable hash key from the compile inputs for caching.
+    fn compute_compile_cache_key(
+        &self,
+        state_vars: &[String],
+        discrete_vars: &[String],
+        param_vars: &[String],
+        output_vars: &[String],
+        array_info: &HashMap<String, ArrayInfo>,
+        alg_equations: &[Equation],
+        diff_equations: &[Equation],
+        algorithms: &[AlgorithmStatement],
+        clock_partition_schedule: &[ClockPartitionScheduleEntry],
+    ) -> String {
+        use xxhash_rust::xxh64::Xxh64;
+
+        let mut h = Xxh64::new(0);
+
+        // Opt level
+        h.update(jit_opt_level_from_env().as_bytes());
+
+        // Variable lists (sorted for stability)
+        let mut sorted: Vec<&String> = state_vars.iter().collect();
+        sorted.sort();
+        for v in &sorted {
+            h.update(v.as_bytes());
+        }
+
+        let mut sorted: Vec<&String> = discrete_vars.iter().collect();
+        sorted.sort();
+        for v in &sorted {
+            h.update(v.as_bytes());
+        }
+
+        let mut sorted: Vec<&String> = param_vars.iter().collect();
+        sorted.sort();
+        for v in &sorted {
+            h.update(v.as_bytes());
+        }
+
+        let mut sorted: Vec<&String> = output_vars.iter().collect();
+        sorted.sort();
+        for v in &sorted {
+            h.update(v.as_bytes());
+        }
+
+        // Array info (sorted)
+        let mut sorted_array: Vec<(&String, &ArrayInfo)> = array_info.iter().collect();
+        sorted_array.sort_by_key(|(k, _)| *k);
+        for (name, info) in sorted_array {
+            h.update(name.as_bytes());
+            h.update(&[info.array_type as u8]);
+            h.update(&info.start_index.to_le_bytes());
+            h.update(&info.size.to_le_bytes());
+        }
+
+        // Equation counts (fast approximation - full equation hashing would be expensive)
+        h.update(&alg_equations.len().to_le_bytes());
+        h.update(&diff_equations.len().to_le_bytes());
+        h.update(&algorithms.len().to_le_bytes());
+        h.update(&clock_partition_schedule.len().to_le_bytes());
+
+        format!("jit:{:016x}", h.digest())
+    }
+
+    /// Clear the in-memory function cache (e.g., after model changes).
+    pub fn clear_func_cache(&mut self) {
+        let count = self.func_cache.len();
+        self.func_cache.clear();
+        if count > 0 {
+            eprintln!("[jit] cleared {} cached function(s)", count);
+        }
+    }
+
+    /// Get function cache statistics.
+    pub fn func_cache_stats(&self) -> (usize, usize) {
+        (self.func_cache.len(), self.func_cache.values().map(|(_, w, c)| w + c).sum())
     }
 
     /// FUNC-2: Compile a single-output user function to a JIT stub (f64, ...) -> f64 and return its pointer.

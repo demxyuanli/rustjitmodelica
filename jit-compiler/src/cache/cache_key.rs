@@ -1,37 +1,11 @@
 use crate::cache::cache_scope::CacheScope;
-use crate::cache::ir_epoch::IR_SCHEMA_EPOCH;
+use crate::cache::ir_epoch::epoch_for_stage;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use xxhash_rust::xxh64::Xxh64;
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CacheStage {
-    Parse,
-    ModelAst,
-    Inheritance,
-    DeclExpand,
-    EqExpand,
-    ConstrainedBy,
-    FlatModelQ,
-    FlatFull,
-    ArraySizes,
-}
-
-impl CacheStage {
-    pub fn tag(&self) -> &'static str {
-        match self {
-            CacheStage::Parse => "parse_v2",
-            CacheStage::ModelAst => "model_ast_v2",
-            CacheStage::Inheritance => "inheritance_v2",
-            CacheStage::DeclExpand => "decl_expand_v2",
-            CacheStage::EqExpand => "eq_expand_v2",
-            CacheStage::ConstrainedBy => "constrainedby_v2",
-            CacheStage::FlatModelQ => "flat_model_q_v2",
-            CacheStage::FlatFull => "flat_full_v2",
-            CacheStage::ArraySizes => "array_sizes_v3",
-        }
-    }
-}
+// Re-export CacheStage for backwards compatibility with modules importing from this file.
+pub use crate::cache::ir_epoch::CacheStage;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompileFlagsKey {
@@ -73,7 +47,7 @@ impl CacheKeyV2 {
         CacheKeyV2Builder {
             key: CacheKeyV2 {
                 compiler_version: env!("CARGO_PKG_VERSION"),
-                ir_schema_epoch: IR_SCHEMA_EPOCH,
+                ir_schema_epoch: epoch_for_stage(stage),
                 stage,
                 scope,
                 model_name: model_name.into(),

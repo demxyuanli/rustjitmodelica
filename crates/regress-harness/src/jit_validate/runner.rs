@@ -709,6 +709,7 @@ pub fn default_perf_scenarios(hot_runs: usize) -> Vec<Scenario> {
                 set: BTreeMap::from([
                     ("RUSTMODLICA_QUERY_CACHE_NAMESPACE".to_string(), "A".to_string()),
                     ("RUSTMODLICA_CACHE_SQLITE".to_string(), "1".to_string()),
+                    ("RUSTMODLICA_FLATTEN_FULL_CACHE".to_string(), "1".to_string()),
                 ]),
                 unset: vec![
                     "RUSTMODLICA_QUERY_CACHE".to_string(),
