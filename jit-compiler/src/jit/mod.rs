@@ -1,8 +1,11 @@
 use crate::ast::*;
+#[cfg(not(windows))]
+use cranelift::codegen::binemit::Reloc;
 use cranelift::codegen::ir::UserFuncName;
 use cranelift::prelude::{types as cl_types, *};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
+use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::sync::OnceLock;
@@ -18,11 +21,29 @@ mod var_fallback_policy;
 
 use self::analysis::{collect_modified, collect_modified_equations};
 use self::context::TranslationContext;
-use self::native::register_symbols;
+use self::native::{builtin_jit_symbol_ptrs, register_symbols};
 use self::translator::expr::compile_expression;
 use self::translator::{compile_algorithm_stmt, compile_equation};
 pub use self::types::{ArrayInfo, ArrayType, CalcDerivsFunc};
 use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
+
+/// Veneer tail allocation per out-of-range `Arm64Call` in cranelift-jit `CompiledBlob` (must match JIT).
+#[cfg(not(windows))]
+const JIT_ARM64_VENEER_SIZE: usize = 24;
+
+/// Executable allocation size for the last `define_function` on `ctx`: body + AArch64 veneers.
+#[cfg(not(windows))]
+fn jit_executable_allocation_len(ctx: &codegen::Context) -> Option<usize> {
+    let cc = ctx.compiled_code()?;
+    let body_len = cc.code_buffer().len();
+    let veneer_slots = cc
+        .buffer
+        .relocs()
+        .iter()
+        .filter(|r| r.kind == Reloc::Arm64Call)
+        .count();
+    Some(body_len + veneer_slots * JIT_ARM64_VENEER_SIZE)
+}
 
 fn jit_opt_level_from_env() -> String {
     let raw = std::env::var("RUSTMODLICA_CRANELIFT_OPT_LEVEL")
@@ -40,6 +61,38 @@ fn jit_opt_level_from_env() -> String {
             "speed".to_string()
         }
     }
+}
+
+fn build_object_isa() -> Result<std::sync::Arc<dyn cranelift::codegen::isa::TargetIsa>, String> {
+    let mut flag_builder = settings::builder();
+    let _ = flag_builder.set("opt_level", &jit_opt_level_from_env());
+    let _ = flag_builder.set("is_pic", "true");
+    let isa_builder = cranelift_native::builder().map_err(|e| e.to_string())?;
+    isa_builder
+        .finish(settings::Flags::new(flag_builder))
+        .map_err(|e| e.to_string())
+}
+
+fn emit_object_cache_artifact(
+    ir_func: &cranelift::codegen::ir::Function,
+) -> Result<Vec<u8>, String> {
+    let isa = build_object_isa()?;
+    let builder = ObjectBuilder::new(isa, "jit_cache_obj", cranelift_module::default_libcall_names())
+        .map_err(|e| e.to_string())?;
+    let mut module = ObjectModule::new(builder);
+    let mut ctx = module.make_context();
+    let name = "calc_derivs";
+    let func_id = module
+        .declare_function(name, Linkage::Export, &ir_func.signature)
+        .map_err(|e| e.to_string())?;
+    ctx.func = ir_func.clone();
+    ctx.func.name = UserFuncName::user(0, func_id.as_u32());
+    module
+        .define_function(func_id, &mut ctx)
+        .map_err(|e| e.to_string())?;
+    module.clear_context(&mut ctx);
+    let product = module.finish();
+    product.emit().map_err(|e| e.to_string())
 }
 
 fn emit_sample_trigger(
@@ -119,6 +172,10 @@ pub struct Jit {
     /// In-memory cache of compiled function pointers keyed by flat model hash.
     /// This provides fast reuse within the same process even without disk persistence.
     func_cache: HashMap<String, (CalcDerivsFunc, usize, usize)>,
+    /// Keep disk-cache backed code artifacts alive for function-pointer validity.
+    disk_cache_live: Vec<codegen_cache::CachedFunction>,
+    /// Runtime-resolvable symbol table for object-cache relocation.
+    runtime_symbols: HashMap<String, *const u8>,
 }
 
 fn jit_verifier_dump_enabled() -> bool {
@@ -150,10 +207,12 @@ impl Jit {
         let mut builder =
             JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
 
+        let mut runtime_symbols = builtin_jit_symbol_ptrs();
         register_symbols(&mut builder);
         if let Some(map) = extra {
             for (name, ptr) in map {
                 builder.symbol(name, *ptr);
+                runtime_symbols.insert(name.clone(), *ptr);
             }
         }
 
@@ -173,6 +232,8 @@ impl Jit {
             module,
             codegen_cache,
             func_cache: HashMap::new(),
+            disk_cache_live: Vec::new(),
+            runtime_symbols,
         }
     }
 
@@ -227,16 +288,31 @@ impl Jit {
                 &jit_opt_level_from_env(),
             );
             let key = codegen_cache::CodegenCacheKey::new("calc_derivs", &flat_hash, &jit_opt_level_from_env());
-            if let Some(cached) = cache.get(&key) {
+            if let Some(cached) = cache.get(&key, &self.runtime_symbols) {
+                let when_count = cached.when_count;
+                let crossings_count = cached.crossings_count;
                 eprintln!(
                     "[jit] CODEGEN_CACHE_HIT key={} when={} crossings={}",
                     &key.stable_hash().chars().take(16).collect::<String>(),
-                    cached.when_count,
-                    cached.crossings_count
+                    when_count,
+                    crossings_count
                 );
+                #[cfg(windows)]
+                {
+                    // Keep loaded artifact alive for diagnostics, but compile fresh code path on
+                    // Windows to avoid runtime instability while COFF relocation coverage expands.
+                    self.disk_cache_live.push(cached);
+                    eprintln!("[jit] CODEGEN_CACHE_HIT_WINDOWS_REJIT=1");
+                }
+                #[cfg(not(windows))]
+                {
+                let func = cached.func;
+                self.disk_cache_live.push(cached);
                 // Store in memory cache for future calls
-                self.func_cache.insert(cache_key, (cached.func, cached.when_count, cached.crossings_count));
-                return Ok((cached.func, cached.when_count, cached.crossings_count));
+                self.func_cache
+                    .insert(cache_key, (func, when_count, crossings_count));
+                return Ok((func, when_count, crossings_count));
+                }
             }
         }
 
@@ -504,6 +580,9 @@ impl Jit {
                 }
                 format!("{:?}", e)
             })?;
+        #[cfg(not(windows))]
+        let disk_alloc_len = jit_executable_allocation_len(&self.ctx);
+        let ir_for_object_cache = self.ctx.func.clone();
         self.module.clear_context(&mut self.ctx);
         self.module
             .finalize_definitions()
@@ -523,34 +602,80 @@ impl Jit {
 
         // Save to disk cache if available
         if let Some(ref cache) = self.codegen_cache {
-            let flat_hash = codegen_cache::flat_model_hash(
-                "calc_derivs",
-                state_vars,
-                discrete_vars,
-                param_vars,
-                output_vars,
-                array_info,
-                &jit_opt_level_from_env(),
-            );
-            let key = codegen_cache::CodegenCacheKey::new("calc_derivs", &flat_hash, &jit_opt_level_from_env());
+            if jit_policy::allow_codegen_disk_put(alg_equations.len(), diff_equations.len()) {
+                #[cfg(windows)]
+                {
+                    let flat_hash = codegen_cache::flat_model_hash(
+                        "calc_derivs",
+                        state_vars,
+                        discrete_vars,
+                        param_vars,
+                        output_vars,
+                        array_info,
+                        &jit_opt_level_from_env(),
+                    );
+                    let key = codegen_cache::CodegenCacheKey::new(
+                        "calc_derivs",
+                        &flat_hash,
+                        &jit_opt_level_from_env(),
+                    );
+                    match emit_object_cache_artifact(&ir_for_object_cache) {
+                        Ok(obj) => {
+                            if let Err(e) =
+                                cache.put_object(&key, &obj, when_count, crossings_count)
+                            {
+                                eprintln!("[jit] CODEGEN_CACHE_OBJECT_WRITE_ERROR: {}", e);
+                            } else {
+                                eprintln!(
+                                    "[jit] CODEGEN_CACHE_OBJECT_WRITE key_prefix={}... size={} bytes",
+                                    &key.stable_hash().chars().take(16).collect::<String>(),
+                                    obj.len()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_ERROR: {}", e);
+                        }
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
+                    let flat_hash = codegen_cache::flat_model_hash(
+                        "calc_derivs",
+                        state_vars,
+                        discrete_vars,
+                        param_vars,
+                        output_vars,
+                        array_info,
+                        &jit_opt_level_from_env(),
+                    );
+                    let key = codegen_cache::CodegenCacheKey::new(
+                        "calc_derivs",
+                        &flat_hash,
+                        &jit_opt_level_from_env(),
+                    );
 
-            // Estimate function size (Cranelift doesn't expose exact size)
-            // Use a reasonable estimate based on equation count
-            let func_size_estimate = 64 * (alg_equations.len() + diff_equations.len() + 1);
+                    let code_bytes =
+                        unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
 
-            // Get the compiled code bytes
-            let code_bytes = unsafe {
-                std::slice::from_raw_parts(code, func_size_estimate)
-            };
-
-            if let Err(e) = cache.put(&key, code_bytes, 0, func_size_estimate, when_count, crossings_count) {
-                eprintln!("[jit] CODEGEN_CACHE_WRITE_ERROR: {}", e);
-            } else {
-                eprintln!(
-                    "[jit] CODEGEN_CACHE_WRITE key_prefix={}... size={} bytes",
-                    &key.stable_hash().chars().take(16).collect::<String>(),
-                    code_bytes.len()
-                );
+                    if let Err(e) =
+                        cache.put(&key, code_bytes, 0, func_alloc_len, when_count, crossings_count)
+                    {
+                        eprintln!("[jit] CODEGEN_CACHE_WRITE_ERROR: {}", e);
+                    } else {
+                        eprintln!(
+                            "[jit] CODEGEN_CACHE_WRITE key_prefix={}... size={} bytes",
+                            &key.stable_hash().chars().take(16).collect::<String>(),
+                            code_bytes.len()
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "[jit] CODEGEN_CACHE_WRITE_SKIPPED missing compiled_code size (JIT internal)"
+                    );
+                }
+                }
             }
         }
 
@@ -625,6 +750,7 @@ impl Jit {
     pub fn clear_func_cache(&mut self) {
         let count = self.func_cache.len();
         self.func_cache.clear();
+        self.disk_cache_live.clear();
         if count > 0 {
             eprintln!("[jit] cleared {} cached function(s)", count);
         }

@@ -383,6 +383,7 @@ impl ProvenanceBuilder {
 
 /// Serializable impact summary for API / IDE (sorted for stable output).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImpactAnalysisResult {
     pub affected_vars: Vec<String>,
     pub affected_equation_indices: Vec<usize>,
@@ -410,6 +411,18 @@ impl ProvenanceIndex {
     pub fn analyze_param_change_names(&self, changed_params: &[String]) -> ImpactAnalysisResult {
         let refs: Vec<&str> = changed_params.iter().map(|s| s.as_str()).collect();
         self.compute_param_change_impact(&refs[..]).into()
+    }
+
+    /// Heuristic hint for tooling: whether incremental codegen might be worthwhile vs full recompile.
+    /// Does **not** authorize skipping full JIT; safe use is logging or IDE hints only.
+    pub fn incremental_codegen_worthwhile_hint(&self, impact: &ImpactAnalysisResult) -> bool {
+        let ci = ChangeImpact {
+            affected_vars: impact.affected_vars.iter().cloned().collect(),
+            affected_equations: impact.affected_equation_indices.iter().cloned().collect(),
+            requires_full_reflatten: impact.requires_full_reflatten,
+            reflatten_reason: impact.reflatten_reason.clone(),
+        };
+        self.is_incremental_worthwhile(&ci)
     }
 }
 

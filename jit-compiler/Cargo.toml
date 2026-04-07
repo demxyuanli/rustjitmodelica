@@ -14,7 +14,7 @@ path = "src/main.rs"
 [features]
 default = []
 # SUNDIALS CVODE/IDA/KINSOL via sundials-sys (system install or enable `sundials-vendor`).
-sundials = ["dep:sundials-sys", "dep:libc"]
+sundials = ["dep:sundials-sys"]
 sundials-vendor = ["sundials", "sundials-sys/build_libraries"]
 # SUNLinSol KLU + sparse Jacobian matrix (SuiteSparse KLU); heavy dependency.
 sundials-klu = ["sundials", "sundials-sys/klu"]
@@ -28,12 +28,13 @@ rkyv = { version = "0.7", features = ["validation", "bytecheck"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 shared_memory = "0.12.4"
 libloading = "0.8"
-cranelift = "0.128.3"
-cranelift-frontend = "0.128.3"
-cranelift-jit = "0.128.3"
-cranelift-module = "0.128.3"
-cranelift-native = "0.128.3"
-cranelift-object = "0.128.3"
+cranelift = "0.128.4"
+cranelift-frontend = "0.128.4"
+cranelift-jit = "0.128.4"
+cranelift-module = "0.128.4"
+cranelift-native = "0.128.4"
+cranelift-object = "0.128.4"
+object = { version = "0.37", default-features = false, features = ["read_core", "coff"] }
 pest = "2.8.6"
 pest_derive = "2.8.6"
 petgraph = "0.6"
@@ -41,10 +42,13 @@ thiserror = "2.0.18"
 realfft = "3.4"
 # Sparse LU for CSR Newton (see sparse_solve / native rustmodlica_solve_linear_csr).
 faer = { version = "0.24", default-features = false, features = ["std", "sparse-linalg"] }
-libc = { version = "0.2", optional = true }
+libc = "0.2"
 sundials-sys = { version = "0.6.2", optional = true, default-features = false, features = ["cvode", "ida", "kinsol"] }
 salsa = "0.16.1"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 dirs = "5.0"
-memmap2 = "0.9"
-goblin = "0.9"
+rayon = "1.11.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Memory", "Win32_System_LibraryLoader"] }
+

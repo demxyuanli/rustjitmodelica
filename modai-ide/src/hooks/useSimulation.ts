@@ -38,7 +38,8 @@ export interface TableState {
 
 export function useSimulation(
   log: (msg: string) => void,
-  validationDefaultTier?: string | null
+  validationDefaultTier?: string | null,
+  eqExpandParallelMode?: "off" | "guarded" | "on" | null
 ) {
   useEffect(() => {
     let disposed = false;
@@ -122,6 +123,9 @@ export function useSimulation(
   }, []);
 
   const tierTrim = validationDefaultTier?.trim();
+  const eqModeRaw = (eqExpandParallelMode ?? "off").trim().toLowerCase();
+  const eqMode: "off" | "guarded" | "on" =
+    eqModeRaw === "guarded" || eqModeRaw === "on" ? eqModeRaw : "off";
   const buildOptions = useCallback((): JitValidateOptions => ({
     t_end: params.tEnd,
     dt: params.dt,
@@ -130,7 +134,8 @@ export function useSimulation(
     atol: params.atol,
     rtol: params.rtol,
     ...(tierTrim ? { validationTier: tierTrim } : {}),
-  }), [params, tierTrim]);
+    eqExpandParallelMode: eqMode,
+  }), [eqMode, params, tierTrim]);
 
   const beginHeartbeat = useCallback((label: string, intervalMs = 5000) => {
     const startedAt = Date.now();
@@ -148,6 +153,7 @@ export function useSimulation(
   const validate = useCallback(async (code: string, modelName: string, projectDir: string | null) => {
     setValidateLoading(true);
     log(tf("jitValidateLogStart", { model: modelName }));
+    log(`eqExpandParallelMode(validate): ${eqMode}`);
     const t0 = typeof performance !== "undefined" ? performance.now() : 0;
     const finishHeartbeat = beginHeartbeat("Validation");
     try {
@@ -213,11 +219,12 @@ export function useSimulation(
     } finally {
       setValidateLoading(false);
     }
-  }, [beginHeartbeat, buildOptions, log]);
+  }, [beginHeartbeat, buildOptions, eqMode, log]);
 
   const runSimulation = useCallback(async (code: string, modelName: string, projectDir: string | null) => {
     setSimLoading(true);
     setSimResult(null);
+    log(`eqExpandParallelMode(simulate): ${eqMode}`);
     const finishHeartbeat = beginHeartbeat("Simulation");
     try {
       const result = await runSimulationV2({
@@ -243,7 +250,7 @@ export function useSimulation(
     } finally {
       setSimLoading(false);
     }
-  }, [beginHeartbeat, buildOptions, log]);
+  }, [beginHeartbeat, buildOptions, eqMode, log]);
 
   const testAllMoFiles = useCallback(async (
     projectDir: string,

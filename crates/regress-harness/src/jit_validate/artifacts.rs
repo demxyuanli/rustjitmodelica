@@ -109,6 +109,26 @@ pub struct ModelPerfStats {
     #[serde(default)]
     pub inline_load_model_ms_max: Option<u64>,
     #[serde(default)]
+    pub stub_compile_ms_min: Option<u64>,
+    #[serde(default)]
+    pub stub_compile_ms_max: Option<u64>,
+    #[serde(default)]
+    pub stub_compile_us_min: Option<u64>,
+    #[serde(default)]
+    pub stub_compile_us_max: Option<u64>,
+    #[serde(default)]
+    pub clock_partition_scan_ms_min: Option<u64>,
+    #[serde(default)]
+    pub clock_partition_scan_ms_max: Option<u64>,
+    #[serde(default)]
+    pub clock_partition_scan_us_min: Option<u64>,
+    #[serde(default)]
+    pub clock_partition_scan_us_max: Option<u64>,
+    #[serde(default)]
+    pub parallel_candidate_share_pct_min: Option<f64>,
+    #[serde(default)]
+    pub parallel_candidate_share_pct_max: Option<f64>,
+    #[serde(default)]
     pub cache_deserialize_ms_min: Option<u64>,
     #[serde(default)]
     pub cache_deserialize_ms_max: Option<u64>,
@@ -132,6 +152,13 @@ pub struct ModelPerfStats {
     /// Aggregated `query_cache_counters` from `RUSTMODLICA_CACHE_STATS_JSON` (summed over runs).
     #[serde(default)]
     pub cache_query_counters: BTreeMap<String, u64>,
+    /// Summed from `compile_perf.salsa_process_db_*` when `RUSTMODLICA_PERF_SALSA_STATS=1` on the compiler process.
+    #[serde(default)]
+    pub salsa_process_db_hits_sum: u64,
+    #[serde(default)]
+    pub salsa_process_db_misses_sum: u64,
+    #[serde(default)]
+    pub salsa_process_db_evictions_sum: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

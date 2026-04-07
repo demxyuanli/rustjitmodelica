@@ -1,6 +1,7 @@
 use crate::ast::{AlgorithmStatement, Equation};
 use crate::compiler::pipeline::log_stage_timing;
 use crate::loader::ModelLoader;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,6 +11,21 @@ use crate::ast::Expression;
 use crate::flatten::FlattenedModel;
 
 use super::rewrite::{inline_expr, ResolveMemoEntry};
+
+fn inline_parallel_poc_enabled() -> bool {
+    std::env::var("RUSTMODLICA_INLINE_PARALLEL_POC")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false)
+}
+
+fn inline_parallel_min_items() -> usize {
+    std::env::var("RUSTMODLICA_INLINE_PARALLEL_MIN_ITEMS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(256)
+}
 
 fn expr_may_need_inline(expr: &Expression) -> bool {
     use Expression::*;
@@ -251,6 +267,11 @@ pub(super) fn inline_function_calls_in_model(
 
     let mut cache: HashMap<String, Arc<Model>> = HashMap::new();
     let mut no_inline: HashSet<String> = HashSet::new();
+    let parallel_poc = inline_parallel_poc_enabled();
+    let parallel_min = inline_parallel_min_items();
+    if parallel_poc {
+        crate::query_db::perf_record_add("inline_parallel_poc_enabled", 1);
+    }
 
     let t0 = Instant::now();
     for decl in &mut flat.declarations {
@@ -276,15 +297,71 @@ pub(super) fn inline_function_calls_in_model(
     log_stage_timing(stage_trace, "inline.decl_start_values", t0);
 
     let t0 = Instant::now();
-    for e in &mut flat.equations {
-        *e = inline_equation(e, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+    if parallel_poc && flat.equations.len() >= parallel_min {
+        let library_paths = loader.library_paths.clone();
+        let base_memo = resolve_memo.clone();
+        let out: Vec<Equation> = flat
+            .equations
+            .par_iter()
+            .map(|e| {
+                let mut local_loader = ModelLoader::new();
+                local_loader.set_quiet(true);
+                for p in &library_paths {
+                    local_loader.add_path(p.clone());
+                }
+                let mut local_cache: HashMap<String, Arc<Model>> = HashMap::new();
+                let mut local_no_inline: HashSet<String> = HashSet::new();
+                let mut local_memo = base_memo.clone();
+                inline_equation(
+                    e,
+                    &mut local_loader,
+                    &mut local_cache,
+                    &mut local_no_inline,
+                    &mut local_memo,
+                    max_depth,
+                )
+            })
+            .collect();
+        flat.equations = out;
+    } else {
+        for e in &mut flat.equations {
+            *e = inline_equation(e, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+        }
     }
     crate::query_db::perf_record_us("inline_pass_equations_us", t0.elapsed().as_micros() as u64);
     log_stage_timing(stage_trace, "inline.equations", t0);
 
     let t0 = Instant::now();
-    for e in &mut flat.initial_equations {
-        *e = inline_equation(e, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+    if parallel_poc && flat.initial_equations.len() >= parallel_min {
+        let library_paths = loader.library_paths.clone();
+        let base_memo = resolve_memo.clone();
+        let out: Vec<Equation> = flat
+            .initial_equations
+            .par_iter()
+            .map(|e| {
+                let mut local_loader = ModelLoader::new();
+                local_loader.set_quiet(true);
+                for p in &library_paths {
+                    local_loader.add_path(p.clone());
+                }
+                let mut local_cache: HashMap<String, Arc<Model>> = HashMap::new();
+                let mut local_no_inline: HashSet<String> = HashSet::new();
+                let mut local_memo = base_memo.clone();
+                inline_equation(
+                    e,
+                    &mut local_loader,
+                    &mut local_cache,
+                    &mut local_no_inline,
+                    &mut local_memo,
+                    max_depth,
+                )
+            })
+            .collect();
+        flat.initial_equations = out;
+    } else {
+        for e in &mut flat.initial_equations {
+            *e = inline_equation(e, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+        }
     }
     crate::query_db::perf_record_us(
         "inline_pass_initial_equations_us",
@@ -293,8 +370,36 @@ pub(super) fn inline_function_calls_in_model(
     log_stage_timing(stage_trace, "inline.initial_equations", t0);
 
     let t0 = Instant::now();
-    for s in &mut flat.algorithms {
-        *s = inline_algorithm(s, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+    if parallel_poc && flat.algorithms.len() >= parallel_min {
+        let library_paths = loader.library_paths.clone();
+        let base_memo = resolve_memo.clone();
+        let out: Vec<AlgorithmStatement> = flat
+            .algorithms
+            .par_iter()
+            .map(|s| {
+                let mut local_loader = ModelLoader::new();
+                local_loader.set_quiet(true);
+                for p in &library_paths {
+                    local_loader.add_path(p.clone());
+                }
+                let mut local_cache: HashMap<String, Arc<Model>> = HashMap::new();
+                let mut local_no_inline: HashSet<String> = HashSet::new();
+                let mut local_memo = base_memo.clone();
+                inline_algorithm(
+                    s,
+                    &mut local_loader,
+                    &mut local_cache,
+                    &mut local_no_inline,
+                    &mut local_memo,
+                    max_depth,
+                )
+            })
+            .collect();
+        flat.algorithms = out;
+    } else {
+        for s in &mut flat.algorithms {
+            *s = inline_algorithm(s, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+        }
     }
     crate::query_db::perf_record_us(
         "inline_pass_algorithms_us",
@@ -303,8 +408,36 @@ pub(super) fn inline_function_calls_in_model(
     log_stage_timing(stage_trace, "inline.algorithms", t0);
 
     let t0 = Instant::now();
-    for s in &mut flat.initial_algorithms {
-        *s = inline_algorithm(s, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+    if parallel_poc && flat.initial_algorithms.len() >= parallel_min {
+        let library_paths = loader.library_paths.clone();
+        let base_memo = resolve_memo.clone();
+        let out: Vec<AlgorithmStatement> = flat
+            .initial_algorithms
+            .par_iter()
+            .map(|s| {
+                let mut local_loader = ModelLoader::new();
+                local_loader.set_quiet(true);
+                for p in &library_paths {
+                    local_loader.add_path(p.clone());
+                }
+                let mut local_cache: HashMap<String, Arc<Model>> = HashMap::new();
+                let mut local_no_inline: HashSet<String> = HashSet::new();
+                let mut local_memo = base_memo.clone();
+                inline_algorithm(
+                    s,
+                    &mut local_loader,
+                    &mut local_cache,
+                    &mut local_no_inline,
+                    &mut local_memo,
+                    max_depth,
+                )
+            })
+            .collect();
+        flat.initial_algorithms = out;
+    } else {
+        for s in &mut flat.initial_algorithms {
+            *s = inline_algorithm(s, loader, &mut cache, &mut no_inline, resolve_memo, max_depth);
+        }
     }
     crate::query_db::perf_record_us(
         "inline_pass_initial_algorithms_us",

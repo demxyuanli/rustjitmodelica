@@ -31,6 +31,7 @@ export interface DependencyGraphSettingsForm {
 
 export interface ValidationSettingsForm {
   defaultTier?: string;
+  eqExpandParallelMode?: "off" | "guarded" | "on";
 }
 
 export interface AppSettingsForm {

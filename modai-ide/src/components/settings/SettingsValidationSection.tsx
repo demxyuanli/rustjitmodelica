@@ -14,6 +14,8 @@ export function SettingsValidationSection({
   const v = appSettings.validation ?? {};
   const tierRaw = (v.defaultTier ?? "analyze").trim().toLowerCase();
   const tier = ["parse", "flatten", "analyze", "full"].includes(tierRaw) ? tierRaw : "analyze";
+  const eqModeRaw = (v.eqExpandParallelMode ?? "off").trim().toLowerCase();
+  const eqMode = ["off", "guarded", "on"].includes(eqModeRaw) ? eqModeRaw : "off";
 
   return (
     <section id="settings-group-validation">
@@ -38,6 +40,25 @@ export function SettingsValidationSection({
           <option value="flatten">{t("settingsValidationTierFlatten")}</option>
           <option value="analyze">{t("settingsValidationTierAnalyze")}</option>
           <option value="full">{t("settingsValidationTierFull")}</option>
+        </select>
+      </SettingsRow>
+      <SettingsRow
+        title={t("settingsEqExpandParallelMode")}
+        description={t("settingsEqExpandParallelModeDesc")}
+      >
+        <select
+          value={eqMode}
+          onChange={(e) =>
+            onAppSettingsChange({
+              ...appSettings,
+              validation: { ...v, eqExpandParallelMode: e.target.value as "off" | "guarded" | "on" },
+            })
+          }
+          className="min-w-[200px] bg-[var(--surface)] border border-border px-2.5 py-1.5 text-sm rounded"
+        >
+          <option value="off">{t("settingsEqExpandParallelModeOff")}</option>
+          <option value="guarded">{t("settingsEqExpandParallelModeGuarded")}</option>
+          <option value="on">{t("settingsEqExpandParallelModeOn")}</option>
         </select>
       </SettingsRow>
     </section>

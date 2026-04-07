@@ -7,6 +7,12 @@ export interface JitValidateOptions {
   output_interval?: number;
   /** Stops validation after this tier: full | parse | flatten | analyze */
   validationTier?: string;
+  /** Flattened parameter names for provenance impact probe (analysis only). */
+  paramChangeImpactProbe?: string[];
+  /** Flattened component instance path for provenance impact probe (analysis only). */
+  instanceChangeImpactProbe?: string;
+  /** Eq-expand parallel mode: off | guarded | on (default off). */
+  eqExpandParallelMode?: "off" | "guarded" | "on";
 }
 
 export interface WarningItem {
@@ -14,6 +20,24 @@ export interface WarningItem {
   line: number;
   column: number;
   message: string;
+}
+
+/** Provenance impact summary (camelCase from backend). */
+export interface JitProvenanceImpactAnalysis {
+  affectedVars: string[];
+  affectedEquationIndices: number[];
+  requiresFullReflatten: boolean;
+  reflattenReason?: string | null;
+}
+
+export interface JitProvenanceReport {
+  equationCount: number;
+  variableCount: number;
+  parameterClosureCount: number;
+  instanceCount: number;
+  paramChangeImpact?: JitProvenanceImpactAnalysis | null;
+  instanceChangeImpact?: JitProvenanceImpactAnalysis | null;
+  incrementalCodegenWorthwhileHint?: boolean | null;
 }
 
 export interface JitValidateResult {
@@ -28,6 +52,7 @@ export interface JitValidateResult {
   compile_trace?: string[];
   validation_stop_phase?: string | null;
   validation_partial?: boolean;
+  provenance?: JitProvenanceReport | null;
 }
 
 export interface DiagnosticErrorItem {

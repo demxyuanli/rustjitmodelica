@@ -80,7 +80,11 @@ function App() {
   const [libraryRefreshToken, setLibraryRefreshToken] = useState(0);
   const [showNewModelDialog, setShowNewModelDialog] = useState(false);
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null);
-  const sim = useSimulation(log, appSettings?.validation?.defaultTier ?? null);
+  const sim = useSimulation(
+    log,
+    appSettings?.validation?.defaultTier ?? null,
+    appSettings?.validation?.eqExpandParallelMode ?? "off",
+  );
   const ai = useModelicaAI(log);
   const [appDataRoot, setAppDataRoot] = useState<string | null>(null);
 

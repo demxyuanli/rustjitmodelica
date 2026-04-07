@@ -60,6 +60,10 @@ fn resolve_artifact_path(out_dir: &Path, p: &str) -> PathBuf {
 }
 
 struct ParsedCompilePerf {
+    /// Present when `RUSTMODLICA_PERF_SALSA_STATS=1` on the rustmodlica process.
+    salsa_process_db_hits: u64,
+    salsa_process_db_misses: u64,
+    salsa_process_db_evictions: u64,
     flatten_inline_ms: u64,
     flatten_wall_ms: u64,
     flatten_wall_us: u64,
@@ -82,6 +86,11 @@ struct ParsedCompilePerf {
     cache_scope_stage_hits: BTreeMap<String, BTreeMap<String, u64>>,
     cache_scope_stage_misses: BTreeMap<String, BTreeMap<String, u64>>,
     cache_scope_stage_invalidations: BTreeMap<String, BTreeMap<String, u64>>,
+    stub_compile_ms: u64,
+    stub_compile_us: u64,
+    clock_partition_scan_ms: u64,
+    clock_partition_scan_us: u64,
+    parallel_candidate_share_pct: f64,
 }
 
 fn parse_scope_stage_map(c: &serde_json::Value, key: &str) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -119,10 +128,16 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let c = v.get("compile_perf")?;
     let u = |key: &str| json_get_u64(c, key).unwrap_or(0);
+    let salsa_hits = json_get_u64(c, "salsa_process_db_hits").unwrap_or(0);
+    let salsa_misses = json_get_u64(c, "salsa_process_db_misses").unwrap_or(0);
+    let salsa_evictions = json_get_u64(c, "salsa_process_db_evictions").unwrap_or(0);
     let scope_stage_hits = parse_scope_stage_map(c, "cache_scope_stage_hits");
     let scope_stage_misses = parse_scope_stage_map(c, "cache_scope_stage_misses");
     let scope_stage_invalidations = parse_scope_stage_map(c, "cache_scope_stage_invalidations");
     Some(ParsedCompilePerf {
+        salsa_process_db_hits: salsa_hits,
+        salsa_process_db_misses: salsa_misses,
+        salsa_process_db_evictions: salsa_evictions,
         flatten_inline_ms: u("flatten_inline_ms"),
         flatten_wall_ms: u("flatten_wall_ms"),
         flatten_wall_us: u("flatten_wall_us"),
@@ -145,6 +160,14 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
         cache_scope_stage_hits: scope_stage_hits,
         cache_scope_stage_misses: scope_stage_misses,
         cache_scope_stage_invalidations: scope_stage_invalidations,
+        stub_compile_ms: u("stub_compile_ms"),
+        stub_compile_us: u("stub_compile_us"),
+        clock_partition_scan_ms: u("clock_partition_scan_ms"),
+        clock_partition_scan_us: u("clock_partition_scan_us"),
+        parallel_candidate_share_pct: c
+            .get("parallel_candidate_share_pct")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0),
     })
 }
 
@@ -169,6 +192,25 @@ fn parse_cache_stats_json(path: &Path) -> Option<(BTreeMap<String, u64>, BTreeMa
 fn update_min_max(opt_min: &mut Option<u64>, opt_max: &mut Option<u64>, v: u64) {
     *opt_min = Some(opt_min.map(|x| x.min(v)).unwrap_or(v));
     *opt_max = Some(opt_max.map(|x| x.max(v)).unwrap_or(v));
+}
+
+fn update_min_max_f64(opt_min: &mut Option<f64>, opt_max: &mut Option<f64>, v: f64) {
+    *opt_min = Some(opt_min.map(|x| x.min(v)).unwrap_or(v));
+    *opt_max = Some(opt_max.map(|x| x.max(v)).unwrap_or(v));
+}
+
+fn rollup_salsa_db_totals(stats: &PerfStats) -> (u64, u64, u64) {
+    let mut h = 0u64;
+    let mut m = 0u64;
+    let mut e = 0u64;
+    for by_model in stats.by_scenario.values() {
+        for s in by_model.values() {
+            h += s.salsa_process_db_hits_sum;
+            m += s.salsa_process_db_misses_sum;
+            e += s.salsa_process_db_evictions_sum;
+        }
+    }
+    (h, m, e)
 }
 
 fn rollup_cache_layer_totals(stats: &PerfStats) -> (u64, u64, u64, u64, u64, u64) {
@@ -273,9 +315,18 @@ fn format_validate_perf_cache_rollup(stats: &PerfStats) -> Option<String> {
     } else {
         String::new()
     };
+    let (sh, sm, se) = rollup_salsa_db_totals(stats);
+    let salsa_note = if sh > 0 || sm > 0 || se > 0 {
+        format!(
+            " | salsa_db hits={} misses={} evictions={}",
+            sh, sm, se
+        )
+    } else {
+        String::new()
+    };
     Some(format!(
-        "jit-validate-perf cache rollup: L0 hits={} writes={} L1 hits={} writes={} L2 hits={} writes={}{}",
-        l0h, l0w, l1h, l1w, l2h, l2w, qc_note
+        "jit-validate-perf cache rollup: L0 hits={} writes={} L1 hits={} writes={} L2 hits={} writes={}{}{}",
+        l0h, l0w, l1h, l1w, l2h, l2w, qc_note, salsa_note
     ))
 }
 
@@ -346,6 +397,31 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                     m.inline_load_model_ms,
                 );
                 update_min_max(
+                    &mut s.stub_compile_ms_min,
+                    &mut s.stub_compile_ms_max,
+                    m.stub_compile_ms,
+                );
+                update_min_max(
+                    &mut s.stub_compile_us_min,
+                    &mut s.stub_compile_us_max,
+                    m.stub_compile_us,
+                );
+                update_min_max(
+                    &mut s.clock_partition_scan_ms_min,
+                    &mut s.clock_partition_scan_ms_max,
+                    m.clock_partition_scan_ms,
+                );
+                update_min_max(
+                    &mut s.clock_partition_scan_us_min,
+                    &mut s.clock_partition_scan_us_max,
+                    m.clock_partition_scan_us,
+                );
+                update_min_max_f64(
+                    &mut s.parallel_candidate_share_pct_min,
+                    &mut s.parallel_candidate_share_pct_max,
+                    m.parallel_candidate_share_pct,
+                );
+                update_min_max(
                     &mut s.cache_deserialize_ms_min,
                     &mut s.cache_deserialize_ms_max,
                     m.cache_deserialize_ms,
@@ -360,6 +436,9 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                 let l2 = layers.entry("L2".to_string()).or_insert_with(LayerStats::default);
                 l2.hits += m.cache_l2_hits;
                 l2.writes += m.cache_l2_writes;
+                s.salsa_process_db_hits_sum += m.salsa_process_db_hits;
+                s.salsa_process_db_misses_sum += m.salsa_process_db_misses;
+                s.salsa_process_db_evictions_sum += m.salsa_process_db_evictions;
                 if m.deps_mismatch > 0
                     && !l2.recompute_reasons.iter().any(|r| r == "deps_mismatch")
                 {
@@ -924,6 +1003,10 @@ impl ValidatePerfRunner {
 
                     let mut env_set: BTreeMap<String, String> = resolved.env_set.clone();
                     let env_unset: Vec<String> = resolved.env_unset.clone();
+                    env_set.insert(
+                        "RUSTMODLICA_PERF_SALSA_STATS".to_string(),
+                        "1".to_string(),
+                    );
                     env_set.insert(
                         "RUSTMODLICA_CACHE_STATS_JSON".to_string(),
                         paths.cache_stats_json.display().to_string(),

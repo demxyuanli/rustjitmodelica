@@ -1073,6 +1073,10 @@ fn eq_expanded(db: &dyn QueryDb, model_name: String) -> EqExpandResPtr {
     eq_expand::eq_expanded(db, model_name)
 }
 
+pub fn eq_parallel_guard_update_candidate_share(model_name: &str, pct: f64) {
+    eq_expand::eq_parallel_guard_update_candidate_share(model_name, pct);
+}
+
 fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> FlatModelResPtr {
     flat_model::flattened_model_q(db, model_name)
 }

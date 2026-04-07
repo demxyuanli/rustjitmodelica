@@ -64,6 +64,11 @@ pub struct JitProvenanceReport {
     pub instance_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub param_change_impact: Option<rustmodlica::ImpactAnalysisResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_change_impact: Option<rustmodlica::ImpactAnalysisResult>,
+    /// Heuristic only; does not enable partial codegen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incremental_codegen_worthwhile_hint: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +409,10 @@ fn build_compile_trace(
     output_vars_len: usize,
 ) -> Vec<String> {
     let mut lines = Vec::new();
+    lines.push(format!(
+        "compile: eq_expand_parallel_mode={}",
+        current_eq_expand_parallel_mode_from_env()
+    ));
     if let Some(p) = perf {
         lines.push(format!("compile: load_model {} ms", p.load_model_ms));
         lines.push(format!("compile: flatten_inline {} ms", p.flatten_inline_ms));
@@ -451,6 +460,53 @@ fn parse_validation_tier(s: &str) -> Option<CompileStopPhase> {
         "flatten" => Some(CompileStopPhase::Flatten),
         "analyze" => Some(CompileStopPhase::Analyze),
         _ => None,
+    }
+}
+
+fn normalize_eq_expand_parallel_mode(opts: Option<&JitValidateOptions>) -> &'static str {
+    match opts
+        .and_then(|o| o.eq_expand_parallel_mode.as_deref())
+        .map(|s| s.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("guarded") => "guarded",
+        Some("on") => "on",
+        _ => "off",
+    }
+}
+
+fn current_eq_expand_parallel_mode_from_env() -> &'static str {
+    match std::env::var("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE")
+        .ok()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("guarded") => "guarded",
+        Some("on") => "on",
+        _ => "off",
+    }
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        unsafe { std::env::set_var(key, value) };
+        Self { key, prev }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        if let Some(ref v) = self.prev {
+            unsafe { std::env::set_var(self.key, v) };
+        } else {
+            unsafe { std::env::remove_var(self.key) };
+        }
     }
 }
 
@@ -529,18 +585,33 @@ fn jit_validate_result_body(
 fn build_provenance_report(
     compiler: &rustmodlica::Compiler,
     param_probe: Option<&Vec<String>>,
+    instance_probe: Option<&str>,
 ) -> Option<JitProvenanceReport> {
     let ix = compiler.last_provenance_index.as_ref()?;
     let st = ix.stats();
     let param_change_impact = param_probe
         .filter(|v| !v.is_empty())
         .map(|params| rustmodlica::analyze_change_impact(ix.as_ref(), params));
+    let instance_change_impact = instance_probe
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|path| rustmodlica::analyze_instance_change_impact(ix.as_ref(), path));
+    let incremental_codegen_worthwhile_hint = param_change_impact
+        .as_ref()
+        .map(|p| rustmodlica::incremental_codegen_worthwhile_hint(ix.as_ref(), p))
+        .or_else(|| {
+            instance_change_impact
+                .as_ref()
+                .map(|i| rustmodlica::incremental_codegen_worthwhile_hint(ix.as_ref(), i))
+        });
     Some(JitProvenanceReport {
         equation_count: st.equation_count,
         variable_count: st.variable_count,
         parameter_closure_count: st.parameter_count,
         instance_count: st.instance_count,
         param_change_impact,
+        instance_change_impact,
+        incremental_codegen_worthwhile_hint,
     })
 }
 
@@ -618,10 +689,16 @@ fn with_loader_paths(
 fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, String> {
     let _timer = ScopedTimer::new("jit_validate");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
+    let _eq_expand_mode_env =
+        ScopedEnvVar::set("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE", normalize_eq_expand_parallel_mode(request.options.as_ref()));
     let param_impact_probe: Option<Vec<String>> = request
         .options
         .as_ref()
         .and_then(|o| o.param_change_impact_probe.clone());
+    let instance_impact_probe: Option<String> = request
+        .options
+        .as_ref()
+        .and_then(|o| o.instance_change_impact_probe.clone());
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
     compiler.options.validate_only = true;
@@ -633,7 +710,11 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
     let result = compiler.compile_from_source(&model_name, &request.code);
     let warnings = compiler.take_warnings();
     let perf = compiler.take_compile_perf_report();
-    let provenance = build_provenance_report(&compiler, param_impact_probe.as_ref());
+    let provenance = build_provenance_report(
+        &compiler,
+        param_impact_probe.as_ref(),
+        instance_impact_probe.as_deref(),
+    );
     match result {
         Ok(rustmodlica::CompileOutput::FunctionRun(_)) => {
             let compile_trace = build_compile_trace(perf.as_ref(), 0, 0);
@@ -831,6 +912,8 @@ pub async fn jit_validate_v2(
 fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult, String> {
     let _timer = ScopedTimer::new("run_simulation_cmd");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
+    let _eq_expand_mode_env =
+        ScopedEnvVar::set("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE", normalize_eq_expand_parallel_mode(request.options.as_ref()));
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
     compiler.options.compile_stop = CompileStopPhase::Full;
@@ -1119,6 +1202,8 @@ pub struct StartSessionRequest {
 fn start_simulation_session_sync(request: StartSessionRequest) -> Result<String, String> {
     let _timer = ScopedTimer::new("start_simulation_session");
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
+    let _eq_expand_mode_env =
+        ScopedEnvVar::set("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE", normalize_eq_expand_parallel_mode(request.options.as_ref()));
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
     compiler.options.compile_stop = CompileStopPhase::Full;

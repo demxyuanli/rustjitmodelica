@@ -41,8 +41,10 @@ pub use equation_graph::{EquationGraph, EquationGraphEdge, EquationGraphNode};
 pub use loader::{LoadError, ModelLoader};
 pub use simulation::{run_simulation, run_simulation_collect, runtime_perf_counters, SimulationResult};
 pub use api::{
-    affected_models_for_changed_files, analyze_change_impact, provenance_index_for_flat_model,
+    affected_models_for_changed_files, analyze_change_impact, analyze_instance_change_impact,
+    incremental_codegen_worthwhile_hint, provenance_index_for_flat_model,
 };
+pub use query_db::salsa_session::salsa_process_db_stats;
 pub use analysis::{ImpactAnalysisResult, ProvenanceIndex};
 #[cfg(feature = "sundials")]
 pub use simulation::{

@@ -3,6 +3,11 @@
 //!
 //! Reuse is gated by the same qualified key as [`super::flat_model::flattened_model_q`] and
 //! [`crate::cache::closure_hash::deps_match`] on the dependency list recorded for that query.
+//!
+//! ## Environment
+//! - `RUSTMODLICA_SALSA_PROCESS_DB` — `0`/`false`/`no` disables reuse (default: on).
+//! - `RUSTMODLICA_SALSA_PROCESS_DB_SLOTS` — max concurrent sessions per OS thread (default `4`, clamped to `1..=16`).
+//! Use [`salsa_process_db_stats`] from tests or the IDE to read `(hits, misses, evictions)`.
 
 use crate::cache::closure_hash;
 use crate::flatten::flat_cache_v1::DepHashEntry;
@@ -10,6 +15,7 @@ use crate::flatten::ValidationMode;
 use crate::loader::ModelLoader;
 use crate::query_db::QueryDb;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 thread_local! {
@@ -17,7 +23,20 @@ thread_local! {
 }
 
 thread_local! {
-    static SALSA_PROCESS_SESSION: RefCell<Option<SalsaProcessSession>> = const { RefCell::new(None) };
+    static SALSA_PROCESS_LRU: RefCell<Vec<SalsaProcessSession>> = const { RefCell::new(Vec::new()) };
+}
+
+static SALSA_DB_HIT: AtomicU64 = AtomicU64::new(0);
+static SALSA_DB_MISS: AtomicU64 = AtomicU64::new(0);
+static SALSA_DB_EVICTION: AtomicU64 = AtomicU64::new(0);
+
+/// Counters: `(hits, misses, evictions)` for [`take_reusable_database`] / [`return_database`].
+pub fn salsa_process_db_stats() -> (u64, u64, u64) {
+    (
+        SALSA_DB_HIT.load(Ordering::Relaxed),
+        SALSA_DB_MISS.load(Ordering::Relaxed),
+        SALSA_DB_EVICTION.load(Ordering::Relaxed),
+    )
 }
 
 struct SalsaProcessSession {
@@ -36,6 +55,14 @@ fn process_db_enabled() -> bool {
             !(t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no"))
         })
         .unwrap_or(true)
+}
+
+fn lru_capacity() -> usize {
+    std::env::var("RUSTMODLICA_SALSA_PROCESS_DB_SLOTS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(1, 16))
+        .unwrap_or(4)
 }
 
 fn flat_model_q_key_string(
@@ -70,7 +97,7 @@ pub fn take_last_flat_model_q_deps() -> Option<Vec<DepHashEntry>> {
     LAST_FLAT_MODEL_Q_DEPS.with(|c| c.borrow_mut().take())
 }
 
-/// If process-local reuse is enabled and the stored session matches `key` and disk deps, returns
+/// If process-local reuse is enabled and a stored session matches `key` and disk deps, returns
 /// the cached [`super::Database`]. Otherwise returns `None` (caller should use `Database::default()`).
 pub fn take_reusable_database(
     loader: &ModelLoader,
@@ -89,18 +116,18 @@ pub fn take_reusable_database(
         compile_stop,
         validation_mode,
     );
-    SALSA_PROCESS_SESSION.with(|cell| {
+    SALSA_PROCESS_LRU.with(|cell| {
         let mut slot = cell.borrow_mut();
-        let Some(sess) = slot.take() else {
-            return None;
-        };
-        if sess.key != want_key {
-            return None;
+        if let Some(idx) = slot
+            .iter()
+            .position(|s| s.key == want_key && closure_hash::deps_match(&s.deps))
+        {
+            let sess = slot.remove(idx);
+            SALSA_DB_HIT.fetch_add(1, Ordering::Relaxed);
+            return Some(sess.db);
         }
-        if !closure_hash::deps_match(&sess.deps) {
-            return None;
-        }
-        Some(sess.db)
+        SALSA_DB_MISS.fetch_add(1, Ordering::Relaxed);
+        None
     })
 }
 
@@ -124,7 +151,14 @@ pub fn return_database(
         compile_stop,
         validation_mode,
     );
-    SALSA_PROCESS_SESSION.with(|cell| {
-        *cell.borrow_mut() = Some(SalsaProcessSession { key, deps, db });
+    let cap = lru_capacity();
+    SALSA_PROCESS_LRU.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        slot.retain(|s| s.key != key);
+        slot.push(SalsaProcessSession { key, deps, db });
+        while slot.len() > cap {
+            slot.remove(0);
+            SALSA_DB_EVICTION.fetch_add(1, Ordering::Relaxed);
+        }
     });
 }

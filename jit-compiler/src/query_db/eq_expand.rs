@@ -5,6 +5,7 @@ use crate::flatten::{ArraySizePolicy, Flattener};
 use crate::query_db::{semantic_hash_text, QueryDb};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub const EQ_EXPAND_CACHE_SCHEMA_V1: &str = "rustmodlica_eq_expand_cache_v1";
@@ -33,6 +34,268 @@ pub struct EqExpandCacheV1 {
     pub out: Option<EqExpandOut>,
     pub err: Option<String>,
     pub deps: Vec<DepHashEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct EqParallelGuardDb {
+    models: HashMap<String, EqParallelGuardEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct EqParallelGuardEntry {
+    last_parallel_eq_expand_us: u64,
+    last_parallel_candidate_share_pct: f64,
+    degrade_streak: u32,
+    last_model_size: usize,
+    cooldown_remaining: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EqModelTier {
+    Small,
+    Medium,
+    Large,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EqParallelMode {
+    Off,
+    Guarded,
+    On,
+}
+
+fn eq_parallel_mode() -> EqParallelMode {
+    match std::env::var("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("on") | Some("always") | Some("force_on") => EqParallelMode::On,
+        Some("guarded") | Some("guard") => EqParallelMode::Guarded,
+        Some("off") | Some("0") | Some("false") | Some("no") => EqParallelMode::Off,
+        _ => EqParallelMode::Off,
+    }
+}
+
+fn eq_parallel_tier_small_max() -> usize {
+    std::env::var("RUSTMODLICA_EQ_PARALLEL_TIER_SMALL_MAX")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(1500)
+}
+
+fn eq_parallel_tier_medium_max() -> usize {
+    std::env::var("RUSTMODLICA_EQ_PARALLEL_TIER_MEDIUM_MAX")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(8000)
+}
+
+fn eq_parallel_model_tier(model_size: usize) -> EqModelTier {
+    if model_size <= eq_parallel_tier_small_max() {
+        EqModelTier::Small
+    } else if model_size <= eq_parallel_tier_medium_max() {
+        EqModelTier::Medium
+    } else {
+        EqModelTier::Large
+    }
+}
+
+fn eq_parallel_guard_enabled() -> bool {
+    std::env::var("RUSTMODLICA_EQ_PARALLEL_GUARD")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(true)
+}
+
+fn eq_parallel_guard_model_size_min() -> usize {
+    std::env::var("RUSTMODLICA_EQ_PARALLEL_GUARD_MODEL_SIZE_MIN")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(2000)
+}
+
+fn eq_parallel_guard_streak_threshold() -> u32 {
+    std::env::var("RUSTMODLICA_EQ_PARALLEL_GUARD_STREAK")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(2)
+}
+
+fn eq_parallel_guard_degrade_ratio_pct() -> u64 {
+    std::env::var("RUSTMODLICA_EQ_PARALLEL_GUARD_DEGRADE_PCT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v >= 100)
+        .unwrap_or(110)
+}
+
+fn eq_parallel_guard_share_min_pct() -> f64 {
+    std::env::var("RUSTMODLICA_EQ_PARALLEL_GUARD_SHARE_MIN_PCT")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| *v >= 0.0)
+        .unwrap_or(15.0)
+}
+
+fn eq_parallel_guard_streak_threshold_for_tier(tier: EqModelTier) -> u32 {
+    let key = match tier {
+        EqModelTier::Small => "RUSTMODLICA_EQ_PARALLEL_GUARD_STREAK_SMALL",
+        EqModelTier::Medium => "RUSTMODLICA_EQ_PARALLEL_GUARD_STREAK_MEDIUM",
+        EqModelTier::Large => "RUSTMODLICA_EQ_PARALLEL_GUARD_STREAK_LARGE",
+    };
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or_else(eq_parallel_guard_streak_threshold)
+}
+
+fn eq_parallel_guard_degrade_ratio_pct_for_tier(tier: EqModelTier) -> u64 {
+    let key = match tier {
+        EqModelTier::Small => "RUSTMODLICA_EQ_PARALLEL_GUARD_DEGRADE_PCT_SMALL",
+        EqModelTier::Medium => "RUSTMODLICA_EQ_PARALLEL_GUARD_DEGRADE_PCT_MEDIUM",
+        EqModelTier::Large => "RUSTMODLICA_EQ_PARALLEL_GUARD_DEGRADE_PCT_LARGE",
+    };
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v >= 100)
+        .unwrap_or_else(eq_parallel_guard_degrade_ratio_pct)
+}
+
+fn eq_parallel_guard_share_min_pct_for_tier(tier: EqModelTier) -> f64 {
+    let key = match tier {
+        EqModelTier::Small => "RUSTMODLICA_EQ_PARALLEL_GUARD_SHARE_MIN_PCT_SMALL",
+        EqModelTier::Medium => "RUSTMODLICA_EQ_PARALLEL_GUARD_SHARE_MIN_PCT_MEDIUM",
+        EqModelTier::Large => "RUSTMODLICA_EQ_PARALLEL_GUARD_SHARE_MIN_PCT_LARGE",
+    };
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| *v >= 0.0)
+        .unwrap_or_else(eq_parallel_guard_share_min_pct)
+}
+
+fn eq_parallel_guard_cooldown_compiles_for_tier(tier: EqModelTier) -> u32 {
+    let key = match tier {
+        EqModelTier::Small => "RUSTMODLICA_EQ_PARALLEL_GUARD_COOLDOWN_SMALL",
+        EqModelTier::Medium => "RUSTMODLICA_EQ_PARALLEL_GUARD_COOLDOWN_MEDIUM",
+        EqModelTier::Large => "RUSTMODLICA_EQ_PARALLEL_GUARD_COOLDOWN_LARGE",
+    };
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(2)
+}
+
+fn eq_parallel_guard_seed_eq_expand_us_for_tier(tier: EqModelTier) -> u64 {
+    let key = match tier {
+        EqModelTier::Small => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_EQ_US_SMALL",
+        EqModelTier::Medium => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_EQ_US_MEDIUM",
+        EqModelTier::Large => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_EQ_US_LARGE",
+    };
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(match tier {
+            EqModelTier::Small => 2_000,
+            EqModelTier::Medium => 120_000,
+            EqModelTier::Large => 900_000,
+        })
+}
+
+fn eq_parallel_guard_seed_share_pct_for_tier(tier: EqModelTier) -> f64 {
+    let key = match tier {
+        EqModelTier::Small => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_SHARE_PCT_SMALL",
+        EqModelTier::Medium => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_SHARE_PCT_MEDIUM",
+        EqModelTier::Large => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_SHARE_PCT_LARGE",
+    };
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| *v >= 0.0)
+        .unwrap_or(match tier {
+            EqModelTier::Small => 5.0,
+            EqModelTier::Medium => 12.0,
+            EqModelTier::Large => 25.0,
+        })
+}
+
+fn eq_parallel_guard_seed_streak_for_tier(tier: EqModelTier) -> u32 {
+    let key = match tier {
+        EqModelTier::Small => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_STREAK_SMALL",
+        EqModelTier::Medium => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_STREAK_MEDIUM",
+        EqModelTier::Large => "RUSTMODLICA_EQ_PARALLEL_GUARD_SEED_STREAK_LARGE",
+    };
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+fn eq_parallel_guard_seed_entry_if_missing(
+    guard: &mut EqParallelGuardDb,
+    model_name: &str,
+    model_size: usize,
+) {
+    if guard.models.contains_key(model_name) {
+        return;
+    }
+    let tier = eq_parallel_model_tier(model_size);
+    guard.models.insert(
+        model_name.to_string(),
+        EqParallelGuardEntry {
+            last_parallel_eq_expand_us: eq_parallel_guard_seed_eq_expand_us_for_tier(tier),
+            last_parallel_candidate_share_pct: eq_parallel_guard_seed_share_pct_for_tier(tier),
+            degrade_streak: eq_parallel_guard_seed_streak_for_tier(tier),
+            last_model_size: model_size,
+            cooldown_remaining: 0,
+        },
+    );
+}
+
+fn eq_parallel_guard_path() -> PathBuf {
+    if let Ok(v) = std::env::var("LOCALAPPDATA") {
+        let p = PathBuf::from(v).join("rustmodlica").join("eq_parallel_guard_v1.json");
+        return p;
+    }
+    std::env::temp_dir().join("rustmodlica_eq_parallel_guard_v1.json")
+}
+
+fn eq_parallel_guard_load() -> EqParallelGuardDb {
+    let path = eq_parallel_guard_path();
+    if let Ok(text) = std::fs::read_to_string(path) {
+        if let Ok(v) = serde_json::from_str::<EqParallelGuardDb>(&text) {
+            return v;
+        }
+    }
+    EqParallelGuardDb::default()
+}
+
+fn eq_parallel_guard_save(db: &EqParallelGuardDb) {
+    let path = eq_parallel_guard_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string(db) {
+        let _ = std::fs::write(path, text.as_bytes());
+    }
+}
+
+pub fn eq_parallel_guard_update_candidate_share(model_name: &str, pct: f64) {
+    if !eq_parallel_guard_enabled() || model_name.trim().is_empty() {
+        return;
+    }
+    let mut guard = eq_parallel_guard_load();
+    let entry = guard.models.entry(model_name.to_string()).or_default();
+    entry.last_parallel_candidate_share_pct = pct.clamp(0.0, 100.0);
+    eq_parallel_guard_save(&guard);
 }
 
 pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPtr {
@@ -146,6 +409,55 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         flattener.loader.add_path(p.clone());
     }
     flattener.loader.set_quiet(true);
+    let model_size = root.equations.len().saturating_add(root.algorithms.len());
+    let eq_parallel_requested_raw = std::env::var("RUSTMODLICA_FLATTEN_EQ_PARALLEL")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false);
+    let parallel_mode = eq_parallel_mode();
+    let eq_parallel_requested = match parallel_mode {
+        EqParallelMode::Off => false,
+        EqParallelMode::Guarded => eq_parallel_requested_raw,
+        EqParallelMode::On => true,
+    };
+    let mut forced_by_cooldown = false;
+    if matches!(parallel_mode, EqParallelMode::Off) {
+        flattener.force_disable_eq_parallel = true;
+        crate::query_db::perf::record_add("guard_reason_policy_off", 1);
+    } else if eq_parallel_requested
+        && matches!(parallel_mode, EqParallelMode::Guarded)
+        && eq_parallel_guard_enabled()
+    {
+        let mut guard = eq_parallel_guard_load();
+        eq_parallel_guard_seed_entry_if_missing(&mut guard, &model_name, model_size);
+        if let Some(entry) = guard.models.get_mut(&model_name) {
+            let tier = eq_parallel_model_tier(model_size);
+            let streak_threshold = eq_parallel_guard_streak_threshold_for_tier(tier);
+            let model_size_min = eq_parallel_guard_model_size_min();
+            let share_min_pct = eq_parallel_guard_share_min_pct_for_tier(tier);
+            if entry.cooldown_remaining > 0 {
+                flattener.force_disable_eq_parallel = true;
+                forced_by_cooldown = true;
+                crate::query_db::perf::record_add("guard_cooldown_active", 1);
+                crate::query_db::perf::record_add("guard_reason_cooldown_active", 1);
+                entry.cooldown_remaining = entry.cooldown_remaining.saturating_sub(1);
+                if entry.cooldown_remaining == 0 {
+                    crate::query_db::perf::record_add("guard_cooldown_exit", 1);
+                }
+            } else if entry.degrade_streak >= streak_threshold
+                && model_size < model_size_min
+                && entry.last_parallel_candidate_share_pct < share_min_pct
+            {
+                flattener.force_disable_eq_parallel = true;
+                entry.cooldown_remaining = eq_parallel_guard_cooldown_compiles_for_tier(tier);
+                crate::query_db::perf::record_add("guard_cooldown_enter", 1);
+                crate::query_db::perf::record_add("guard_reason_degrade_low_share_small_model", 1);
+            } else {
+                crate::query_db::perf::record_add("guard_reason_none", 1);
+            }
+        }
+        eq_parallel_guard_save(&guard);
+    }
 
     let mut flat = crate::flatten::FlattenedModel {
         // Not needed for equation expansion; keep empty to avoid large clones.
@@ -170,6 +482,34 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
     };
 
     flattener.eq_expand_root_preinherited(root.as_ref(), &mut flat);
+    let eq_elapsed_us = wall.elapsed().as_micros() as u64;
+    if eq_parallel_requested
+        && matches!(parallel_mode, EqParallelMode::Guarded)
+        && eq_parallel_guard_enabled()
+    {
+        let mut guard = eq_parallel_guard_load();
+        eq_parallel_guard_seed_entry_if_missing(&mut guard, &model_name, model_size);
+        let entry = guard.models.entry(model_name.clone()).or_default();
+        if !flattener.force_disable_eq_parallel {
+            let tier = eq_parallel_model_tier(model_size);
+            let degrade_pct = eq_parallel_guard_degrade_ratio_pct_for_tier(tier);
+            let prev = entry.last_parallel_eq_expand_us.max(1);
+            if eq_elapsed_us.saturating_mul(100) >= prev.saturating_mul(degrade_pct) {
+                entry.degrade_streak = entry.degrade_streak.saturating_add(1);
+            } else {
+                entry.degrade_streak = 0;
+            }
+            entry.last_parallel_eq_expand_us = eq_elapsed_us;
+            entry.last_model_size = model_size;
+        } else {
+            // Fallback run keeps previous streak so next runs can stay protected until conditions improve.
+            entry.last_model_size = model_size;
+            if forced_by_cooldown {
+                // During cooldown we keep streak untouched; probe happens automatically when cooldown reaches zero.
+            }
+        }
+        eq_parallel_guard_save(&guard);
+    }
 
     let out = EqExpandOut {
         equations: flat.equations,
@@ -225,7 +565,7 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         }
     }
 
-    crate::query_db::perf::record_us("eq_expand_us", wall.elapsed().as_micros() as u64);
+    crate::query_db::perf::record_us("eq_expand_us", eq_elapsed_us);
     super::EqExpandResPtr(Arc::new(EqExpandResult {
         out: Some(out),
         err: None,

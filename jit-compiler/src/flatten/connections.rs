@@ -4,6 +4,7 @@ use super::FlattenError;
 use crate::ast::{Equation, Expression, Operator};
 use crate::diag::SourceLocation;
 use crate::loader::ModelLoader;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
@@ -162,6 +163,158 @@ fn equations_for_connections(
     out
 }
 
+fn flatten_resolve_parallel_enabled() -> bool {
+    std::env::var("RUSTMODLICA_FLATTEN_RESOLVE_PARALLEL")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false)
+}
+
+fn flatten_resolve_parallel_min_items() -> usize {
+    std::env::var("RUSTMODLICA_FLATTEN_RESOLVE_PARALLEL_MIN_ITEMS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(64)
+}
+
+struct ConnBuildOut {
+    potential_eqs: Vec<Equation>,
+    flow_pairs: Vec<(String, String)>,
+    stream_pairs: Vec<(String, String)>,
+    clock_pairs: Vec<(String, String)>,
+}
+
+fn process_connection_pair(
+    flat: &FlattenedModel,
+    loader: &ModelLoader,
+    root_model_name: Option<&str>,
+    a_path: &str,
+    b_path: &str,
+) -> Result<ConnBuildOut, FlattenError> {
+    let mut out = ConnBuildOut {
+        potential_eqs: Vec::new(),
+        flow_pairs: Vec::new(),
+        stream_pairs: Vec::new(),
+        clock_pairs: Vec::new(),
+    };
+    let type_a = find_connector_type(a_path, flat);
+    let type_b = find_connector_type(b_path, flat);
+    if let (Some(ta), Some(tb)) = (&type_a, &type_b) {
+        if !are_types_compatible(ta, tb) {
+            let loc = root_model_name
+                .and_then(|n| loader.get_path_for_model(n))
+                .map(|p| SourceLocation {
+                    file: p.display().to_string(),
+                    line: 0,
+                    column: 0,
+                });
+            return Err(FlattenError::IncompatibleConnector(
+                a_path.to_string(),
+                b_path.to_string(),
+                ta.clone(),
+                tb.clone(),
+                loc,
+            ));
+        }
+        let heat_scalar_array = |t: &str| {
+            t.ends_with("HeatPort_a") || t.ends_with("HeatPort_b") || t.ends_with("HeatPorts_a")
+        };
+        if heat_scalar_array(ta) && heat_scalar_array(tb) && ta != tb {
+            return Ok(out);
+        }
+        let clock_conn = |t: &str| {
+            let u = t.to_ascii_lowercase();
+            u.contains("clock") && (u.contains("input") || u.contains("output"))
+        };
+        if clock_conn(ta) && clock_conn(tb) {
+            out.clock_pairs
+                .push((a_path.to_string(), b_path.to_string()));
+        }
+    } else if !loader.quiet && connect_warn_enabled() {
+        if type_a.is_none() {
+            let cands = connector_debug_candidates(a_path, flat);
+            eprintln!(
+                "Warning: Could not determine type for connector '{}' (path in model){}",
+                a_path,
+                if cands.is_empty() {
+                    String::new()
+                } else {
+                    format!("; nearby={}", cands.join(", "))
+                }
+            );
+        }
+        if type_b.is_none() {
+            let cands = connector_debug_candidates(b_path, flat);
+            eprintln!(
+                "Warning: Could not determine type for connector '{}' (path in model){}",
+                b_path,
+                if cands.is_empty() {
+                    String::new()
+                } else {
+                    format!("; nearby={}", cands.join(", "))
+                }
+            );
+        }
+    }
+
+    if flat.instances.contains_key(a_path) || has_connector_members(a_path, flat) {
+        let prefix_a = format!("{}_", a_path);
+        let prefix_b = format!("{}_", b_path);
+        for decl in &flat.declarations {
+            if decl.name.starts_with(&prefix_a) {
+                if let Some(suffix) = decl.name.strip_prefix(&prefix_a) {
+                    let target_name = format!("{}{}", prefix_b, suffix);
+                    if decl.is_flow {
+                        out.flow_pairs.push((decl.name.clone(), target_name));
+                    } else if decl.is_stream {
+                        out.stream_pairs
+                            .push((decl.name.clone(), target_name.clone()));
+                        out.stream_pairs.push((target_name, decl.name.clone()));
+                    } else {
+                        out.potential_eqs.push(Equation::Simple(
+                            Expression::var(&decl.name),
+                            Expression::Variable(crate::string_intern::intern(&target_name)),
+                        ));
+                    }
+                }
+            }
+        }
+    } else {
+        let mut found = false;
+        for decl in &flat.declarations {
+            if decl.name == a_path {
+                found = true;
+                if decl.is_flow {
+                    out.flow_pairs.push((a_path.to_string(), b_path.to_string()));
+                } else if decl.is_stream {
+                    out.stream_pairs.push((a_path.to_string(), b_path.to_string()));
+                    out.stream_pairs.push((b_path.to_string(), a_path.to_string()));
+                } else {
+                    out.potential_eqs
+                        .push(Equation::Simple(Expression::var(a_path), Expression::var(b_path)));
+                }
+                break;
+            }
+        }
+        if !found {
+            if !loader.quiet && connect_warn_enabled() {
+                let cands = connector_debug_candidates(a_path, flat);
+                eprintln!(
+                    "Warning: Connect involving unknown variable '{}'. Assuming potential equality.",
+                    a_path
+                );
+                if !cands.is_empty() {
+                    eprintln!("  Nearby connector candidates: {}", cands.join(", "));
+                }
+            }
+            out.potential_eqs
+                .push(Equation::Simple(Expression::var(a_path), Expression::var(b_path)));
+        }
+    }
+    Ok(out)
+}
+
 pub fn resolve_connections(
     flat: &mut FlattenedModel,
     root_model_name: Option<&str>,
@@ -170,8 +323,33 @@ pub fn resolve_connections(
     let mut potential_eqs = Vec::new();
     let mut flow_adj: HashMap<String, Vec<String>> = HashMap::new();
     let mut flow_vars = HashSet::new();
-
-    for (a_path, b_path) in &flat.connections {
+    let parallel_enabled = flatten_resolve_parallel_enabled();
+    let parallel_min_items = flatten_resolve_parallel_min_items();
+    if parallel_enabled && flat.connections.len() >= parallel_min_items {
+        crate::query_db::perf_record_add("flatten_parallel_poc_enabled", 1);
+        let outs: Vec<Result<ConnBuildOut, FlattenError>> = flat
+            .connections
+            .par_iter()
+            .map(|(a_path, b_path)| {
+                process_connection_pair(flat, loader, root_model_name, a_path, b_path)
+            })
+            .collect();
+        for item in outs {
+            let out = item?;
+            potential_eqs.extend(out.potential_eqs);
+            for (a, b) in out.flow_pairs {
+                flow_adj.entry(a.clone()).or_default().push(b.clone());
+                flow_adj.entry(b.clone()).or_default().push(a.clone());
+                flow_vars.insert(a);
+                flow_vars.insert(b);
+            }
+            for (a, b) in out.stream_pairs {
+                flat.stream_peer_map.insert(a, b);
+            }
+            flat.clock_signal_connections.extend(out.clock_pairs);
+        }
+    } else {
+        for (a_path, b_path) in &flat.connections {
         // Type Checking: Verify connector compatibility
         let type_a = find_connector_type(a_path, flat);
         let type_b = find_connector_type(b_path, flat);
@@ -311,6 +489,7 @@ pub fn resolve_connections(
                 ));
             }
         }
+    }
     }
 
     flat.equations.extend(potential_eqs);

@@ -175,16 +175,24 @@ pub struct ValidationSettings {
     /// Default validation tier: `full` | `parse` | `flatten` | `analyze`.
     #[serde(default = "validation_default_tier_string")]
     pub default_tier: String,
+    /// Eq-expand parallel mode: `off` | `guarded` | `on`.
+    #[serde(default = "validation_default_eq_expand_parallel_mode_string")]
+    pub eq_expand_parallel_mode: String,
 }
 
 fn validation_default_tier_string() -> String {
     "analyze".to_string()
 }
 
+fn validation_default_eq_expand_parallel_mode_string() -> String {
+    "off".to_string()
+}
+
 impl Default for ValidationSettings {
     fn default() -> Self {
         Self {
             default_tier: validation_default_tier_string(),
+            eq_expand_parallel_mode: validation_default_eq_expand_parallel_mode_string(),
         }
     }
 }

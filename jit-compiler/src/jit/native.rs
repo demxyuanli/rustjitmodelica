@@ -580,199 +580,120 @@ pub extern "C" fn previous(x: f64) -> f64 {
     x
 }
 
-pub fn register_symbols(builder: &mut JITBuilder) {
-    builder.symbol("rustmodlica_sample", rustmodlica_sample as *const u8);
-    builder.symbol("sample", sample as *const u8);
-    // Register symbols for math functions
-    builder.symbol("sin", f64::sin as *const u8);
-    builder.symbol("cos", f64::cos as *const u8);
-    builder.symbol("tan", f64::tan as *const u8);
-    builder.symbol("asin", f64::asin as *const u8);
-    builder.symbol("acos", f64::acos as *const u8);
-    builder.symbol("atan", f64::atan as *const u8);
-    builder.symbol("atan2", f64::atan2 as *const u8);
-    builder.symbol("sinh", f64::sinh as *const u8);
-    builder.symbol("cosh", f64::cosh as *const u8);
-    builder.symbol("tanh", f64::tanh as *const u8);
-    builder.symbol("sqrt", f64::sqrt as *const u8);
-    builder.symbol("pow", modelica_pow as *const u8);
-    builder.symbol("exp", f64::exp as *const u8);
-    builder.symbol("log", f64::ln as *const u8);
-    builder.symbol("log10", f64::log10 as *const u8);
-    builder.symbol("abs", f64::abs as *const u8);
-    builder.symbol("ceil", f64::ceil as *const u8);
-    builder.symbol("floor", f64::floor as *const u8);
-
-    // Extended Math
-    builder.symbol("mod", modelica_mod as *const u8);
-    builder.symbol("rem", modelica_rem as *const u8);
-    builder.symbol("sign", modelica_sign as *const u8);
-    builder.symbol("min", modelica_min as *const u8);
-    builder.symbol("max", modelica_max as *const u8);
-    builder.symbol("div", modelica_div as *const u8);
-    builder.symbol("integer", modelica_integer as *const u8);
-    builder.symbol("smooth", modelica_smooth as *const u8);
-
-    // SYNC builtins
-    builder.symbol("interval", interval as *const u8);
-    builder.symbol("subSample", subSample as *const u8);
-    builder.symbol("superSample", superSample as *const u8);
-    builder.symbol("shiftSample", shiftSample as *const u8);
-    builder.symbol("hold", hold as *const u8);
-    builder.symbol("previous", previous as *const u8);
-
-    // Modelica.Math Aliases
-    builder.symbol("Modelica.Math.sin", f64::sin as *const u8);
-    builder.symbol("Modelica.Math.cos", f64::cos as *const u8);
-    builder.symbol("Modelica.Math.tan", f64::tan as *const u8);
-    builder.symbol("Modelica.Math.asin", f64::asin as *const u8);
-    builder.symbol("Modelica.Math.acos", f64::acos as *const u8);
-    builder.symbol("Modelica.Math.atan", f64::atan as *const u8);
-    builder.symbol("Modelica.Math.atan2", f64::atan2 as *const u8);
-    builder.symbol("Modelica.Math.sinh", f64::sinh as *const u8);
-    builder.symbol("Modelica.Math.cosh", f64::cosh as *const u8);
-    builder.symbol("Modelica.Math.tanh", f64::tanh as *const u8);
-    builder.symbol("Modelica.Math.exp", f64::exp as *const u8);
-    builder.symbol("Modelica.Math.log", f64::ln as *const u8);
-    builder.symbol("Modelica.Math.log10", f64::log10 as *const u8);
-    builder.symbol("Modelica.Math.sqrt", f64::sqrt as *const u8);
-    builder.symbol("Modelica.Math.pow", modelica_pow as *const u8);
-    builder.symbol("Modelica.Math.ceil", f64::ceil as *const u8);
-    builder.symbol("Modelica.Math.floor", f64::floor as *const u8);
-    builder.symbol("Modelica.Math.mod", modelica_mod as *const u8);
-    builder.symbol("Modelica.Math.rem", modelica_rem as *const u8);
-    builder.symbol("Modelica.Math.sign", modelica_sign as *const u8);
-    builder.symbol("Modelica.Math.min", modelica_min as *const u8);
-    builder.symbol("Modelica.Math.max", modelica_max as *const u8);
-    builder.symbol("Modelica.Math.div", modelica_div as *const u8);
-    builder.symbol("Modelica.Math.integer", modelica_integer as *const u8);
-
-    builder.symbol(
-        "rustmodlica_solve_linear_n",
-        rustmodlica_solve_linear_n as *const u8,
-    );
-    builder.symbol(
+fn visit_builtin_symbols(mut f: impl FnMut(&'static str, *const u8)) {
+    f("rustmodlica_sample", rustmodlica_sample as *const u8);
+    f("sample", sample as *const u8);
+    f("sin", f64::sin as *const u8);
+    f("cos", f64::cos as *const u8);
+    f("tan", f64::tan as *const u8);
+    f("asin", f64::asin as *const u8);
+    f("acos", f64::acos as *const u8);
+    f("atan", f64::atan as *const u8);
+    f("atan2", f64::atan2 as *const u8);
+    f("sinh", f64::sinh as *const u8);
+    f("cosh", f64::cosh as *const u8);
+    f("tanh", f64::tanh as *const u8);
+    f("sqrt", f64::sqrt as *const u8);
+    f("pow", modelica_pow as *const u8);
+    f("exp", f64::exp as *const u8);
+    f("log", f64::ln as *const u8);
+    f("log10", f64::log10 as *const u8);
+    f("abs", f64::abs as *const u8);
+    f("ceil", f64::ceil as *const u8);
+    f("floor", f64::floor as *const u8);
+    f("mod", modelica_mod as *const u8);
+    f("rem", modelica_rem as *const u8);
+    f("sign", modelica_sign as *const u8);
+    f("min", modelica_min as *const u8);
+    f("max", modelica_max as *const u8);
+    f("div", modelica_div as *const u8);
+    f("integer", modelica_integer as *const u8);
+    f("smooth", modelica_smooth as *const u8);
+    f("interval", interval as *const u8);
+    f("subSample", subSample as *const u8);
+    f("superSample", superSample as *const u8);
+    f("shiftSample", shiftSample as *const u8);
+    f("hold", hold as *const u8);
+    f("previous", previous as *const u8);
+    f("Modelica.Math.sin", f64::sin as *const u8);
+    f("Modelica.Math.cos", f64::cos as *const u8);
+    f("Modelica.Math.tan", f64::tan as *const u8);
+    f("Modelica.Math.asin", f64::asin as *const u8);
+    f("Modelica.Math.acos", f64::acos as *const u8);
+    f("Modelica.Math.atan", f64::atan as *const u8);
+    f("Modelica.Math.atan2", f64::atan2 as *const u8);
+    f("Modelica.Math.sinh", f64::sinh as *const u8);
+    f("Modelica.Math.cosh", f64::cosh as *const u8);
+    f("Modelica.Math.tanh", f64::tanh as *const u8);
+    f("Modelica.Math.exp", f64::exp as *const u8);
+    f("Modelica.Math.log", f64::ln as *const u8);
+    f("Modelica.Math.log10", f64::log10 as *const u8);
+    f("Modelica.Math.sqrt", f64::sqrt as *const u8);
+    f("Modelica.Math.pow", modelica_pow as *const u8);
+    f("Modelica.Math.ceil", f64::ceil as *const u8);
+    f("Modelica.Math.floor", f64::floor as *const u8);
+    f("Modelica.Math.mod", modelica_mod as *const u8);
+    f("Modelica.Math.rem", modelica_rem as *const u8);
+    f("Modelica.Math.sign", modelica_sign as *const u8);
+    f("Modelica.Math.min", modelica_min as *const u8);
+    f("Modelica.Math.max", modelica_max as *const u8);
+    f("Modelica.Math.div", modelica_div as *const u8);
+    f("Modelica.Math.integer", modelica_integer as *const u8);
+    f("rustmodlica_solve_linear_n", rustmodlica_solve_linear_n as *const u8);
+    f(
         "rustmodlica_dense_newton_workspace",
         rustmodlica_dense_newton_workspace as *const u8,
     );
-    builder.symbol(
-        "rustmodlica_jit_workspace_bytes",
-        rustmodlica_jit_workspace_bytes as *const u8,
-    );
-    builder.symbol(
-        "rustmodlica_solve_linear_csr",
-        rustmodlica_solve_linear_csr as *const u8,
-    );
-
-    builder.symbol("assert", modelica_assert as *const u8);
-    builder.symbol("terminate", modelica_terminate as *const u8);
-    builder.symbol("extLog", rustmodlica_builtin_ext_log as *const u8);
-    builder.symbol(
+    f("rustmodlica_jit_workspace_bytes", rustmodlica_jit_workspace_bytes as *const u8);
+    f("rustmodlica_solve_linear_csr", rustmodlica_solve_linear_csr as *const u8);
+    f("assert", modelica_assert as *const u8);
+    f("terminate", modelica_terminate as *const u8);
+    f("extLog", rustmodlica_builtin_ext_log as *const u8);
+    f(
         "rustmodlica_residual_gate_fail",
         rustmodlica_residual_gate_fail as *const u8,
     );
-    builder.symbol("Boolean", modelica_boolean as *const u8);
-    builder.symbol("not", modelica_not as *const u8);
-    builder.symbol("String", modelica_string as *const u8);
-    builder.symbol(
+    f("Boolean", modelica_boolean as *const u8);
+    f("not", modelica_not as *const u8);
+    f("String", modelica_string as *const u8);
+    f(
         "rustmodlica_assert_suppress_begin",
         rustmodlica_assert_suppress_begin as *const u8,
     );
-    builder.symbol(
+    f(
         "rustmodlica_assert_suppress_end",
         rustmodlica_assert_suppress_end as *const u8,
     );
-
-    builder.symbol(
-        "rustmodlica_math_real_fft",
-        crate::math_fft::rustmodlica_math_real_fft as *const u8,
-    );
-    builder.symbol(
+    f("rustmodlica_math_real_fft", crate::math_fft::rustmodlica_math_real_fft as *const u8);
+    f(
         "rustmodlica_math_random_msl",
         crate::modelica_random::rustmodlica_math_random_msl as *const u8,
     );
-    builder.symbol(
+    f(
         "rustmodlica_real_fft_write_to_file",
         crate::math_fft::rustmodlica_real_fft_write_to_file as *const u8,
     );
 }
 
+pub fn register_symbols(builder: &mut JITBuilder) {
+    visit_builtin_symbols(|name, ptr| {
+        builder.symbol(name, ptr);
+    });
+}
+
+pub fn builtin_jit_symbol_ptrs() -> std::collections::HashMap<String, *const u8> {
+    let mut m = std::collections::HashMap::new();
+    visit_builtin_symbols(|name, ptr| {
+        m.insert(name.to_string(), ptr);
+    });
+    m
+}
+
 /// Names of symbols registered by register_symbols(); used to avoid JIT panic when external is missing.
 pub fn builtin_jit_symbol_names() -> std::collections::HashSet<&'static str> {
     let mut set = std::collections::HashSet::new();
-    set.insert("rustmodlica_sample");
-    set.insert("sample");
-    set.insert("sin");
-    set.insert("cos");
-    set.insert("tan");
-    set.insert("asin");
-    set.insert("acos");
-    set.insert("atan");
-    set.insert("atan2");
-    set.insert("sinh");
-    set.insert("cosh");
-    set.insert("tanh");
-    set.insert("sqrt");
-    set.insert("pow");
-    set.insert("exp");
-    set.insert("log");
-    set.insert("log10");
-    set.insert("abs");
-    set.insert("ceil");
-    set.insert("floor");
-    set.insert("mod");
-    set.insert("rem");
-    set.insert("sign");
-    set.insert("min");
-    set.insert("max");
-    set.insert("div");
-    set.insert("integer");
-    set.insert("smooth");
-    set.insert("interval");
-    set.insert("subSample");
-    set.insert("superSample");
-    set.insert("shiftSample");
-    set.insert("hold");
-    set.insert("previous");
-    set.insert("Modelica.Math.sin");
-    set.insert("Modelica.Math.cos");
-    set.insert("Modelica.Math.tan");
-    set.insert("Modelica.Math.asin");
-    set.insert("Modelica.Math.acos");
-    set.insert("Modelica.Math.atan");
-    set.insert("Modelica.Math.atan2");
-    set.insert("Modelica.Math.sinh");
-    set.insert("Modelica.Math.cosh");
-    set.insert("Modelica.Math.tanh");
-    set.insert("Modelica.Math.exp");
-    set.insert("Modelica.Math.log");
-    set.insert("Modelica.Math.log10");
-    set.insert("Modelica.Math.sqrt");
-    set.insert("Modelica.Math.pow");
-    set.insert("Modelica.Math.ceil");
-    set.insert("Modelica.Math.floor");
-    set.insert("Modelica.Math.mod");
-    set.insert("Modelica.Math.rem");
-    set.insert("Modelica.Math.sign");
-    set.insert("Modelica.Math.min");
-    set.insert("Modelica.Math.max");
-    set.insert("Modelica.Math.div");
-    set.insert("Modelica.Math.integer");
-    set.insert("rustmodlica_solve_linear_n");
-    set.insert("rustmodlica_dense_newton_workspace");
-    set.insert("rustmodlica_jit_workspace_bytes");
-    set.insert("rustmodlica_solve_linear_csr");
-    set.insert("rustmodlica_assert_suppress_begin");
-    set.insert("rustmodlica_assert_suppress_end");
-    set.insert("rustmodlica_math_real_fft");
-    set.insert("rustmodlica_math_random_msl");
-    set.insert("rustmodlica_real_fft_write_to_file");
-    set.insert("assert");
-    set.insert("terminate");
-    set.insert("extLog");
-    set.insert("rustmodlica_residual_gate_fail");
-    set.insert("Boolean");
-    set.insert("not");
-    set.insert("String");
+    visit_builtin_symbols(|name, _| {
+        set.insert(name);
+    });
     set
 }

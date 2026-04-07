@@ -72,6 +72,7 @@ export interface DependencyGraphSettings {
 
 export interface ValidationSettings {
   defaultTier?: string;
+  eqExpandParallelMode?: "off" | "guarded" | "on";
 }
 
 export interface AppSettings {

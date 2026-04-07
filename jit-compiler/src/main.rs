@@ -17,16 +17,51 @@ use std::time::Instant;
 
 type RunError = error::AppError;
 
+fn perf_salsa_stats_enabled() -> bool {
+    env::var("RUSTMODLICA_PERF_SALSA_STATS")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn merge_salsa_process_db_stats_into_compile_perf(compile_perf: &mut serde_json::Value) {
+    if !perf_salsa_stats_enabled() {
+        return;
+    }
+    let (hits, misses, evictions) = rustmodlica::salsa_process_db_stats();
+    let Some(obj) = compile_perf.as_object_mut() else {
+        return;
+    };
+    obj.insert(
+        "salsa_process_db_hits".to_string(),
+        serde_json::json!(hits),
+    );
+    obj.insert(
+        "salsa_process_db_misses".to_string(),
+        serde_json::json!(misses),
+    );
+    obj.insert(
+        "salsa_process_db_evictions".to_string(),
+        serde_json::json!(evictions),
+    );
+}
+
 fn maybe_write_perf_json(
     perf_json_path: &Option<String>,
     model_name: &str,
     warnings_count: usize,
-    compile_perf: Option<serde_json::Value>,
+    mut compile_perf: Option<serde_json::Value>,
     sim_perf: Option<serde_json::Value>,
 ) -> Result<(), RunError> {
     let Some(path) = perf_json_path.as_ref() else {
         return Ok(());
     };
+    if let Some(ref mut cp) = compile_perf {
+        merge_salsa_process_db_stats_into_compile_perf(cp);
+    }
     let payload = serde_json::json!({
         "model": model_name,
         "warnings_count": warnings_count,

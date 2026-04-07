@@ -178,9 +178,33 @@ pub struct CompilePerfReport {
     pub inline_input_algorithms: usize,
     pub inline_input_initial_algorithms: usize,
     pub inline_declarations_with_start_value: usize,
+    /// Whether inline frontend parallel PoC path was enabled for this compile.
+    pub inline_parallel_poc_enabled: bool,
+    /// Whether flatten-stage parallel PoC path was enabled for this compile.
+    pub flatten_parallel_poc_enabled: bool,
+    /// Eq-expand guard observability counters.
+    pub guard_cooldown_enter: u64,
+    pub guard_cooldown_active: u64,
+    pub guard_cooldown_exit: u64,
+    /// Human-readable last guard reason for this compile.
+    pub guard_reason: String,
     pub analyze_ms: u64,
     pub backend_dae_ms: u64,
     pub external_resolve_ms: u64,
+    /// User function stub candidates collected from call graph.
+    pub stub_candidate_count: usize,
+    /// Wall-clock spent building user stubs.
+    pub stub_compile_ms: u64,
+    pub stub_compile_us: u64,
+    /// Whether stub parallel prototype was enabled for this compile.
+    pub stub_parallel_enabled: bool,
+    /// Wall-clock spent scanning/building clock partition schedule.
+    pub clock_partition_scan_ms: u64,
+    pub clock_partition_scan_us: u64,
+    /// Whether partition-scan parallel prototype was enabled for this compile.
+    pub clock_partition_parallel_enabled: bool,
+    /// Candidate parallel share estimate (0-100) from frontend-inline + stub/partition segments over total compile wall.
+    pub parallel_candidate_share_pct: f64,
     /// Track B: wall time for Cranelift JIT compile (`jit.compile`), microseconds (pair with `jit_ms`).
     pub codegen_wall_us: u64,
     pub codegen_wall_ms: u64,

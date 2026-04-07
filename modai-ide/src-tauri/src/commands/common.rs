@@ -16,6 +16,12 @@ pub struct JitValidateOptions {
     /// When provenance is available after flatten, run `analyze_change_impact` for these flattened parameter names (analysis only).
     #[serde(default)]
     pub param_change_impact_probe: Option<Vec<String>>,
+    /// When provenance is available, run `analyze_instance_change_impact` for this flattened instance path (analysis only).
+    #[serde(default)]
+    pub instance_change_impact_probe: Option<String>,
+    /// Eq-expand parallel mode: `off` | `guarded` | `on` (default `off`).
+    #[serde(default)]
+    pub eq_expand_parallel_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

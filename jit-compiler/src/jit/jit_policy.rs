@@ -25,6 +25,9 @@ struct HysteresisConfig {
 struct JitPolicyFile {
     #[serde(default)]
     schema_version: u32,
+    /// When set, skip writing `RUSTMODLICA_JIT_CODEGEN_CACHE` entries if `alg + diff` equation count exceeds this (in-process JIT still runs).
+    #[serde(default)]
+    codegen_disk_max_equations: Option<usize>,
     #[serde(default)]
     variable_fallbacks: Vec<ScalarFallbackRule>,
     #[serde(default)]
@@ -65,6 +68,7 @@ impl Default for HysteresisConfig {
 
 #[derive(Clone)]
 pub struct LoadedJitPolicy {
+    pub codegen_disk_max_equations: Option<usize>,
     pub variable_fallbacks: Vec<ScalarFallbackRule>,
     pub pre_variable_fallbacks: Vec<ScalarFallbackRule>,
     pub pre_chain_variable_fallbacks: bool,
@@ -149,6 +153,9 @@ fn strict_algorithm() -> bool {
 
 fn merge_policy(base: JitPolicyFile, overlay: JitPolicyFile) -> JitPolicyFile {
     let mut out = base;
+    if overlay.codegen_disk_max_equations.is_some() {
+        out.codegen_disk_max_equations = overlay.codegen_disk_max_equations;
+    }
     out.variable_fallbacks.extend(overlay.variable_fallbacks);
     out.pre_variable_fallbacks.extend(overlay.pre_variable_fallbacks);
     if overlay.schema_version != 0 {
@@ -202,6 +209,7 @@ fn load_policy_files() -> LoadedJitPolicy {
 
     LoadedJitPolicy {
         variable_fallbacks: merged.variable_fallbacks,
+        codegen_disk_max_equations: merged.codegen_disk_max_equations,
         pre_variable_fallbacks: merged.pre_variable_fallbacks,
         pre_chain_variable_fallbacks: merged.pre_chain_variable_fallbacks,
         pre_generic_underscore_fallback: merged.pre_generic_underscore_fallback,
@@ -217,6 +225,47 @@ static POLICY: OnceLock<LoadedJitPolicy> = OnceLock::new();
 
 fn policy() -> &'static LoadedJitPolicy {
     POLICY.get_or_init(load_policy_files)
+}
+
+fn adaptive_jit_log_enabled() -> bool {
+    std::env::var("RUSTMODLICA_JIT_ADAPTIVE_LOG")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+/// Whether a compiled `calc_derivs` may be written to the on-disk codegen cache (adaptive cap).
+/// In-memory JIT is unaffected when this returns false.
+pub fn allow_codegen_disk_put(alg_equation_count: usize, diff_equation_count: usize) -> bool {
+    let total = alg_equation_count.saturating_add(diff_equation_count);
+    if let Ok(raw) = std::env::var("RUSTMODLICA_JIT_CODEGEN_CACHE_MAX_EQUATIONS") {
+        if let Ok(max) = raw.trim().parse::<usize>() {
+            if total > max {
+                if adaptive_jit_log_enabled() {
+                    eprintln!(
+                        "[jit-policy] skip codegen disk put: {} equations > RUSTMODLICA_JIT_CODEGEN_CACHE_MAX_EQUATIONS={}",
+                        total, max
+                    );
+                }
+                return false;
+            }
+        }
+    }
+    if let Some(max) = policy().codegen_disk_max_equations {
+        if total > max {
+            if adaptive_jit_log_enabled() {
+                eprintln!(
+                    "[jit-policy] skip codegen disk put: {} equations > policy codegen_disk_max_equations={}",
+                    total, max
+                );
+            }
+            return false;
+        }
+    }
+    true
 }
 
 /// Variable JIT path: scalar fallback for unknown names.

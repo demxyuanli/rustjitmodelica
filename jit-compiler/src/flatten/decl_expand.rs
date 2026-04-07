@@ -4,6 +4,7 @@ use crate::diag::SourceLocation;
 use crate::loader::LoadError;
 use crate::flatten::utils::{is_primitive, resolve_inner_class_alias, resolve_type_alias};
 use crate::flatten::{apply_modification_to_model, ModifyContext};
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use super::substitute::SubstituteCache;
@@ -16,6 +17,21 @@ fn perf_trace_enabled() -> bool {
             t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false)
+}
+
+fn flatten_decl_parallel_enabled() -> bool {
+    std::env::var("RUSTMODLICA_FLATTEN_DECL_PARALLEL")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false)
+}
+
+fn flatten_decl_parallel_min_items() -> usize {
+    std::env::var("RUSTMODLICA_FLATTEN_DECL_PARALLEL_MIN_ITEMS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(256)
 }
 
 #[derive(Debug, Default)]
@@ -356,6 +372,8 @@ impl Flattener {
                     current_model_name,
                     msl_import_context,
                 } => {
+                    let decl_parallel_enabled = flatten_decl_parallel_enabled();
+                    let decl_parallel_min_items = flatten_decl_parallel_min_items();
                     let current_qualified = current_model_name.as_deref().unwrap_or("");
                     let mut context: HashMap<String, Expression> = HashMap::new();
                     let mut local_array_sizes: HashMap<String, usize> = HashMap::new();
@@ -573,6 +591,70 @@ impl Flattener {
                             );
                             resolved_type =
                                 Self::normalize_decl_type_name(resolved_type, &pre_inner_alias);
+
+                            if i == 1
+                                && is_array
+                                && count >= decl_parallel_min_items
+                                && decl_parallel_enabled
+                                && is_primitive(&resolved_type)
+                            {
+                                crate::query_db::perf_record_add("flatten_parallel_poc_enabled", 1);
+                                let start_template: Option<Expression> = if let Some(ev) = &each_start {
+                                    Some(self.substitute(ev, &context))
+                                } else if let Some(val) = &decl.start_value {
+                                    Some(self.substitute(val, &context))
+                                } else {
+                                    None
+                                };
+                                let resolved_type_clone = resolved_type.clone();
+                                let entries: Vec<(Declaration, String, usize)> = (1..=count)
+                                    .into_par_iter()
+                                    .map(|idx| {
+                                        let idx_suffix = format!("_{}", idx);
+                                        let idx_local_name = format!("{}{}", decl.name, idx_suffix);
+                                        let idx_full_path = if prefix.is_empty() {
+                                            idx_local_name
+                                        } else {
+                                            format!("{}_{}", prefix, idx_local_name)
+                                        };
+                                        let start_value = start_template
+                                            .as_ref()
+                                            .map(|sub| index_expression(sub, idx));
+                                        let d = Declaration {
+                                            type_name: resolved_type_clone.clone(),
+                                            name: idx_full_path.clone(),
+                                            replaceable: decl.replaceable,
+                                            constrainedby_type: decl.constrainedby_type.clone(),
+                                            is_parameter: decl.is_parameter,
+                                            is_flow: decl.is_flow,
+                                            is_stream: decl.is_stream,
+                                            is_discrete: decl.is_discrete,
+                                            is_input: decl.is_input,
+                                            is_output: decl.is_output,
+                                            is_inner: decl.is_inner,
+                                            is_outer: decl.is_outer,
+                                            is_public: decl.is_public,
+                                            is_protected: decl.is_protected,
+                                            start_value,
+                                            array_size: None,
+                                            modifications: Vec::new(),
+                                            is_rest: decl.is_rest,
+                                            annotation: None,
+                                            condition: None,
+                                        };
+                                        (d, idx_full_path, idx)
+                                    })
+                                    .collect();
+                                for (d, idx_full_path, idx) in entries {
+                                    flat.declarations.push(d);
+                                    flat.register_inst_path(
+                                        idx_full_path,
+                                        resolved_type.clone(),
+                                        Some(idx),
+                                    );
+                                }
+                                break;
+                            }
 
                             // SuperFast mode: skip recursive sub-model loading for non-primitive types
                             if mode == ExpandDeclMode::SuperFast && !is_primitive(&resolved_type) {

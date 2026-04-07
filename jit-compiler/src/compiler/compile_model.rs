@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
 use std::time::Instant;
+use rayon::prelude::*;
 
 use crate::analysis::analyze_initial_equations;
 use crate::ast::{Equation, Expression};
@@ -62,6 +63,20 @@ fn perf_trace_enabled() -> bool {
             let t = v.trim();
             t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
         })
+        .unwrap_or(false)
+}
+
+fn jit_stub_parallel_enabled() -> bool {
+    std::env::var("RUSTMODLICA_JIT_STUB_PARALLEL")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false)
+}
+
+fn jit_partition_scan_parallel_enabled() -> bool {
+    std::env::var("RUSTMODLICA_JIT_PARTITION_SCAN_PARALLEL")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
         .unwrap_or(false)
 }
 
@@ -479,6 +494,28 @@ pub(super) fn compile(
             *qperf.get("inline_input_initial_algorithms").unwrap_or(&0) as usize;
         perf_report.inline_declarations_with_start_value =
             *qperf.get("inline_declarations_with_start_value").unwrap_or(&0) as usize;
+        perf_report.inline_parallel_poc_enabled =
+            *qperf.get("inline_parallel_poc_enabled").unwrap_or(&0) > 0;
+        perf_report.flatten_parallel_poc_enabled =
+            *qperf.get("flatten_parallel_poc_enabled").unwrap_or(&0) > 0;
+        perf_report.guard_cooldown_enter = *qperf.get("guard_cooldown_enter").unwrap_or(&0);
+        perf_report.guard_cooldown_active = *qperf.get("guard_cooldown_active").unwrap_or(&0);
+        perf_report.guard_cooldown_exit = *qperf.get("guard_cooldown_exit").unwrap_or(&0);
+        perf_report.guard_reason = if *qperf.get("guard_reason_policy_off").unwrap_or(&0) > 0 {
+            "policy_off".to_string()
+        } else if *qperf.get("guard_reason_cooldown_active").unwrap_or(&0) > 0 {
+            "cooldown_active".to_string()
+        } else if *qperf
+            .get("guard_reason_degrade_low_share_small_model")
+            .unwrap_or(&0)
+            > 0
+        {
+            "degrade_low_share_small_model".to_string()
+        } else if *qperf.get("guard_reason_none").unwrap_or(&0) > 0 {
+            "none".to_string()
+        } else {
+            String::new()
+        };
         perf_report.qcache_deps_match_us = *qperf.get("qcache_deps_match_us").unwrap_or(&0);
         perf_report.cache_l0_hits = *qperf.get("cache_L0_hits").unwrap_or(&0);
         perf_report.cache_l1_hits = *qperf.get("cache_L1_hits").unwrap_or(&0);
@@ -935,6 +972,12 @@ pub(super) fn compile(
         let external_names: HashSet<String> =
             external_list.iter().map(|(n, _, _)| n.clone()).collect();
         let stub_cap = all_called.len().saturating_sub(external_names.len());
+        #[derive(Clone)]
+        struct StubPlan {
+            name: String,
+            input_names: Vec<String>,
+            output_expr: Expression,
+        }
         let mut user_stub_jits: Vec<Jit> = Vec::new();
         let mut user_stub_ptrs: HashMap<String, *const u8> = HashMap::with_capacity(stub_cap);
         let mut user_function_bodies: HashMap<String, (Vec<String>, Expression)> =
@@ -1021,48 +1064,107 @@ pub(super) fn compile(
                 .collect()
         }
 
-        for name in &all_called {
-            if inline::is_builtin_function(name) || external_names.contains(name) {
-                continue;
-            }
-            // MSL Fluid: valveCharacteristic is usually provided via replaceable function
-            // bound to BaseClasses.ValveCharacteristics.linear/one/...; our current
-            // frontend does not track the specific binding here, so we fall back to
-            // the default linear characteristic for JIT stubs.
-            let mut func_model = None;
-            for cand in candidate_load_names(name) {
-                if let Ok(m) = compiler.loader.load_model(&cand) {
-                    func_model = Some(m);
-                    break;
+        let stub_compile_t0 = Instant::now();
+        let mut stub_plans: Vec<StubPlan> = Vec::new();
+        perf_report.stub_parallel_enabled = jit_stub_parallel_enabled();
+        if perf_report.stub_parallel_enabled {
+            let loader_paths = compiler.loader.library_paths.clone();
+            let scan_results: Vec<Result<Option<StubPlan>, String>> = all_called
+                .par_iter()
+                .map(|name| {
+                    if inline::is_builtin_function(name) || external_names.contains(name) {
+                        return Ok(None);
+                    }
+                    let mut local_loader = crate::loader::ModelLoader::new();
+                    local_loader.set_quiet(true);
+                    for p in &loader_paths {
+                        local_loader.add_path(p.clone());
+                    }
+                    let mut func_model = None;
+                    for cand in candidate_load_names(name) {
+                        if let Ok(m) = local_loader.load_model(&cand) {
+                            func_model = Some(m);
+                            break;
+                        }
+                    }
+                    let Some(func_model) = func_model else {
+                        return Ok(None);
+                    };
+                    if func_model.external_info.is_some() {
+                        return Ok(None);
+                    }
+                    let Some((input_names, outputs)) = inline::get_function_body(func_model.as_ref()) else {
+                        return Ok(None);
+                    };
+                    if outputs.len() != 1 {
+                        return Err(format!(
+                            "Function '{}' has {} outputs; JIT callable supports single-output only (FUNC-2).",
+                            name, outputs.len()
+                        ));
+                    }
+                    Ok(Some(StubPlan {
+                        name: name.clone(),
+                        input_names: input_names.clone(),
+                        output_expr: outputs[0].1.clone(),
+                    }))
+                })
+                .collect();
+            for item in scan_results {
+                match item {
+                    Ok(Some(p)) => stub_plans.push(p),
+                    Ok(None) => {}
+                    Err(e) => return Err(e.into()),
                 }
             }
-            let Some(func_model) = func_model else {
-                // Some collected call-like identifiers are not real Modelica
-                // functions in current frontend coverage; skip hard failure.
-                continue;
-            };
-            if func_model.external_info.is_some() {
-                continue;
+            stub_plans.sort_by(|a, b| a.name.cmp(&b.name));
+            stub_plans.dedup_by(|a, b| a.name == b.name);
+        } else {
+            for name in &all_called {
+                if inline::is_builtin_function(name) || external_names.contains(name) {
+                    continue;
+                }
+                let mut func_model = None;
+                for cand in candidate_load_names(name) {
+                    if let Ok(m) = compiler.loader.load_model(&cand) {
+                        func_model = Some(m);
+                        break;
+                    }
+                }
+                let Some(func_model) = func_model else {
+                    continue;
+                };
+                if func_model.external_info.is_some() {
+                    continue;
+                }
+                let Some((input_names, outputs)) = inline::get_function_body(func_model.as_ref()) else {
+                    continue;
+                };
+                if outputs.len() != 1 {
+                    return Err(format!(
+                        "Function '{}' has {} outputs; JIT callable supports single-output only (FUNC-2).",
+                        name, outputs.len()
+                    ).into());
+                }
+                stub_plans.push(StubPlan {
+                    name: name.clone(),
+                    input_names: input_names.clone(),
+                    output_expr: outputs[0].1.clone(),
+                });
             }
-            let Some((input_names, outputs)) = inline::get_function_body(func_model.as_ref()) else {
-                // Keep compilation progressing for library test wrappers that call
-                // non-inlinable functions; expr translator provides a placeholder path.
-                continue;
-            };
-            if outputs.len() != 1 {
-                return Err(format!(
-                    "Function '{}' has {} outputs; JIT callable supports single-output only (FUNC-2).",
-                    name, outputs.len()
-                ).into());
-            }
+        }
+        perf_report.stub_candidate_count = stub_plans.len();
+        for p in stub_plans {
             let mut stub_jit = Jit::new();
             let ptr = stub_jit
-                .compile_user_function_stub(name, &input_names, &outputs[0].1)
-                .map_err(|e| format!("JIT stub for '{}': {}", name, e))?;
-            user_stub_ptrs.insert(name.clone(), ptr);
+                .compile_user_function_stub(&p.name, &p.input_names, &p.output_expr)
+                .map_err(|e| format!("JIT stub for '{}': {}", p.name, e))?;
+            user_stub_ptrs.insert(p.name.clone(), ptr);
+            user_function_bodies.insert(p.name, (p.input_names, p.output_expr));
             user_stub_jits.push(stub_jit);
-            user_function_bodies.insert(name.clone(), (input_names.clone(), outputs[0].1.clone()));
         }
+        let stub_elapsed = stub_compile_t0.elapsed();
+        perf_report.stub_compile_ms = stub_elapsed.as_millis() as u64;
+        perf_report.stub_compile_us = stub_elapsed.as_micros() as u64;
 
         if opts.backend_dae_info {
             jacobian::print_backend_dae_info(
@@ -1225,8 +1327,9 @@ pub(super) fn compile(
         if perf_trace {
             eprintln!("[perf] aot_cache_status={}", aot_cache_status.as_str());
         }
-        let mut clock_partition_schedule: Vec<ClockPartitionScheduleEntry> = Vec::new();
-        for part in &backend_clock_partitions {
+        let partition_scan_t0 = Instant::now();
+        perf_report.clock_partition_parallel_enabled = jit_partition_scan_parallel_enabled();
+        let build_partition_entry = |part: &BackendClockPartition| {
             let mut var_names: Vec<String> = part.var_names.iter().cloned().collect();
             var_names.sort_unstable();
             let var_set: HashSet<String> = var_names.iter().cloned().collect();
@@ -1243,10 +1346,7 @@ pub(super) fn compile(
             let mut alg_equation_indices = Vec::new();
             for (idx, eq) in alg_equations.iter().enumerate() {
                 let mut modified = HashSet::new();
-                crate::jit::analysis::collect_modified_equations(
-                    std::slice::from_ref(eq),
-                    &mut modified,
-                );
+                crate::jit::analysis::collect_modified_equations(std::slice::from_ref(eq), &mut modified);
                 if modified.iter().any(|v| var_set.contains(v)) {
                     alg_equation_indices.push(idx);
                 }
@@ -1255,24 +1355,30 @@ pub(super) fn compile(
             let mut diff_equation_indices = Vec::new();
             for (idx, eq) in diff_equations.iter().enumerate() {
                 let mut modified = HashSet::new();
-                crate::jit::analysis::collect_modified_equations(
-                    std::slice::from_ref(eq),
-                    &mut modified,
-                );
+                crate::jit::analysis::collect_modified_equations(std::slice::from_ref(eq), &mut modified);
                 if modified.iter().any(|v| var_set.contains(v)) {
                     diff_equation_indices.push(idx);
                 }
             }
-
-            clock_partition_schedule.push(ClockPartitionScheduleEntry {
+            ClockPartitionScheduleEntry {
                 id: part.id.clone(),
                 trigger: parse_clock_partition_trigger(&part.id),
                 var_names,
                 algorithm_indices,
                 alg_equation_indices,
                 diff_equation_indices,
-            });
-        }
+            }
+        };
+        let mut clock_partition_schedule: Vec<ClockPartitionScheduleEntry> =
+            if perf_report.clock_partition_parallel_enabled && backend_clock_partitions.len() > 1 {
+                backend_clock_partitions.par_iter().map(build_partition_entry).collect()
+            } else {
+                backend_clock_partitions.iter().map(build_partition_entry).collect()
+            };
+        clock_partition_schedule.sort_by(|a, b| a.id.cmp(&b.id));
+        let partition_elapsed = partition_scan_t0.elapsed();
+        perf_report.clock_partition_scan_ms = partition_elapsed.as_millis() as u64;
+        perf_report.clock_partition_scan_us = partition_elapsed.as_micros() as u64;
 
         let lib_paths: Vec<std::path::PathBuf> = if !compiler.options.external_libs.is_empty() {
             compiler.options
@@ -1391,13 +1497,51 @@ pub(super) fn compile(
         perf_report.jit_ms = jit_elapsed.as_millis() as u64;
         perf_report.codegen_wall_us = jit_elapsed.as_micros() as u64;
         perf_report.codegen_wall_ms = perf_report.codegen_wall_us / 1000;
+        let frontend_flatten_seg_us = perf_report
+            .decl_expand_us
+            .saturating_add(perf_report.eq_expand_us)
+            .saturating_add(perf_report.resolve_connections_us);
+        let frontend_inline_seg_us = perf_report
+            .inline_pass_decl_start_values_us
+            .saturating_add(perf_report.inline_pass_equations_us)
+            .saturating_add(perf_report.inline_pass_initial_equations_us)
+            .saturating_add(perf_report.inline_pass_algorithms_us)
+            .saturating_add(perf_report.inline_pass_initial_algorithms_us);
+        let seg_us = frontend_flatten_seg_us
+            .saturating_add(frontend_inline_seg_us)
+            .saturating_add(perf_report.stub_compile_us)
+            .saturating_add(perf_report.clock_partition_scan_us);
+        let total_us = perf_report
+            .flatten_wall_us
+            .saturating_add(perf_report.codegen_wall_us)
+            .max(1);
+        perf_report.parallel_candidate_share_pct =
+            (seg_us as f64 * 100.0_f64 / total_us as f64).clamp(0.0, 100.0);
+        crate::query_db::eq_parallel_guard_update_candidate_share(
+            model_name,
+            perf_report.parallel_candidate_share_pct,
+        );
         if perf_trace {
             eprintln!(
-                "[perf] tracks trackA_flatten_wall_us={} trackA_inline_wall_us={} trackB_codegen_wall_us={} trackB_jit_ms={}",
+                "[perf] tracks trackA_flatten_wall_us={} trackA_inline_wall_us={} trackB_codegen_wall_us={} trackB_jit_ms={} frontend_flatten_seg_ms={} frontend_inline_seg_ms={} stub_compile_ms={} partition_scan_ms={} flatten_parallel_poc_enabled={} inline_parallel_poc_enabled={} parallel_candidate_share_pct={:.2}",
                 perf_report.flatten_wall_us,
                 perf_report.inline_wall_us,
                 perf_report.codegen_wall_us,
-                perf_report.jit_ms
+                perf_report.jit_ms,
+                frontend_flatten_seg_us / 1000,
+                frontend_inline_seg_us / 1000,
+                perf_report.stub_compile_ms,
+                perf_report.clock_partition_scan_ms,
+                perf_report.flatten_parallel_poc_enabled,
+                perf_report.inline_parallel_poc_enabled,
+                perf_report.parallel_candidate_share_pct
+            );
+            eprintln!(
+                "[perf] guard cooldown_enter={} cooldown_active={} cooldown_exit={} reason={}",
+                perf_report.guard_cooldown_enter,
+                perf_report.guard_cooldown_active,
+                perf_report.guard_cooldown_exit,
+                perf_report.guard_reason
             );
             eprintln!("[perf] compile_phase.jit_ms={}", perf_report.jit_ms);
         }

@@ -191,6 +191,22 @@ pub fn analyze_change_impact(
     provenance.analyze_param_change_names(changed_params)
 }
 
+/// Impact of editing a component instance path (analysis / IDE only; not a codegen skip guarantee).
+pub fn analyze_instance_change_impact(
+    provenance: &ProvenanceIndex,
+    instance_path: &str,
+) -> ImpactAnalysisResult {
+    provenance.compute_instance_change_impact(instance_path).into()
+}
+
+/// Heuristic for UI or logs only; see [`ProvenanceIndex::incremental_codegen_worthwhile_hint`].
+pub fn incremental_codegen_worthwhile_hint(
+    provenance: &ProvenanceIndex,
+    impact: &ImpactAnalysisResult,
+) -> bool {
+    provenance.incremental_codegen_worthwhile_hint(impact)
+}
+
 /// Build [`ProvenanceIndex`] from a flattened model (optional root `.mo` path for `source_file` hints).
 pub fn provenance_index_for_flat_model(
     flat: &FlattenedModel,
