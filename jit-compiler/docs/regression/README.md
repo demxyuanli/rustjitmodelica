@@ -84,6 +84,92 @@ This documentation is for guidance and traceability only, without adding new tes
     - `normalize` 默认 `true`：返回精简 `provider/model/answer/thinking`；`normalize=false` 额外返回 `api_base` 与完整 `result` 便于调试。
 - **`run_regression.ps1` 中尚未映射到 JSON 的段落 / PS1 sections not yet covered by JSON configs**: 已有 phase1 映射覆盖 `JIT_RULES`、`INT-2`、`FUNC-6/7`、`SYNC-2`。当前仍由 `run_regression.ps1`（或其所调子流程）负责，后续可继续迁入：`PERF-SMOKE`（`RUSTMODLICA_PERF_SMOKE` 门控）；`SYNC-DET` 重复运行 CSV 稳定性；`SYNC-TRACE-ASSERT` 时钟分区跟踪断言；`[FMI]` `--emit-fmu` 产物检查；`[DIR]` `run_modelica_dir_regression.ps1`（可用 `-SkipDir` 跳过）；覆盖率门禁刷新 `coverage_status.json` 等。
 
+## JIT 配置模板与参数优先级 / JIT templates and option precedence
+
+### 参数优先级说明 / Option precedence
+
+- 优先级统一按 **CLI > env > default** 执行。
+- 当同一个行为既有命令行参数又有环境变量时，以命令行参数为准（例如 `--fmi-model-id` 高于 `RUSTMODLICA_FMI_MODEL_ID`）。
+- 对于仅存在 env 开关的行为（如部分 trace/cache 开关），未设置时使用实现内默认值。
+- 建议在 CI 和批量回归里显式设置关键参数，避免依赖进程环境残留。
+
+### 最小推荐模板 1：开发迭代 / Minimal template 1: local development
+
+```powershell
+$env:RUSTMODLICA_SALSA = "1"
+$env:RUSTMODLICA_QUERY_CACHE = "1"
+$env:RUSTMODLICA_QUERY_CACHE_NAMESPACE = "dev-local"
+$env:RUSTMODLICA_PERF_TRACE = "0"
+$env:RUSTMODLICA_STAGE_TRACE = "0"
+
+.\target\release\rustmodlica.exe `
+  --validate `
+  --validate-tier=analyze `
+  --validation-mode=quick `
+  --lib-path=.\jit-compiler `
+  ModelicaTest.JitStress.ComplexJitRegression
+```
+
+### 最小推荐模板 2：CI 门禁 / Minimal template 2: CI gate
+
+```powershell
+$env:RUSTMODLICA_SALSA = "1"
+$env:RUSTMODLICA_QUERY_CACHE = "1"
+$env:RUSTMODLICA_QUERY_CACHE_NAMESPACE = "ci-$env:BUILD_BUILDID"
+$env:RUSTMODLICA_FLATTEN_CACHE_DIR = "$pwd\build\ci_cache"
+$env:RUSTMODLICA_JIT_CODEGEN_CACHE = "1"
+$env:RUSTMODLICA_JIT_CODEGEN_CACHE_DIR = "$pwd\build\ci_codegen_cache"
+$env:RUSTMODLICA_PERF_TRACE = "0"
+$env:RUSTMODLICA_STAGE_TRACE = "0"
+
+cargo run -p regress-harness --release -- `
+  run `
+  --config crates/regress-harness/examples/smoke.json `
+  --data-root build/regression_data `
+  --incremental last_structure_rerun_failed
+```
+
+### 最小推荐模板 3：性能排查 / Minimal template 3: performance diagnostics
+
+```powershell
+$env:RUSTMODLICA_SALSA = "1"
+$env:RUSTMODLICA_QUERY_CACHE = "1"
+$env:RUSTMODLICA_QUERY_CACHE_NAMESPACE = "perf-nsA"
+$env:RUSTMODLICA_PERF_TRACE = "1"
+$env:RUSTMODLICA_STAGE_TRACE = "1"
+$env:RUSTMODLICA_CACHE_STATS_JSON = "$pwd\build\jit_validate_perf\cache_stats.json"
+$env:RUSTMODLICA_DEP_GRAPH_JSON = "$pwd\build\jit_validate_perf\dep_graph.json"
+
+cargo run -p regress-harness --release -- `
+  jit validate-perf `
+  --out-dir build/jit_validate_perf `
+  --validate-tier=analyze `
+  --validation-mode=full `
+  --models ModelicaTest.JitStress.ComplexJitRegression `
+  --hot-runs 2 `
+  --perf-trace `
+  --stage-trace
+```
+
+### 故障到参数对照表 / Symptom-to-parameter quick map
+
+| 故障现象 / Symptom | 先看参数（Top 3） | 建议动作（最小闭环） |
+|---|---|---|
+| `flatten` 失败或结果不符合预期 | `--validate-tier=flatten`, `--validation-mode`, `RUSTMODLICA_SALSA` | 先用 `--validate --validate-tier=flatten` 复现；切换 `RUSTMODLICA_SALSA=0/1` 对比路径；必要时改 `validation-mode=full` 排除 quick/superfast 影响 |
+| `analyze` 失败或提前停止 | `--validate-tier=analyze`, `--index-reduction-method`, `--tearing-method` | 固定到 `--validate-tier=analyze`；对比 `index-reduction-method`（`none` vs `pantelides`）；记录 `tearing-method` 差异并保留失败样本 |
+| 仿真失败或数值不稳定 | `--solver`, `--atol/--rtol`, `--output-interval` | 先切换求解器（`rk45`/`ida`）；收紧或放宽容差；固定输出间隔后再比较结果 |
+| 性能明显变慢（编译或仿真） | `RUSTMODLICA_PERF_TRACE`, `RUSTMODLICA_STAGE_TRACE`, `--perf-json` | 开 `PERF_TRACE/STAGE_TRACE`；增加 `--perf-json` 固化证据；对同一模型做 A/B 对比（同环境、同参数） |
+| 缓存命中率低或反复 miss | `RUSTMODLICA_QUERY_CACHE`, `RUSTMODLICA_QUERY_CACHE_NAMESPACE`, `RUSTMODLICA_FLATTEN_CACHE_DIR` | 确认缓存未被关闭；为不同任务显式设置 namespace；固定 cache dir 后再跑两轮观察热启动命中 |
+| 增量回归选例异常（跑太多或漏跑） | `--incremental`, `--baseline`, `--manifest` | 明确增量策略（如 `last_structure_rerun_failed`）；核对 baseline/manifest 路径是否指向同一 data-root 产物 |
+| overdetermined 相关报错 | `--overdet-check`, `--overdet-tol`, `RUSTMODLICA_OVERDET_RESIDUAL_TOL` | 先显式开启/关闭 `overdet-check` 对比；调大 `overdet-tol` 观察边界；避免 CLI 与 env 同时冲突配置 |
+| FMI 导出不一致（ID/GUID） | `--fmi-model-id`, `--fmi-guid`, `RUSTMODLICA_FMI_MODEL_ID` | 优先使用 CLI 固定导出；仅在无 CLI 时使用 env；保证同一流水线内 ID/GUID 来源单一 |
+| 事件扫描结果波动大 | `RUSTMODLICA_EVENT_COUNT_DEADBAND`, `RUSTMODLICA_TAIL_VELOCITY_DEADBAND`, `RUSTMODLICA_SUNDIALS_EVENT_LOG` | 用 event-scan 扫 deadband 组合；固定日志开关；对同模型重复运行并比较 top-N 组合稳定性 |
+
+Quick triage notes:
+- 先最小化变量：固定模型、固定输入、固定参数，再做单因子对比。
+- 涉及覆盖关系时遵循 `CLI > env > default`，避免“看起来改了但未生效”。
+- 性能问题优先留痕：`report.json`、`perf-json`、`cache_stats`、`dep_graph` 至少保留一组可复现工件。
+
 ## 分类文档 / Category Documents
 
 - [核心仿真 / Core Simulation](./core-simulation.md)

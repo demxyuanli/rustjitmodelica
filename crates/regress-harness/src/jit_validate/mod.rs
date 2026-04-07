@@ -69,6 +69,17 @@ pub struct RunSpec {
     /// Before running scenarios, delete every `out_dir/cache_*` directory (fresh on-disk tier state).
     #[serde(default)]
     pub purge_scenario_caches: bool,
+    /// Optional shared cache root for all scenarios.
+    /// When set, every scenario resolves cache dir under this root instead of `out_dir/cache_<scenario>`.
+    #[serde(default)]
+    pub shared_cache_dir: Option<PathBuf>,
+    /// Force-enable flatten full cache for every scenario (sets `RUSTMODLICA_FLATTEN_FULL_CACHE=1`).
+    #[serde(default)]
+    pub force_flatten_full_cache: bool,
+    /// PoC: execute per-scenario batches via worker mode entrypoint.
+    /// Current implementation keeps artifact parity with legacy one-case-one-process execution.
+    #[serde(default)]
+    pub worker_per_scenario: bool,
 }
 
 pub fn normalize_model_list(models: &[String]) -> Vec<String> {

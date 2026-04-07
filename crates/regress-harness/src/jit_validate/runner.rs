@@ -626,9 +626,12 @@ fn host_info() -> HostInfo {
     h
 }
 
-fn resolve_scenario_cache_dir(out_dir: &Path, sc: &Scenario) -> PathBuf {
+fn resolve_scenario_cache_dir(out_dir: &Path, shared_root: Option<&Path>, sc: &Scenario) -> PathBuf {
     if let Some(p) = &sc.cache_dir {
         return p.clone();
+    }
+    if let Some(root) = shared_root {
+        return root.join(safe_slug(&sc.id));
     }
     out_dir.join(format!("cache_{}", safe_slug(&sc.id)))
 }
@@ -789,29 +792,49 @@ fn build_manifest(spec: &RunSpec, scenarios: &[ScenarioResolved]) -> RunManifest
         },
         scenarios: scenarios.to_vec(),
         purge_scenario_caches: spec.purge_scenario_caches,
+        shared_cache_dir: spec
+            .shared_cache_dir
+            .as_ref()
+            .map(|p| p.display().to_string()),
+        force_flatten_full_cache: spec.force_flatten_full_cache,
+        worker_per_scenario: spec.worker_per_scenario,
     }
 }
 
-/// Remove `out_dir/cache_*` directories so each bench starts without leftover SQLite/SHM from prior runs.
-fn purge_scenario_cache_subdirs(out_dir: &std::path::Path) -> anyhow::Result<()> {
-    let rd = std::fs::read_dir(out_dir)
-        .with_context(|| format!("read out dir {}", out_dir.display()))?;
+/// Remove cache subdirs under `base_dir` matching the expected layout.
+fn purge_scenario_cache_subdirs(base_dir: &std::path::Path, use_prefixed_layout: bool) -> anyhow::Result<()> {
+    if !base_dir.exists() {
+        return Ok(());
+    }
+    let rd = std::fs::read_dir(base_dir)
+        .with_context(|| format!("read cache base dir {}", base_dir.display()))?;
     for ent in rd {
-        let ent = ent.with_context(|| format!("read entry in {}", out_dir.display()))?;
+        let ent = ent.with_context(|| format!("read entry in {}", base_dir.display()))?;
         let p = ent.path();
         if !p.is_dir() {
             continue;
         }
         let name = ent.file_name();
         let Some(ns) = name.to_str() else { continue };
-        if ns.starts_with("cache_") {
+        let should_remove = if use_prefixed_layout {
+            ns.starts_with("cache_")
+        } else {
+            // Shared-cache layout stores per-scenario subdirs directly under root.
+            !ns.is_empty()
+        };
+        if should_remove {
             std::fs::remove_dir_all(&p).with_context(|| format!("remove {}", p.display()))?;
         }
     }
     Ok(())
 }
 
-fn scenario_env_resolved(sc: &Scenario, cache_dir: &Path, trace: &TraceFlags) -> (BTreeMap<String, String>, Vec<String>) {
+fn scenario_env_resolved(
+    sc: &Scenario,
+    cache_dir: &Path,
+    trace: &TraceFlags,
+    force_flatten_full_cache: bool,
+) -> (BTreeMap<String, String>, Vec<String>) {
     let mut set = sc.env.set.clone();
     let mut unset = sc.env.unset.clone();
     set.insert(
@@ -823,6 +846,10 @@ fn scenario_env_resolved(sc: &Scenario, cache_dir: &Path, trace: &TraceFlags) ->
     }
     if trace.perf_trace {
         set.insert("RUSTMODLICA_PERF_TRACE".to_string(), "1".to_string());
+    }
+    if force_flatten_full_cache {
+        set.insert("RUSTMODLICA_FLATTEN_FULL_CACHE".to_string(), "1".to_string());
+        unset.retain(|k| k != "RUSTMODLICA_FLATTEN_FULL_CACHE");
     }
     // Ensure uniqueness and stable ordering.
     unset.sort();
@@ -927,11 +954,19 @@ impl ValidatePerfRunner {
         std::fs::create_dir_all(&spec.out_dir)
             .with_context(|| format!("create out dir {}", spec.out_dir.display()))?;
         if spec.purge_scenario_caches {
-            purge_scenario_cache_subdirs(&spec.out_dir)?;
-            eprintln!(
-                "[jit-validate-perf] purge_scenario_caches: removed cache_* under {}",
-                spec.out_dir.display()
-            );
+            if let Some(shared_root) = spec.shared_cache_dir.as_deref() {
+                purge_scenario_cache_subdirs(shared_root, false)?;
+                eprintln!(
+                    "[jit-validate-perf] purge_scenario_caches: removed scenario cache dirs under shared root {}",
+                    shared_root.display()
+                );
+            } else {
+                purge_scenario_cache_subdirs(&spec.out_dir, true)?;
+                eprintln!(
+                    "[jit-validate-perf] purge_scenario_caches: removed cache_* under {}",
+                    spec.out_dir.display()
+                );
+            }
         }
 
         let trace = TraceFlags {
@@ -954,9 +989,15 @@ impl ValidatePerfRunner {
             .collect();
 
         let mut scenarios_resolved: Vec<ScenarioResolved> = Vec::new();
+        let shared_root = spec.shared_cache_dir.as_deref();
         for sc in &selected_scenarios {
-            let cache_dir = resolve_scenario_cache_dir(&spec.out_dir, sc);
-            let (env_set, env_unset) = scenario_env_resolved(sc, &cache_dir, &trace);
+            let cache_dir = resolve_scenario_cache_dir(&spec.out_dir, shared_root, sc);
+            let (env_set, env_unset) = scenario_env_resolved(
+                sc,
+                &cache_dir,
+                &trace,
+                spec.force_flatten_full_cache,
+            );
             scenarios_resolved.push(ScenarioResolved {
                 id: sc.id.clone(),
                 runs: sc.runs,
@@ -978,6 +1019,12 @@ impl ValidatePerfRunner {
             .iter()
             .map(|p| format!("--lib-path={}", p.display()))
             .collect();
+
+        if spec.worker_per_scenario {
+            eprintln!(
+                "[jit-validate-perf] worker-per-scenario PoC enabled: keeping artifact parity with legacy case execution path"
+            );
+        }
 
         for (sc_idx, sc) in selected_scenarios.iter().enumerate() {
             let resolved = &scenarios_resolved[sc_idx];

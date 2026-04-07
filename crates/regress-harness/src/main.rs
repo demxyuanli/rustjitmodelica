@@ -249,6 +249,16 @@ enum JitCommands {
         /// Delete all out_dir/cache_* before running (reproducible L2 state across A/B compares).
         #[arg(long)]
         purge_scenario_caches: bool,
+        /// Optional shared cache root for all scenarios.
+        /// When set, scenario cache dirs become <shared_cache_dir>/<scenario_id>.
+        #[arg(long)]
+        shared_cache_dir: Option<PathBuf>,
+        /// Force-enable flatten full cache for every scenario.
+        #[arg(long)]
+        force_flatten_full_cache: bool,
+        /// PoC mode: execute each scenario via worker entrypoint.
+        #[arg(long)]
+        worker_per_scenario: bool,
     },
 }
 
@@ -442,6 +452,9 @@ fn run_cli() -> Result<()> {
                 scenarios,
                 incremental,
                 purge_scenario_caches,
+                shared_cache_dir,
+                force_flatten_full_cache,
+                worker_per_scenario,
             } => {
                 let repo_root = discover_repo_root()?;
                 let exe_path = if let Some(p) = exe {
@@ -470,6 +483,9 @@ fn run_cli() -> Result<()> {
                     scenario_filter: scenarios.unwrap_or_default(),
                     incremental,
                     purge_scenario_caches,
+                    shared_cache_dir,
+                    force_flatten_full_cache,
+                    worker_per_scenario,
                 };
                 let report = regress_harness::jit_validate::runner::ValidatePerfRunner::run(spec)?;
                 println!(

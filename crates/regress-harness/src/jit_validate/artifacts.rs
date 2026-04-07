@@ -18,6 +18,12 @@ pub struct RunManifest {
     pub scenarios: Vec<ScenarioResolved>,
     #[serde(default)]
     pub purge_scenario_caches: bool,
+    #[serde(default)]
+    pub shared_cache_dir: Option<String>,
+    #[serde(default)]
+    pub force_flatten_full_cache: bool,
+    #[serde(default)]
+    pub worker_per_scenario: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
