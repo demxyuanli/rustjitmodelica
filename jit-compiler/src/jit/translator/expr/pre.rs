@@ -11,11 +11,14 @@ use super::builtin::try_compile_builtin_placeholder_constant;
 use super::helpers::{
     abi_params_short, import_call_abi_tag, jit_builtin_fallback_warn_once, jit_dot_trace_enabled,
     jit_import_debug_enabled, jit_import_strict_enabled, jit_strict_placeholders_enabled,
-    jit_var_fallback_trace, lookup_or_insert_import, modelica_constants_dot_member,
+    jit_var_fallback_trace_val, lookup_or_insert_import, modelica_constants_dot_member,
     modelica_constants_flat_variable, pre_scalar_name_bound,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
-use crate::jit::jit_policy::{hysteresis_record_value, lookup_pre_variable_fallback};
+use crate::jit::jit_policy::{
+    dot_flat_path_yields_zero, dot_prefix_yields_zero, hysteresis_record_value,
+    lookup_pre_variable_fallback,
+};
 
 fn pre_call_name_matches(func_name: &str, plain: &str) -> bool {
     func_name == plain || func_name.ends_with(&format!(".{}", plain))
@@ -51,7 +54,7 @@ pub(super) fn compile_pre_expression(
                     Ok(builder.ins().f64const(v))
                 } else if let Some((v, trace_tag)) = lookup_pre_variable_fallback(&name) {
                     if !trace_tag.is_empty() {
-                        jit_var_fallback_trace(&name, trace_tag.as_str());
+                        jit_var_fallback_trace_val(&name, trace_tag.as_str(), v);
                     }
                     Ok(builder.ins().f64const(v))
                 } else {
@@ -190,6 +193,7 @@ pub(super) fn compile_pre_expression(
                         func_name
                     ));
                 }
+                jit_builtin_fallback_warn_once(func_name, "cardinality-no-degree-pre");
                 return Ok(builder.ins().f64const(0.0));
             }
             if func_name == "size" {
@@ -386,6 +390,9 @@ pub(super) fn compile_pre_expression(
                 if let Some(v) = modelica_constants_dot_member(&prefix, member) {
                     return Ok(builder.ins().f64const(v));
                 }
+                if dot_prefix_yields_zero(&prefix) {
+                    return Ok(builder.ins().f64const(0.0));
+                }
             }
             if let Some(v) = fold_dot_symmetric_transformation_matrix(inner.as_ref(), member) {
                 return Ok(builder.ins().f64const(v));
@@ -422,6 +429,9 @@ pub(super) fn compile_pre_expression(
                 let path_us = path.replace('.', "_");
                 if pre_scalar_name_bound(ctx, &path_us) {
                     return compile_pre_expression(&Expression::var(&path_us), ctx, builder);
+                }
+                if dot_flat_path_yields_zero(&path) {
+                    return Ok(builder.ins().f64const(0.0));
                 }
             }
             if let Some(full_flat) = expr_to_flat_scalar_prefix(expr) {

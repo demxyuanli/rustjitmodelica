@@ -143,14 +143,8 @@ pub(super) fn dispatch_named_builtin_policy(
         }
         "outer_product" => {
             if args.len() >= 2 {
-                let u_val = match compile_rec(&args[0], ctx, builder) {
-                    Ok(v) => v,
-                    Err(_) => return Ok(builder.ins().f64const(0.0)),
-                };
-                let v_val = match compile_rec(&args[1], ctx, builder) {
-                    Ok(v) => v,
-                    Err(_) => return Ok(builder.ins().f64const(0.0)),
-                };
+                let u_val = compile_rec(&args[0], ctx, builder)?;
+                let v_val = compile_rec(&args[1], ctx, builder)?;
                 return Ok(builder.ins().fmul(u_val, v_val));
             }
             if args.is_empty() {
@@ -166,11 +160,7 @@ pub(super) fn dispatch_named_builtin_policy(
         }
         "skew_jit" => {
             if args.len() >= 1 {
-                let w_val = match compile_rec(&args[0], ctx, builder) {
-                    Ok(v) => v,
-                    Err(_) => return Ok(builder.ins().f64const(0.0)),
-                };
-                return Ok(w_val);
+                return compile_rec(&args[0], ctx, builder);
             }
             Ok(builder.ins().f64const(0.0))
         }
@@ -184,7 +174,11 @@ pub(super) fn dispatch_named_builtin_policy(
             if args.len() != 1 {
                 return Err(format!("noEvent() expects 1 argument, got {}", args.len()));
             }
-            compile_rec(&args[0], ctx, builder)
+            let prev = ctx.suppress_zero_crossings;
+            ctx.suppress_zero_crossings = true;
+            let out = compile_rec(&args[0], ctx, builder);
+            ctx.suppress_zero_crossings = prev;
+            out
         }
         "instream" => {
             if args.len() != 1 {
@@ -206,6 +200,8 @@ pub(super) fn dispatch_named_builtin_policy(
                         }
                         let mut numerator = builder.ins().f64const(0.0);
                         let mut denominator = builder.ins().f64const(0.0);
+                        let mut equal_sum = builder.ins().f64const(0.0);
+                        let mut peer_count = 0u32;
                         for peer_name in peers {
                             let Some(peer_flow_name) = stream_flow_name_for(ctx, &peer_name) else {
                                 continue;
@@ -222,11 +218,19 @@ pub(super) fn dispatch_named_builtin_policy(
                             let contrib = builder.ins().fmul(w, h_peer);
                             numerator = builder.ins().fadd(numerator, contrib);
                             denominator = builder.ins().fadd(denominator, w);
+                            equal_sum = builder.ins().fadd(equal_sum, h_peer);
+                            peer_count += 1;
                         }
                         let eps = builder.ins().f64const(1e-12);
                         let has_mix = builder.ins().fcmp(FloatCC::GreaterThan, denominator, eps);
                         let mixed = builder.ins().fdiv(numerator, denominator);
-                        return Ok(builder.ins().select(has_mix, mixed, self_v));
+                        let zero_flow_fallback = if peer_count > 0 {
+                            let n_f = builder.ins().f64const(peer_count as f64);
+                            builder.ins().fdiv(equal_sum, n_f)
+                        } else {
+                            self_v
+                        };
+                        return Ok(builder.ins().select(has_mix, mixed, zero_flow_fallback));
                     }
                 }
                 warn_stream_semantics_once("peerMissing");
@@ -254,6 +258,8 @@ pub(super) fn dispatch_named_builtin_policy(
                             } else {
                                 let mut numerator = builder.ins().f64const(0.0);
                                 let mut denominator = builder.ins().f64const(0.0);
+                                let mut equal_sum = builder.ins().f64const(0.0);
+                                let mut peer_count = 0u32;
                                 for peer_name in peers {
                                     let Some(peer_flow_name) = stream_flow_name_for(ctx, &peer_name) else {
                                         continue;
@@ -272,11 +278,19 @@ pub(super) fn dispatch_named_builtin_policy(
                                     let contrib = builder.ins().fmul(w, h_peer);
                                     numerator = builder.ins().fadd(numerator, contrib);
                                     denominator = builder.ins().fadd(denominator, w);
+                                    equal_sum = builder.ins().fadd(equal_sum, h_peer);
+                                    peer_count += 1;
                                 }
                                 let eps = builder.ins().f64const(1e-12);
                                 let has_mix = builder.ins().fcmp(FloatCC::GreaterThan, denominator, eps);
                                 let mixed = builder.ins().fdiv(numerator, denominator);
-                                builder.ins().select(has_mix, mixed, self_v)
+                                let zero_flow_fallback = if peer_count > 0 {
+                                    let n_f = builder.ins().f64const(peer_count as f64);
+                                    builder.ins().fdiv(equal_sum, n_f)
+                                } else {
+                                    self_v
+                                };
+                                builder.ins().select(has_mix, mixed, zero_flow_fallback)
                             }
                         };
                         let eps = builder.ins().f64const(1e-12);
@@ -481,6 +495,13 @@ pub(super) fn dispatch_named_builtin_policy(
                 let z = builder.ins().f64const(0.0);
                 return Ok(builder.ins().select(is_first, one, z));
             }
+            if jit_strict_placeholders_enabled() {
+                return Err(format!(
+                    "JIT strict placeholders: firstTick() without time in var_map ({})",
+                    func_name
+                ));
+            }
+            jit_builtin_fallback_warn_once(func_name, "first-tick-without-time");
             Ok(builder.ins().f64const(0.0))
         }
         "first_true_index" => compile_first_true_index(args, ctx, builder, compile_rec),
@@ -492,7 +513,7 @@ pub(super) fn dispatch_named_builtin_policy(
                     args.len()
                 ));
             }
-            Ok(builder.ins().f64const(0.0))
+            strict_placeholder_zero(func_name, "get-next-time-event-placeholder", builder)
         }
         "is_empty_one" => {
             if args.len() != 1 {
@@ -560,7 +581,7 @@ pub(super) fn dispatch_named_builtin_policy(
                     args.len()
                 ));
             }
-            Ok(builder.ins().f64const(0.0))
+            strict_placeholder_zero(func_name, "external-object-validate-placeholder", builder)
         }
         "ext_combitimetable_warn0" => {
             jit_builtin_fallback_warn_once(func_name, "external-combitimetable-placeholder");
@@ -583,7 +604,18 @@ pub(super) fn dispatch_named_builtin_policy(
                 jit_builtin_fallback_warn_once(func_name, "loadresource-path-probe");
                 return Ok(builder.ins().f64const(v));
             }
-            strict_placeholder_zero(func_name, "loadresource-placeholder", builder)
+            if let Some(Expression::Variable(id)) = args.first() {
+                let var_name = crate::string_intern::resolve_id(*id);
+                jit_builtin_fallback_warn_once(
+                    func_name,
+                    "loadresource-non-literal-uri",
+                );
+                if let Some(&val) = ctx.var_map.get(&var_name) {
+                    return Ok(val);
+                }
+            }
+            jit_builtin_fallback_warn_once(func_name, "loadresource-placeholder");
+            Ok(builder.ins().f64const(0.0))
         }
         "type_conv_pf0" => {
             if args.is_empty() {
@@ -595,11 +627,19 @@ pub(super) fn dispatch_named_builtin_policy(
             if args.is_empty() {
                 return Ok(builder.ins().f64const(1.0));
             }
+            if let Expression::Variable(id) = &args[0] {
+                let arr_name = crate::string_intern::resolve_id(*id);
+                return super::call::compile_array_reduce(&arr_name, 1.0, true, ctx, builder);
+            }
             compile_rec(&args[0], ctx, builder)
         }
         "sum_fn" => {
             if args.is_empty() {
                 return Ok(builder.ins().f64const(0.0));
+            }
+            if let Expression::Variable(id) = &args[0] {
+                let arr_name = crate::string_intern::resolve_id(*id);
+                return super::call::compile_array_reduce(&arr_name, 0.0, false, ctx, builder);
             }
             compile_rec(&args[0], ctx, builder)
         }

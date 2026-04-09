@@ -75,6 +75,7 @@ pub(super) fn try_compile_builtin_placeholder_constant(
         return Some(builder.ins().f64const(0.0));
     }
     if func_name == "Modelica.Math.Vectors.interpolate" || func_name.ends_with(".interpolate") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-interpolate");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name == "real"
@@ -86,24 +87,31 @@ pub(super) fn try_compile_builtin_placeholder_constant(
         || func_name == "position"
         || func_name.ends_with(".position")
     {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-complex-scalar");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name.ends_with("getNextTimeEvent") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-time-event");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name == "Modelica.Utilities.Strings.isEmpty" || func_name.ends_with(".isEmpty") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-isEmpty");
         return Some(builder.ins().f64const(1.0));
     }
     if func_name.ends_with("ExternalCombiTimeTable") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-combi-table");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name == "Modelica.Math.BooleanVectors.firstTrueIndex" || func_name.ends_with(".firstTrueIndex") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-firstTrueIndex");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name == "firstTick" || func_name.ends_with(".firstTick") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-firstTick");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name.contains("CombiTimeTable") || func_name.contains("getTimeTableValue") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-table");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name.contains("ExternalCombiTable1D")
@@ -111,9 +119,11 @@ pub(super) fn try_compile_builtin_placeholder_constant(
         || func_name.ends_with("getTable1DValueNoDer")
         || func_name.ends_with("getTable1DValueNoDer2")
     {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-table1d");
         return Some(builder.ins().f64const(0.0));
     }
     if func_name.contains("ExternalObject") || func_name.ends_with(".ExternalObject") {
+        jit_builtin_fallback_warn_once(func_name, "pre-placeholder-external-object");
         return Some(builder.ins().f64const(0.0));
     }
     None

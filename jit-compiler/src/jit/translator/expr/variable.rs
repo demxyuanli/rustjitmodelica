@@ -6,7 +6,7 @@ use cranelift::prelude::*;
 
 use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
-use super::helpers::{jit_scalar_name_bound, jit_var_fallback_trace, modelica_constants_flat_variable};
+use super::helpers::{jit_scalar_name_bound, jit_strict_placeholders_enabled, jit_var_fallback_trace, jit_var_fallback_trace_val, modelica_constants_flat_variable};
 
 pub(super) fn compile_variable_load(
     id: crate::string_intern::VarId,
@@ -75,6 +75,12 @@ pub(super) fn compile_variable_load(
         }
         if base == "a" || base == "b" {
             let _ = idx0;
+            if jit_strict_placeholders_enabled() {
+                return Err(format!(
+                    "JIT strict placeholders: array scalar '{}' not resolved",
+                    name
+                ));
+            }
             jit_var_fallback_trace(&name, "array-scalar-placeholder-a-b");
             return Ok(builder.ins().f64const(0.0));
         }
@@ -85,7 +91,7 @@ pub(super) fn compile_variable_load(
     }
     if let Some((v, trace_tag)) = crate::jit::var_fallback_policy::lookup_var_fallback(&name) {
         if !trace_tag.is_empty() {
-            jit_var_fallback_trace(&name, trace_tag.as_str());
+            jit_var_fallback_trace_val(&name, trace_tag.as_str(), v);
         }
         return Ok(builder.ins().f64const(v));
     }

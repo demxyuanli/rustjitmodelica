@@ -112,7 +112,7 @@ pub(super) fn jit_scalar_name_bound(ctx: &TranslationContext, name: &str) -> boo
 pub(super) fn modelica_constants_flat_variable(name: &str) -> Option<f64> {
     match name {
         "Modelica.Constants.eps" | "Modelica_Constants_eps" => Some(f64::EPSILON),
-        "Modelica.Constants.T_zero" => Some(273.15),
+        "Modelica.Constants.T_zero" | "Modelica_Constants_T_zero" => Some(273.15),
         "Modelica.Constants.pi" | "Modelica_Constants_pi" => Some(std::f64::consts::PI),
         "Modelica.Constants.small" | "Modelica_Constants_small" => Some(1.0e-60),
         "Modelica.Constants.g_n" | "Modelica_Constants_g_n" => Some(9.80665),
@@ -191,7 +191,7 @@ pub(super) fn jit_dot_fallback_zero_enabled() -> bool {
     })
 }
 
-pub(super) fn jit_strict_placeholders_enabled() -> bool {
+pub(crate) fn jit_strict_placeholders_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var("RUSTMODLICA_JIT_STRICT_PLACEHOLDERS")
@@ -246,13 +246,17 @@ pub(super) fn jit_builtin_fallback_warn_once(func_name: &str, reason: &str) {
 }
 
 pub(super) fn jit_var_fallback_trace(name: &str, reason: &str) {
+    jit_var_fallback_trace_val(name, reason, 0.0);
+}
+
+pub(super) fn jit_var_fallback_trace_val(name: &str, reason: &str, value: f64) {
     if !env_flag("RUSTMODLICA_JIT_VAR_FALLBACK_TRACE", false) {
         return;
     }
     fallback_counter::inc_jit_variable();
     eprintln!(
-        "[fallback:jit-variable] name={} reason={} -> using 0.0",
-        name, reason
+        "[fallback:jit-variable] name={} reason={} -> using {}",
+        name, reason, value
     );
 }
 

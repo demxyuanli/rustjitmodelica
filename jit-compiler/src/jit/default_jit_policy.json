@@ -19,7 +19,7 @@
     { "op": "ends_with", "pattern": "_Machine_inf", "value": "inf", "trace": "" },
     { "op": "contains", "pattern": "combiTimeTable", "value": "zero", "trace": "combitimetable-placeholder" },
     { "op": "equals", "pattern": "startTime", "value": "zero", "trace": "known-runtime-placeholder" },
-    { "op": "equals", "pattern": "u", "value": "zero", "trace": "known-runtime-placeholder" },
+    { "op": "ends_with", "pattern": "_u", "value": "zero", "trace": "known-runtime-placeholder" },
     { "op": "equals", "pattern": "samplePeriod", "value": "zero", "trace": "known-runtime-placeholder" },
     { "op": "equals", "pattern": "generateNoise", "value": "zero", "trace": "known-runtime-placeholder" },
     { "op": "ends_with", "pattern": "_startTime", "value": "zero", "trace": "discrete-instance-startTime-placeholder" },

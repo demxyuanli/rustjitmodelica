@@ -6,6 +6,7 @@ mod store_lhs;
 use crate::jit::context::TranslationContext;
 use control_flow::{compile_for_stmt, compile_if_stmt, compile_when_stmt, compile_while_stmt};
 use super::expr::compile_expression;
+use super::expr::helpers::jit_strict_placeholders_enabled as alg_strict_placeholders;
 use crate::ast::{AlgorithmStatement, Expression};
 use crate::diag::fallback_counter;
 use cranelift::prelude::types as cl_types;
@@ -186,6 +187,15 @@ pub fn compile_algorithm_stmt(
                 .enumerate()
                 .map(|(i, lhs)| format!("#{}={:?}", i + 1, lhs))
                 .collect();
+
+            if alg_strict_placeholders() {
+                return Err(format!(
+                    "JIT strict placeholders: unresolved MultiAssign with {} target(s), RHS = {}; targets: {}",
+                    lhss.len(),
+                    rhs_hint,
+                    lhs_targets.join(", ")
+                ));
+            }
 
             eprintln!(
                 "[fallback:jit-multi-assign] writes zero to {} target(s) for unsupported RHS {}.",

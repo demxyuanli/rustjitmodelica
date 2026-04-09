@@ -40,7 +40,7 @@ fn name_matches(func_name: &str, plain: &str) -> bool {
     func_name == plain || func_name.ends_with(&format!(".{}", plain))
 }
 
-fn compile_array_reduce(
+pub(super) fn compile_array_reduce(
     arr_name: &str,
     init: f64,
     is_product: bool,
@@ -222,6 +222,7 @@ pub(super) fn compile_call(
                 func_name
             ));
         }
+        jit_builtin_fallback_warn_once(func_name, "cardinality-no-degree");
         return Ok(builder.ins().f64const(0.0));
     }
     if name_matches(func_name, "getInstanceName")
@@ -230,6 +231,7 @@ pub(super) fn compile_call(
         || name_matches(func_name, "rooted")
         || name_matches(func_name, "branch")
     {
+        jit_builtin_fallback_warn_once(func_name, "graph-query-placeholder");
         return Ok(builder.ins().f64const(0.0));
     }
     if func_name == "size" {
@@ -309,11 +311,18 @@ pub(super) fn compile_call(
     if func_name.ends_with("realFFTwriteToFile") || func_name == "realFFTwriteToFile" {
         return compile_real_fft_write_to_file_call(args, ctx, builder);
     }
-    if inline_builtins_enabled() && builtin_inline_allowed(func_name) {
-        if let Some(res) = try_compile_builtin_call(func_name, args, ctx, builder, compile_rec) {
+    // JSON / namespace builtin dispatch: always on (not gated by RUSTMODLICA_JIT_INLINE_BUILTINS).
+    let json_builtin_rule = crate::jit::jit_policy::match_function_builtin_rule(func_name);
+    if let Some(res) = try_compile_builtin_call(func_name, args, ctx, builder, compile_rec) {
+        // Perf counter: only count whitelisted math names when resolution did not use a JSON rule
+        // (avoids counting abs/max/min etc. that map to policy handlers).
+        if inline_builtins_enabled()
+            && builtin_inline_allowed(func_name)
+            && json_builtin_rule.is_none()
+        {
             record_inline_builtin_hit();
-            return res;
         }
+        return res;
     }
     if func_name == "assert" {
         if args.len() != 2 {

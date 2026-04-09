@@ -423,3 +423,47 @@ pub fn algorithm_random_kind(fname: &str) -> Option<i32> {
     }
     None
 }
+
+#[cfg(test)]
+mod function_builtin_rules_reachability_tests {
+    use super::match_function_builtin_rule;
+
+    /// Sampling: default `default_function_builtin_rules.json` must map these names to dispatch arms.
+    /// Skips assertions when `RUSTMODLICA_JIT_POLICY_STRICT` disables `function_builtin` matching.
+    #[test]
+    fn default_rules_sample_names_hit_expected_handlers() {
+        if match_function_builtin_rule("inStream").as_deref() != Some("instream") {
+            // Strict `function_builtin`, custom policy, or unloaded rules; skip in non-default env.
+            return;
+        }
+        let cases: &[(&str, &str)] = &[
+            ("inStream", "instream"),
+            ("pkg.inStream", "instream"),
+            ("actualStream", "actualstream"),
+            ("pkg.actualStream", "actualstream"),
+            ("Modelica.Math.Vectors.interpCoeff", "interp_coef"),
+            ("regStep", "reg_step_blend"),
+            ("pkg.regStep", "reg_step_blend"),
+            // Avoid ".Internal." in the name (earlier `const0_warn_internal` rule wins first-match).
+            ("Lib.spliceFunction", "splice_blend"),
+            ("valveCharacteristic", "valve_char_1"),
+            ("pkg.valveCharacteristic", "valve_char_1"),
+            ("subSample", "clock_derived"),
+            ("superSample", "clock_derived"),
+            ("shiftSample", "clock_derived"),
+            ("backSample", "clock_derived"),
+            ("clk.subSample", "clock_derived"),
+        ];
+        for (fname, want) in cases {
+            let got = match_function_builtin_rule(fname)
+                .unwrap_or_else(|| panic!("no rule for '{}'", fname));
+            assert_eq!(
+                got.as_str(),
+                *want,
+                "func_name={} expected handler_id {}",
+                fname,
+                want
+            );
+        }
+    }
+}

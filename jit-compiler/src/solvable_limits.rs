@@ -16,10 +16,13 @@
 /// Maximum number of residuals (and matched unknowns) accepted for a single `SolvableBlock` in JIT and C emission.
 pub const MAX_SOLVABLE_RESIDUALS: usize = 2048;
 
-/// Emit a compile-time warning when dense Newton `n` exceeds this (sparse path skipped).
+/// Emit a compile-time warning when dense Newton `n` exceeds this AND sparse path was not selected.
+/// Warning fires when BOTH conditions hold: `n > DENSE_NEWTON_WARN_MIN_N` AND
+/// `n*n*8 > DENSE_JACOBIAN_WARN_BYTES`.
 pub const DENSE_NEWTON_WARN_MIN_N: usize = 512;
 
 /// Emit a compile-time warning when a dense Jacobian buffer would exceed this size (bytes).
+/// See `DENSE_NEWTON_WARN_MIN_N` -- warning requires both thresholds to be exceeded.
 pub const DENSE_JACOBIAN_WARN_BYTES: usize = 2 * 1024 * 1024;
 
 /// Use faer sparse LU for CSR solves when `n` is at least this (in-tree solver below for small systems).
@@ -31,10 +34,13 @@ pub const CSR_FAER_MAX_AVG_NNZ_PER_ROW: usize = 256;
 /// Auto sparse Jacobian path requires `nnz / (n*n)` <= this ratio.
 pub const NEWTON_SPARSE_AUTO_MAX_DENSITY: f64 = 0.75;
 
-/// Dense Newton: use Cranelift stack slot for J,r,dx only while `n` is small enough to stay well under typical thread stack limits.
+/// Dense Newton: use Cranelift **stack slot** for J,r,dx only while `n <= JIT_DENSE_STACK_MAX_N`
+/// (keeps workspace under ~200 KiB on stack). Larger dense blocks use a **heap workspace**.
 pub const JIT_DENSE_STACK_MAX_N: usize = 64;
 
-/// Sparse (and other) Newton: if the packed workspace would exceed this size, use a thread-local heap buffer instead of a stack slot.
+/// Sparse (and large dense) Newton: if the packed workspace would exceed this size, use a
+/// **thread-local heap buffer** instead of a Cranelift stack slot. Applies to both sparse CSR
+/// workspace and dense workspace when `n > JIT_DENSE_STACK_MAX_N`.
 pub const JIT_STACK_BUFFER_BYTES_MAX: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -96,6 +96,10 @@ pub(super) fn compile_first_true_index(
             return Ok(result_val);
         }
     }
+    if jit_strict_placeholders_enabled() {
+        return Err("JIT strict placeholders: firstTrueIndex() requires a resolved Boolean array variable".to_string());
+    }
+    jit_builtin_fallback_warn_once("firstTrueIndex", "firstTrueIndex-non-array");
     Ok(builder.ins().f64const(0.0))
 }
 
@@ -123,6 +127,7 @@ pub(super) fn compile_interpolate_vectors(
         let yan = crate::string_intern::resolve_id(*yan_id);
         if let (Some(xai), Some(yai)) = (ctx.array_info.get(&xan), ctx.array_info.get(&yan)) {
             if xai.size == 0 || yai.size == 0 {
+                jit_builtin_fallback_warn_once("interpolate", "interpolate-empty-array");
                 return Ok(builder.ins().f64const(0.0));
             }
             let xa_ptr = match xai.array_type {
@@ -167,6 +172,10 @@ pub(super) fn compile_interpolate_vectors(
             return Ok(y_val);
         }
     }
+    if jit_strict_placeholders_enabled() {
+        return Err("JIT strict placeholders: interpolate() requires resolved array variables".to_string());
+    }
+    jit_builtin_fallback_warn_once("interpolate", "interpolate-non-array-fallback");
     Ok(builder.ins().f64const(0.0))
 }
 
