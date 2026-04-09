@@ -110,6 +110,8 @@ pub enum AlgorithmStatement {
     CallStmt(Expression),
     /// Parse-only no-op statement (e.g. standalone annotation in algorithm section).
     NoOp,
+    Break,
+    Return(Option<Expression>),
     If(
         Expression,
         Vec<AlgorithmStatement>,

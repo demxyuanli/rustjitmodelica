@@ -31,6 +31,7 @@ pub struct FlatCacheV1 {
     pub clock_partitions: Vec<ClockPartition>,
     pub clock_signal_connections: Vec<(String, String)>,
     pub stream_peer_map: HashMap<String, String>,
+    pub stream_connection_set: HashMap<String, Vec<String>>,
     pub deps: Vec<DepHashEntry>,
 }
 
@@ -53,6 +54,7 @@ impl FlatCacheV1 {
             clock_partitions: flat.clock_partitions.clone(),
             clock_signal_connections: flat.clock_signal_connections.clone(),
             stream_peer_map: flat.stream_peer_map.clone(),
+            stream_connection_set: flat.stream_connection_set.clone(),
             deps,
         }
     }
@@ -75,7 +77,13 @@ impl FlatCacheV1 {
             interner.intern(k.as_str());
             interner.intern(v.as_str());
         }
-        FlattenedModel {
+        for (k, peers) in &self.stream_connection_set {
+            interner.intern(k.as_str());
+            for p in peers {
+                interner.intern(p.as_str());
+            }
+        }
+        let mut flat = FlattenedModel {
             declarations: self.declarations,
             equations: self.equations,
             algorithms: self.algorithms,
@@ -89,9 +97,17 @@ impl FlatCacheV1 {
             clock_partitions: self.clock_partitions,
             clock_signal_connections: self.clock_signal_connections,
             stream_peer_map: self.stream_peer_map,
+            stream_connection_set: self.stream_connection_set,
+            stream_flow_map: HashMap::new(),
             interner,
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),
+        };
+        crate::flatten::connections::rebuild_stream_flow_map(&mut flat);
+        for (k, v) in &flat.stream_flow_map {
+            flat.interner.intern(k.as_str());
+            flat.interner.intern(v.as_str());
         }
+        flat
     }
 }

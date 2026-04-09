@@ -191,6 +191,32 @@ pub(super) fn jit_dot_fallback_zero_enabled() -> bool {
     })
 }
 
+pub(super) fn jit_strict_placeholders_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_JIT_STRICT_PLACEHOLDERS")
+            .ok()
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    })
+}
+
+pub(super) fn jit_import_strict_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("RUSTMODLICA_JIT_IMPORT_STRICT")
+            .ok()
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    })
+}
+
 fn env_flag(var_name: &str, default_enabled: bool) -> bool {
     std::env::var(var_name)
         .ok()

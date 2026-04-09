@@ -1,6 +1,12 @@
 pub mod cache_key;
 pub mod cache_scope;
 pub mod closure_hash;
+pub mod artifact_bundle;
+pub mod artifact_cache;
+pub mod artifact_key;
+pub mod external_resolve_cache;
+pub mod sim_bundle_cache;
+pub mod warmup;
 pub mod invalidation;
 pub mod ir_epoch;
 pub mod lib_epoch;

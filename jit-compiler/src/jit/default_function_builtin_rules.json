@@ -1,3 +1,24 @@
 {
-  "rules": []
+  "rules": [
+    { "handler_id": "noevent_1", "op": "equals", "pattern": "noEvent" },
+    { "handler_id": "noevent_1", "op": "ends_with", "pattern": ".noEvent" },
+    { "handler_id": "cardinality_zero", "op": "equals", "pattern": "cardinality" },
+    { "handler_id": "cardinality_zero", "op": "ends_with", "pattern": ".cardinality" },
+    { "handler_id": "imag_zero", "op": "equals", "pattern": "imag" },
+    { "handler_id": "imag_zero", "op": "ends_with", "pattern": ".imag" },
+    { "handler_id": "zeros_fn", "op": "equals", "pattern": "zeros" },
+    { "handler_id": "zeros_fn", "op": "ends_with", "pattern": ".zeros" },
+    { "handler_id": "loadresource_warn0", "op": "contains", "pattern": "loadResource" },
+    { "handler_id": "const0_warn_medium", "op": "contains", "pattern": "Modelica.Media" },
+    { "handler_id": "const0_warn_internal", "op": "contains", "pattern": ".Internal." },
+    { "handler_id": "const0_warn_internal", "op": "starts_with", "pattern": "Internal." },
+    { "handler_id": "const0_warn_frames", "op": "contains", "pattern": "Modelica.Mechanics.MultiBody.Frames" },
+    { "handler_id": "const0_warn_gravity", "op": "contains", "pattern": "StandardGravity" },
+    { "handler_id": "const0_warn_gravity", "op": "contains", "pattern": "GravityAcceleration" },
+    { "handler_id": "const0_warn_noise", "op": "contains", "pattern": "Modelica.Blocks.Noise" },
+    { "handler_id": "const0_warn_noise", "op": "contains", "pattern": "generateNoise" },
+    { "handler_id": "const0_warn_connections", "op": "contains", "pattern": "Fluid.Interfaces.Connections" },
+    { "handler_id": "const0_warn_baseclasses", "op": "contains", "pattern": "BaseClasses" },
+    { "handler_id": "const0_warn_frames", "op": "contains", "pattern": "MultiBody.Frames" }
+  ]
 }

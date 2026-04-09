@@ -8,7 +8,7 @@ use crate::i18n;
 use super::CompilerOptions;
 
 /// Sparse ODE Jacobian: only non-zero entries (row, col, expr). IR4-4.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SparseOdeJacobian {
     pub n: usize,
     pub entries: Vec<(usize, usize, Expression)>,

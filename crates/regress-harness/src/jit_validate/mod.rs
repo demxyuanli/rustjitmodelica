@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub mod artifacts;
+pub mod baseline;
 pub mod legacy;
 pub mod runner;
 

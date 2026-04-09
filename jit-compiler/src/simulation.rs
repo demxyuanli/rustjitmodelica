@@ -204,6 +204,14 @@ pub fn run_simulation(
     let mut next_print = 0.0;
     let epsilon = 1e-5;
     let mut adaptive_step_count: u64 = 0;
+    let hotspot_threshold = std::env::var("RUSTMODLICA_HOTSPOT_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1000);
+    let stack_scratch_enabled = std::env::var("RUSTMODLICA_JIT_STACK_SCRATCH")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false);
     let mut diag_state = vec![0.0_f64; states.len()];
     let mut scratch_outputs_for_step = vec![0.0_f64; output_vars.len()];
     let mut prev_outputs = vec![0.0; output_vars.len()];
@@ -403,6 +411,11 @@ pub fn run_simulation(
                 buf_crossings: Vec::new(),
                 buf_outputs: Vec::new(),
                 buf_guess: Vec::new(),
+                eval_count: 0,
+                hotspot_threshold,
+                simd_step_hits: 0,
+                simd_step_fallbacks: 0,
+                stack_scratch_enabled,
             };
             let step_res = if use_adaptive {
                 let r = rk45_solver.step(&mut system, time, dt, &mut states);
@@ -589,6 +602,11 @@ pub fn run_simulation(
                     buf_crossings: Vec::new(),
                     buf_outputs: Vec::new(),
                     buf_guess: Vec::new(),
+                eval_count: 0,
+                hotspot_threshold,
+                simd_step_hits: 0,
+                simd_step_fallbacks: 0,
+                stack_scratch_enabled,
                 };
                 let step_res = if use_adaptive {
                     let r = rk45_solver.step(&mut system, time, dt_event, &mut states);

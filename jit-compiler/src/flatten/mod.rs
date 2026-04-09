@@ -10,8 +10,10 @@ use std::sync::Arc;
 mod error;
 mod array_size_policy;
 pub(crate) mod flatten_cache;
+pub use self::flatten_cache::flatten_cache_dir;
 mod decl_expand;
 pub(crate) mod cache_sqlite;
+pub use self::cache_sqlite::export_sqlite_kind_stats_layers;
 pub(crate) mod cache_shm;
 pub(crate) mod flat_cache_v1;
 pub(crate) mod flat_cache_v2;
@@ -56,7 +58,7 @@ impl ValidationMode {
     /// - `QuickStructure` / `SuperFast`: keep output sufficient for variable/equation analysis
     ///   (incl. initial equations and clocked-variable inference used by classification), but may
     ///   skip work that is only needed for later simulation/JIT phases (e.g. initial algorithms).
-    ///   Constant propagation passes are additionally reduced in `decl_expand.rs`.
+    ///   Constant propagation passes are additionally reduced in `decl_expand/`.
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "quick" | "quickstructure" | "quick_structure" => Self::QuickStructure,
@@ -177,6 +179,8 @@ impl Flattener {
                 10 + expr_cost(c) + b.len() * 3 + elses.iter().map(|(_, b)| b.len() * 3).sum::<usize>()
             }
             AlgorithmStatement::NoOp => 1,
+            AlgorithmStatement::Break => 1,
+            AlgorithmStatement::Return(v) => 1 + v.as_ref().map(expr_cost).unwrap_or(0),
         }
     }
 
@@ -353,6 +357,8 @@ impl Flattener {
                     clock_partitions: Vec::new(),
                     clock_signal_connections: Vec::new(),
                     stream_peer_map: HashMap::new(),
+                    stream_connection_set: HashMap::new(),
+                    stream_flow_map: HashMap::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -383,6 +389,8 @@ impl Flattener {
                     clock_partitions: Vec::new(),
                     clock_signal_connections: Vec::new(),
                     stream_peer_map: HashMap::new(),
+                    stream_connection_set: HashMap::new(),
+                    stream_flow_map: HashMap::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -413,6 +421,8 @@ impl Flattener {
                     clock_partitions: Vec::new(),
                     clock_signal_connections: Vec::new(),
                     stream_peer_map: HashMap::new(),
+                    stream_connection_set: HashMap::new(),
+                    stream_flow_map: HashMap::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -475,6 +485,8 @@ impl Flattener {
                     clock_partitions: Vec::new(),
                     clock_signal_connections: Vec::new(),
                     stream_peer_map: HashMap::new(),
+                    stream_connection_set: HashMap::new(),
+                    stream_flow_map: HashMap::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -501,6 +513,8 @@ impl Flattener {
                     clock_partitions: Vec::new(),
                     clock_signal_connections: Vec::new(),
                     stream_peer_map: HashMap::new(),
+                    stream_connection_set: HashMap::new(),
+                    stream_flow_map: HashMap::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -528,6 +542,8 @@ impl Flattener {
                     clock_partitions: Vec::new(),
                     clock_signal_connections: Vec::new(),
                     stream_peer_map: HashMap::new(),
+                    stream_connection_set: HashMap::new(),
+                    stream_flow_map: HashMap::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -581,6 +597,8 @@ impl Flattener {
             clock_partitions: Vec::new(),
             clock_signal_connections: Vec::new(),
             stream_peer_map: HashMap::new(),
+            stream_connection_set: HashMap::new(),
+            stream_flow_map: HashMap::new(),
             interner: StringInterner::new(),
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),

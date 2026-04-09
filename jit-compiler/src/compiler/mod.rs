@@ -2,6 +2,7 @@ mod c_codegen;
 mod equation_convert;
 mod initial_conditions;
 pub(crate) mod inline;
+pub(crate) mod adaptive;
 mod jacobian;
 mod pipeline;
 mod compile_model;
@@ -139,6 +140,10 @@ pub struct CompilePerfReport {
     pub cache_scope_stage_hits: BTreeMap<String, BTreeMap<String, u64>>,
     pub cache_scope_stage_misses: BTreeMap<String, BTreeMap<String, u64>>,
     pub cache_scope_stage_invalidations: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Aggregated flat_full tier hits across L0/L1/L2 (always populated when flatten cache runs).
+    pub flat_full_cache_hits: u64,
+    pub flat_full_cache_misses: u64,
+    pub flat_full_cache_writes: u64,
     pub inline_us: u64,
     /// Aggregate time in `substitute_expr` during inline (`rewrite` / record dot extraction).
     pub inline_substitute_us: u64,
@@ -191,6 +196,26 @@ pub struct CompilePerfReport {
     pub analyze_ms: u64,
     pub backend_dae_ms: u64,
     pub external_resolve_ms: u64,
+    /// `hit` | `put` | `miss_compute` | `disabled` | `no_cache_dir` | `err_deser`
+    pub external_resolve_cache_status: String,
+    /// `hit` | `put` | `miss` | `disabled` | `no_cache_dir` | `err_deser`
+    pub analysis_summary_cache_status: String,
+    /// Classify + analyze SQLite cache: `not_run` | `disk_hit` | `disk_put` | `miss_compute` | `disabled` | `no_cache_dir` | `err_ser` | `err_deser`
+    pub analysis_pipeline_cache_status: String,
+    /// `backend_dae_v1` SQLite cache: `not_run` | `disk_hit` | `disk_put` | `miss_compute` | `disabled` | `no_cache_dir` | `err_deser`
+    pub backend_dae_cache_status: String,
+    /// End-to-end sim bundle: `hit` | `miss` | `disabled` | `skipped_stubs` | `skipped_codegen_disk`
+    pub artifact_bundle_cache_status: String,
+    /// 1.0 when sim-bundle skipped JIT entirely; else 0.0 (coarse metric).
+    pub cache_warm_ratio: f64,
+    /// Last artifact/codegen fast-path miss reason (e.g. `key_not_found`, `deps_changed`, `codegen_cache_miss`).
+    pub cache_miss_reason: Option<String>,
+    /// True when end-to-end artifact or sim-bundle structural reuse skipped JIT.
+    pub structural_cache_hit: bool,
+    /// True when only parameter vector was swapped (e.g. `reuse_compiled_with_new_params`).
+    pub param_only_update: bool,
+    /// When a full JIT compile ran, optional reason label.
+    pub full_recompile_reason: Option<String>,
     /// User function stub candidates collected from call graph.
     pub stub_candidate_count: usize,
     /// Wall-clock spent building user stubs.
@@ -231,6 +256,33 @@ pub struct CompilePerfReport {
     pub fallback_newton_init_accept: u64,
     pub fallback_newton_event_accept: u64,
     pub fallback_clock_degrade: u64,
+    pub adaptive_profile: String,
+    pub adaptive_override_count: usize,
+    pub adaptive_warning_count: usize,
+    pub jit_incremental_enabled: bool,
+    pub jit_cache_variant: String,
+    pub jit_cache_partial_recompile: bool,
+    pub jit_cache_skipped_functions: u64,
+    pub jit_cache_recompiled_functions: u64,
+    pub const_fold_enabled: bool,
+    pub eq_dce_enabled: bool,
+    pub const_fold_count: u64,
+    pub eq_dce_removed: u64,
+    /// Number of parameter names participating in folded expressions.
+    pub const_fold_param_count: usize,
+    /// Comma-joined parameter names touched by folded expressions.
+    pub const_fold_param_names: String,
+    pub jit_inline_builtins_enabled: bool,
+    pub jit_inline_builtin_hits: u64,
+    pub hotspot_eval_count: u64,
+    pub hotspot_threshold: u64,
+    pub simd_step_enabled: bool,
+    pub simd_step_hits: u64,
+    pub simd_step_fallbacks: u64,
+    pub type_specialization_enabled: bool,
+    pub type_profile_hash: String,
+    pub stack_scratch_enabled: bool,
+    pub runtime_boundary_epoch: u64,
 }
 
 impl Default for CompilerOptions {
@@ -281,6 +333,8 @@ pub struct Compiler {
     pub last_compile_perf: Option<CompilePerfReport>,
     /// Equation/component provenance for the last successful flatten+inline (same flat as last compile).
     pub last_provenance_index: Option<Arc<ProvenanceIndex>>,
+    /// Deferred strict-mode artifact write to flush on explicit confirmation.
+    pub(crate) deferred_artifact: Option<DeferredArtifactWrite>,
 }
 
 impl Default for ExternalLibs {
@@ -407,6 +461,12 @@ pub(super) fn collect_all_called_names(
             AlgorithmStatement::MultiAssign(_, rhs) => collect_calls_expr(rhs, out),
             AlgorithmStatement::CallStmt(expr) => collect_calls_expr(expr, out),
             AlgorithmStatement::NoOp => {}
+            AlgorithmStatement::Break => {}
+            AlgorithmStatement::Return(v) => {
+                if let Some(expr) = v {
+                    collect_calls_expr(expr, out);
+                }
+            }
             AlgorithmStatement::If(cond, t, eifs, els) => {
                 collect_calls_expr(cond, out);
                 for s in t {
@@ -465,14 +525,12 @@ pub(super) fn collect_all_called_names(
     names
 }
 
-/// EXT-2: Collect (modelica_name, c_name, library_hint) for functions that have external_info and are called from eqs/alg.
-/// EXT-4: library_hint is from annotation(Library="...").
-pub(super) fn collect_external_calls(
-    loader: &mut ModelLoader,
+/// Raw call-site names from equations/algorithms (before external resolution / loader work).
+pub(crate) fn collect_external_raw_call_sites(
     alg_equations: &[Equation],
     diff_equations: &[Equation],
     algorithms: &[AlgorithmStatement],
-) -> Vec<(String, String, Option<String>)> {
+) -> HashSet<String> {
     let mut names = HashSet::new();
     fn collect_calls_expr(expr: &Expression, out: &mut HashSet<String>) {
         match expr {
@@ -540,6 +598,12 @@ pub(super) fn collect_external_calls(
             AlgorithmStatement::MultiAssign(_, rhs) => collect_calls_expr(rhs, out),
             AlgorithmStatement::CallStmt(expr) => collect_calls_expr(expr, out),
             AlgorithmStatement::NoOp => {}
+            AlgorithmStatement::Break => {}
+            AlgorithmStatement::Return(v) => {
+                if let Some(expr) = v {
+                    collect_calls_expr(expr, out);
+                }
+            }
             AlgorithmStatement::If(cond, t, eifs, els) => {
                 collect_calls_expr(cond, out);
                 for s in t {
@@ -592,6 +656,18 @@ pub(super) fn collect_external_calls(
     for stmt in algorithms {
         collect_calls_alg(stmt, &mut names);
     }
+    names
+}
+
+/// EXT-2: Collect (modelica_name, c_name, library_hint) for functions that have external_info and are called from eqs/alg.
+/// EXT-4: library_hint is from annotation(Library="...").
+pub(super) fn collect_external_calls(
+    loader: &mut ModelLoader,
+    alg_equations: &[Equation],
+    diff_equations: &[Equation],
+    algorithms: &[AlgorithmStatement],
+) -> Vec<(String, String, Option<String>)> {
+    let names = collect_external_raw_call_sites(alg_equations, diff_equations, algorithms);
     let mut out = Vec::new();
     for call_site in names {
         // Avoid mis-classifying builtin operators as external calls.
@@ -672,13 +748,14 @@ pub enum CompileOutput {
     ValidationAnalyzed(ValidationAnalyzedSummary),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClockPartitionTrigger {
     Always,
     Sample { start: f64, interval: f64 },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ClockPartitionScheduleEntry {
     pub id: String,
     pub trigger: ClockPartitionTrigger,
@@ -723,175 +800,11 @@ pub struct Artifacts {
     /// FUNC-2: Keep user function stub JITs alive so calc_derivs call targets remain valid.
     #[allow(dead_code)]
     pub user_stub_jits: Vec<Jit>,
+    /// Keeps disk-backed `calc_derivs` memory valid when returning from sim-bundle fast path.
+    #[allow(dead_code)]
+    pub(crate) calc_derivs_codegen_keepalive: Option<Box<crate::jit::codegen_cache::CachedFunction>>,
+    /// Set by `reuse_compiled_with_new_params` when only the parameter vector was replaced.
+    pub param_only_update: bool,
 }
 
-impl Compiler {
-    fn function_has_output_in_hierarchy(
-        &mut self,
-        model: &crate::ast::Model,
-        current_qualified: &str,
-    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        if model.declarations.iter().any(|d| d.is_output) {
-            return Ok(true);
-        }
-        for clause in &model.extends {
-            let base_name =
-                Flattener::resolve_import_prefix(model, &clause.model_name, current_qualified);
-            let base_name = Flattener::qualify_in_scope(current_qualified, &base_name);
-            let base_model = self
-                .loader
-                .load_model(&base_name)
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-            if self.function_has_output_in_hierarchy(base_model.as_ref(), &base_name)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    pub fn new() -> Self {
-        Compiler {
-            loader: ModelLoader::new(),
-            options: CompilerOptions::default(),
-            warnings: Vec::new(),
-            external_libraries: ExternalLibs::default(),
-            external_symbol_ptrs: HashMap::new(),
-            interner: crate::string_intern::StringInterner::new(),
-            last_compile_perf: None,
-            last_provenance_index: None,
-        }
-    }
-
-    pub fn take_warnings(&mut self) -> Vec<WarningInfo> {
-        std::mem::take(&mut self.warnings)
-    }
-
-    pub fn take_compile_perf_report(&mut self) -> Option<CompilePerfReport> {
-        self.last_compile_perf.take()
-    }
-
-    /// Compile a model from source code in memory (for IDE / single-file). Caller may add_path
-    /// for StandardLib/TestLib before this if the model has dependencies.
-    pub fn compile_from_source(
-        &mut self,
-        model_name: &str,
-        code: &str,
-    ) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
-        self.loader
-            .load_model_from_source(model_name, code)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        self.compile(model_name)
-    }
-
-    /// Build equation/variable dependency graph from source (for analysis/debug). Does not run full compile.
-    pub fn get_equation_graph_from_source(
-        &mut self,
-        model_name: &str,
-        code: &str,
-        mode: EquationGraphMode,
-    ) -> Result<equation_graph::EquationGraph, Box<dyn std::error::Error + Send + Sync>> {
-        self.loader
-            .load_model_from_source(model_name, code)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        let mut root_model = self
-            .loader
-            .load_model(model_name)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        if root_model.as_ref().is_function {
-            return Err("Equation graph is not supported for functions.".into());
-        }
-        if matches!(mode, EquationGraphMode::Structural) {
-            return Ok(equation_graph::build_structural_graph(root_model.as_ref()));
-        }
-        let stage_trace = stage_trace_enabled();
-        let snap_path = self
-            .options
-            .emit_flat_snapshot
-            .as_deref()
-            .map(std::path::Path::new);
-        let array_sizes_path = self
-            .options
-            .array_sizes_json
-            .as_deref()
-            .map(std::path::Path::new);
-        let array_size_policy = ArraySizePolicy::parse(self.options.array_size_policy.as_str());
-        let stage = flatten_and_inline(
-            &mut root_model,
-            model_name,
-            &mut self.loader,
-            self.options.compile_stop.clone(),
-            false,
-            self.options.quiet,
-            stage_trace,
-            snap_path,
-            self.options.coarse_constrainedby_only,
-            crate::flatten::ValidationMode::parse(self.options.validation_mode.as_str()),
-            array_size_policy,
-            array_sizes_path,
-            self.options.warnings_level.as_str(),
-        )?;
-        self.last_provenance_index = Some(stage.provenance_index.clone());
-        let flat_model = stage.flat_model;
-        Ok(equation_graph::build_equation_graph(&flat_model, mode))
-    }
-
-    /// Run a function once with given inputs (or 0.0 per input if not provided) and return the output (F3-1).
-    fn run_function_once(
-        &mut self,
-        model_name: &str,
-    ) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
-        let mut root_model = self
-            .loader
-            .load_model(model_name)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        if !root_model.extends.is_empty() {
-            let mut flattener = Flattener::new();
-            flattener.loader.library_paths = self.loader.library_paths.clone();
-            if let Some(p) = self.loader.get_path_for_model(model_name) {
-                flattener.loader.register_path(model_name, p);
-            }
-            flattener
-                .flatten_inheritance(&mut root_model, model_name)
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        }
-        if let Some((input_names, outputs)) = inline::get_function_body(root_model.as_ref()) {
-            let body = outputs
-                .first()
-                .ok_or("Function has no output expression.")?
-                .1
-                .clone();
-            let args = self.options.function_args.as_deref().unwrap_or(&[]);
-            let mut vars = HashMap::new();
-            for (i, name) in input_names.iter().enumerate() {
-                let val = args.get(i).copied().unwrap_or(0.0);
-                vars.insert(name.clone(), val);
-            }
-            return expr_eval::eval_expr(&body, &vars).map_err(|e| e.into());
-        }
-        if self.options.quiet {
-            return Ok(0.0);
-        }
-        if self.function_has_output_in_hierarchy(root_model.as_ref(), model_name)? {
-            return Ok(0.0);
-        }
-        if root_model.external_info.is_some() {
-            return Ok(0.0);
-        }
-        Err("Function must have at least one output and assignments in algorithm.".into())
-    }
-
-    pub fn compile(
-        &mut self,
-        model_name: &str,
-    ) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
-        compile_model::compile(self, model_name)
-    }
-
-    /// DBG-4: suffix for error messages (file path or model name).
-    fn source_loc_suffix(&self, model_name: &str) -> String {
-        self.loader
-            .get_path_for_model(model_name)
-            .map(|p| format!("\n  --> {}", p.display()))
-            .unwrap_or_else(|| format!(" (model: {})", model_name))
-    }
-}
+include!("compiler_impl.rs");

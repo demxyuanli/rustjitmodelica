@@ -63,6 +63,14 @@ pub struct TranslationContext<'a> {
     pub varid_discrete_index: HashMap<VarId, usize>,
     pub varid_param_index: HashMap<VarId, usize>,
     pub varid_output_index: HashMap<VarId, usize>,
+    pub loop_break_stack: Vec<Block>,
+    pub function_return_block: Option<Block>,
+    pub suppress_zero_crossings: bool,
+    pub delay_call_counter: usize,
+    /// Count of `connect` endpoints per flattened connector path (for `cardinality`).
+    pub connector_connection_degree: &'a HashMap<String, usize>,
+    pub stream_connection_set: &'a HashMap<String, Vec<String>>,
+    pub stream_flow_map: &'a HashMap<String, String>,
 }
 
 impl<'a> TranslationContext<'a> {
@@ -159,6 +167,10 @@ impl<'a> TranslationContext<'a> {
         string_literal_data_ctx: Option<&'a mut DataDescription>,
         string_data_counter: Option<&'a mut usize>,
         external_modelica_names: Option<&'a HashSet<String>>,
+        function_return_block: Option<Block>,
+        connector_connection_degree: &'a HashMap<String, usize>,
+        stream_connection_set: &'a HashMap<String, Vec<String>>,
+        stream_flow_map: &'a HashMap<String, String>,
     ) -> Self {
         Self {
             module,
@@ -195,6 +207,13 @@ impl<'a> TranslationContext<'a> {
             varid_discrete_index: HashMap::new(),
             varid_param_index: HashMap::new(),
             varid_output_index: HashMap::new(),
+            loop_break_stack: Vec::new(),
+            function_return_block,
+            suppress_zero_crossings: false,
+            delay_call_counter: 0,
+            connector_connection_degree,
+            stream_connection_set,
+            stream_flow_map,
         }
     }
 

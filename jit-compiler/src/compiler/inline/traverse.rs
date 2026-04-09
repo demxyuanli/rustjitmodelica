@@ -170,6 +170,8 @@ pub(super) fn inline_algorithm(
             AlgorithmStatement::CallStmt(inline_expr(expr, loader, cache, no_inline, resolve_memo, 0, max_depth))
         }
         AlgorithmStatement::NoOp => AlgorithmStatement::NoOp,
+        AlgorithmStatement::Break => AlgorithmStatement::Break,
+        AlgorithmStatement::Return(v) => AlgorithmStatement::Return(v.clone()),
         AlgorithmStatement::MultiAssign(lhss, rhs) => AlgorithmStatement::MultiAssign(
             lhss.iter()
                 .map(|e| inline_expr(e, loader, cache, no_inline, resolve_memo, 0, max_depth))

@@ -1,6 +1,7 @@
 use cranelift_jit::JITBuilder;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use crate::sparse_solve::CsrMatrix;
 
@@ -13,6 +14,24 @@ const ASSERT_PRINT_LIMIT: u64 = 32;
 static NEWTON_DUAL_VALIDATE_ENABLED: OnceLock<bool> = OnceLock::new();
 static NEWTON_SPARSE_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 static ASSERT_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+static TABLE_ID_ALLOC: AtomicU64 = AtomicU64::new(1);
+static EXTERNAL_OBJECT_ID_ALLOC: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Default)]
+struct TableData {
+    time_col: Vec<f64>,
+    data_cols: Vec<Vec<f64>>,
+}
+
+fn table_registry() -> &'static Mutex<HashMap<i64, TableData>> {
+    static REG: OnceLock<Mutex<HashMap<i64, TableData>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn external_object_registry() -> &'static Mutex<HashMap<i64, i64>> {
+    static REG: OnceLock<Mutex<HashMap<i64, i64>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn env_flag(name: &str) -> bool {
     std::env::var(name)
@@ -191,8 +210,8 @@ extern "C" fn modelica_integer(x: f64) -> f64 {
     x.trunc()
 }
 
-/// smooth(Real) -> Real: identity for testing; Modelica uses for continuity hint.
-extern "C" fn modelica_smooth(x: f64) -> f64 {
+/// smooth(p, x) -> x
+extern "C" fn modelica_smooth(_p: f64, x: f64) -> f64 {
     x
 }
 
@@ -225,6 +244,128 @@ thread_local! {
         std::cell::RefCell::new(Vec::new());
     static JIT_RAW_U64_WORKSPACE: std::cell::RefCell<Vec<u64>> =
         std::cell::RefCell::new(Vec::new());
+    static JIT_DELAY_SAMPLES: std::cell::RefCell<HashMap<i64, Vec<(f64, f64)>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+extern "C" fn rustmodlica_delay_lookup_record(id: i64, time: f64, value: f64, delay_time: f64) -> f64 {
+    let target_time = time - delay_time.max(0.0);
+    JIT_DELAY_SAMPLES.with(|cell| {
+        let mut map = cell.borrow_mut();
+        let samples = map.entry(id).or_default();
+        if samples.is_empty() {
+            samples.push((time, value));
+            return value;
+        }
+        if samples.last().map(|(t, _)| *t != time).unwrap_or(true) {
+            samples.push((time, value));
+        }
+        if samples.len() > 4096 {
+            let drop_n = samples.len().saturating_sub(2048);
+            samples.drain(0..drop_n);
+        }
+        if target_time <= samples[0].0 {
+            return samples[0].1;
+        }
+        let mut out = samples.last().map(|(_, v)| *v).unwrap_or(value);
+        for w in samples.windows(2) {
+            let (t0, v0) = w[0];
+            let (t1, v1) = w[1];
+            if target_time >= t0 && target_time <= t1 {
+                let dt = t1 - t0;
+                if dt.abs() < 1e-12 {
+                    out = v1;
+                } else {
+                    let alpha = (target_time - t0) / dt;
+                    out = v0 + alpha * (v1 - v0);
+                }
+                break;
+            }
+        }
+        out
+    })
+}
+
+extern "C" fn rustmodlica_table_create(data_ptr: *const f64, rows: i64, cols: i64) -> i64 {
+    if data_ptr.is_null() || rows <= 0 || cols <= 1 {
+        return 0;
+    }
+    let rows_u = rows as usize;
+    let cols_u = cols as usize;
+    let flat = unsafe { std::slice::from_raw_parts(data_ptr, rows_u.saturating_mul(cols_u)) };
+    let mut table = TableData::default();
+    table.time_col.reserve(rows_u);
+    table.data_cols = vec![Vec::with_capacity(rows_u); cols_u - 1];
+    for r in 0..rows_u {
+        table.time_col.push(flat[r * cols_u]);
+        for c in 1..cols_u {
+            table.data_cols[c - 1].push(flat[r * cols_u + c]);
+        }
+    }
+    let id = TABLE_ID_ALLOC.fetch_add(1, Ordering::Relaxed) as i64;
+    if let Ok(mut reg) = table_registry().lock() {
+        reg.insert(id, table);
+        id
+    } else {
+        0
+    }
+}
+
+extern "C" fn rustmodlica_table_destroy(handle: i64) -> f64 {
+    if let Ok(mut reg) = table_registry().lock() {
+        reg.remove(&handle);
+    }
+    0.0
+}
+
+extern "C" fn rustmodlica_table_get_value(handle: i64, time: f64, col: i64) -> f64 {
+    let Ok(reg) = table_registry().lock() else {
+        return 0.0;
+    };
+    let Some(table) = reg.get(&handle) else {
+        return 0.0;
+    };
+    if col <= 0 || (col as usize) > table.data_cols.len() || table.time_col.is_empty() {
+        return 0.0;
+    }
+    let vals = &table.data_cols[col as usize - 1];
+    if time <= table.time_col[0] {
+        return vals[0];
+    }
+    let last = table.time_col.len() - 1;
+    if time >= table.time_col[last] {
+        return vals[last];
+    }
+    for i in 0..last {
+        let t0 = table.time_col[i];
+        let t1 = table.time_col[i + 1];
+        if time >= t0 && time <= t1 {
+            let dt = t1 - t0;
+            if dt.abs() < 1e-12 {
+                return vals[i + 1];
+            }
+            let a = (time - t0) / dt;
+            return vals[i] + a * (vals[i + 1] - vals[i]);
+        }
+    }
+    vals[last]
+}
+
+extern "C" fn rustmodlica_external_object_create(token: i64) -> i64 {
+    let id = EXTERNAL_OBJECT_ID_ALLOC.fetch_add(1, Ordering::Relaxed) as i64;
+    if let Ok(mut reg) = external_object_registry().lock() {
+        reg.insert(id, token);
+        id
+    } else {
+        0
+    }
+}
+
+extern "C" fn rustmodlica_external_object_destroy(handle: i64) -> f64 {
+    if let Ok(mut reg) = external_object_registry().lock() {
+        reg.remove(&handle);
+    }
+    0.0
 }
 
 /// Contiguous [J row-major n*n][r n][dx n], 8-byte aligned. Thread-local; reused across calls.
@@ -609,6 +750,21 @@ fn visit_builtin_symbols(mut f: impl FnMut(&'static str, *const u8)) {
     f("div", modelica_div as *const u8);
     f("integer", modelica_integer as *const u8);
     f("smooth", modelica_smooth as *const u8);
+    f(
+        "rustmodlica_delay_lookup_record",
+        rustmodlica_delay_lookup_record as *const u8,
+    );
+    f("rustmodlica_table_create", rustmodlica_table_create as *const u8);
+    f("rustmodlica_table_get_value", rustmodlica_table_get_value as *const u8);
+    f("rustmodlica_table_destroy", rustmodlica_table_destroy as *const u8);
+    f(
+        "rustmodlica_external_object_create",
+        rustmodlica_external_object_create as *const u8,
+    );
+    f(
+        "rustmodlica_external_object_destroy",
+        rustmodlica_external_object_destroy as *const u8,
+    );
     f("interval", interval as *const u8);
     f("subSample", subSample as *const u8);
     f("superSample", superSample as *const u8);

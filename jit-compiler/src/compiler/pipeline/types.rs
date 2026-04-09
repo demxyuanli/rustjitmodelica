@@ -16,6 +16,7 @@ pub(crate) struct FrontendStage {
     pub provenance_index: Arc<ProvenanceIndex>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct VariableLayout {
     pub states: Vec<f64>,
     pub discrete_vals: Vec<f64>,
@@ -32,6 +33,7 @@ pub(crate) struct VariableLayout {
     pub array_info: HashMap<String, ArrayInfo>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnalysisStage {
     pub alg_equations: Vec<Equation>,
     pub diff_equations: Vec<Equation>,

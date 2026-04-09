@@ -165,6 +165,184 @@ cargo run -p regress-harness --release -- `
 | FMI 导出不一致（ID/GUID） | `--fmi-model-id`, `--fmi-guid`, `RUSTMODLICA_FMI_MODEL_ID` | 优先使用 CLI 固定导出；仅在无 CLI 时使用 env；保证同一流水线内 ID/GUID 来源单一 |
 | 事件扫描结果波动大 | `RUSTMODLICA_EVENT_COUNT_DEADBAND`, `RUSTMODLICA_TAIL_VELOCITY_DEADBAND`, `RUSTMODLICA_SUNDIALS_EVENT_LOG` | 用 event-scan 扫 deadband 组合；固定日志开关；对同模型重复运行并比较 top-N 组合稳定性 |
 
+### Full-tier regression diff: r6 -> r7 (2026-04-08)
+
+Run command (same for both baselines):
+
+```powershell
+cargo run -p regress-harness --release -- `
+  jit validate-perf `
+  --out-dir build/jit_validate_perf_r7 `
+  --validate-tier=full `
+  --validation-mode=full `
+  --models=ModelicaTest.JitStress.ComplexJitRegression,ModelicaTest.JitStress.MslBroadCoverage,ModelicaTest.JitStress.RobotElectricalControl,TestLib.BigFor,TestLib.MSLBlocksTest,TestLib.MultiTopCombined `
+  --hot-runs 2 `
+  --perf-trace `
+  --stage-trace
+```
+
+Top-line verdict:
+
+- `r6`: `30 total / 29 pass / 1 fail`
+- `r7`: `30 total / 30 pass / 0 fail`
+- Failure was reduced to zero; previously failing case: `legacy_salsa0 + ModelicaTest.JitStress.MslBroadCoverage`
+
+Per-model hot-path (`hot_nsA`, run2) cache-field diff:
+
+| model | artifact_bundle_cache_status (r6->r7) | external_resolve_cache_status (r6->r7) | cache_warm_ratio (r6->r7) | duration_ms (r6->r7) | delta_ms |
+|---|---|---|---|---:|---:|
+| ModelicaTest.JitStress.ComplexJitRegression | `hit -> hit` | `not_run -> hit` | `1 -> 1` | `1991 -> 2005` | `+14` |
+| ModelicaTest.JitStress.MslBroadCoverage | `hit -> hit` | `not_run -> hit` | `1 -> 1` | `2030 -> 1806` | `-224` |
+| ModelicaTest.JitStress.RobotElectricalControl | `hit -> hit` | `not_run -> hit` | `1 -> 1` | `1974 -> 1789` | `-185` |
+| TestLib.BigFor | `hit -> hit` | `not_run -> hit` | `1 -> 1` | `2650 -> 1789` | `-861` |
+| TestLib.MSLBlocksTest | `hit -> hit` | `not_run -> hit` | `1 -> 1` | `2505 -> 1827` | `-678` |
+| TestLib.MultiTopCombined | `hit -> hit` | `not_run -> hit` | `1 -> 1` | `2101 -> 1841` | `-260` |
+
+Scenario aggregate diff:
+
+| scenario | failed_cases (r6->r7) | avg_duration_ms (r6->r7) | delta_ms | avg_cache_warm_ratio (r6->r7) | flat_full_cache_hits total (r6->r7) |
+|---|---|---:|---:|---:|---:|
+| cold_empty_nsCOLD | `0 -> 0` | `6362.33 -> 5534.00` | `-828.33` | `0.0 -> 0.0` | `0 -> 0` |
+| cold_qcache0 | `0 -> 0` | `6153.50 -> 5546.83` | `-606.67` | `0.0 -> 0.0` | `0 -> 0` |
+| hot_nsA | `0 -> 0` | `4356.42 -> 3602.50` | `-753.92` | `0.5 -> 0.5` | `0 -> 6` |
+| legacy_salsa0 | `0 -> 0` | `3394.80 -> 10015.50` | `+6620.70` | `0.0 -> 0.0` | `0 -> 0` |
+
+Interpretation notes:
+
+- `legacy_salsa0` avg time rises because the former failing case now executes complete pipeline and reports success instead of terminating with JIT error.
+- `hot_nsA` run2 keeps full `artifact_bundle_cache_status=hit` coverage (`6/6`) and now reports `external_resolve_cache_status=hit` (`6/6`), indicating deeper cache-path observability after fix.
+- `flat_full_cache_*` improvement appears in `hot_nsA` (`hits: 0 -> 6`), while cold/legacy scenarios remain miss/write dominated as expected.
+
+### Full-tier regression diff: r7 -> r8 (2026-04-08)
+
+Top-line verdict:
+
+- `r7`: `30 total / 30 pass / 0 fail`
+- `r8`: `30 total / 30 pass / 0 fail`
+- pass/fail remains stable; comparison focuses on cache-field consistency and timing deltas.
+
+Per-model hot-path (`hot_nsA`, run2) cache-field diff:
+
+| model | artifact_bundle_cache_status (r7->r8) | external_resolve_cache_status (r7->r8) | cache_warm_ratio (r7->r8) | duration_ms (r7->r8) | delta_ms |
+|---|---|---|---|---:|---:|
+| ModelicaTest.JitStress.ComplexJitRegression | `hit -> hit` | `hit -> hit` | `1 -> 1` | `2005 -> 1736` | `-269` |
+| ModelicaTest.JitStress.MslBroadCoverage | `hit -> hit` | `hit -> hit` | `1 -> 1` | `1806 -> 1728` | `-78` |
+| ModelicaTest.JitStress.RobotElectricalControl | `hit -> hit` | `hit -> hit` | `1 -> 1` | `1789 -> 1818` | `+29` |
+| TestLib.BigFor | `hit -> hit` | `hit -> hit` | `1 -> 1` | `1789 -> 1715` | `-74` |
+| TestLib.MSLBlocksTest | `hit -> hit` | `hit -> hit` | `1 -> 1` | `1827 -> 1697` | `-130` |
+| TestLib.MultiTopCombined | `hit -> hit` | `hit -> hit` | `1 -> 1` | `1841 -> 1741` | `-100` |
+
+Scenario aggregate diff:
+
+| scenario | failed_cases (r7->r8) | avg_duration_ms (r7->r8) | delta_ms | avg_cache_warm_ratio (r7->r8) | flat_full_cache_hits total (r7->r8) |
+|---|---|---:|---:|---:|---:|
+| cold_empty_nsCOLD | `0 -> 0` | `5534.00 -> 5876.50` | `+342.50` | `0.0 -> 0.0` | `0 -> 0` |
+| cold_qcache0 | `0 -> 0` | `5546.83 -> 6302.17` | `+755.34` | `0.0 -> 0.0` | `0 -> 0` |
+| hot_nsA | `0 -> 0` | `3602.50 -> 3910.17` | `+307.67` | `0.5 -> 0.5` | `6 -> 6` |
+| legacy_salsa0 | `0 -> 0` | `10015.50 -> 11851.83` | `+1836.33` | `0.0 -> 0.0` | `0 -> 0` |
+
+#### legacy_salsa0 split table A: success-rate repair benefit
+
+| metric | r7 | r8 | delta |
+|---|---:|---:|---:|
+| total_cases | 6 | 6 | 0 |
+| passed_cases | 6 | 6 | 0 |
+| failed_cases | 0 | 0 | 0 |
+| success_rate | 100% | 100% | 0% |
+
+#### legacy_salsa0 split table B: pure performance (success-only)
+
+| metric | r7 | r8 | delta |
+|---|---:|---:|---:|
+| avg_duration_ms_success_only | 10015.50 | 11851.83 | +1836.33 |
+
+Interpretation notes:
+
+- The split confirms `r7 -> r8` has no success-rate repair effect in `legacy_salsa0`; observed change is purely timing variance under successful runs.
+- Cache-field consistency remains stable across hot run2 (`artifact=hit`, `external_resolve=hit`, `warm_ratio=1` for all six models).
+
+### Full-tier regression diff: r8 -> r9 (3-sample) (2026-04-08)
+
+Sampling setup:
+
+- `r8`: single baseline run (`build/jit_validate_perf_r8`)
+- `r9`: three repeated runs (`build/jit_validate_perf_r9_1..3`) with identical command/options
+
+Top-line verdict:
+
+- `r8`: `30 total / 30 pass / 0 fail`
+- `r9`: each sample run is `30 total / 30 pass / 0 fail`
+- cache consistency on `hot_nsA run2` remains stable across all three r9 runs: `artifact_hit=6/6`, `external_resolve_hit=6/6`, `cache_warm_ratio=1` for all models
+
+Scenario aggregate with median/variance (r9 across 3 runs):
+
+| scenario | r8 avg_duration_ms | r9 mean_duration_ms | r9 median_duration_ms | r9 variance_ms2 | median_delta_vs_r8_ms |
+|---|---:|---:|---:|---:|---:|
+| cold_empty_nsCOLD | 5876.50 | 5267.39 | 5331.00 | 3647.34 | -545.50 |
+| cold_qcache0 | 6302.17 | 5189.06 | 5254.00 | 4119.18 | -1048.17 |
+| hot_nsA | 3910.17 | 3558.78 | 3663.17 | 8215.03 | -247.00 |
+| legacy_salsa0 | 11851.83 | 9922.22 | 10453.00 | 212183.81 | -1398.83 |
+
+Hot-path per-model (`hot_nsA`, run2) with median/variance (r9 across 3 runs):
+
+| model | r8 duration_ms | r9 mean_ms | r9 median_ms | r9 variance_ms2 | median_delta_vs_r8_ms |
+|---|---:|---:|---:|---:|---:|
+| ModelicaTest.JitStress.ComplexJitRegression | 1736 | 1724.00 | 1735 | 103.00 | -1 |
+| ModelicaTest.JitStress.MslBroadCoverage | 1728 | 1871.67 | 2024 | 23104.33 | +296 |
+| ModelicaTest.JitStress.RobotElectricalControl | 1818 | 1838.33 | 2053 | 34757.33 | +235 |
+| TestLib.BigFor | 1715 | 1753.33 | 1813 | 2942.33 | +98 |
+| TestLib.MSLBlocksTest | 1697 | 1779.33 | 1849 | 3640.33 | +152 |
+| TestLib.MultiTopCombined | 1741 | 1867.67 | 1999 | 12940.33 | +258 |
+
+#### legacy_salsa0 split table A: success-rate repair benefit (r8 vs r9-3run)
+
+| metric | r8 | r9 mean | r9 median | r9 variance |
+|---|---:|---:|---:|---:|
+| success_rate(%) | 100.00 | 100.00 | 100.00 | 0.00 |
+
+#### legacy_salsa0 split table B: pure performance (success-only, r8 vs r9-3run)
+
+| metric | r8 | r9 mean | r9 median | r9 variance | median_delta_vs_r8 |
+|---|---:|---:|---:|---:|---:|
+| avg_duration_ms_success_only | 11851.83 | 9922.22 | 10453.00 | 212183.81 | -1398.83 |
+
+Interpretation notes:
+
+- Adding median and variance reduces single-run bias: scenario-level medians show `r9` is faster than `r8`, while model-level hot-path variance reveals a few models with unstable run2 latency.
+- `legacy_salsa0` split confirms no success-rate repair effect in `r8 -> r9`; the observed difference is pure performance distribution change under all-success runs.
+
+### Full-tier regression diff: r9 -> r10 (3-sample, with P90/MAD) (2026-04-08)
+
+Top-line verdict:
+
+- `r10_1/r10_2/r10_3`: all `30 total / 30 pass / 0 fail`
+- `hot_nsA run2` cache consistency keeps full coverage in all r10 samples: `artifact_hit=6/6`, `external_resolve_hit=6/6`, `cache_warm_ratio=1`
+
+Scenario aggregate distribution (`avg_duration_ms` per scenario per run):
+
+| scenario | r9 median_ms | r10 median_ms | median_delta_ms | r9 variance_ms2 | r10 variance_ms2 | r9 P90_ms | r10 P90_ms | r9 MAD_ms | r10 MAD_ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| cold_empty_nsCOLD | 5331.00 | 5674.83 | +343.83 | 3647.34 | 24201.79 | 5316.87 | 5646.73 | 120.17 | 310.67 |
+| cold_qcache0 | 5254.00 | 5751.00 | +497.00 | 4119.18 | 61098.34 | 5240.70 | 5688.03 | 128.33 | 487.50 |
+| hot_nsA | 3663.17 | 3601.00 | -62.17 | 8215.03 | 4246.20 | 3633.15 | 3596.55 | 163.08 | 122.33 |
+| legacy_salsa0 | 10453.00 | 10152.50 | -300.50 | 212183.81 | 34449.79 | 10299.73 | 10091.43 | 826.00 | 335.50 |
+
+Hot-path per-model distribution (`hot_nsA`, run2, 3 samples):
+
+| model | r9 median_ms | r10 median_ms | median_delta_ms | r9 variance_ms2 | r10 variance_ms2 | r9 P90_ms | r10 P90_ms | r9 MAD_ms | r10 MAD_ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ModelicaTest.JitStress.ComplexJitRegression | 1735 | 2165 | +430 | 103.00 | 54704.33 | 1732.4 | 2089.8 | 20 | 429 |
+| ModelicaTest.JitStress.MslBroadCoverage | 2024 | 1732 | -292 | 23104.33 | 37.00 | 1993.4 | 1731.8 | 304 | 11 |
+| ModelicaTest.JitStress.RobotElectricalControl | 2053 | 1782 | -271 | 34757.33 | 702.33 | 1991.4 | 1776.6 | 336 | 53 |
+| TestLib.BigFor | 1813 | 1758 | -55 | 2942.33 | 902.33 | 1798.4 | 1757.6 | 106 | 53 |
+| TestLib.MSLBlocksTest | 1849 | 1776 | -73 | 3640.33 | 1183.00 | 1828.2 | 1773.4 | 105 | 65 |
+| TestLib.MultiTopCombined | 1999 | 1725 | -274 | 12940.33 | 274.33 | 1960.0 | 1721.2 | 199 | 33 |
+
+Interpretation notes:
+
+- `P90` + `MAD` confirms long-tail jitter reduction in `hot_nsA` and `legacy_salsa0` at scenario level (`variance`, `P90`, `MAD` all decreased), while cold scenarios show wider spread in this sample window.
+- At model granularity, most hot-run2 cases become tighter (`MAD` down), but `ComplexJitRegression` shows a tail expansion in r10 and should be tracked separately as a hotspot outlier.
+
 Quick triage notes:
 - 先最小化变量：固定模型、固定输入、固定参数，再做单因子对比。
 - 涉及覆盖关系时遵循 `CLI > env > default`，避免“看起来改了但未生效”。
@@ -178,6 +356,20 @@ Quick triage notes:
 - [展平连接与OOP / Flatten Connect OOP](./flatten-connect-oop.md)
 - [工具链FMI EmitC Script / Toolchain FMI EmitC Script](./toolchain-fmi-emitc-script.md)（含 `modelDescription` 字段、CLI/`RUSTMODLICA_FMI_*` 与 `run_regression.ps1` FMI 断言） / includes `modelDescription` fields, CLI and `RUSTMODLICA_FMI_*` env, and `run_regression.ps1` FMI checks
 - [MSL与ModelicaTest目录回归 / MSL And ModelicaTest Directory Regression](./msl-modelicatest-dir-regression.md)
+
+## 参数收敛与选择规范 / Parameter convergence and selector spec
+
+- 主规范 / Main spec: `parameter-convergence.md`
+- 参数元数据 / Parameter metadata: `parameter-metadata.json`
+- 场景模板 / Profile templates: `profile-templates.json`
+- 实施映射指南 / CLI-TUI guide: `CLI_TUI_Implementation_Guide.md`
+- 集成检查清单 / Integration checklist: `parameter-integration-checklist.md`
+
+使用建议 / Recommended reading order:
+1) `parameter-convergence.md`（规则与流程）  
+2) `profile-templates.json`（场景参数包）  
+3) `parameter-metadata.json`（参数级元信息）  
+4) `CLI_TUI_Implementation_Guide.md`（落地实现映射）
 
 ## 统一判定规则 / Unified Verdict Rules
 

@@ -1,128 +1,38 @@
-use crate::ast::{
-    expr_to_connector_path, expr_to_flat_scalar_prefix, flat_index_suffix_for_scalar_name, Expression,
-    Operator,
-};
+use crate::ast::{Expression, Operator};
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
-use cranelift_module::{Linkage, Module};
 
-use crate::jit::context::TranslationContext;
-use crate::jit::types::ArrayType;
 use crate::diag::fallback_counter;
-use super::builtin::try_compile_builtin_call;
-use super::helpers::{
-    abi_params_short, import_call_abi_tag, jit_dot_fallback_zero_enabled, jit_dot_trace_enabled,
-    jit_builtin_fallback_warn_once, jit_import_debug_enabled, jit_scalar_name_bound,
-    jit_var_fallback_trace, lookup_or_insert_import, modelica_constants_dot_member,
-    modelica_constants_flat_variable,
-};
-use super::matrix::fold_dot_symmetric_transformation_matrix;
-use super::pre::compile_pre_expression;
+use crate::jit::context::TranslationContext;
 use crate::jit::jit_policy::{
     dot_flat_path_yields_zero, dot_prefix_yields_zero, hysteresis_record_value,
 };
-
-fn compile_base_sample_trigger(
-    clock_expr: &Expression,
-    ctx: &mut TranslationContext,
-    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
-) -> Result<Option<(Value, Value)>, String> {
-    let time_val = ctx
-        .var_map
-        .get("time")
-        .copied()
-        .ok_or("sample-based clock requires time in context".to_string())?;
-    match clock_expr {
-        Expression::Sample(interval_expr) => {
-            let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
-            Ok(Some((time_val, interval_val)))
-        }
-        Expression::Call(name, args)
-            if (name.eq_ignore_ascii_case("sample") || name.ends_with(".sample"))
-                && (args.len() == 1 || args.len() == 2) =>
-        {
-            let interval_val = compile_expression_rec(args.last().unwrap(), ctx, builder)?;
-            if args.len() == 2 {
-                let start_val = compile_expression_rec(&args[0], ctx, builder)?;
-                let t_rel = builder.ins().fsub(time_val, start_val);
-                Ok(Some((t_rel, interval_val)))
-            } else {
-                Ok(Some((time_val, interval_val)))
-            }
-        }
-        Expression::Call(name, args)
-            if (name.eq_ignore_ascii_case("clock") || name.ends_with(".Clock"))
-                && !args.is_empty() =>
-        {
-            let interval_val = compile_expression_rec(args.last().unwrap(), ctx, builder)?;
-            Ok(Some((time_val, interval_val)))
-        }
-        _ => Ok(None),
-    }
-}
-use std::sync::OnceLock;
-
-fn warn_clock_degrade_once(kind: &'static str) {
-    static SUPER_WARNED: OnceLock<()> = OnceLock::new();
-    static SHIFT_WARNED: OnceLock<()> = OnceLock::new();
-    static SUB_WARNED: OnceLock<()> = OnceLock::new();
-    static BACK_WARNED: OnceLock<()> = OnceLock::new();
-    static INTERVAL_WARNED: OnceLock<()> = OnceLock::new();
-    static SYNC_WARN_ENABLED: OnceLock<bool> = OnceLock::new();
-    let enabled = *SYNC_WARN_ENABLED.get_or_init(|| {
-        std::env::var("RUSTMODLICA_SYNC_WARN")
-            .ok()
-            .map(|v| {
-                let t = v.trim();
-                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
-            })
-            .unwrap_or(true)
-    });
-    if !enabled {
-        return;
-    }
-    match kind {
-        "superSample" => {
-            if SUPER_WARNED.set(()).is_ok() {
-                fallback_counter::inc_clock_degrade();
-                eprintln!("[fallback:clock] superSample currently uses first-version passthrough semantics.");
-            }
-        }
-        "shiftSample" => {
-            if SHIFT_WARNED.set(()).is_ok() {
-                fallback_counter::inc_clock_degrade();
-                eprintln!("[fallback:clock] shiftSample currently uses first-version passthrough semantics.");
-            }
-        }
-        "subSample" => {
-            if SUB_WARNED.set(()).is_ok() {
-                fallback_counter::inc_clock_degrade();
-                eprintln!("[fallback:clock] subSample without sample(base) falls back to passthrough.");
-            }
-        }
-        "backSample" => {
-            if BACK_WARNED.set(()).is_ok() {
-                fallback_counter::inc_clock_degrade();
-                eprintln!("[fallback:clock] backSample without sample(base) falls back to passthrough.");
-            }
-        }
-        "interval" => {
-            if INTERVAL_WARNED.set(()).is_ok() {
-                fallback_counter::inc_clock_degrade();
-                eprintln!("[fallback:clock] interval() fallback currently returns 0.0 for non-numeric sample clock.");
-            }
-        }
-        _ => {}
-    }
-}
-
+use super::call::compile_call;
+use super::clock_sample::compile_sample_interval_clock_arms;
+use super::helpers::{
+    jit_dot_fallback_zero_enabled, jit_dot_trace_enabled, jit_scalar_name_bound,
+    modelica_constants_dot_member,
+};
+use super::matrix::fold_dot_symmetric_transformation_matrix;
+use super::pre::compile_pre_expression;
+use super::variable::{compile_array_access, compile_variable_load};
 
 pub(crate) fn compile_zero_crossing_store(
     expr: &Expression,
     ctx: &mut TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<(), String> {
+    if ctx.suppress_zero_crossings {
+        return Ok(());
+    }
     match expr {
+        Expression::Call(name, args) if (name == "noEvent" || name.ends_with(".noEvent")) && args.len() == 1 => {
+            let prev = ctx.suppress_zero_crossings;
+            ctx.suppress_zero_crossings = true;
+            let out = compile_zero_crossing_store(&args[0], ctx, builder);
+            ctx.suppress_zero_crossings = prev;
+            out?;
+        }
         Expression::BinaryOp(lhs, op, rhs) => match op {
             Operator::Less | Operator::Greater | Operator::LessEq | Operator::GreaterEq => {
                 let l = compile_expression(lhs, ctx, builder)?;
@@ -150,153 +60,16 @@ pub(super) fn compile_expression_rec(
     ctx: &mut TranslationContext,
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
 ) -> Result<Value, String> {
+    if let Some(v) =
+        compile_sample_interval_clock_arms(expr, ctx, builder, compile_expression_rec)?
+    {
+        return Ok(v);
+    }
     match expr {
         Expression::Number(n) => Ok(builder.ins().f64const(*n)),
-        Expression::Variable(id) => {
-            let name = crate::string_intern::resolve_id(*id);
-            if let Some(slot) = ctx.stack_slots.get(&name) {
-                return Ok(builder.ins().stack_load(cl_types::F64, *slot, 0));
-            }
-            if let Some(val) = ctx.var_map.get(&name).copied() {
-                return Ok(val);
-            }
-            if let Some(idx) = ctx.output_index(&name) {
-                let offset = (idx * 8) as i32;
-                return Ok(builder
-                    .ins()
-                    .load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset));
-            }
-            if let Some(idx) = ctx.param_index(&name) {
-                let offset = (idx * 8) as i32;
-                return Ok(builder
-                    .ins()
-                    .load(cl_types::F64, MemFlags::new(), ctx.params_ptr, offset));
-            }
-            if name.starts_with("der_") {
-                let base = &name[4..];
-                if let Some(idx) = ctx.state_index(base) {
-                    let offset = (idx * 8) as i32;
-                    return Ok(builder.ins().load(
-                        cl_types::F64,
-                        MemFlags::new(),
-                        ctx.derivs_ptr,
-                        offset,
-                    ));
-                }
-                return Err(format!(
-                    "der({}) not found: state variable {} unknown",
-                    base, base
-                ));
-            }
-
-            if let Some((base, idx0)) = name
-                .rsplit_once('_')
-                .and_then(|(b, i)| i.parse::<usize>().ok().map(|n| (b.to_string(), n)))
-            {
-                if let Some((array_type, start_index)) = ctx.array_storage(&base) {
-                    // Flatten may scalarize arrays into base_0, base_1, ...; map to 1-based Modelica indexing.
-                    let idx_val = builder.ins().f64const((idx0 as f64) + 1.0);
-                    let one = builder.ins().f64const(1.0);
-                    let idx_0 = builder.ins().fsub(idx_val, one);
-                    let idx_int = builder.ins().fcvt_to_sint(cl_types::I64, idx_0);
-                    let eight = builder.ins().iconst(cl_types::I64, 8);
-                    let offset_bytes = builder.ins().imul(idx_int, eight);
-                    let start_offset = (start_index * 8) as i64;
-                    let start_const = builder.ins().iconst(cl_types::I64, start_offset);
-                    let total_offset = builder.ins().iadd(start_const, offset_bytes);
-                    let base_ptr = match array_type {
-                        ArrayType::State => ctx.states_ptr,
-                        ArrayType::Discrete => ctx.discrete_ptr,
-                        ArrayType::Parameter => ctx.params_ptr,
-                        ArrayType::Output => ctx.outputs_ptr,
-                        ArrayType::Derivative => ctx.derivs_ptr,
-                    };
-                    let addr = builder.ins().iadd(base_ptr, total_offset);
-                    return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0));
-                }
-                if base == "a" || base == "b" {
-                    let _ = idx0;
-                    jit_var_fallback_trace(&name, "array-scalar-placeholder-a-b");
-                    return Ok(builder.ins().f64const(0.0));
-                }
-            }
-
-            if let Some(v) = modelica_constants_flat_variable(&name) {
-                return Ok(builder.ins().f64const(v));
-            }
-            if let Some((v, trace_tag)) = crate::jit::var_fallback_policy::lookup_var_fallback(&name) {
-                if !trace_tag.is_empty() {
-                    jit_var_fallback_trace(&name, trace_tag.as_str());
-                }
-                return Ok(builder.ins().f64const(v));
-            }
-
-            // P5-1: Tightened fallback conditions - removed overly broad `name.contains('_')` pattern.
-            // Only accept specific patterns that are known to be safe placeholders.
-            // The following patterns are still allowed for MSL compatibility:
-            // - Initialization placeholders (_Init_, _Types_Init_, _Types_)
-            // - Specific model patterns (Machine_inf, combiTimeTable)
-            // - Known runtime variables (startTime, u, samplePeriod, generateNoise)
-            // All other unknown variables with underscores will now produce an error.
-            
-            // P5-2: Enhanced diagnostic for unknown variables
-            Err(format!("Variable '{}' not found in JIT context (check model flattening and variable declarations)", name))
-        }
+        Expression::Variable(id) => compile_variable_load(*id, ctx, builder),
         Expression::ArrayAccess(arr_expr, idx_expr) => {
-            if let Some(flat) = expr_to_flat_scalar_prefix(expr) {
-                if jit_scalar_name_bound(ctx, &flat) {
-                    return compile_expression_rec(&Expression::var(&flat), ctx, builder);
-                }
-            }
-
-            let name = if let Expression::Variable(id) = &**arr_expr {
-                Some(crate::string_intern::resolve_id(*id))
-            } else {
-                expr_to_connector_path(arr_expr)
-            };
-
-            if let Some(name) = name {
-                if let Some((array_type, start_index)) = ctx.array_storage(&name) {
-                let idx_val = compile_expression_rec(idx_expr, ctx, builder)?;
-                let one = builder.ins().f64const(1.0);
-                let idx_0 = builder.ins().fsub(idx_val, one);
-                let idx_int = builder.ins().fcvt_to_sint(cl_types::I64, idx_0);
-                let eight = builder.ins().iconst(cl_types::I64, 8);
-                let offset_bytes = builder.ins().imul(idx_int, eight);
-                let start_offset = (start_index * 8) as i64;
-                let start_const = builder.ins().iconst(cl_types::I64, start_offset);
-                let total_offset = builder.ins().iadd(start_const, offset_bytes);
-                let base_ptr = match array_type {
-                    ArrayType::State => ctx.states_ptr,
-                    ArrayType::Discrete => ctx.discrete_ptr,
-                    ArrayType::Parameter => ctx.params_ptr,
-                    ArrayType::Output => ctx.outputs_ptr,
-                    ArrayType::Derivative => ctx.derivs_ptr,
-                };
-                let addr = builder.ins().iadd(base_ptr, total_offset);
-                Ok(builder.ins().load(cl_types::F64, MemFlags::new(), addr, 0))
-                } else {
-                    let base = name.replace('.', "_");
-                    if let Some(suf) = flat_index_suffix_for_scalar_name(idx_expr) {
-                        let elem_name = format!("{}_{}", base, suf);
-                        compile_expression_rec(&Expression::var(&elem_name), ctx, builder)
-                    } else {
-                        Err(format!("Array {} not found in array_info", name))
-                    }
-                }
-            } else if let Some(arr_base) = expr_to_connector_path(arr_expr)
-                .map(|p| p.replace('.', "_"))
-                .or_else(|| expr_to_flat_scalar_prefix(arr_expr))
-            {
-                if let Some(suf) = flat_index_suffix_for_scalar_name(idx_expr) {
-                    let elem_name = format!("{}_{}", arr_base, suf);
-                    compile_expression_rec(&Expression::var(&elem_name), ctx, builder)
-                } else {
-                    compile_expression_rec(arr_expr, ctx, builder)
-                }
-            } else {
-                compile_expression_rec(arr_expr, ctx, builder)
-            }
+            compile_array_access(expr, arr_expr, idx_expr, ctx, builder, compile_expression_rec)
         }
         Expression::BinaryOp(lhs, op, rhs) => {
             let l = compile_expression_rec(lhs, ctx, builder)?;
@@ -317,7 +90,12 @@ pub(super) fn compile_expression_rec(
                     let r_safe = builder.ins().select(is_small, eps_signed, r);
                     Ok(builder.ins().fdiv(l, r_safe))
                 }
-                Operator::Less | Operator::Greater | Operator::LessEq | Operator::GreaterEq | Operator::Equal | Operator::NotEqual => {
+                Operator::Less
+                | Operator::Greater
+                | Operator::LessEq
+                | Operator::GreaterEq
+                | Operator::Equal
+                | Operator::NotEqual => {
                     let cc = match op {
                         Operator::Less => FloatCC::LessThan,
                         Operator::Greater => FloatCC::GreaterThan,
@@ -358,243 +136,7 @@ pub(super) fn compile_expression_rec(
             let cmp = builder.ins().fcmp(FloatCC::NotEqual, c_val, zero);
             Ok(builder.ins().select(cmp, t_val, f_val))
         }
-        Expression::Call(func_name, args) => {
-            if func_name == "size" {
-                if args.is_empty() || args.len() > 2 {
-                    return Err(format!("size() expects 1 or 2 arguments, got {}", args.len()));
-                }
-                let dim = if args.len() == 1 {
-                    1_i64
-                } else if let Expression::Number(n) = args[1] {
-                    n as i64
-                } else {
-                    1_i64
-                };
-                match &args[0] {
-                    Expression::Variable(id) => {
-                        let name = crate::string_intern::resolve_id(*id);
-                        if let Some(size) = ctx.array_len(&name) {
-                            let out = if dim <= 1 { size as f64 } else { 1.0 };
-                            return Ok(builder.ins().f64const(out));
-                        }
-                    }
-                    Expression::Number(_) => {
-                        return Ok(builder.ins().f64const(1.0));
-                    }
-                    Expression::ArrayLiteral(items) => {
-                        let out = if dim <= 1 { items.len() as f64 } else { 1.0 };
-                        return Ok(builder.ins().f64const(out));
-                    }
-                    _ => {}
-                }
-                // If we can't infer the size statically, do not fall through to the generic
-                // external import path (which would require a host symbol `size`).
-                // Degrade to 1.0 to keep validation/JIT robust.
-                return Ok(builder.ins().f64const(1.0));
-            }
-            if func_name == "pre" {
-                if args.len() != 1 {
-                    return Err(format!("pre() expects 1 argument, got {}", args.len()));
-                }
-                let arg = &args[0];
-                if let Expression::Variable(id) = arg {
-                    let var_name = crate::string_intern::resolve_id(*id);
-                    if let Some(idx) = ctx.state_index(&var_name) {
-                        let offset = (idx * 8) as i32;
-                        return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.pre_states_ptr, offset));
-                    }
-                    if let Some(idx) = ctx.discrete_index(&var_name) {
-                        let offset = (idx * 8) as i32;
-                        return Ok(builder.ins().load(cl_types::F64, MemFlags::new(), ctx.pre_discrete_ptr, offset));
-                    }
-                }
-                return compile_pre_expression(arg, ctx, builder);
-            }
-            if func_name == "edge" {
-                if args.len() != 1 {
-                    return Err("edge() expects 1 argument".to_string());
-                }
-                let arg = &args[0];
-                let curr_val = compile_expression_rec(arg, ctx, builder)?;
-                let pre_val = compile_pre_expression(arg, ctx, builder)?;
-                let zero = builder.ins().f64const(0.0);
-                let curr_bool = builder.ins().fcmp(FloatCC::NotEqual, curr_val, zero);
-                let pre_zero = builder.ins().fcmp(FloatCC::Equal, pre_val, zero);
-                let res_bool = builder.ins().band(curr_bool, pre_zero);
-                let one = builder.ins().f64const(1.0);
-                return Ok(builder.ins().select(res_bool, one, zero));
-            }
-            if func_name == "change" {
-                if args.len() != 1 {
-                    return Err("change() expects 1 argument".to_string());
-                }
-                let arg = &args[0];
-                let curr_val = compile_expression_rec(arg, ctx, builder)?;
-                let pre_val = compile_pre_expression(arg, ctx, builder)?;
-                let diff = builder.ins().fcmp(FloatCC::NotEqual, curr_val, pre_val);
-                let one = builder.ins().f64const(1.0);
-                let zero = builder.ins().f64const(0.0);
-                return Ok(builder.ins().select(diff, one, zero));
-            }
-            if func_name.ends_with("realFFTwriteToFile") || func_name == "realFFTwriteToFile" {
-                return compile_real_fft_write_to_file_call(args, ctx, builder);
-            }
-            if let Some(res) = try_compile_builtin_call(func_name, args, ctx, builder, compile_expression_rec) {
-                return res;
-            }
-            if func_name == "assert" {
-                if args.len() != 2 {
-                    return Err(format!("assert() expects 2 arguments (condition, message), got {}", args.len()));
-                }
-                let cond_val = compile_expression_rec(&args[0], ctx, builder)?;
-                let msg_val = compile_expression_rec(&args[1], ctx, builder)?;
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.returns.push(AbiParam::new(cl_types::F64));
-                let func_id = ctx.module.declare_function("assert", Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())?;
-                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                builder.ins().call(func_ref, &[cond_val, msg_val]);
-                return Ok(builder.ins().f64const(0.0));
-            }
-            if func_name == "terminate" {
-                if args.len() != 1 {
-                    return Err(format!("terminate() expects 1 argument (message), got {}", args.len()));
-                }
-                let msg_val = compile_expression_rec(&args[0], ctx, builder)?;
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.returns.push(AbiParam::new(cl_types::F64));
-                let func_id = ctx.module.declare_function("terminate", Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())?;
-                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                builder.ins().call(func_ref, &[msg_val]);
-                return Ok(builder.ins().f64const(0.0));
-            }
-
-            // In validate-mode JIT, avoid importing unknown call-site names, which would
-            // require a host symbol and can panic inside cranelift-jit if missing.
-            let is_external_modelica = ctx
-                .external_modelica_names
-                .map(|s| s.contains(func_name))
-                .unwrap_or(false);
-            if !is_external_modelica
-                && !crate::jit::native::builtin_jit_symbol_names()
-                    .iter()
-                    .any(|&n| n == func_name)
-            {
-                jit_builtin_fallback_warn_once(func_name, "unknown-import");
-                if args.is_empty() {
-                    return Ok(builder.ins().f64const(0.0));
-                }
-                return compile_expression_rec(&args[0], ctx, builder);
-            }
-
-            let ptr_type = ctx.module.target_config().pointer_type();
-            let mut sig = ctx.module.make_signature();
-            let mut arg_vals = Vec::new();
-            for arg in args {
-                if let Expression::Variable(id) = arg {
-                    let name = crate::string_intern::resolve_id(*id);
-                    // FUNC-1: Array argument ABI - pass ptr + size as dual parameters
-                    if let Some(info) = ctx.array_info.get(&name) {
-                        // Get base pointer for the array
-                        let base_ptr = match info.array_type {
-                            crate::jit::types::ArrayType::State => ctx.states_ptr,
-                            crate::jit::types::ArrayType::Discrete => ctx.discrete_ptr,
-                            crate::jit::types::ArrayType::Parameter => ctx.params_ptr,
-                            crate::jit::types::ArrayType::Output => ctx.outputs_ptr,
-                            crate::jit::types::ArrayType::Derivative => ctx.derivs_ptr,
-                        };
-                        let start_offset = (info.start_index * 8) as i64;
-                        let start_const = builder.ins().iconst(ptr_type, start_offset);
-                        let array_ptr = builder.ins().iadd(base_ptr, start_const);
-                        
-                        // Array size as f64 (Modelica convention)
-                        let size_val = builder.ins().f64const(info.size as f64);
-                        
-                        // Push ptr then size (C ABI: double* ptr, double size)
-                        sig.params.push(AbiParam::new(ptr_type));
-                        arg_vals.push(array_ptr);
-                        sig.params.push(AbiParam::new(cl_types::F64));
-                        arg_vals.push(size_val);
-                        continue;
-                    }
-                }
-                if let Expression::ArrayLiteral(items) = arg {
-                    let mut elems: Vec<f64> = Vec::with_capacity(items.len());
-                    for it in items {
-                        match it {
-                            Expression::Number(n) => elems.push(*n),
-                            _ => {
-                                return Err(format!(
-                                    "JIT external call '{}': array argument must be a numeric literal list (EXT-3).",
-                                    func_name
-                                ));
-                            }
-                        }
-                    }
-                    let data_id = match ctx.get_or_create_f64_array_literal_data(&elems)? {
-                        Some(id) => id,
-                        None => {
-                            return Err(
-                                "Array literal in external call requires JIT data context (EXT-3)."
-                                    .to_string(),
-                            );
-                        }
-                    };
-                    sig.params.push(AbiParam::new(ptr_type));
-                    let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
-                    arg_vals.push(builder.ins().global_value(ptr_type, gv));
-                    sig.params.push(AbiParam::new(cl_types::F64));
-                    arg_vals.push(builder.ins().f64const(elems.len() as f64));
-                    continue;
-                }
-                if let Expression::StringLiteral(s) = arg {
-                    let data_id = match ctx.get_or_create_string_data(s)? {
-                        Some(id) => id,
-                        None => {
-                            return Err("String argument in function call requires string data context (FUNC-7). Ensure JIT compilation is configured with string literal support.".to_string());
-                        }
-                    };
-                    sig.params.push(AbiParam::new(ptr_type));
-                    let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
-                    arg_vals.push(builder.ins().global_value(ptr_type, gv));
-                    continue;
-                }
-                let val = compile_expression_rec(arg, ctx, builder)?;
-                sig.params.push(AbiParam::new(cl_types::F64));
-                arg_vals.push(val);
-            }
-            sig.returns.push(AbiParam::new(cl_types::F64));
-            if jit_import_debug_enabled() {
-                let mut array_args = Vec::new();
-                for a in args {
-                    if let Expression::Variable(id) = a {
-                        let n = crate::string_intern::resolve_id(*id);
-                        if ctx.array_info.contains_key(&n) {
-                            array_args.push(n);
-                        }
-                    }
-                }
-                eprintln!(
-                    "[jit-import] name={} sig={} array_args={}",
-                    func_name,
-                    abi_params_short(&sig),
-                    if array_args.is_empty() {
-                        "-".to_string()
-                    } else {
-                        array_args.join(",")
-                    }
-                );
-            }
-            let abi_tag = import_call_abi_tag(args, ctx);
-            let func_id = lookup_or_insert_import(func_name, abi_tag, &sig, ctx)?;
-            let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-            let call_inst = builder.ins().call(func_ref, &arg_vals);
-            Ok(builder.inst_results(call_inst)[0])
-        }
+        Expression::Call(func_name, args) => compile_call(func_name, args, ctx, builder, compile_expression_rec),
         Expression::Der(inner) => {
             if let Some(expanded) = crate::analysis::derivative::expand_der_linear(inner) {
                 return compile_expression_rec(&expanded, ctx, builder);
@@ -624,7 +166,7 @@ pub(super) fn compile_expression_rec(
         }
         Expression::Range(_, _, _) => Ok(builder.ins().f64const(0.0)),
         Expression::Dot(inner, member) => {
-            if let Some(prefix) = expr_to_connector_path(inner) {
+            if let Some(prefix) = crate::ast::expr_to_connector_path(inner) {
                 if let Some(v) = modelica_constants_dot_member(&prefix, member) {
                     return Ok(builder.ins().f64const(v));
                 }
@@ -660,7 +202,7 @@ pub(super) fn compile_expression_rec(
                     }
                 }
             }
-            if let Some(path) = expr_to_connector_path(expr) {
+            if let Some(path) = crate::ast::expr_to_connector_path(expr) {
                 if jit_scalar_name_bound(ctx, &path) {
                     return compile_expression_rec(&Expression::var(&path), ctx, builder);
                 }
@@ -669,12 +211,12 @@ pub(super) fn compile_expression_rec(
                     return compile_expression_rec(&Expression::var(&path_us), ctx, builder);
                 }
             }
-            if let Some(full_flat) = expr_to_flat_scalar_prefix(expr) {
+            if let Some(full_flat) = crate::ast::expr_to_flat_scalar_prefix(expr) {
                 if jit_scalar_name_bound(ctx, &full_flat) {
                     return compile_expression_rec(&Expression::var(&full_flat), ctx, builder);
                 }
             }
-            if let Some(prefix) = expr_to_flat_scalar_prefix(inner) {
+            if let Some(prefix) = crate::ast::expr_to_flat_scalar_prefix(inner) {
                 let flat = format!("{}_{}", prefix, member);
                 if jit_scalar_name_bound(ctx, &flat) {
                     return compile_expression_rec(&Expression::var(&flat), ctx, builder);
@@ -705,9 +247,6 @@ pub(super) fn compile_expression_rec(
             }
         }
         Expression::ArrayComprehension { expr, iter_var, iter_range } => {
-            // P3-2: Full JIT support for array comprehension {expr for i in 1:n}
-            // Scalar JIT path: evaluate expr at the first logical iteration point.
-            // Supports dynamic Range(start, step, end) instead of silently returning 0.0.
             let (start_val, step_val, end_val) = match iter_range.as_ref() {
                 Expression::Range(start, step, end) => (
                     compile_expression_rec(start.as_ref(), ctx, builder)?,
@@ -727,17 +266,18 @@ pub(super) fn compile_expression_rec(
                 }
             };
 
-            // First iteration value is the dynamic start value.
             let old_val = ctx.var_map.get(iter_var).copied();
             ctx.var_map.insert(iter_var.clone(), start_val);
             let result = compile_expression_rec(expr, ctx, builder);
-            // Restore old value
             match old_val {
-                Some(v) => { ctx.var_map.insert(iter_var.clone(), v); }
-                None => { ctx.var_map.remove(iter_var); }
+                Some(v) => {
+                    ctx.var_map.insert(iter_var.clone(), v);
+                }
+                None => {
+                    ctx.var_map.remove(iter_var);
+                }
             }
 
-            // Validate a non-empty range: step != 0 and direction-consistent bounds.
             let zero = builder.ins().f64const(0.0);
             let step_pos = builder.ins().fcmp(FloatCC::GreaterThan, step_val, zero);
             let step_neg = builder.ins().fcmp(FloatCC::LessThan, step_val, zero);
@@ -754,298 +294,12 @@ pub(super) fn compile_expression_rec(
             Ok(builder.ins().select(range_valid, result_val, zero))
         }
         Expression::StringLiteral(_) => Ok(builder.ins().f64const(0.0)),
-        Expression::Sample(interval_expr) => {
-            // sample(x): in synchronous equations it denotes sampled value of x.
-            // Keep trigger-like behavior only for numeric sample(period) usage.
-            if matches!(&**interval_expr, Expression::Number(_)) {
-                let interval_val = compile_expression_rec(interval_expr, ctx, builder)?;
-                let time_val = ctx.var_map.get("time").copied().ok_or("sample() requires time in context".to_string())?;
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.returns.push(AbiParam::new(cl_types::F64));
-                let func_id = ctx.module.declare_function("rustmodlica_sample", Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())?;
-                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                let call_inst = builder.ins().call(func_ref, &[time_val, interval_val]);
-                Ok(builder.inst_results(call_inst)[0])
-            } else {
-                compile_expression_rec(interval_expr, ctx, builder)
-            }
-        }
-        Expression::Interval(clock_expr) => {
-            match &**clock_expr {
-                Expression::Sample(inner) => {
-                    if matches!(&**inner, Expression::Number(_)) {
-                        compile_expression_rec(inner, ctx, builder)
-                    } else {
-                        warn_clock_degrade_once("interval");
-                        Ok(builder.ins().f64const(0.0))
-                    }
-                }
-                Expression::Call(name, cargs)
-                    if (name.eq_ignore_ascii_case("clock") || name.ends_with(".clock")
-                        || name.eq_ignore_ascii_case("sample") || name.ends_with(".sample"))
-                        && !cargs.is_empty() =>
-                {
-                    compile_expression_rec(cargs.last().unwrap(), ctx, builder)
-                }
-                Expression::Variable(id) if crate::string_intern::resolve_id(*id).contains("simTime") => {
-                    warn_clock_degrade_once("interval");
-                    Ok(builder.ins().f64const(0.0))
-                }
-                _ => compile_expression_rec(clock_expr, ctx, builder),
-            }
-        }
-        Expression::Hold(inner) => compile_expression_rec(inner, ctx, builder),
         Expression::Previous(inner) => compile_pre_expression(inner, ctx, builder),
-        Expression::SubSample(clock_expr, n_expr) => {
-            if let Some((time_arg, interval_val)) =
-                compile_base_sample_trigger(clock_expr, ctx, builder)?
-            {
-                let n_val = compile_expression_rec(n_expr, ctx, builder)?;
-                let zero = builder.ins().f64const(0.0);
-                let one = builder.ins().f64const(1.0);
-                let n_pos = builder.ins().fcmp(FloatCC::GreaterThan, n_val, zero);
-                let n_safe = builder.ins().select(n_pos, n_val, one);
-                let scaled_interval = builder.ins().fmul(interval_val, n_safe);
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.returns.push(AbiParam::new(cl_types::F64));
-                let func_id = ctx
-                    .module
-                    .declare_function("rustmodlica_sample", Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())?;
-                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                let call_inst = builder.ins().call(func_ref, &[time_arg, scaled_interval]);
-                Ok(builder.inst_results(call_inst)[0])
-            } else {
-                warn_clock_degrade_once("subSample");
-                compile_expression_rec(clock_expr, ctx, builder)
-            }
-        }
-        Expression::SuperSample(clock_expr, n_expr) => {
-            if let Some((time_arg, interval_val)) =
-                compile_base_sample_trigger(clock_expr, ctx, builder)?
-            {
-                let n_val = compile_expression_rec(n_expr, ctx, builder)?;
-                let one = builder.ins().f64const(1.0);
-                let zero = builder.ins().f64const(0.0);
-                let n_pos = builder.ins().fcmp(FloatCC::GreaterThan, n_val, zero);
-                let n_safe = builder.ins().select(n_pos, n_val, one);
-                let scaled_interval = builder.ins().fdiv(interval_val, n_safe);
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.returns.push(AbiParam::new(cl_types::F64));
-                let func_id = ctx
-                    .module
-                    .declare_function("rustmodlica_sample", Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())?;
-                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                let call_inst = builder.ins().call(func_ref, &[time_arg, scaled_interval]);
-                Ok(builder.inst_results(call_inst)[0])
-            } else {
-                warn_clock_degrade_once("superSample");
-                compile_expression_rec(clock_expr, ctx, builder)
-            }
-        }
-        Expression::ShiftSample(clock_expr, n_expr) => {
-            if let Some((time_arg, interval_val)) =
-                compile_base_sample_trigger(clock_expr, ctx, builder)?
-            {
-                let n_val = compile_expression_rec(n_expr, ctx, builder)?;
-                let shift = builder.ins().fmul(interval_val, n_val);
-                let shifted_t = builder.ins().fsub(time_arg, shift);
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.returns.push(AbiParam::new(cl_types::F64));
-                let func_id = ctx
-                    .module
-                    .declare_function("rustmodlica_sample", Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())?;
-                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                let call_inst = builder.ins().call(func_ref, &[shifted_t, interval_val]);
-                Ok(builder.inst_results(call_inst)[0])
-            } else {
-                warn_clock_degrade_once("shiftSample");
-                compile_expression_rec(clock_expr, ctx, builder)
-            }
-        }
-        Expression::BackSample(clock_expr, n_expr) => {
-            // MLS: first tick of backSample(u, factor) is shifted (factor-1) base-clock ticks
-            // vs first tick of subSample(u, factor); same slow period as subSample.
-            if let Some((time_arg, interval_val)) =
-                compile_base_sample_trigger(clock_expr, ctx, builder)?
-            {
-                let n_val = compile_expression_rec(n_expr, ctx, builder)?;
-                let one = builder.ins().f64const(1.0);
-                let zero = builder.ins().f64const(0.0);
-                let n_pos = builder.ins().fcmp(FloatCC::GreaterThan, n_val, zero);
-                let n_safe = builder.ins().select(n_pos, n_val, one);
-                let n_minus_one = builder.ins().fsub(n_safe, one);
-                let slow_period = builder.ins().fmul(n_safe, interval_val);
-                let t0 = builder.ins().fmul(n_minus_one, interval_val);
-                let shifted_t = builder.ins().fsub(time_arg, t0);
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.params.push(AbiParam::new(cl_types::F64));
-                sig.returns.push(AbiParam::new(cl_types::F64));
-                let func_id = ctx
-                    .module
-                    .declare_function("rustmodlica_sample", Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())?;
-                let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-                let call_inst = builder.ins().call(func_ref, &[shifted_t, slow_period]);
-                Ok(builder.inst_results(call_inst)[0])
-            } else {
-                warn_clock_degrade_once("backSample");
-                compile_expression_rec(clock_expr, ctx, builder)
-            }
-        }
+        _ => Err(format!(
+            "unsupported expression variant in scalar JIT path: {:?}",
+            expr
+        )),
     }
-}
-
-fn compile_real_fft_write_to_file_call(
-    args: &[Expression],
-    ctx: &mut TranslationContext,
-    builder: &mut cranelift::frontend::FunctionBuilder<'_>,
-) -> Result<Value, String> {
-    if args.len() < 4 {
-        return Err(format!(
-            "realFFTwriteToFile expects at least 4 arguments, got {}",
-            args.len()
-        ));
-    }
-    let t_val = compile_expression(&args[0], ctx, builder)?;
-    let path_s = match &args[1] {
-        Expression::StringLiteral(s) => s.clone(),
-        _ => {
-            return Err(
-                "realFFTwriteToFile: fileName must be a string literal in JIT".to_string(),
-            );
-        }
-    };
-    let data_id = match ctx.get_or_create_string_data(&path_s)? {
-        Some(id) => id,
-        None => {
-            return Err(
-                "realFFTwriteToFile: string data not available (FUNC-7)".to_string(),
-            );
-        }
-    };
-    let ptr_ty = ctx.module.target_config().pointer_type();
-    let path_ptr = {
-        let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
-        builder.ins().global_value(ptr_ty, gv)
-    };
-    let f_max_val = compile_expression(&args[2], ctx, builder)?;
-    let amp_name = match &args[3] {
-        Expression::Variable(id) => crate::string_intern::resolve_id(*id),
-        _ => {
-            return Err(
-                "realFFTwriteToFile: amplitudes must be an array variable".to_string(),
-            );
-        }
-    };
-    let n_amp = ctx.array_len(&amp_name).ok_or_else(|| {
-        format!(
-            "realFFTwriteToFile: unknown array length for '{}'",
-            amp_name
-        )
-    })?;
-    let (a_ty, a_start) = ctx.array_storage(&amp_name).ok_or_else(|| {
-        format!(
-            "realFFTwriteToFile: no storage for array '{}'",
-            amp_name
-        )
-    })?;
-    let amp_base = match a_ty {
-        ArrayType::State => ctx.states_ptr,
-        ArrayType::Discrete => ctx.discrete_ptr,
-        ArrayType::Parameter => ctx.params_ptr,
-        ArrayType::Output => ctx.outputs_ptr,
-        ArrayType::Derivative => ctx.derivs_ptr,
-    };
-    let amp_off = builder
-        .ins()
-        .iconst(ptr_ty, (a_start * 8) as i64);
-    let amp_ptr = builder.ins().iadd(amp_base, amp_off);
-
-    let (phase_ptr_val, n_phase_val) = if args.len() >= 5 {
-        let ph_name = match &args[4] {
-            Expression::Variable(id) => crate::string_intern::resolve_id(*id),
-            _ => {
-                return Err(
-                    "realFFTwriteToFile: phases must be an array variable".to_string(),
-                );
-            }
-        };
-        let n_ph = ctx.array_len(&ph_name).ok_or_else(|| {
-            format!(
-                "realFFTwriteToFile: unknown phase array length for '{}'",
-                ph_name
-            )
-        })?;
-        let (p_ty, p_start) = ctx.array_storage(&ph_name).ok_or_else(|| {
-            format!(
-                "realFFTwriteToFile: no storage for phase array '{}'",
-                ph_name
-            )
-        })?;
-        let p_base = match p_ty {
-            ArrayType::State => ctx.states_ptr,
-            ArrayType::Discrete => ctx.discrete_ptr,
-            ArrayType::Parameter => ctx.params_ptr,
-            ArrayType::Output => ctx.outputs_ptr,
-            ArrayType::Derivative => ctx.derivs_ptr,
-        };
-        let p_off = builder
-            .ins()
-            .iconst(ptr_ty, (p_start * 8) as i64);
-        let pp = builder.ins().iadd(p_base, p_off);
-        let n_ph_i = builder.ins().iconst(cl_types::I64, n_ph as i64);
-        (pp, n_ph_i)
-    } else {
-        let zero = builder.ins().iconst(ptr_ty, 0);
-        let nz = builder.ins().iconst(cl_types::I64, 0);
-        (zero, nz)
-    };
-
-    let n_amp_val = builder.ins().iconst(cl_types::I64, n_amp as i64);
-
-    let mut sig = ctx.module.make_signature();
-    sig.params.push(AbiParam::new(cl_types::F64));
-    sig.params.push(AbiParam::new(ptr_ty));
-    sig.params.push(AbiParam::new(cl_types::F64));
-    sig.params.push(AbiParam::new(ptr_ty));
-    sig.params.push(AbiParam::new(cl_types::I64));
-    sig.params.push(AbiParam::new(ptr_ty));
-    sig.params.push(AbiParam::new(cl_types::I64));
-    sig.returns.push(AbiParam::new(cl_types::F64));
-
-    let func_id = lookup_or_insert_import(
-        "rustmodlica_real_fft_write_to_file",
-        "v1".to_string(),
-        &sig,
-        ctx,
-    )?;
-    let func_ref = ctx.module.declare_func_in_func(func_id, &mut builder.func);
-    let call_inst = builder.ins().call(
-        func_ref,
-        &[
-            t_val,
-            path_ptr,
-            f_max_val,
-            amp_ptr,
-            n_amp_val,
-            phase_ptr_val,
-            n_phase_val,
-        ],
-    );
-    Ok(builder.inst_results(call_inst)[0])
 }
 
 pub fn compile_expression(

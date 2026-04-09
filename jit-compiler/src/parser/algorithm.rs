@@ -8,8 +8,8 @@ pub(super) fn parse_algorithm_stmt(pair: Pair<Rule>) -> AlgorithmStatement {
     match pair.as_rule() {
         Rule::annotation_clause => AlgorithmStatement::NoOp,
         Rule::visibility_clause => AlgorithmStatement::NoOp,
-        Rule::break_stmt => AlgorithmStatement::NoOp,
-        Rule::return_stmt => AlgorithmStatement::NoOp,
+        Rule::break_stmt => AlgorithmStatement::Break,
+        Rule::return_stmt => AlgorithmStatement::Return(None),
         Rule::assignment_stmt => {
             let mut inner = pair.into_inner();
             let lhs_pair = inner.next().unwrap();

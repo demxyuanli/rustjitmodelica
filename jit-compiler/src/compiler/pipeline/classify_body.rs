@@ -159,6 +159,12 @@ pub(crate) fn classify_variables(
             }
             AlgorithmStatement::CallStmt(e) => collect_previous_vars_expr(e, out),
             AlgorithmStatement::NoOp => {}
+            AlgorithmStatement::Break => {}
+            AlgorithmStatement::Return(v) => {
+                if let Some(expr) = v {
+                    collect_previous_vars_expr(expr, out);
+                }
+            }
             AlgorithmStatement::If(c, t, elseifs, els) => {
                 collect_previous_vars_expr(c, out);
                 for s in t {

@@ -485,6 +485,19 @@ fn write_algorithm_statement(buf: &mut String, a: &AlgorithmStatement) {
             buf.push_str(";\n");
         }
         AlgorithmStatement::NoOp => {}
+        AlgorithmStatement::Break => {
+            buf.push_str("  break;\n");
+        }
+        AlgorithmStatement::Return(v) => {
+            match v {
+                Some(expr) => {
+                    buf.push_str("  return ");
+                    write_expression(buf, expr);
+                    buf.push_str(";\n");
+                }
+                None => buf.push_str("  return;\n"),
+            }
+        }
         AlgorithmStatement::Reinit(var, expr) => {
             buf.push_str("  reinit(");
             buf.push_str(var);

@@ -139,6 +139,10 @@ fn strict_pre() -> bool {
     legacy_var_strict() || policy_strict_domains().contains("pre")
 }
 
+fn strict_pre_generic_underscore() -> bool {
+    policy_strict_domains().contains("pre_generic_underscore")
+}
+
 fn strict_dot() -> bool {
     policy_strict_domains().contains("dot")
 }
@@ -299,7 +303,7 @@ pub fn lookup_pre_variable_fallback(name: &str) -> Option<(f64, String)> {
             return Some(x);
         }
     }
-    if p.pre_generic_underscore_fallback && name.contains('_') {
+    if p.pre_generic_underscore_fallback && name.contains('_') && !strict_pre_generic_underscore() {
         return Some((0.0, "pre-generic-underscore-placeholder".to_string()));
     }
     None

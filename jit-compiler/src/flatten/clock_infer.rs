@@ -226,6 +226,7 @@ impl Flattener {
                     }
                     AlgorithmStatement::CallStmt(_) => {}
                     AlgorithmStatement::NoOp => {}
+                    AlgorithmStatement::Break | AlgorithmStatement::Return(_) => {}
                     AlgorithmStatement::If(_, then_stmts, else_ifs, else_stmts) => {
                         walk_algorithms(then_stmts, in_clocked, inherited_part, partmap, union);
                         for (_, s) in else_ifs {

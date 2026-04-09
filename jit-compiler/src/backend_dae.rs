@@ -8,7 +8,7 @@ use crate::analysis::{build_solvable_block_sparse_pattern, BlockCausalityInfo};
 use crate::ast::Equation;
 
 /// Block type for partitioning (IR1-3): explicit single eq, torn nonlinear system, or mixed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub enum BlockType {
     /// Single equation (explicit or linear)
@@ -20,7 +20,7 @@ pub enum BlockType {
 }
 
 /// One strongly connected component / block after BLT (IR1-3).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct BlockInfo {
     pub block_type: BlockType,
@@ -47,7 +47,7 @@ pub struct BlockInfo {
 }
 
 /// Variable classification for explicit DAE: 0 = F(x, x', z, u, t)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DaeVariableSets {
     /// State variables x
     pub states: Vec<String>,
@@ -112,7 +112,7 @@ impl DaeVariableSets {
 }
 
 /// SYNC-2: One clock partition for solver/event handling (vars updated on same clock).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ClockPartition {
     pub id: String,
     pub var_names: HashSet<String>,
@@ -120,7 +120,7 @@ pub struct ClockPartition {
 
 /// Explicit DAE system: variable sets + equation counts + blocks (IR1-1, IR1-3).
 /// Residual form: 0 = F(x, x', z, u, t).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct DaeSystem {
     pub variables: DaeVariableSets,
@@ -140,7 +140,7 @@ pub struct DaeSystem {
 }
 
 /// Initial equation system: same structure as DaeSystem but for initial equations only.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct InitialDae {
     pub equation_count: usize,
@@ -148,7 +148,7 @@ pub struct InitialDae {
 }
 
 /// Simulation DAE (continuous time): full explicit form.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationDae {
     pub dae: DaeSystem,
     /// Optional: initial system for consistent initialization

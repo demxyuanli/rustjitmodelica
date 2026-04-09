@@ -475,6 +475,8 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         clock_partitions: Vec::new(),
         clock_signal_connections: Vec::new(),
         stream_peer_map: HashMap::new(),
+        stream_connection_set: HashMap::new(),
+        stream_flow_map: HashMap::new(),
         interner: crate::string_intern::StringInterner::new(),
         // Not needed for this stage.
         inst_records: Vec::new(),

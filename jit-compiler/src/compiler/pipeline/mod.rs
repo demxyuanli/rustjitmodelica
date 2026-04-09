@@ -7,6 +7,7 @@ mod normalize_eq;
 mod trace;
 mod types;
 
+pub(crate) use types::{AnalysisStage, VariableLayout};
 pub use geometric_default::geometric_default_for_name;
 pub(crate) use algorithms::{build_runtime_algorithms, collect_newton_tearing_var_names};
 pub(crate) use analyze::analyze_equations;

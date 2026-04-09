@@ -9,18 +9,21 @@ pub struct SqliteCacheConfig {
     pub path: PathBuf,
 }
 
-fn parse_bool_env(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|v| {
+fn parse_bool_env_default_true(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => {
             let t = v.trim();
-            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false)
+            if t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no") {
+                return false;
+            }
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes") || t.is_empty()
+        }
+        Err(_) => true,
+    }
 }
 
 pub fn sqlite_config(cache_dir: Option<&Path>) -> Option<SqliteCacheConfig> {
-    if !parse_bool_env("RUSTMODLICA_CACHE_SQLITE") {
+    if !parse_bool_env_default_true("RUSTMODLICA_CACHE_SQLITE") {
         return None;
     }
     let dir = cache_dir?;
@@ -31,7 +34,7 @@ pub fn sqlite_config(cache_dir: Option<&Path>) -> Option<SqliteCacheConfig> {
 }
 
 pub fn sqlite_config_for_scope(scope: CacheScope, cache_dir: Option<&Path>) -> Option<SqliteCacheConfig> {
-    if !parse_bool_env("RUSTMODLICA_CACHE_SQLITE") {
+    if !parse_bool_env_default_true("RUSTMODLICA_CACHE_SQLITE") {
         return None;
     }
     let dir = cache_dir?;
@@ -345,7 +348,7 @@ pub struct CacheStatsLayerExport {
 
 /// Per-tier `cache_kind_stats` when the DB file already exists (does not create empty DBs).
 pub fn export_sqlite_kind_stats_layers(cache_dir: &Path) -> Vec<CacheStatsLayerExport> {
-    if !parse_bool_env("RUSTMODLICA_CACHE_SQLITE") {
+    if !parse_bool_env_default_true("RUSTMODLICA_CACHE_SQLITE") {
         return Vec::new();
     }
     let mut out = Vec::new();

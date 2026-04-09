@@ -41,6 +41,11 @@ pub struct System<'a> {
     pub buf_crossings: Vec<f64>,
     pub buf_outputs: Vec<f64>,
     pub buf_guess: Vec<f64>,
+    pub eval_count: u64,
+    pub hotspot_threshold: u64,
+    pub simd_step_hits: u64,
+    pub simd_step_fallbacks: u64,
+    pub stack_scratch_enabled: bool,
 }
 
 impl<'a> System<'a> {
@@ -101,6 +106,13 @@ impl<'a> System<'a> {
         states: &mut [f64],
         derivs: &mut [f64],
     ) -> Result<(), i32> {
+        self.eval_count = self.eval_count.saturating_add(1);
+        if self.hotspot_threshold > 0 && self.eval_count % self.hotspot_threshold == 0 {
+            eprintln!(
+                "[jit-hotspot] eval_count={} threshold={}",
+                self.eval_count, self.hotspot_threshold
+            );
+        }
         unsafe {
             let status = (self.calc_derivs)(
                 time,
@@ -136,6 +148,19 @@ impl<'a> System<'a> {
         states: &mut [f64],
         derivs: &mut [f64],
     ) -> Result<(), i32> {
+        self.eval_count = self.eval_count.saturating_add(1);
+        if self.hotspot_threshold > 0 && self.eval_count % self.hotspot_threshold == 0 {
+            eprintln!(
+                "[jit-hotspot] eval_scratch_count={} threshold={}",
+                self.eval_count, self.hotspot_threshold
+            );
+        }
+        if !self.stack_scratch_enabled {
+            self.buf_discrete.clear();
+            self.buf_when.clear();
+            self.buf_crossings.clear();
+            self.buf_outputs.clear();
+        }
         self.buf_discrete.resize(self.discrete.len(), 0.0);
         self.buf_discrete.copy_from_slice(self.discrete);
         self.buf_when.resize(self.when_states.len(), 0.0);
@@ -420,9 +445,36 @@ impl Solver for RungeKutta4Solver {
         system.evaluate_scratch(time + dt, &mut self.tmp_states, &mut self.k4)?;
 
         // y_{n+1} = y_n + h/6 * (k1 + 2k2 + 2k3 + k4)
-        for i in 0..n {
-            states[i] +=
-                (dt / 6.0) * (self.k1[i] + 2.0 * self.k2[i] + 2.0 * self.k3[i] + self.k4[i]);
+        let simd_enabled = std::env::var("RUSTMODLICA_SIMD_STEP")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+            .unwrap_or(false);
+        if simd_enabled && n >= 4 {
+            let scale = dt / 6.0;
+            let mut i = 0usize;
+            while i + 3 < n {
+                states[i] += scale * (self.k1[i] + 2.0 * self.k2[i] + 2.0 * self.k3[i] + self.k4[i]);
+                states[i + 1] +=
+                    scale * (self.k1[i + 1] + 2.0 * self.k2[i + 1] + 2.0 * self.k3[i + 1] + self.k4[i + 1]);
+                states[i + 2] +=
+                    scale * (self.k1[i + 2] + 2.0 * self.k2[i + 2] + 2.0 * self.k3[i + 2] + self.k4[i + 2]);
+                states[i + 3] +=
+                    scale * (self.k1[i + 3] + 2.0 * self.k2[i + 3] + 2.0 * self.k3[i + 3] + self.k4[i + 3]);
+                i += 4;
+                system.simd_step_hits = system.simd_step_hits.saturating_add(1);
+            }
+            while i < n {
+                states[i] += scale * (self.k1[i] + 2.0 * self.k2[i] + 2.0 * self.k3[i] + self.k4[i]);
+                i += 1;
+            }
+        } else {
+            if simd_enabled {
+                system.simd_step_fallbacks = system.simd_step_fallbacks.saturating_add(1);
+            }
+            for i in 0..n {
+                states[i] +=
+                    (dt / 6.0) * (self.k1[i] + 2.0 * self.k2[i] + 2.0 * self.k3[i] + self.k4[i]);
+            }
         }
 
         Ok(())

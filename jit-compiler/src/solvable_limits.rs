@@ -6,10 +6,12 @@
 //!
 //! This crate keeps **dense** Newton for moderate `n` with a **heap workspace** once `n` exceeds a small stack-safe threshold.
 //!
-//! ## Planned: sparse direct / iterative linear solve (not implemented)
-//! - **Direct**: symbolic/numeric sparse Jacobian in CSR/CSC; factorize with KLU/UMFPACK-style LU or Cholesky when structurally symmetric PD; reuse symbolic factorization across steps.
-//! - **Iterative**: GMRES/BiCGSTAB + Jacobian-vector products (avoid forming full J) or sparse J + ILU preconditioner; line search unchanged.
-//! - **Selection**: auto-pick by `nnz/n`, condition hints, or user flag; keep dense path for small `n`.
+//! ## Sparse Jacobian / linear solve (in-tree, policy-gated)
+//! - CSR Jacobian assembly and faer sparse LU are integrated for Newton blocks when
+//!   `should_use_newton_sparse_path` selects sparse mode (`RUSTMODLICA_NEWTON_SPARSE_POLICY`,
+//!   density heuristics using `NEWTON_SPARSE_AUTO_MAX_DENSITY`, and related constants below).
+//! - Dense Newton (stack or heap workspace) remains for small systems and when sparse is not selected.
+//! - **Future**: external direct solvers (KLU/UMFPACK-style) or iterative Krylov + ILU are not wired.
 
 /// Maximum number of residuals (and matched unknowns) accepted for a single `SolvableBlock` in JIT and C emission.
 pub const MAX_SOLVABLE_RESIDUALS: usize = 2048;

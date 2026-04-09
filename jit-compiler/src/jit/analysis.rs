@@ -117,7 +117,9 @@ pub fn collect_modified(stmt: &AlgorithmStatement, vars: &mut HashSet<String>) {
         AlgorithmStatement::Assert(_, _)
         | AlgorithmStatement::Terminate(_)
         | AlgorithmStatement::CallStmt(_)
-        | AlgorithmStatement::NoOp => {}
+        | AlgorithmStatement::NoOp
+        | AlgorithmStatement::Break
+        | AlgorithmStatement::Return(_) => {}
     }
 }
 

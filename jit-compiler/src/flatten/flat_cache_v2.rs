@@ -30,6 +30,7 @@ pub struct FlatCacheV2 {
     pub clock_partitions_bytes: Option<Vec<u8>>,
     pub clock_signal_connections_bytes: Option<Vec<u8>>,
     pub stream_peer_map_bytes: Option<Vec<u8>>,
+    pub stream_connection_set_bytes: Option<Vec<u8>>,
     pub deps: Vec<DepHashEntry>,
 }
 
@@ -60,6 +61,7 @@ impl FlatCacheV2 {
             clock_partitions_bytes: bincode::serialize(&flat.clock_partitions).ok(),
             clock_signal_connections_bytes: bincode::serialize(&flat.clock_signal_connections).ok(),
             stream_peer_map_bytes: bincode::serialize(&flat.stream_peer_map).ok(),
+            stream_connection_set_bytes: bincode::serialize(&flat.stream_connection_set).ok(),
             deps,
         }
     }
@@ -69,6 +71,8 @@ impl FlatCacheV2 {
         let instances: HashMap<String, String> = self.deserialize_field(&self.instances_bytes)?;
         let clocked_var_names: HashSet<String> = self.deserialize_field(&self.clocked_var_names_bytes)?;
         let stream_peer_map: HashMap<String, String> = self.deserialize_field(&self.stream_peer_map_bytes)?;
+        let stream_connection_set: HashMap<String, Vec<String>> =
+            self.deserialize_field(&self.stream_connection_set_bytes)?;
 
         let mut interner = crate::string_intern::StringInterner::new();
         for d in &declarations {
@@ -87,8 +91,14 @@ impl FlatCacheV2 {
             interner.intern(k.as_str());
             interner.intern(v.as_str());
         }
+        for (k, peers) in &stream_connection_set {
+            interner.intern(k.as_str());
+            for p in peers {
+                interner.intern(p.as_str());
+            }
+        }
 
-        Ok(FlattenedModel {
+        let mut flat = FlattenedModel {
             declarations,
             equations: self.deserialize_field(&self.equations_bytes)?,
             algorithms: self.deserialize_field(&self.algorithms_bytes)?,
@@ -102,10 +112,18 @@ impl FlatCacheV2 {
             clock_partitions: self.deserialize_field(&self.clock_partitions_bytes)?,
             clock_signal_connections: self.deserialize_field(&self.clock_signal_connections_bytes)?,
             stream_peer_map,
+            stream_connection_set,
+            stream_flow_map: HashMap::new(),
             interner,
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),
-        })
+        };
+        crate::flatten::connections::rebuild_stream_flow_map(&mut flat);
+        for (k, v) in &flat.stream_flow_map {
+            flat.interner.intern(k.as_str());
+            flat.interner.intern(v.as_str());
+        }
+        Ok(flat)
     }
 
     fn deserialize_field<T: serde::de::DeserializeOwned>(&self, bytes: &Option<Vec<u8>>) -> Result<T, Box<dyn std::error::Error>> {

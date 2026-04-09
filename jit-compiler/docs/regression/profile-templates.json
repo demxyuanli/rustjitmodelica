@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "precedence": [
+    "cli",
+    "env",
+    "profile",
+    "default"
+  ],
+  "profiles": [
+    {
+      "name": "DevFast",
+      "goal": "speed",
+      "scenario": "local development iteration",
+      "must": [
+        "--validate",
+        "--validate-tier=analyze",
+        "--validation-mode=quick",
+        "--solver=rk45",
+        "RUSTMODLICA_SALSA=1",
+        "RUSTMODLICA_QUERY_CACHE=1"
+      ],
+      "optional": [
+        "--perf-json=<path>",
+        "RUSTMODLICA_QUERY_CACHE_NAMESPACE=<ns>"
+      ],
+      "forbidden": [
+        "--emit-fmu=<dir>",
+        "--emit-fmu-me=<dir>",
+        "RUSTMODLICA_PERF_TRACE=1",
+        "RUSTMODLICA_STAGE_TRACE=1"
+      ],
+      "exit_conditions": [
+        "analyze phase fails repeatedly",
+        "same model has deterministic mismatch in simulation"
+      ],
+      "next_profile_on_failure": "SolverStability"
+    },
+    {
+      "name": "CIGate",
+      "goal": "determinism",
+      "scenario": "pipeline gate",
+      "must": [
+        "--validation-mode=full",
+        "RUSTMODLICA_SALSA=1",
+        "RUSTMODLICA_QUERY_CACHE=1",
+        "RUSTMODLICA_QUERY_CACHE_NAMESPACE=<ci-run-id>",
+        "RUSTMODLICA_FLATTEN_CACHE_DIR=<workspace>/build/ci_cache",
+        "RUSTMODLICA_JIT_CODEGEN_CACHE=1",
+        "RUSTMODLICA_JIT_CODEGEN_CACHE_DIR=<workspace>/build/ci_codegen_cache"
+      ],
+      "optional": [
+        "--validate-tier=analyze",
+        "--incremental=last_structure_rerun_failed"
+      ],
+      "forbidden": [
+        "RUSTMODLICA_PERF_TRACE=1",
+        "RUSTMODLICA_STAGE_TRACE=1",
+        "RUSTMODLICA_QUERY_CACHE=0"
+      ],
+      "exit_conditions": [
+        "all gate cases pass",
+        "timeout budget exceeded"
+      ],
+      "next_profile_on_failure": "SolverStability"
+    },
+    {
+      "name": "PerfDiag",
+      "goal": "performance diagnostics",
+      "scenario": "regression analysis and profiling",
+      "must": [
+        "--validation-mode=full",
+        "RUSTMODLICA_PERF_TRACE=1",
+        "RUSTMODLICA_STAGE_TRACE=1",
+        "RUSTMODLICA_CACHE_STATS_JSON=<path>",
+        "RUSTMODLICA_DEP_GRAPH_JSON=<path>",
+        "RUSTMODLICA_QUERY_CACHE_NAMESPACE=perf-<run>"
+      ],
+      "optional": [
+        "--perf-json=<path>",
+        "--hot-runs=2",
+        "--scenarios=hot_nsA,cold_empty_nsCOLD"
+      ],
+      "forbidden": [
+        "RUSTMODLICA_QUERY_CACHE=0"
+      ],
+      "exit_conditions": [
+        "perf indicators stable in 2 consecutive runs",
+        "root cause isolated to one stage or cache layer"
+      ],
+      "next_profile_on_failure": "PerfDiag"
+    },
+    {
+      "name": "SolverStability",
+      "goal": "numerical convergence",
+      "scenario": "simulation instability and drift",
+      "must": [
+        "--solver=ida",
+        "--validation-mode=full",
+        "--atol=1e-6",
+        "--rtol=1e-3"
+      ],
+      "optional": [
+        "--index-reduction-method=pantelides",
+        "RUSTMODLICA_EVENT_COUNT_DEADBAND=<value>",
+        "RUSTMODLICA_TAIL_VELOCITY_DEADBAND=<value>"
+      ],
+      "forbidden": [
+        "--validation-mode=superfast"
+      ],
+      "exit_conditions": [
+        "no convergence failure in repeated run",
+        "drift returns within accepted tolerance"
+      ],
+      "next_profile_on_failure": "PerfDiag"
+    },
+    {
+      "name": "FMIExport",
+      "goal": "fmu compatibility",
+      "scenario": "fmi artifact generation",
+      "must": [
+        "--validation-mode=full",
+        "--emit-fmu=<dir> or --emit-fmu-me=<dir>"
+      ],
+      "optional": [
+        "--fmi-model-id=<id>",
+        "--fmi-guid=<uuid-or-token>",
+        "RUSTMODLICA_FMI_GENERATION_TOOL=<text>"
+      ],
+      "forbidden": [
+        "--validation-mode=superfast"
+      ],
+      "exit_conditions": [
+        "modelDescription.xml generated",
+        "fmi c files generated",
+        "id and guid are valid"
+      ],
+      "next_profile_on_failure": "CIGate"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "DevFast",
+      "trigger": "flatten_fail",
+      "to": "SolverStability"
+    },
+    {
+      "from": "DevFast",
+      "trigger": "perf_regress",
+      "to": "PerfDiag"
+    },
+    {
+      "from": "CIGate",
+      "trigger": "numerical_drift",
+      "to": "SolverStability"
+    },
+    {
+      "from": "CIGate",
+      "trigger": "timeout",
+      "to": "PerfDiag"
+    },
+    {
+      "from": "SolverStability",
+      "trigger": "still_unstable",
+      "to": "PerfDiag"
+    }
+  ]
+}

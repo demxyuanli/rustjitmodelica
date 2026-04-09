@@ -10,11 +10,16 @@ use crate::jit::types::ArrayType;
 use super::builtin::try_compile_builtin_placeholder_constant;
 use super::helpers::{
     abi_params_short, import_call_abi_tag, jit_builtin_fallback_warn_once, jit_dot_trace_enabled,
-    jit_import_debug_enabled, jit_var_fallback_trace, lookup_or_insert_import,
-    modelica_constants_dot_member, modelica_constants_flat_variable, pre_scalar_name_bound,
+    jit_import_debug_enabled, jit_import_strict_enabled, jit_strict_placeholders_enabled,
+    jit_var_fallback_trace, lookup_or_insert_import, modelica_constants_dot_member,
+    modelica_constants_flat_variable, pre_scalar_name_bound,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use crate::jit::jit_policy::{hysteresis_record_value, lookup_pre_variable_fallback};
+
+fn pre_call_name_matches(func_name: &str, plain: &str) -> bool {
+    func_name == plain || func_name.ends_with(&format!(".{}", plain))
+}
 
 pub(super) fn compile_pre_expression(
     expr: &Expression,
@@ -166,6 +171,27 @@ pub(super) fn compile_pre_expression(
             Ok(builder.ins().select(cmp, t_val, f_val))
         }
         Expression::Call(func_name, args) => {
+            if pre_call_name_matches(func_name, "cardinality") {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "cardinality() expects 1 argument, got {}",
+                        args.len()
+                    ));
+                }
+                if let Expression::Variable(id) = &args[0] {
+                    let path = crate::string_intern::resolve_id(*id);
+                    if let Some(&d) = ctx.connector_connection_degree.get(&path) {
+                        return Ok(builder.ins().f64const(d as f64));
+                    }
+                }
+                if jit_strict_placeholders_enabled() {
+                    return Err(format!(
+                        "cardinality (pre): no flatten degree for '{}'",
+                        func_name
+                    ));
+                }
+                return Ok(builder.ins().f64const(0.0));
+            }
             if func_name == "size" {
                 if args.is_empty() || args.len() > 2 {
                     return Err(format!("size() expects 1 or 2 arguments, got {}", args.len()));
@@ -218,6 +244,12 @@ pub(super) fn compile_pre_expression(
                     .iter()
                     .any(|&n| n == func_name)
             {
+                if jit_import_strict_enabled() {
+                    return Err(format!(
+                        "JIT import strict (pre): '{}' is not a linked builtin or external symbol",
+                        func_name
+                    ));
+                }
                 jit_builtin_fallback_warn_once(func_name, "unknown-import-pre");
                 if args.is_empty() {
                     return Ok(builder.ins().f64const(0.0));
@@ -256,32 +288,51 @@ pub(super) fn compile_pre_expression(
                     }
                 }
                 if let Expression::ArrayLiteral(items) = arg {
-                    let mut elems: Vec<f64> = Vec::with_capacity(items.len());
-                    for it in items {
-                        match it {
-                            Expression::Number(n) => elems.push(*n),
-                            _ => {
-                                return Err(format!(
-                                    "pre() external call '{}': array argument must be a numeric literal list (EXT-3).",
-                                    func_name
-                                ));
+                    if items.iter().all(|it| matches!(it, Expression::Number(_))) {
+                        let mut elems: Vec<f64> = Vec::with_capacity(items.len());
+                        for it in items {
+                            if let Expression::Number(n) = it {
+                                elems.push(*n);
                             }
                         }
+                        let data_id = match ctx.get_or_create_f64_array_literal_data(&elems)? {
+                            Some(id) => id,
+                            None => {
+                                return Err(
+                                    "Array literal in pre() external call requires JIT data context (EXT-3)."
+                                        .to_string(),
+                                );
+                            }
+                        };
+                        sig.params.push(AbiParam::new(ptr_type));
+                        let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
+                        arg_vals.push(builder.ins().global_value(ptr_type, gv));
+                        sig.params.push(AbiParam::new(cl_types::F64));
+                        arg_vals.push(builder.ins().f64const(elems.len() as f64));
+                        continue;
                     }
-                    let data_id = match ctx.get_or_create_f64_array_literal_data(&elems)? {
-                        Some(id) => id,
-                        None => {
-                            return Err(
-                                "Array literal in pre() external call requires JIT data context (EXT-3)."
-                                    .to_string(),
-                            );
-                        }
-                    };
+
+                    let byte_len = (items.len() * 8) as u32;
+                    let tmp_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        byte_len,
+                        8,
+                    ));
+                    for (i, it) in items.iter().enumerate() {
+                        let item_val = compile_pre_expression(it, ctx, builder)?;
+                        let off_i64 = (i as i64) * 8;
+                        let off = i32::try_from(off_i64).map_err(|_| {
+                            format!(
+                                "pre() external call '{}': array literal too large (EXT-3).",
+                                func_name
+                            )
+                        })?;
+                        builder.ins().stack_store(item_val, tmp_slot, off);
+                    }
                     sig.params.push(AbiParam::new(ptr_type));
-                    let gv = ctx.module.declare_data_in_func(data_id, &mut builder.func);
-                    arg_vals.push(builder.ins().global_value(ptr_type, gv));
+                    arg_vals.push(builder.ins().stack_addr(ptr_type, tmp_slot, 0));
                     sig.params.push(AbiParam::new(cl_types::F64));
-                    arg_vals.push(builder.ins().f64const(elems.len() as f64));
+                    arg_vals.push(builder.ins().f64const(items.len() as f64));
                     continue;
                 }
                 if let Expression::StringLiteral(s) = arg {

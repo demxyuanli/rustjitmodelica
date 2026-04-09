@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub enum ArrayType {
     State,
     Discrete,
@@ -8,7 +8,7 @@ pub enum ArrayType {
     Derivative,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ArrayInfo {
     pub array_type: ArrayType,
     pub start_index: usize,

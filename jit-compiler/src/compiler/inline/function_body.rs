@@ -15,6 +15,7 @@ fn stmts_has_side_effects_one(
             | AlgorithmStatement::Terminate(_) => return true,
             AlgorithmStatement::CallStmt(_) => return true,
             AlgorithmStatement::NoOp => {}
+            AlgorithmStatement::Break | AlgorithmStatement::Return(_) => return true,
             AlgorithmStatement::Assignment(lhs, _) => {
                 if let Expression::Variable(id) = lhs {
                     let name = crate::string_intern::resolve_id(*id);

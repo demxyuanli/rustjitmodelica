@@ -9,6 +9,20 @@
   - **`cache_flat_full_layer_*` / `cache_array_sizes_layer_*`**: flatten / array-size hint rollups by scope.
   After a successful run, the CLI prints one line **`jit-validate-perf cache rollup:`** with L0/L1/L2 hits+writes and distinct `query_cache_counter` key count + sum when present.
 
+## JIT parameter convergence summary
+
+- Full specification is maintained in `jit-compiler/docs/regression/parameter-convergence.md`.
+- Machine-readable assets:
+  - `jit-compiler/docs/regression/parameter-metadata.json`
+  - `jit-compiler/docs/regression/profile-templates.json`
+- Implementation mapping guide:
+  - `jit-compiler/docs/regression/CLI_TUI_Implementation_Guide.md`
+
+Quick policy:
+- Option precedence is `CLI > env > profile > default`.
+- Use `DevFast` for local iteration, `CIGate` for gate runs, `PerfDiag` for regressions, `SolverStability` for convergence, and `FMIExport` for export workflows.
+- For troubleshooting, prefer profile switch first, then parameter fine tuning.
+
 ## JIT settings reference (CLI + env)
 
 ### `rustmodlica` CLI (high impact options)
