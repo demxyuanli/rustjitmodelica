@@ -55,9 +55,79 @@ pub(crate) fn compile_export_sidebar_json(
                 .and_then(|v| v.as_bool())
         })
         .unwrap_or(false);
+    let dual_ok = compile_perf
+        .get("dual_compile_ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let dual_req = compile_perf
+        .get("dual_compile_requested")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let dual_spec = compile_perf
+        .get("dual_compile_speculation_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let dual_status = compile_perf
+        .get("dual_compile_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let dual_error = compile_perf.get("dual_compile_error").cloned();
+    let dual_error = match dual_error {
+        Some(serde_json::Value::Object(_)) => dual_error,
+        Some(serde_json::Value::Null) | None => {
+            let code = compile_perf.get("dual_compile_error_code").cloned();
+            let detail = compile_perf.get("dual_compile_error_detail").cloned();
+            let poisoned = compile_perf.get("dual_compile_error_registry_poisoned").cloned();
+            let phase = compile_perf.get("dual_compile_error_cranelift_phase").cloned();
+            let sym = compile_perf.get("dual_compile_error_symbol_name").cloned();
+            if code.is_none()
+                && detail.is_none()
+                && poisoned.is_none()
+                && phase.is_none()
+                && sym.is_none()
+            {
+                None
+            } else {
+                let mut m = serde_json::Map::new();
+                if let Some(v) = code {
+                    m.insert("code".to_string(), v);
+                }
+                if let Some(v) = poisoned {
+                    m.insert("registry_poisoned".to_string(), v);
+                }
+                if let Some(v) = phase {
+                    m.insert("cranelift_phase".to_string(), v);
+                }
+                if let Some(v) = sym {
+                    m.insert("symbol_name".to_string(), v);
+                }
+                if let Some(v) = detail {
+                    m.insert("detail".to_string(), v);
+                }
+                Some(serde_json::Value::Object(m))
+            }
+        }
+        _ => None,
+    }
+    .unwrap_or(serde_json::Value::Null);
+    let aot_native = compile_perf
+        .get("aot_native_load_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let aot_native_detail = compile_perf
+        .get("aot_native_load_detail")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     serde_json::json!({
         "backend_dae_cache_status": backend_dae,
         "param_only_update": param_only,
+        "dual_compile_requested": dual_req,
+        "dual_compile_ok": dual_ok,
+        "dual_compile_speculation_count": dual_spec,
+        "dual_compile_status": dual_status,
+        "dual_compile_error": dual_error,
+        "aot_native_load_status": aot_native,
+        "aot_native_load_detail": aot_native_detail,
     })
 }
 

@@ -1,13 +1,18 @@
 pub mod analysis;
+pub mod aot_archive;
 pub mod codegen_cache;
 mod clock_lowering;
 mod compile;
 mod config;
 mod connector_degree;
 pub mod context;
+pub mod deopt;
+pub mod interpreter;
 mod jit_policy;
 pub mod native;
 mod object_emit;
+pub mod speculation;
+pub mod tiered;
 pub mod translator;
 pub mod types;
 mod var_fallback_policy;

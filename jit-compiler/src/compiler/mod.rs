@@ -95,6 +95,39 @@ pub struct CompilerOptions {
     pub validation_mode: String,
     /// Tiered validation: stop after parse, flatten, or analysis instead of running JIT.
     pub compile_stop: CompileStopPhase,
+    /// Leyden: dual-compile produces speculative + generic paths for deopt fallback.
+    #[serde(default)]
+    pub dual_compile: bool,
+}
+
+/// Structured cache miss event for diagnostics (L4-T08).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct CacheMissEvent {
+    /// Cache layer: "artifact", "sim_bundle", "codegen", "flat_full", "external_resolve",
+    /// "analysis_pipeline", "backend_dae", "analysis_summary".
+    pub layer: String,
+    /// Miss reason: "key_not_found", "deps_changed", "version_mismatch", "const_fold_mismatch",
+    /// "dll_mtime_changed", "fingerprint_mismatch", "disabled", etc.
+    pub reason: String,
+    /// Optional extra detail (e.g. which param differed, which dep changed).
+    pub detail: Option<String>,
+}
+
+fn serde_skip_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Nested dual-compile failure payload for perf JSON (stable field order; omit defaults).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct DualCompileErrorReport {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "serde_skip_false")]
+    pub registry_poisoned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cranelift_phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -206,7 +239,8 @@ pub struct CompilePerfReport {
     pub backend_dae_cache_status: String,
     /// End-to-end sim bundle: `hit` | `miss` | `disabled` | `skipped_stubs` | `skipped_codegen_disk`
     pub artifact_bundle_cache_status: String,
-    /// 1.0 when sim-bundle skipped JIT entirely; else 0.0 (coarse metric).
+    /// Weighted cache warm ratio: 0.0 = fully cold, 1.0 = all stages cached.
+    /// Computed from per-phase cache hit status with approximate cost weights.
     pub cache_warm_ratio: f64,
     /// Last artifact/codegen fast-path miss reason (e.g. `key_not_found`, `deps_changed`, `codegen_cache_miss`).
     pub cache_miss_reason: Option<String>,
@@ -216,6 +250,16 @@ pub struct CompilePerfReport {
     pub param_only_update: bool,
     /// When a full JIT compile ran, optional reason label.
     pub full_recompile_reason: Option<String>,
+    /// L3-T04: aggregate count of structural cache hits (artifact or sim-bundle).
+    pub cache_structural_hit_count: u32,
+    /// L3-T04: aggregate count of param-only updates (no recompile).
+    pub cache_param_update_count: u32,
+    /// L3-T04: aggregate count of full recompiles (cold path).
+    pub cache_full_recompile_count: u32,
+    /// L4-T08: structured cache miss events collected across all cache layers.
+    pub cache_miss_events: Vec<CacheMissEvent>,
+    /// Fine-grained external-resolve miss detail when cache misses (L4-T08 / section 6.8-2).
+    pub external_resolve_miss_detail: Option<String>,
     /// User function stub candidates collected from call graph.
     pub stub_candidate_count: usize,
     /// Wall-clock spent building user stubs.
@@ -283,6 +327,94 @@ pub struct CompilePerfReport {
     pub type_profile_hash: String,
     pub stack_scratch_enabled: bool,
     pub runtime_boundary_epoch: u64,
+    /// Leyden condenser metrics.
+    pub condenser_total_elapsed_us: u64,
+    pub condenser_artifacts_written: u32,
+    pub condenser_cache_hits: u32,
+    pub condenser_errors: u32,
+    /// Active compilation tier (from tiered compilation scheduler).
+    pub compile_tier: String,
+    /// Whether a training-run profile was used for this compilation.
+    pub profile_guided: bool,
+    /// Number of active speculative guards.
+    pub speculation_guard_count: u32,
+    /// Number of speculation invalidations during this session.
+    pub speculation_invalidation_count: u32,
+    /// CLI / options: dual speculative+generic compile requested.
+    pub dual_compile_requested: bool,
+    /// True when `dual_compile` produced both paths successfully.
+    pub dual_compile_ok: bool,
+    /// Active speculations count recorded for dual-compile (or 0).
+    pub dual_compile_speculation_count: u32,
+    /// `off` | `not_run` | `attempted` | `ok` | `failed` | `skipped_no_guards` | `skipped_aot_native`.
+    pub dual_compile_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dual_compile_error: Option<DualCompileErrorReport>,
+    /// AOT archive native fast path: `not_eligible` | `no_blob` | `loaded` | `load_failed` | `wrong_key` | `unsupported_os`.
+    pub aot_native_load_status: String,
+    /// Optional detail for AOT native load source/path (e.g. `toc_match` / `key_fallback`).
+    pub aot_native_load_detail: Option<String>,
+}
+
+impl CompilePerfReport {
+    pub const DUAL_COMPILE_STATUS_OFF: &'static str = "off";
+    pub const DUAL_COMPILE_STATUS_NOT_RUN: &'static str = "not_run";
+    pub const DUAL_COMPILE_STATUS_ATTEMPTED: &'static str = "attempted";
+    pub const DUAL_COMPILE_STATUS_OK: &'static str = "ok";
+    pub const DUAL_COMPILE_STATUS_FAILED: &'static str = "failed";
+    pub const DUAL_COMPILE_STATUS_SKIPPED_NO_GUARDS: &'static str = "skipped_no_guards";
+    pub const DUAL_COMPILE_STATUS_SKIPPED_AOT_NATIVE: &'static str = "skipped_aot_native";
+    pub const DUAL_COMPILE_ERROR_DETAIL_MAX_LEN: usize = 256;
+
+    pub const AOT_NATIVE_STATUS_NOT_ELIGIBLE: &'static str = "not_eligible";
+    pub const AOT_NATIVE_STATUS_NO_MATCHING_ENTRY: &'static str = "no_matching_entry";
+    pub const AOT_NATIVE_STATUS_NO_BLOB: &'static str = "no_blob";
+    pub const AOT_NATIVE_STATUS_LOADED: &'static str = "loaded";
+    pub const AOT_NATIVE_STATUS_LOAD_FAILED: &'static str = "load_failed";
+    pub const AOT_NATIVE_STATUS_UNSUPPORTED_OS: &'static str = "unsupported_os";
+    pub const AOT_NATIVE_STATUS_WRONG_KEY: &'static str = "wrong_key";
+    pub const AOT_NATIVE_STATUS_MODEL_NOT_IN_ARCHIVE: &'static str = "model_not_in_archive";
+    pub const AOT_NATIVE_STATUS_ARCHIVE_READ_FAILED: &'static str = "archive_read_failed";
+    pub const AOT_NATIVE_STATUS_NO_ARCHIVE_FILE: &'static str = "no_archive_file";
+    pub const AOT_NATIVE_STATUS_NO_ARCHIVE_PATH: &'static str = "no_archive_path";
+    pub const AOT_NATIVE_STATUS_DISABLED_BY_ENV: &'static str = "disabled_by_env";
+
+    /// AOT native load detail: archive TOC entry matched model+key.
+    pub const AOT_NATIVE_DETAIL_TOC_MATCH: &'static str = "toc_match";
+    /// AOT native load detail: fallback to direct key lookup in archive map.
+    pub const AOT_NATIVE_DETAIL_KEY_FALLBACK: &'static str = "key_fallback";
+
+    /// Compute a weighted cache warm ratio from per-phase cache hit flags.
+    /// Weights reflect approximate contribution of each phase to cold compile time
+    /// for typical medium/large models.
+    pub fn compute_warm_ratio(&self, jit_skipped: bool) -> f64 {
+        // Phase weights (sum = 1.0):
+        //   flatten/inline: 0.40, JIT/codegen: 0.35, external_resolve: 0.10,
+        //   analysis_pipeline: 0.10, backend_dae: 0.05
+        let mut w = 0.0_f64;
+        if self.flat_full_cache_hits > 0 {
+            w += 0.40;
+        }
+        if jit_skipped {
+            w += 0.35;
+        }
+        if self.external_resolve_cache_status == "hit" {
+            w += 0.10;
+        }
+        if self.analysis_pipeline_cache_status == "disk_hit" {
+            w += 0.10;
+        }
+        if self.backend_dae_cache_status == "disk_hit" {
+            w += 0.05;
+        }
+        w.clamp(0.0, 1.0)
+    }
+
+    pub fn truncate_dual_compile_error_detail(e: &str) -> String {
+        e.chars()
+            .take(Self::DUAL_COMPILE_ERROR_DETAIL_MAX_LEN)
+            .collect()
+    }
 }
 
 impl Default for CompilerOptions {
@@ -313,6 +445,7 @@ impl Default for CompilerOptions {
             jit_policy_json: None,
             validation_mode: "full".to_string(),
             compile_stop: CompileStopPhase::Full,
+            dual_compile: false,
         }
     }
 }
@@ -731,6 +864,36 @@ pub(super) fn collect_external_calls(
     out
 }
 
+/// Opaque handle to a compiled model (L3-T06). Wraps structural cache identity
+/// and simulation layout so that parameter sweeps can reuse native code without
+/// recompilation.
+pub struct CompiledModel {
+    pub(crate) artifacts: Artifacts,
+    pub(crate) model_name: String,
+}
+
+impl CompiledModel {
+    /// Create a simulation-ready artifact set with a new parameter vector.
+    /// The compiled native code is reused; only the parameter array is swapped.
+    pub fn with_params(&self, new_params: Vec<f64>) -> Artifacts {
+        let mut a = self.artifacts.clone_layout_with_params(new_params);
+        a.param_only_update = true;
+        a
+    }
+
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    pub fn param_vars(&self) -> &[String] {
+        &self.artifacts.param_vars
+    }
+
+    pub fn state_vars(&self) -> &[String] {
+        &self.artifacts.state_vars
+    }
+}
+
 /// Result of compilation: either simulation artifacts or a single function result (F3-1).
 pub enum CompileOutput {
     Simulation(Artifacts),
@@ -803,8 +966,59 @@ pub struct Artifacts {
     /// Keeps disk-backed `calc_derivs` memory valid when returning from sim-bundle fast path.
     #[allow(dead_code)]
     pub(crate) calc_derivs_codegen_keepalive: Option<Box<crate::jit::codegen_cache::CachedFunction>>,
+    /// Keeps the owning `Jit` (and its `JITModule`) alive so the `calc_derivs` pointer
+    /// into the module's executable memory remains valid.  Without this the `Jit` is
+    /// dropped at the end of `compile_model::compile()`, freeing the machine code that
+    /// `calc_derivs` points to and causing ACCESS_VIOLATION on Windows.
+    #[allow(dead_code)]
+    pub(crate) jit_module_keepalive: Option<Box<crate::jit::Jit>>,
     /// Set by `reuse_compiled_with_new_params` when only the parameter vector was replaced.
     pub param_only_update: bool,
+    /// Leyden dual-compile: generic fallback function for deopt.
+    pub dual_compile_generic: Option<CalcDerivsFunc>,
+    /// Keep dual-compile JIT modules alive so function pointers remain valid.
+    #[allow(dead_code)]
+    pub(crate) dual_compile_keepalive: Option<Box<crate::jit::deopt::DualCompileResult>>,
+}
+
+impl Artifacts {
+    /// Create a new Artifacts with a different parameter vector, reusing the compiled function.
+    pub(crate) fn clone_layout_with_params(&self, new_params: Vec<f64>) -> Artifacts {
+        Artifacts {
+            calc_derivs: self.calc_derivs,
+            states: vec![0.0; self.state_vars.len()],
+            discrete_vals: vec![0.0; self.discrete_vars.len()],
+            params: new_params,
+            state_vars: self.state_vars.clone(),
+            param_vars: self.param_vars.clone(),
+            discrete_vars: self.discrete_vars.clone(),
+            output_vars: self.output_vars.clone(),
+            output_start_vals: self.output_start_vals.clone(),
+            state_var_index: self.state_var_index.clone(),
+            clock_partitions: Vec::new(),
+            clock_partition_schedule: self.clock_partition_schedule.clone(),
+            when_count: self.when_count,
+            crossings_count: self.crossings_count,
+            t_end: self.t_end,
+            dt: self.dt,
+            numeric_ode_jacobian: self.numeric_ode_jacobian,
+            symbolic_ode_jacobian: None,
+            newton_tearing_var_names: self.newton_tearing_var_names.clone(),
+            atol: self.atol,
+            rtol: self.rtol,
+            differential_index: self.differential_index,
+            ida_component_id: self.ida_component_id.clone(),
+            solver: self.solver.clone(),
+            output_interval: self.output_interval,
+            result_file: self.result_file.clone(),
+            user_stub_jits: Vec::new(),
+            calc_derivs_codegen_keepalive: None,
+            jit_module_keepalive: None,
+            param_only_update: true,
+            dual_compile_generic: None,
+            dual_compile_keepalive: None,
+        }
+    }
 }
 
 include!("compiler_impl.rs");

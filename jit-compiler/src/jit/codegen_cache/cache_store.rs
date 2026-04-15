@@ -12,11 +12,13 @@ use super::exec_buffer::ExecCodeBuffer;
 #[cfg(windows)]
 use super::coff_reloc::load_coff_object_exec_windows;
 
+#[cfg(target_os = "linux")]
+use super::elf_reloc::load_elf_object_exec;
+
 /// Cached function handle (executable anonymous buffer; not file-backed mmap).
 pub struct CachedFunction {
     #[allow(dead_code)]
     exec: Option<ExecCodeBuffer>,
-    #[cfg(windows)]
     #[allow(dead_code)]
     import_slots: Vec<Box<usize>>,
     /// Function pointer to calc_derivs.
@@ -28,7 +30,7 @@ pub struct CachedFunction {
 }
 
 impl CachedFunction {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn from_exec(
         exec: ExecCodeBuffer,
         func: crate::jit::types::CalcDerivsFunc,
@@ -37,7 +39,6 @@ impl CachedFunction {
     ) -> Self {
         Self {
             exec: Some(exec),
-            #[cfg(windows)]
             import_slots: Vec::new(),
             func,
             when_count,
@@ -45,8 +46,8 @@ impl CachedFunction {
         }
     }
 
-    #[cfg(windows)]
-    fn from_exec_with_import_slots(
+    #[cfg(any(windows, target_os = "linux"))]
+    pub(crate) fn from_exec_with_import_slots(
         exec: ExecCodeBuffer,
         import_slots: Vec<Box<usize>>,
         func: crate::jit::types::CalcDerivsFunc,
@@ -90,6 +91,16 @@ impl CodegenCache {
 
     fn object_path(&self, key: &CodegenCacheKey) -> PathBuf {
         self.root.join(format!("{}.bin", key.stable_hash()))
+    }
+
+    /// Read raw object/code bytes from the codegen disk cache for this key (if present).
+    pub fn try_read_object_bytes(&self, key: &CodegenCacheKey) -> Option<Vec<u8>> {
+        let raw = std::fs::read(self.object_path(key)).ok()?;
+        if raw.is_empty() {
+            None
+        } else {
+            Some(raw)
+        }
     }
 
     fn entry_path(&self, key: &CodegenCacheKey) -> PathBuf {
@@ -142,11 +153,29 @@ impl CodegenCache {
             return None;
         }
 
-        if !const_fold_params_match(&entry, runtime_param_values) {
-            eprintln!("[jit-codegen-cache] const-fold param mismatch, invalidating");
-            let _ = std::fs::remove_file(&object_path);
-            let _ = std::fs::remove_file(&entry_path);
-            return None;
+        match const_fold_params_match_detail(&entry, runtime_param_values) {
+            ConstFoldMatchResult::AllMatch => {}
+            ConstFoldMatchResult::ValueOnlyDiff { ref changed } => {
+                eprintln!(
+                    "[jit-codegen-cache] const-fold value-only diff ({}), reusing code",
+                    changed.join(", ")
+                );
+            }
+            ConstFoldMatchResult::StructuralMismatch { ref param } => {
+                eprintln!(
+                    "[jit-codegen-cache] const-fold structural mismatch (param={}), invalidating",
+                    param
+                );
+                let _ = std::fs::remove_file(&object_path);
+                let _ = std::fs::remove_file(&entry_path);
+                return None;
+            }
+            ConstFoldMatchResult::NoRuntimeMap => {
+                eprintln!("[jit-codegen-cache] no runtime param map but entry has const-fold params, invalidating");
+                let _ = std::fs::remove_file(&object_path);
+                let _ = std::fs::remove_file(&entry_path);
+                return None;
+            }
         }
 
         let raw = std::fs::read(&object_path).ok()?;
@@ -193,7 +222,7 @@ impl CodegenCache {
             "[jit-codegen-cache] HIT(raw) model={} size={} bytes func_offset={} func_size={}",
             key.model_name, entry.object_size, func_offset, func_size
         );
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         {
             Some(CachedFunction::from_exec_with_import_slots(
                 exec,
@@ -203,7 +232,7 @@ impl CodegenCache {
                 entry.crossings_count,
             ))
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             Some(CachedFunction::from_exec(
                 exec,
@@ -225,7 +254,11 @@ impl CodegenCache {
         {
             return self.load_object_artifact_windows(key, entry, raw, runtime_symbols);
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            return self.load_object_artifact_linux(key, entry, raw, runtime_symbols);
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = (key, entry, raw, runtime_symbols);
             None
@@ -246,6 +279,31 @@ impl CodegenCache {
 
         eprintln!(
             "[jit-codegen-cache] HIT(object/windows) model={} size={} bytes",
+            key.model_name, entry.object_size
+        );
+        Some(CachedFunction::from_exec_with_import_slots(
+            exec,
+            import_slots,
+            func,
+            entry.when_count,
+            entry.crossings_count,
+        ))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn load_object_artifact_linux(
+        &self,
+        key: &CodegenCacheKey,
+        entry: &CodegenCacheEntry,
+        raw: &[u8],
+        runtime_symbols: &HashMap<String, *const u8>,
+    ) -> Option<CachedFunction> {
+        let (exec, func_offset, import_slots) = load_elf_object_exec(raw, runtime_symbols)?;
+        let func_ptr = unsafe { exec.as_ptr().add(func_offset) };
+        let func: crate::jit::types::CalcDerivsFunc = unsafe { std::mem::transmute(func_ptr) };
+
+        eprintln!(
+            "[jit-codegen-cache] HIT(object/linux) model={} size={} bytes",
             key.model_name, entry.object_size
         );
         Some(CachedFunction::from_exec_with_import_slots(
@@ -373,23 +431,64 @@ impl CodegenCache {
     }
 }
 
-fn const_fold_params_match(
+/// Result of per-parameter const-fold comparison.
+#[derive(Debug)]
+enum ConstFoldMatchResult {
+    /// All folded params match cached values exactly.
+    AllMatch,
+    /// Some value-only params differ but no structural param changed.
+    /// The cached code is still valid; caller should update param vector at runtime.
+    ValueOnlyDiff { changed: Vec<String> },
+    /// A param that affects IR structure changed, or a param is missing.
+    /// Cached code must be invalidated.
+    StructuralMismatch { param: String },
+    /// No runtime param map provided but cached entry has folded params.
+    NoRuntimeMap,
+}
+
+fn const_fold_params_match_detail(
     entry: &CodegenCacheEntry,
     runtime_param_values: Option<&HashMap<String, f64>>,
-) -> bool {
+) -> ConstFoldMatchResult {
     if entry.const_fold_params.is_empty() {
-        return true;
+        return ConstFoldMatchResult::AllMatch;
     }
     let Some(map) = runtime_param_values else {
-        return false;
+        return ConstFoldMatchResult::NoRuntimeMap;
     };
+    let mut changed_names = Vec::new();
     for (name, cached_v) in &entry.const_fold_params {
         match map.get(name) {
             Some(rv) if *rv == *cached_v => {}
-            _ => return false,
+            Some(_rv) => {
+                changed_names.push(name.clone());
+            }
+            None => {
+                return ConstFoldMatchResult::StructuralMismatch {
+                    param: name.clone(),
+                };
+            }
         }
     }
-    true
+    if changed_names.is_empty() {
+        ConstFoldMatchResult::AllMatch
+    } else {
+        ConstFoldMatchResult::ValueOnlyDiff {
+            changed: changed_names,
+        }
+    }
+}
+
+/// Check if const-fold params are compatible (all match or value-only diff).
+#[allow(dead_code)]
+pub(crate) fn const_fold_params_compatible(
+    entry: &CodegenCacheEntry,
+    runtime_param_values: Option<&HashMap<String, f64>>,
+) -> bool {
+    matches!(
+        const_fold_params_match_detail(entry, runtime_param_values),
+        ConstFoldMatchResult::AllMatch | ConstFoldMatchResult::ValueOnlyDiff { .. }
+    )
 }
 
 impl Default for CodegenCache {

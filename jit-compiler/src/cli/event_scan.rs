@@ -235,6 +235,7 @@ fn run_collect_with_solver(artifacts: &Artifacts, solver: &str) -> Result<ScanMe
         Some(temp_path_str.as_str()),
         &artifacts.clock_partition_schedule,
         None,
+        None,
     )?;
     let csv = std::fs::read_to_string(&temp_path)
         .map_err(|e| format!("failed to read scan csv '{}': {}", temp_path_str, e))?;

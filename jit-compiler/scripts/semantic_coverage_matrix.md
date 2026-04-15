@@ -1,6 +1,6 @@
 # Semantic Coverage Matrix
 
-Last updated: 2026-03-29
+Last updated: 2026-04-09 (round-3 audit: default rules + appendix E)
 
 ## Scope
 
@@ -35,11 +35,25 @@ feature boundary matrix (pass/partial/missing) with code and regression referenc
 | inStream/actualStream minimal executable semantics | `src/jit/translator/expr/builtin.rs` | `omc_regression_stream_semantics.mos` | pass | >=98 | 100 | 0 | yes |
 | algorithm when-elsewhen parser/execution closure | `src/parser/algorithm.rs`, `src/jit/translator/algorithm.rs` | `omc_regression_algorithm_elsewhen.mos` | pass | >=98 | 100 | 0 | yes |
 | inStream/actualStream direction-switch semantics (2-port MVP) | `src/flatten/connections.rs`, `src/jit/translator/expr/builtin.rs` | `omc_regression_direction_switch_stream.mos` | pass | >=98 | 100 | 0 | yes |
+| JSON `function_builtin_rules` wired to named handlers | `src/jit/default_function_builtin_rules.json`, `src/jit/jit_policy.rs`, `src/jit/translator/expr/builtin.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| `cardinality()` from flatten `connect` degree map | `src/jit/connector_degree.rs`, `src/jit/context.rs`, `src/jit/translator/expr/call.rs`, `builtin_policy_dispatch.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| Connector graph digest in JIT / codegen cache key | `src/jit/codegen_cache/cache_key.rs`, `src/jit/config.rs`, `src/compiler/compile_model/compile/entry.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| `RUSTMODLICA_JIT_STRICT_PLACEHOLDERS` hard-fail for placeholder builtins | `src/jit/translator/expr/builtin_policy_dispatch.rs`, `builtin_policy_interpolate.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| `RUSTMODLICA_JIT_IMPORT_STRICT` for unknown imports | `src/jit/translator/expr/call.rs`, `pre.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| `RUSTMODLICA_JIT_POLICY_STRICT=pre_generic_underscore` | `src/jit/jit_policy.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| `loadResource` path-exists probe (string + variable URI) | `src/jit/translator/expr/builtin_policy_dispatch.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| Newton sparse LU policy vs `solvable_limits` documentation | `src/solvable_limits.rs`, `src/jit/translator/equation/solvable_general_sparse.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| inStream/actualStream zero reverse-flow aggregate (multi-peer equal-weight fallback) | `src/jit/translator/expr/builtin_policy_dispatch.rs` | `omc_regression_stream_semantics.mos` (subset) | pass | >=98 | 100 | 0 | yes |
+| Silent zero-value paths guarded by warn or strict | `src/jit/translator/expr/call.rs`, `builtin.rs`, `builtin_policy_dispatch.rs`, `variable.rs`, `pre.rs`, `builtin_policy_interpolate.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| Dispatch reachability: default `function_builtin_rules` vs `dispatch_named_builtin_policy` | `src/jit/default_function_builtin_rules.json`, `builtin_policy_dispatch.rs`, `jit_policy.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| Third-round audit: stream/clock/interp/regStep/splice/valve/MSL-test handlers wired in default JSON | `default_function_builtin_rules.json`, `JIT_DEVELOPMENT_ANALYSIS.md` appendix E | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| `product`/`sum` dispatch uses `compile_array_reduce` | `src/jit/translator/expr/builtin_policy_dispatch.rs`, `call.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
+| `Modelica.Constants.T_zero` flat alias | `src/jit/translator/expr/helpers.rs` | compile validation (`cargo check -p jit-compiler`) | pass | >=98 | 100 | 0 | yes |
 
 ## Summary
 
-- Passed items: 15
-- Total tracked items: 15
+- Passed items: 31
+- Total tracked items: 31
 - Semantic coverage snapshot: 100.0%
 - Target semantic coverage: >= 98.0%
 - Modelica 3.4 core target: 100.0%

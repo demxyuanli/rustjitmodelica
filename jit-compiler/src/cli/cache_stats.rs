@@ -7,12 +7,7 @@ pub(crate) fn run_cache_stats() -> Result<(), RunError> {
         ));
     };
     let layers = rustmodlica::flatten::export_sqlite_kind_stats_layers(dir.as_path());
-    let jit_dir = std::env::var("RUSTMODLICA_JIT_CODEGEN_CACHE_DIR")
-        .ok()
-        .map(|p| std::path::PathBuf::from(p))
-        .or_else(|| {
-            dirs::cache_dir().map(|d| d.join("rustmodlica").join("jit-codegen-cache"))
-        });
+    let jit_dir = rustmodlica::jit::codegen_cache::codegen_cache_root();
     let mut jit_object_count = 0_u64;
     let mut jit_total_bytes = 0_u64;
     let mut jit_raw_count = 0_u64;
@@ -90,6 +85,10 @@ pub(crate) fn run_cache_stats() -> Result<(), RunError> {
             Err(_) => true,
         }
     };
+    let budget = rustmodlica::cache::global_budget::enforce_global_budget(
+        Some(dir.as_path()),
+        jit_dir.as_deref(),
+    );
     let out = serde_json::json!({
         "cache_root": dir.display().to_string(),
         "jit_codegen_cache_dir": jit_dir.as_ref().map(|p| p.display().to_string()),
@@ -124,6 +123,15 @@ pub(crate) fn run_cache_stats() -> Result<(), RunError> {
                 .sum::<u64>(),
             "total_jit_files": jit_object_count + jit_raw_count,
             "total_jit_bytes": jit_total_bytes + jit_raw_bytes,
+        },
+        "global_budget": {
+            "total_bytes": budget.total_bytes,
+            "max_bytes": budget.max_bytes,
+            "jit_file_bytes": budget.jit_file_bytes,
+            "sqlite_file_bytes": budget.sqlite_file_bytes,
+            "files_scanned": budget.files_scanned,
+            "files_evicted": budget.files_evicted,
+            "bytes_evicted": budget.bytes_evicted,
         }
     });
     println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());

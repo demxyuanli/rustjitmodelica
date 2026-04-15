@@ -5,6 +5,7 @@ pub mod artifact_bundle;
 pub mod artifact_cache;
 pub mod artifact_key;
 pub mod external_resolve_cache;
+pub mod global_budget;
 pub mod sim_bundle_cache;
 pub mod warmup;
 pub mod invalidation;

@@ -53,6 +53,7 @@ pub(crate) fn run_repl_loop(artifacts: Artifacts) -> Result<(), RunError> {
                 artifacts.result_file.as_deref(),
                 &artifacts.clock_partition_schedule,
                 None,
+                None,
             )?;
             println!("{}", i18n::msg0("simulation_completed"));
             continue;

@@ -52,6 +52,7 @@ fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult
         &artifacts.solver,
         artifacts.output_interval,
         &artifacts.clock_partition_schedule,
+        None,
     )
     .map_err(|e| e.to_string())
 }
@@ -346,6 +347,7 @@ fn start_simulation_session_sync(request: StartSessionRequest) -> Result<String,
         &artifacts.solver,
         artifacts.output_interval,
         &artifacts.clock_partition_schedule,
+        None,
     )
     .map_err(|e| e.to_string())?;
 

@@ -7,6 +7,7 @@ pub mod ast;
 pub mod cache;
 pub mod backend_dae;
 pub mod compiler;
+pub mod condenser;
 pub mod diag;
 pub mod equation_graph;
 pub mod error;
@@ -33,7 +34,8 @@ pub mod query_db;
 pub mod unparse;
 
 pub use compiler::{
-    Artifacts, CompileOutput, CompileStopPhase, Compiler, CompilerOptions, ValidationAnalyzedSummary,
+    Artifacts, CompileOutput, CompileStopPhase, CompiledModel, Compiler, CompilerOptions,
+    ValidationAnalyzedSummary,
 };
 pub use diag::{ParseErrorInfo, SourceLocation, WarningInfo};
 pub use string_intern::{StringInterner, VarId};

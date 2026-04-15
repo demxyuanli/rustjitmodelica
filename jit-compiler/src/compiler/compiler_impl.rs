@@ -179,6 +179,33 @@ impl Compiler {
         artifacts
     }
 
+    /// Compile a model and return a `CompiledModel` handle for batch parameter sweeps.
+    /// The handle can produce simulation-ready `Artifacts` with different parameter vectors
+    /// without recompiling native code (L3-T06).
+    pub fn compile_to_model(
+        &mut self,
+        model_name: &str,
+    ) -> Result<crate::compiler::CompiledModel, Box<dyn std::error::Error + Send + Sync>> {
+        match self.compile(model_name)? {
+            CompileOutput::Simulation(artifacts) => Ok(crate::compiler::CompiledModel {
+                model_name: model_name.to_string(),
+                artifacts,
+            }),
+            other => Err(format!(
+                "compile_to_model requires a simulation model, got {:?}",
+                match other {
+                    CompileOutput::FunctionRun(_) => "FunctionRun",
+                    CompileOutput::FlatSnapshotDone => "FlatSnapshotDone",
+                    CompileOutput::ValidationParseOk => "ValidationParseOk",
+                    CompileOutput::ValidationFlattenOk { .. } => "ValidationFlattenOk",
+                    CompileOutput::ValidationAnalyzed(_) => "ValidationAnalyzed",
+                    _ => "unknown",
+                }
+            )
+            .into()),
+        }
+    }
+
     pub fn options_mut(&mut self) -> &mut CompilerOptions {
         &mut self.options
     }

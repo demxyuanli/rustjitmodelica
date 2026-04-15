@@ -45,6 +45,13 @@ impl Jit {
     ) -> Self {
         let mut flag_builder = settings::builder();
         let _ = flag_builder.set("opt_level", &jit_opt_level_from_env());
+        if std::env::var("RUSTMODLICA_CRANELIFT_ENABLE_SIMD")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+            .unwrap_or(false)
+        {
+            let _ = flag_builder.set("enable_simd", "true");
+        }
         let isa_builder = cranelift_native::builder().unwrap();
         let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
         let mut builder =
@@ -311,6 +318,40 @@ impl Jit {
             let mut declared_imports: HashMap<String, HashMap<String, FuncId>> = HashMap::new();
             let mut string_literal_cache = HashMap::new();
             let mut string_data_counter = 0usize;
+
+            let speculation_guard_ids: Vec<u32> = {
+                let mut ids = Vec::new();
+                if let Ok(spec_reg) = crate::jit::speculation::global_registry().read() {
+                    for (real_id, _kind) in spec_reg.active_speculations_with_ids() {
+                        ids.push(real_id);
+                    }
+                }
+                ids
+            };
+
+            let speculation_guard_fn_ref = if !speculation_guard_ids.is_empty() {
+                let guard_sig = {
+                    let mut s = self.module.make_signature();
+                    s.params.push(AbiParam::new(cl_types::I32));
+                    s.returns.push(AbiParam::new(cl_types::I32));
+                    s
+                };
+                if let Ok(guard_fn_id) = self.module.declare_function(
+                    "speculation_holds",
+                    Linkage::Import,
+                    &guard_sig,
+                ) {
+                    Some(
+                        self.module
+                            .declare_func_in_func(guard_fn_id, builder.func),
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let mut t_ctx = TranslationContext::new(
                 &mut self.module,
                 &mut var_map,
@@ -347,6 +388,30 @@ impl Jit {
                 stream_connection_set,
                 stream_flow_map,
             );
+
+            if let Some(guard_fn_ref) = speculation_guard_fn_ref {
+                if speculation_guard_ids.len() == 1 {
+                    let id_val =
+                        builder.ins().iconst(cl_types::I32, speculation_guard_ids[0] as i64);
+                    builder.ins().call(guard_fn_ref, &[id_val]);
+                } else if speculation_guard_ids.len() > 1 {
+                    let after_guards = builder.create_block();
+                    for &guard_id in &speculation_guard_ids {
+                        let id_val = builder.ins().iconst(cl_types::I32, guard_id as i64);
+                        let call_inst = builder.ins().call(guard_fn_ref, &[id_val]);
+                        let ret = builder.inst_results(call_inst)[0];
+                        let zero = builder.ins().iconst(cl_types::I32, 0);
+                        let failed = builder.ins().icmp(IntCC::Equal, ret, zero);
+                        let next_guard = builder.create_block();
+                        builder.ins().brif(failed, after_guards, &[], next_guard, &[]);
+                        builder.switch_to_block(next_guard);
+                        builder.seal_block(next_guard);
+                    }
+                    builder.ins().jump(after_guards, &[]);
+                    builder.switch_to_block(after_guards);
+                    builder.seal_block(after_guards);
+                }
+            }
 
             let mut covered_algorithms = HashSet::new();
             let mut covered_alg_equations = HashSet::new();
@@ -459,138 +524,101 @@ impl Jit {
 
         if let Some(ref cache) = self.codegen_cache {
             if jit_policy::allow_codegen_disk_put(alg_equations.len(), diff_equations.len()) {
-                #[cfg(windows)]
-                {
-                    let flat_hash = codegen_cache::flat_model_hash(
-                        "calc_derivs",
-                        state_vars,
-                        discrete_vars,
-                        param_vars,
-                        output_vars,
-                        array_info,
-                        &opt_level,
-                        &cache_variant,
-                        &type_hash,
-                        &param_sig,
-                        Some(connector_connection_degree),
-                    );
-                    let key = codegen_cache::CodegenCacheKey::new(
-                        "calc_derivs",
-                        &flat_hash,
-                        &opt_level,
-                        &cache_variant,
-                        &type_hash,
-                        &param_sig,
-                    );
-                    let build_obj = std::panic::catch_unwind(|| emit_object_cache_artifact(&ir_for_object_cache));
-                    match build_obj {
-                        Ok(Ok(obj)) => {
-                            if let Err(e) = cache.put_object(
+                let flat_hash = codegen_cache::flat_model_hash(
+                    "calc_derivs",
+                    state_vars,
+                    discrete_vars,
+                    param_vars,
+                    output_vars,
+                    array_info,
+                    &opt_level,
+                    &cache_variant,
+                    &type_hash,
+                    &param_sig,
+                    Some(connector_connection_degree),
+                );
+                let key = codegen_cache::CodegenCacheKey::new(
+                    "calc_derivs",
+                    &flat_hash,
+                    &opt_level,
+                    &cache_variant,
+                    &type_hash,
+                    &param_sig,
+                );
+                let build_obj =
+                    std::panic::catch_unwind(|| emit_object_cache_artifact(&ir_for_object_cache));
+                match build_obj {
+                    Ok(Ok(obj)) => {
+                        if let Err(e) = cache.put_object(
+                            &key,
+                            &obj,
+                            when_count,
+                            crossings_count,
+                            const_fold_params,
+                        ) {
+                            eprintln!("[jit] CODEGEN_CACHE_OBJECT_WRITE_ERROR: {}", e);
+                        } else {
+                            eprintln!(
+                                "[jit] CODEGEN_CACHE_OBJECT_WRITE key_prefix={}... size={} bytes",
+                                &key.stable_hash().chars().take(16).collect::<String>(),
+                                obj.len()
+                            );
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_ERROR: {}", e);
+                        if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
+                            let code_bytes =
+                                unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
+                            if let Err(pe) = cache.put(
                                 &key,
-                                &obj,
+                                code_bytes,
+                                0,
+                                func_alloc_len,
                                 when_count,
                                 crossings_count,
                                 const_fold_params,
                             ) {
-                                eprintln!("[jit] CODEGEN_CACHE_OBJECT_WRITE_ERROR: {}", e);
+                                eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE_ERROR: {}", pe);
                             } else {
                                 eprintln!(
-                                    "[jit] CODEGEN_CACHE_OBJECT_WRITE key_prefix={}... size={} bytes",
-                                    &key.stable_hash().chars().take(16).collect::<String>(),
-                                    obj.len()
+                                    "[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE size={} bytes",
+                                    code_bytes.len()
                                 );
                             }
-                        }
-                        Ok(Err(e)) => {
-                            eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_ERROR: {}", e);
-                            if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
-                                let code_bytes = unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
-                                if let Err(pe) = cache.put(
-                                    &key,
-                                    code_bytes,
-                                    0,
-                                    func_alloc_len,
-                                    when_count,
-                                    crossings_count,
-                                    const_fold_params,
-                                ) {
-                                    eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE_ERROR: {}", pe);
-                                } else {
-                                    eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE size={} bytes", code_bytes.len());
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_PANIC");
-                            if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
-                                let code_bytes = unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
-                                if let Err(pe) = cache.put(
-                                    &key,
-                                    code_bytes,
-                                    0,
-                                    func_alloc_len,
-                                    when_count,
-                                    crossings_count,
-                                    const_fold_params,
-                                ) {
-                                    eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE_ERROR: {}", pe);
-                                } else {
-                                    eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE size={} bytes", code_bytes.len());
-                                }
-                            }
+                        } else {
+                            eprintln!(
+                                "[jit] CODEGEN_CACHE_RAW_FALLBACK_SKIPPED missing compiled_code size (JIT internal)"
+                            );
                         }
                     }
-                }
-                #[cfg(not(windows))]
-                {
-                if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
-                    let flat_hash = codegen_cache::flat_model_hash(
-                        "calc_derivs",
-                        state_vars,
-                        discrete_vars,
-                        param_vars,
-                        output_vars,
-                        array_info,
-                        &opt_level,
-                        &cache_variant,
-                        &type_hash,
-                        &param_sig,
-                        Some(connector_connection_degree),
-                    );
-                    let key = codegen_cache::CodegenCacheKey::new(
-                        "calc_derivs",
-                        &flat_hash,
-                        &opt_level,
-                        &cache_variant,
-                        &type_hash,
-                        &param_sig,
-                    );
-
-                    let code_bytes =
-                        unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
-
-                    if let Err(e) = cache.put(
-                        &key,
-                        code_bytes,
-                        0,
-                        func_alloc_len,
-                        when_count,
-                        crossings_count,
-                        const_fold_params,
-                    ) {
-                        eprintln!("[jit] CODEGEN_CACHE_WRITE_ERROR: {}", e);
-                    } else {
-                        eprintln!(
-                            "[jit] CODEGEN_CACHE_WRITE key_prefix={}... size={} bytes",
-                            &key.stable_hash().chars().take(16).collect::<String>(),
-                            code_bytes.len()
-                        );
+                    Err(_) => {
+                        eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_PANIC");
+                        if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
+                            let code_bytes =
+                                unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
+                            if let Err(pe) = cache.put(
+                                &key,
+                                code_bytes,
+                                0,
+                                func_alloc_len,
+                                when_count,
+                                crossings_count,
+                                const_fold_params,
+                            ) {
+                                eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE_ERROR: {}", pe);
+                            } else {
+                                eprintln!(
+                                    "[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE size={} bytes",
+                                    code_bytes.len()
+                                );
+                            }
+                        } else {
+                            eprintln!(
+                                "[jit] CODEGEN_CACHE_RAW_FALLBACK_SKIPPED missing compiled_code size (JIT internal)"
+                            );
+                        }
                     }
-                } else {
-                    eprintln!(
-                        "[jit] CODEGEN_CACHE_WRITE_SKIPPED missing compiled_code size (JIT internal)"
-                    );
-                }
                 }
             }
         }

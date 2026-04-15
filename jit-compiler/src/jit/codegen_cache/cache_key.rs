@@ -60,7 +60,7 @@ pub fn codegen_cache_enabled() -> bool {
 }
 
 /// Get the cache root directory for codegen artifacts.
-pub(crate) fn codegen_cache_root() -> Option<PathBuf> {
+pub fn codegen_cache_root() -> Option<PathBuf> {
     let root = std::env::var("RUSTMODLICA_JIT_CODEGEN_CACHE_DIR")
         .ok()
         .map(PathBuf::from)

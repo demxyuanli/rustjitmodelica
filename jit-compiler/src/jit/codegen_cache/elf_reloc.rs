@@ -1,12 +1,20 @@
-//! Windows COFF load and relocation for cached object artifacts.
+//! Linux ELF64 object load and relocation for codegen disk cache and AOT archives.
+//!
+//! Mirrors the Windows COFF path in `coff_reloc.rs`: map sections into an anonymous
+//! RWX buffer, apply relocations, resolve undefined symbols via `dlsym(RTLD_DEFAULT, ...)`.
+
+#[cfg(target_os = "linux")]
+#[link(name = "dl")]
+extern "C" {}
 
 use std::collections::HashMap;
+use std::ffi::CString;
 
 use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget, SymbolSection};
 
 use super::exec_buffer::ExecCodeBuffer;
 
-pub(crate) fn load_coff_object_exec_windows(
+pub(crate) fn load_elf_object_exec(
     raw: &[u8],
     runtime_symbols: &HashMap<String, *const u8>,
 ) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
@@ -21,7 +29,7 @@ pub(crate) fn load_coff_object_exec_windows(
             continue;
         }
         let name = section.name().ok().unwrap_or("");
-        if name.starts_with(".debug") {
+        if name.starts_with(".debug") || name == ".comment" {
             continue;
         }
         let align = usize::try_from(section.align()).ok()?.max(1);
@@ -58,23 +66,21 @@ pub(crate) fn load_coff_object_exec_windows(
         for (rel_off, reloc) in section.relocations() {
             let place_off = base_off.saturating_add(usize::try_from(rel_off).ok()?);
             let target_addr = match reloc.target() {
-                RelocationTarget::Symbol(sym_idx) => {
-                    resolve_symbol_addr_windows(
-                        &obj,
-                        sym_idx,
-                        &layouts,
-                        base_addr,
-                        runtime_symbols,
-                        &mut import_slots,
-                    )?
-                }
+                RelocationTarget::Symbol(sym_idx) => resolve_symbol_addr_elf(
+                    &obj,
+                    sym_idx,
+                    &layouts,
+                    base_addr,
+                    runtime_symbols,
+                    &mut import_slots,
+                )?,
                 RelocationTarget::Section(sec_idx) => {
                     let (sec_off, _) = *layouts.get(&sec_idx)?;
                     base_addr.saturating_add(sec_off)
                 }
                 _ => return None,
             };
-            apply_relocation_windows(
+            apply_relocation_elf(
                 exec.as_mut_ptr(),
                 total_len,
                 base_addr,
@@ -88,14 +94,14 @@ pub(crate) fn load_coff_object_exec_windows(
     }
 
     let sym = obj.symbol_by_name("calc_derivs")?;
-    let func_offset = symbol_runtime_offset_windows(&sym, &layouts)?;
+    let func_offset = symbol_runtime_offset_elf(&sym, &layouts)?;
     if !exec.make_rx() {
         return None;
     }
     Some((exec, func_offset, import_slots))
 }
 
-fn symbol_runtime_offset_windows(
+fn symbol_runtime_offset_elf(
     sym: &object::Symbol<'_, '_>,
     layouts: &HashMap<object::SectionIndex, (usize, usize)>,
 ) -> Option<usize> {
@@ -112,7 +118,7 @@ fn symbol_runtime_offset_windows(
     }
 }
 
-fn resolve_symbol_addr_windows(
+fn resolve_symbol_addr_elf(
     obj: &object::File<'_>,
     sym_idx: object::SymbolIndex,
     layouts: &HashMap<object::SectionIndex, (usize, usize)>,
@@ -121,18 +127,17 @@ fn resolve_symbol_addr_windows(
     import_slots: &mut Vec<Box<usize>>,
 ) -> Option<usize> {
     let sym = obj.symbol_by_index(sym_idx).ok()?;
-    if let Some(off) = symbol_runtime_offset_windows(&sym, layouts) {
+    if let Some(off) = symbol_runtime_offset_elf(&sym, layouts) {
         return Some(base_addr.saturating_add(off));
     }
-    resolve_external_symbol_windows(sym.name().ok()?, runtime_symbols, import_slots)
+    resolve_external_symbol_elf(sym.name().ok()?, runtime_symbols, import_slots)
 }
 
-fn resolve_external_symbol_windows(
+fn resolve_external_symbol_elf(
     raw_name: &str,
     runtime_symbols: &HashMap<String, *const u8>,
     import_slots: &mut Vec<Box<usize>>,
 ) -> Option<usize> {
-    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
     let mut candidates = Vec::new();
     candidates.push(raw_name.to_string());
     if let Some(s) = raw_name.strip_prefix("__imp_") {
@@ -152,11 +157,10 @@ fn resolve_external_symbol_windows(
         }
     }
     for c in &candidates {
-        let mut c_bytes = c.as_bytes().to_vec();
-        c_bytes.push(0);
-        let ptr = unsafe { GetProcAddress(GetModuleHandleA(std::ptr::null()), c_bytes.as_ptr()) };
-        if let Some(p) = ptr {
-            let addr = p as usize;
+        let cstr = CString::new(c.as_str()).ok()?;
+        let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, cstr.as_ptr()) };
+        if !ptr.is_null() {
+            let addr = ptr as usize;
             if raw_name.starts_with("__imp_") {
                 import_slots.push(Box::new(addr));
                 return import_slots.last().map(|b| &**b as *const usize as usize);
@@ -167,7 +171,7 @@ fn resolve_external_symbol_windows(
     None
 }
 
-fn apply_relocation_windows(
+fn apply_relocation_elf(
     image: *mut u8,
     image_len: usize,
     base_addr: usize,
@@ -192,19 +196,25 @@ fn apply_relocation_windows(
             write_u32(image, image_len, place_off, target as u32)
         }
         (object::RelocationKind::Relative, 8) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(1);
+            let place_next = (base_addr as i128)
+                .saturating_add(place_off as i128)
+                .saturating_add(1);
             let disp = target.saturating_sub(place_next);
             let disp8 = i8::try_from(disp).ok()?;
             write_u8(image, image_len, place_off, disp8 as u8)
         }
         (object::RelocationKind::Relative, 16) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(2);
+            let place_next = (base_addr as i128)
+                .saturating_add(place_off as i128)
+                .saturating_add(2);
             let disp = target.saturating_sub(place_next);
             let disp16 = i16::try_from(disp).ok()?;
             write_u16(image, image_len, place_off, disp16 as u16)
         }
         (object::RelocationKind::Relative, 32) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(4);
+            let place_next = (base_addr as i128)
+                .saturating_add(place_off as i128)
+                .saturating_add(4);
             let disp = target.saturating_sub(place_next);
             if disp < i32::MIN as i128 || disp > i32::MAX as i128 {
                 return None;
@@ -212,13 +222,17 @@ fn apply_relocation_windows(
             write_u32(image, image_len, place_off, disp as i32 as u32)
         }
         (object::RelocationKind::Relative, 64) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(8);
+            let place_next = (base_addr as i128)
+                .saturating_add(place_off as i128)
+                .saturating_add(8);
             let disp = target.saturating_sub(place_next);
             let disp64 = i64::try_from(disp).ok()?;
             write_u64(image, image_len, place_off, disp64 as u64)
         }
         (object::RelocationKind::PltRelative, 32) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(4);
+            let place_next = (base_addr as i128)
+                .saturating_add(place_off as i128)
+                .saturating_add(4);
             let disp = target.saturating_sub(place_next);
             write_u32(image, image_len, place_off, disp as i32 as u32)
         }
@@ -226,7 +240,9 @@ fn apply_relocation_windows(
             write_u64(image, image_len, place_off, target as u64)
         }
         (object::RelocationKind::GotRelative, 32) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(4);
+            let place_next = (base_addr as i128)
+                .saturating_add(place_off as i128)
+                .saturating_add(4);
             let disp = target.saturating_sub(place_next);
             write_u32(image, image_len, place_off, disp as i32 as u32)
         }
@@ -298,13 +314,22 @@ fn align_up(value: usize, align: usize) -> usize {
     }
 }
 
-/// Load a code blob from an AOT archive, performing COFF relocation and symbol
-/// resolution.  Returns the executable buffer, function offset within the buffer,
-/// and import-slot keep-alives.
-///
-/// `import_symbols` lists the external symbols the code blob expects.  They are
-/// resolved against `runtime_symbols` and (on Windows) the current process.
-pub(crate) fn load_aot_blob_exec_windows(
+fn load_raw_blob_fallback(raw: &[u8]) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
+    if raw.is_empty() {
+        return None;
+    }
+    let exec = ExecCodeBuffer::alloc_rw(raw.len())?;
+    unsafe {
+        std::ptr::copy_nonoverlapping(raw.as_ptr(), exec.as_mut_ptr(), raw.len());
+    }
+    if !exec.make_rx() {
+        return None;
+    }
+    Some((exec, 0, Vec::new()))
+}
+
+/// Same contract as `coff_reloc::load_aot_blob_exec_windows`.
+pub(crate) fn load_aot_blob_exec_linux(
     raw: &[u8],
     import_symbols: &[String],
     runtime_symbols: &HashMap<String, *const u8>,
@@ -329,7 +354,7 @@ pub(crate) fn load_aot_blob_exec_windows(
             continue;
         }
         let name = section.name().ok().unwrap_or("");
-        if name.starts_with(".debug") || name.starts_with(".pdata") || name.starts_with(".xdata") {
+        if name.starts_with(".debug") || name.starts_with(".comment") {
             continue;
         }
         let alignment = usize::try_from(section.align()).ok()?.max(1);
@@ -362,11 +387,9 @@ pub(crate) fn load_aot_blob_exec_windows(
     let mut merged_symbols = runtime_symbols.clone();
     for sym_name in import_symbols {
         if !merged_symbols.contains_key(sym_name) {
-            if let Some(addr) = resolve_external_symbol_windows(
-                sym_name,
-                runtime_symbols,
-                &mut import_slots,
-            ) {
+            if let Some(addr) =
+                resolve_external_symbol_elf(sym_name, runtime_symbols, &mut import_slots)
+            {
                 merged_symbols.insert(sym_name.clone(), addr as *const u8);
             }
         }
@@ -380,7 +403,7 @@ pub(crate) fn load_aot_blob_exec_windows(
         for (rel_off, reloc) in section.relocations() {
             let place_off = base_off.saturating_add(usize::try_from(rel_off).ok()?);
             let target_addr = match reloc.target() {
-                RelocationTarget::Symbol(sym_idx) => resolve_symbol_addr_windows(
+                RelocationTarget::Symbol(sym_idx) => resolve_symbol_addr_elf(
                     &obj,
                     sym_idx,
                     &layouts,
@@ -394,7 +417,7 @@ pub(crate) fn load_aot_blob_exec_windows(
                 }
                 _ => return None,
             };
-            apply_relocation_windows(
+            apply_relocation_elf(
                 exec.as_mut_ptr(),
                 total_len,
                 base_addr,
@@ -408,23 +431,9 @@ pub(crate) fn load_aot_blob_exec_windows(
     }
 
     let sym = obj.symbol_by_name("calc_derivs")?;
-    let func_offset = symbol_runtime_offset_windows(&sym, &layouts)?;
+    let func_offset = symbol_runtime_offset_elf(&sym, &layouts)?;
     if !exec.make_rx() {
         return None;
     }
     Some((exec, func_offset, import_slots))
-}
-
-fn load_raw_blob_fallback(raw: &[u8]) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
-    if raw.is_empty() {
-        return None;
-    }
-    let exec = ExecCodeBuffer::alloc_rw(raw.len())?;
-    unsafe {
-        std::ptr::copy_nonoverlapping(raw.as_ptr(), exec.as_mut_ptr(), raw.len());
-    }
-    if !exec.make_rx() {
-        return None;
-    }
-    Some((exec, 0, Vec::new()))
 }

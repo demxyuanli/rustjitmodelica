@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::ast::Expression;
 use crate::compiler::ClockPartitionScheduleEntry;
+use crate::jit::deopt::DeoptSimPerfSummary;
 use crate::jit::CalcDerivsFunc;
 use serde::ser::SerializeMap;
 
@@ -154,6 +155,7 @@ pub fn run_simulation_collect(
     solver: &str,
     output_interval: f64,
     clock_partition_schedule: &[ClockPartitionScheduleEntry],
+    deopt_sim_perf: Option<&mut DeoptSimPerfSummary>,
 ) -> Result<SimulationResult, String> {
     let estimated_rows = if output_interval > 0.0 {
         (t_end / output_interval) as usize + 2
@@ -187,6 +189,7 @@ pub fn run_simulation_collect(
         None,
         clock_partition_schedule,
         Some(&mut collector),
+        deopt_sim_perf,
     )?;
     let mut time = Vec::with_capacity(collector.len());
     let mut series: HashMap<String, Vec<f64>> = HashMap::new();

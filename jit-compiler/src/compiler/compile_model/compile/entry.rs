@@ -29,7 +29,8 @@ use crate::compiler::{
     c_codegen, collect_all_called_names, collect_external_calls, collect_external_raw_call_sites,
     inline, jacobian,
     solvable_scale_warn, Artifacts, ClockPartitionScheduleEntry,
-    CompileOutput, CompilePerfReport, CompileStopPhase, Compiler, ValidationAnalyzedSummary,
+    CompileOutput, CompilePerfReport, CompileStopPhase, Compiler, DualCompileErrorReport,
+    ValidationAnalyzedSummary,
 };
 use crate::compiler::pipeline::{
     analyze_equations, build_runtime_algorithms, classify_variables,
@@ -92,6 +93,32 @@ pub(crate) fn compile(
         perf_report.structural_cache_hit = false;
         perf_report.param_only_update = false;
         perf_report.full_recompile_reason = None;
+        perf_report.compile_tier = "optimized_jit".to_string();
+        perf_report.profile_guided = false;
+        perf_report.speculation_guard_count = 0u32;
+        perf_report.speculation_invalidation_count = 0u32;
+        perf_report.condenser_total_elapsed_us = 0u64;
+        perf_report.condenser_artifacts_written = 0u32;
+        perf_report.condenser_cache_hits = 0u32;
+        perf_report.condenser_errors = 0u32;
+        perf_report.dual_compile_requested = opts.dual_compile;
+        perf_report.dual_compile_ok = false;
+        perf_report.dual_compile_speculation_count = 0u32;
+        perf_report.dual_compile_status = if opts.dual_compile {
+            CompilePerfReport::DUAL_COMPILE_STATUS_NOT_RUN.to_string()
+        } else {
+            CompilePerfReport::DUAL_COMPILE_STATUS_OFF.to_string()
+        };
+        perf_report.dual_compile_error = None;
+        perf_report.aot_native_load_status =
+            CompilePerfReport::AOT_NATIVE_STATUS_NOT_ELIGIBLE.to_string();
+        perf_report.aot_native_load_detail = None;
+
+        let leyden_profile = crate::condenser::training_run::load_cached_profile(model_name);
+        if leyden_profile.is_some() {
+            perf_report.profile_guided = true;
+        }
+
         let apply_fallback_snapshot = |report: &mut CompilePerfReport| {
             let snap: FallbackCounterSnapshot = fallback_counter::snapshot();
             report.fallback_jit_builtin = snap.jit_builtin;
@@ -110,17 +137,41 @@ pub(crate) fn compile(
                 let artifact_key = artifact_key::artifact_cache_key(model_name, opts, &compiler.loader);
                 if !artifact_cache::artifact_cache_enabled() {
                     perf_report.cache_miss_reason = Some("artifact_cache_disabled".to_string());
+                    perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                        layer: "artifact".to_string(),
+                        reason: "disabled".to_string(),
+                        detail: None,
+                    });
                 } else if let Some(bundle) = artifact_cache::get(cache_root.as_path(), &artifact_key)
                 {
                     if bundle.schema_version != 1 {
                         perf_report.cache_miss_reason = Some("artifact_schema_mismatch".to_string());
+                        perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                            layer: "artifact".to_string(),
+                            reason: "version_mismatch".to_string(),
+                            detail: Some(format!("schema_version={}", bundle.schema_version)),
+                        });
                     } else if !crate::cache::closure_hash::deps_match(&bundle.deps) {
                         perf_report.cache_miss_reason = Some("deps_changed".to_string());
+                        perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                            layer: "artifact".to_string(),
+                            reason: "deps_changed".to_string(),
+                            detail: None,
+                        });
                     } else if bundle.codegen_key.version
                         != crate::jit::codegen_cache::CODEGEN_CACHE_VERSION
                     {
                         perf_report.cache_miss_reason =
                             Some("codegen_key_version_mismatch".to_string());
+                        perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                            layer: "artifact".to_string(),
+                            reason: "codegen_version_mismatch".to_string(),
+                            detail: Some(format!(
+                                "cached={} current={}",
+                                bundle.codegen_key.version,
+                                crate::jit::codegen_cache::CODEGEN_CACHE_VERSION
+                            )),
+                        });
                     } else {
                         let mut runtime_symbols = builtin_jit_symbol_ptrs();
                         for (k, v) in &compiler.external_symbol_ptrs {
@@ -131,9 +182,114 @@ pub(crate) fn compile(
                             &bundle.param_vars,
                             &bundle.params,
                         );
-                        if let Some(cached) =
-                            cc.get(&bundle.codegen_key, &runtime_symbols, Some(&param_map))
+                        let mut cached_fn: Option<crate::jit::codegen_cache::CachedFunction> = None;
+                        #[cfg(any(windows, target_os = "linux"))]
                         {
+                            if crate::jit::aot_archive::aot_default_archive_native_load_enabled() {
+                                if let Some(default_path) =
+                                    crate::jit::aot_archive::AotArchive::default_archive_path()
+                                {
+                                    if default_path.exists() {
+                                        if let Ok(archive) =
+                                            crate::jit::aot_archive::AotArchive::load(&default_path)
+                                        {
+                                            let key_h = bundle.codegen_key.stable_hash();
+                                            if let Some(ent) = archive.lookup_entry(model_name, &key_h) {
+                                                if let Some(blob) = archive.get_code(&ent.codegen_key_hash) {
+                                                    if !blob.is_empty() {
+                                                        cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
+                                                            blob,
+                                                            &ent.import_symbols,
+                                                            &runtime_symbols,
+                                                            ent.when_count as usize,
+                                                            ent.crossings_count as usize,
+                                                        );
+                                                        if cached_fn.is_some() {
+                                                            perf_report.aot_native_load_status =
+                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOADED
+                                                                    .to_string();
+                                                            perf_report.aot_native_load_detail = Some(
+                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                    .to_string(),
+                                                            );
+                                                            perf_report.compile_tier =
+                                                                "aot_native_loaded".to_string();
+                                                        } else {
+                                                            perf_report.aot_native_load_status =
+                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
+                                                                    .to_string();
+                                                            perf_report.aot_native_load_detail = Some(
+                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                    .to_string(),
+                                                            );
+                                                        }
+                                                    } else {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                                .to_string();
+                                                    }
+                                                } else {
+                                                    perf_report.aot_native_load_status =
+                                                        CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                            .to_string();
+                                                }
+                                            } else if let Some(blob) = archive.get_code(&key_h) {
+                                                if !blob.is_empty() {
+                                                    cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
+                                                        blob,
+                                                        &Vec::new(),
+                                                        &runtime_symbols,
+                                                        bundle.when_count,
+                                                        bundle.crossings_count,
+                                                    );
+                                                    if cached_fn.is_some() {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOADED
+                                                                .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_KEY_FALLBACK
+                                                                .to_string(),
+                                                        );
+                                                        perf_report.compile_tier =
+                                                            "aot_native_loaded".to_string();
+                                                    } else {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
+                                                                .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_KEY_FALLBACK
+                                                                .to_string(),
+                                                        );
+                                                    }
+                                                } else {
+                                                    perf_report.aot_native_load_status =
+                                                        CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                            .to_string();
+                                                }
+                                            } else if archive.model_names().iter().any(|n| *n == model_name) {
+                                                perf_report.aot_native_load_status =
+                                                    CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY
+                                                        .to_string();
+                                            } else {
+                                                perf_report.aot_native_load_status =
+                                                    CompilePerfReport::AOT_NATIVE_STATUS_MODEL_NOT_IN_ARCHIVE
+                                                        .to_string();
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                perf_report.aot_native_load_status =
+                                    CompilePerfReport::AOT_NATIVE_STATUS_DISABLED_BY_ENV.to_string();
+                                perf_report.aot_native_load_detail = Some(
+                                    "RUSTMODLICA_AOT_NATIVE_LOAD=0".to_string(),
+                                );
+                            }
+                        }
+                        if cached_fn.is_none() {
+                            cached_fn = cc.get(&bundle.codegen_key, &runtime_symbols, Some(&param_map));
+                        }
+                        if let Some(cached) = cached_fn {
                             let clock_partitions: Vec<BackendClockPartition> =
                                 serde_json::from_str(&bundle.clock_partitions_json)
                                     .unwrap_or_default();
@@ -143,6 +299,7 @@ pub(crate) fn compile(
                             perf_report.artifact_bundle_cache_status = "hit".to_string();
                             perf_report.structural_cache_hit = true;
                             perf_report.cache_warm_ratio = 1.0;
+                            perf_report.cache_structural_hit_count += 1;
                             perf_report.jit_compile_ok = true;
                             perf_report.jit_ms = 0;
                             perf_report.codegen_wall_us = 0;
@@ -179,15 +336,28 @@ pub(crate) fn compile(
                                 result_file: bundle.result_file,
                                 user_stub_jits: Vec::new(),
                                 calc_derivs_codegen_keepalive: Some(Box::new(cached)),
+                                jit_module_keepalive: None,
                                 param_only_update: false,
+                                dual_compile_generic: None,
+                                dual_compile_keepalive: None,
                             }));
                         } else {
                             perf_report.cache_miss_reason =
                                 Some("codegen_disk_or_const_fold_miss".to_string());
+                            perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                                layer: "codegen".to_string(),
+                                reason: "codegen_disk_or_const_fold_miss".to_string(),
+                                detail: None,
+                            });
                         }
                     }
                 } else {
                     perf_report.cache_miss_reason = Some("artifact_key_not_found".to_string());
+                    perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                        layer: "artifact".to_string(),
+                        reason: "key_not_found".to_string(),
+                        detail: Some(format!("key={}", artifact_key.chars().take(40).collect::<String>())),
+                    });
                 }
             }
         }
@@ -293,6 +463,34 @@ pub(crate) fn compile(
                 "[perf] compile_phase.flatten_inline_ms={}",
                 perf_report.flatten_inline_ms
             );
+        }
+        {
+            let condenser_t0 = Instant::now();
+            let mut condenser_reg = crate::condenser::CondenserRegistry::new();
+            condenser_reg.register(Box::new(crate::condenser::FlattenCondenser));
+            let mut condenser_ctx = crate::condenser::CondenserContext::new(
+                model_name,
+                crate::condenser::CondenserPhase::FirstRun,
+            )
+            .with_quiet(compiler.options.quiet);
+            if let Some(ref profile) = leyden_profile {
+                condenser_ctx = condenser_ctx.with_profile(profile.clone());
+            }
+            let condenser_results = condenser_reg.run_applicable(&mut condenser_ctx);
+            for result in &condenser_results {
+                match result {
+                    Ok(out) => {
+                        if out.cache_hits > 0 {
+                            perf_report.condenser_cache_hits += out.cache_hits;
+                        }
+                        perf_report.condenser_artifacts_written += out.artifacts_written;
+                    }
+                    Err(_) => {
+                        perf_report.condenser_errors += 1;
+                    }
+                }
+            }
+            perf_report.condenser_total_elapsed_us += condenser_t0.elapsed().as_micros() as u64;
         }
         let qperf = crate::query_db::perf_snapshot();
         perf_report.parse_us = *qperf.get("parse_us").unwrap_or(&0);
@@ -657,6 +855,40 @@ pub(crate) fn compile(
         perf_report.analyze_ms = analyze_t0.elapsed().as_millis() as u64;
         if perf_trace {
             eprintln!("[perf] compile_phase.analyze_ms={}", perf_report.analyze_ms);
+        }
+        {
+            let condenser_t0 = Instant::now();
+            let mut condenser_reg = crate::condenser::CondenserRegistry::new();
+            condenser_reg.register(Box::new(crate::condenser::AnalysisCondenser));
+            condenser_reg.register(Box::new(crate::condenser::SymbolicCondenser));
+            let condenser_phase = if leyden_profile.is_some() {
+                crate::condenser::CondenserPhase::FirstRun
+            } else {
+                crate::condenser::CondenserPhase::BuildTime
+            };
+            let mut condenser_ctx = crate::condenser::CondenserContext::new(
+                model_name,
+                condenser_phase,
+            )
+            .with_quiet(compiler.options.quiet);
+            if let Some(ref profile) = leyden_profile {
+                condenser_ctx = condenser_ctx.with_profile(profile.clone());
+            }
+            let condenser_results = condenser_reg.run_applicable(&mut condenser_ctx);
+            for result in &condenser_results {
+                match result {
+                    Ok(out) => {
+                        if out.cache_hits > 0 {
+                            perf_report.condenser_cache_hits += out.cache_hits;
+                        }
+                        perf_report.condenser_artifacts_written += out.artifacts_written;
+                    }
+                    Err(_) => {
+                        perf_report.condenser_errors += 1;
+                    }
+                }
+            }
+            perf_report.condenser_total_elapsed_us += condenser_t0.elapsed().as_micros() as u64;
         }
         let state_vars_sorted = variable_layout.state_vars;
         let discrete_vars_sorted = variable_layout.discrete_vars;
@@ -1027,6 +1259,14 @@ pub(crate) fn compile(
                     perf_report.external_resolve_cache_status = "hit".to_string();
                     cached
                 } else {
+                    let miss_detail =
+                        external_resolve_cache::diagnose_miss(cache_root.as_path(), &key);
+                    perf_report.external_resolve_miss_detail = Some(miss_detail.clone());
+                    perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                        layer: "external_resolve".to_string(),
+                        reason: "cache_miss".to_string(),
+                        detail: Some(miss_detail),
+                    });
                     let computed = collect_external_calls(
                         &mut compiler.loader,
                         &alg_equations,
@@ -1624,9 +1864,110 @@ pub(crate) fn compile(
                         let cc = crate::jit::codegen_cache::CodegenCache::new();
                         let param_map =
                             crate::jit::codegen_cache::param_values_by_name(&param_vars, &params);
-                        if let Some(cached) =
-                            cc.get(&bundle.codegen_key, &all_symbols, Some(&param_map))
+                        let mut cached_fn: Option<crate::jit::codegen_cache::CachedFunction> = None;
+                        #[cfg(any(windows, target_os = "linux"))]
                         {
+                            if crate::jit::aot_archive::aot_default_archive_native_load_enabled() {
+                                if let Some(default_path) =
+                                    crate::jit::aot_archive::AotArchive::default_archive_path()
+                                {
+                                    if default_path.exists() {
+                                        if let Ok(archive) =
+                                            crate::jit::aot_archive::AotArchive::load(&default_path)
+                                        {
+                                            let key_h = bundle.codegen_key.stable_hash();
+                                            if let Some(ent) = archive.lookup_entry(model_name, &key_h) {
+                                                if let Some(blob) = archive.get_code(&ent.codegen_key_hash) {
+                                                    if !blob.is_empty() {
+                                                        cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
+                                                            blob,
+                                                            &ent.import_symbols,
+                                                            &all_symbols,
+                                                            ent.when_count as usize,
+                                                            ent.crossings_count as usize,
+                                                        );
+                                                        if cached_fn.is_some() {
+                                                            perf_report.aot_native_load_status =
+                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOADED
+                                                                    .to_string();
+                                                            perf_report.aot_native_load_detail = Some(
+                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                    .to_string(),
+                                                            );
+                                                            perf_report.compile_tier =
+                                                                "aot_native_loaded".to_string();
+                                                        } else {
+                                                            perf_report.aot_native_load_status =
+                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
+                                                                    .to_string();
+                                                            perf_report.aot_native_load_detail = Some(
+                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                    .to_string(),
+                                                            );
+                                                        }
+                                                    } else {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                                .to_string();
+                                                    }
+                                                }
+                                            } else if let Some(blob) = archive.get_code(&key_h) {
+                                                if !blob.is_empty() {
+                                                    cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
+                                                        blob,
+                                                        &Vec::new(),
+                                                        &all_symbols,
+                                                        bundle.when_count,
+                                                        bundle.crossings_count,
+                                                    );
+                                                    if cached_fn.is_some() {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOADED
+                                                                .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_KEY_FALLBACK
+                                                                .to_string(),
+                                                        );
+                                                        perf_report.compile_tier =
+                                                            "aot_native_loaded".to_string();
+                                                    } else {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
+                                                                .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_KEY_FALLBACK
+                                                                .to_string(),
+                                                        );
+                                                    }
+                                                } else {
+                                                    perf_report.aot_native_load_status =
+                                                        CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                            .to_string();
+                                                }
+                                            } else if archive.model_names().iter().any(|n| *n == model_name) {
+                                                perf_report.aot_native_load_status =
+                                                    CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY
+                                                        .to_string();
+                                            } else {
+                                                perf_report.aot_native_load_status =
+                                                    CompilePerfReport::AOT_NATIVE_STATUS_MODEL_NOT_IN_ARCHIVE
+                                                        .to_string();
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                perf_report.aot_native_load_status =
+                                    CompilePerfReport::AOT_NATIVE_STATUS_DISABLED_BY_ENV.to_string();
+                                perf_report.aot_native_load_detail = Some(
+                                    "RUSTMODLICA_AOT_NATIVE_LOAD=0".to_string(),
+                                );
+                            }
+                        }
+                        if cached_fn.is_none() {
+                            cached_fn = cc.get(&bundle.codegen_key, &all_symbols, Some(&param_map));
+                        }
+                        if let Some(cached) = cached_fn {
                             let calc_derivs = cached.func;
                             let when_count_b = bundle.when_count;
                             let crossings_count_b = bundle.crossings_count;
@@ -1652,7 +1993,9 @@ pub(crate) fn compile(
                             perf_report.codegen_wall_ms = 0;
                             perf_report.artifact_bundle_cache_status = "hit".to_string();
                             perf_report.structural_cache_hit = true;
-                            perf_report.cache_warm_ratio = 1.0;
+                            perf_report.cache_structural_hit_count += 1;
+                            perf_report.cache_warm_ratio =
+                                perf_report.compute_warm_ratio(true);
                             let frontend_flatten_seg_us = perf_report
                                 .decl_expand_us
                                 .saturating_add(perf_report.eq_expand_us)
@@ -1710,41 +2053,202 @@ pub(crate) fn compile(
                                 result_file: compiler.options.result_file.clone(),
                                 user_stub_jits,
                                 calc_derivs_codegen_keepalive: Some(cf),
+                                jit_module_keepalive: None,
                                 param_only_update: false,
+                                dual_compile_generic: None,
+                                dual_compile_keepalive: None,
                             }));
                         } else {
                             perf_report.cache_miss_reason =
                                 Some("sim_bundle_codegen_miss".to_string());
+                            perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                                layer: "sim_bundle".to_string(),
+                                reason: "codegen_miss".to_string(),
+                                detail: None,
+                            });
                         }
                     }
                 }
             }
         }
+        let aot_archive_hit = {
+            if !crate::jit::aot_archive::aot_default_archive_native_load_enabled() {
+                false
+            } else if let Some(ref default_path) = crate::jit::aot_archive::AotArchive::default_archive_path() {
+                if default_path.exists() {
+                    match crate::jit::aot_archive::AotArchive::load(default_path) {
+                        Ok(archive) => {
+                            let found = archive.model_names().iter().any(|n| *n == model_name);
+                            if found {
+                                if perf_trace {
+                                    eprintln!("[perf] aot_archive=hit model={}", model_name);
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => false,
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if let Some(ref profile) = leyden_profile {
+            crate::jit::speculation::init_global_registry(profile);
+            if let Ok(reg) = crate::jit::speculation::global_registry().read() {
+                perf_report.speculation_guard_count = reg.total_guard_count() as u32;
+            }
+        }
+        let tiering_policy = crate::jit::tiered::TieringPolicy::default();
+        let eq_count = alg_equations.len() + diff_equations.len();
+        let selected_tier = tiering_policy.select_initial_tier(eq_count);
+        perf_report.compile_tier = match selected_tier {
+            crate::jit::tiered::CompileTier::Interpreter => "interpreter".to_string(),
+            crate::jit::tiered::CompileTier::FastJit => "fast_jit".to_string(),
+            crate::jit::tiered::CompileTier::OptimizedJit => "optimized_jit".to_string(),
+            crate::jit::tiered::CompileTier::ProfileGuided => "profile_guided".to_string(),
+        };
+        if aot_archive_hit {
+            perf_report.compile_tier = "aot_cached".to_string();
+        }
+
+        let mut aot_native_blob: Option<Vec<u8>> = None;
+        let mut aot_native_cf: Option<crate::jit::codegen_cache::CachedFunction> = None;
+        let mut aot_native_when_cross: Option<(usize, usize)> = None;
+        perf_report.aot_native_load_status =
+            CompilePerfReport::AOT_NATIVE_STATUS_NO_MATCHING_ENTRY.to_string();
+        perf_report.aot_native_load_detail = None;
+
+        if !crate::jit::aot_archive::aot_default_archive_native_load_enabled() {
+            perf_report.aot_native_load_status =
+                CompilePerfReport::AOT_NATIVE_STATUS_DISABLED_BY_ENV.to_string();
+            perf_report.aot_native_load_detail =
+                Some("RUSTMODLICA_AOT_NATIVE_LOAD=0".to_string());
+        } else if let Some(ref default_path) = crate::jit::aot_archive::AotArchive::default_archive_path() {
+            if default_path.exists() {
+                if let Ok(archive) = crate::jit::aot_archive::AotArchive::load(default_path) {
+                    let key_h = codegen_ck.stable_hash();
+                    if let Some(ent) = archive.lookup_entry(model_name, &key_h) {
+                        if let Some(blob) = archive.get_code(&ent.codegen_key_hash) {
+                            if blob.is_empty() {
+                                perf_report.aot_native_load_status =
+                                    CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB.to_string();
+                            } else {
+                                #[cfg(any(windows, target_os = "linux"))]
+                                {
+                                    let mut runtime_symbols = builtin_jit_symbol_ptrs();
+                                    for (k, v) in &all_symbols {
+                                        runtime_symbols.insert(k.clone(), *v);
+                                    }
+                                    let wc = ent.when_count as usize;
+                                    let cc = ent.crossings_count as usize;
+                                    if let Some(cf) = crate::jit::codegen_cache::load_aot_code_blob(
+                                        blob,
+                                        &ent.import_symbols,
+                                        &runtime_symbols,
+                                        wc,
+                                        cc,
+                                    ) {
+                                        aot_native_blob = Some(blob.to_vec());
+                                        aot_native_cf = Some(cf);
+                                        aot_native_when_cross = Some((wc, cc));
+                                        perf_report.aot_native_load_status =
+                                            CompilePerfReport::AOT_NATIVE_STATUS_LOADED.to_string();
+                                        perf_report.aot_native_load_detail = Some(
+                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                .to_string(),
+                                        );
+                                        perf_report.compile_tier = "aot_native_loaded".to_string();
+                                        perf_report.structural_cache_hit = true;
+                                        perf_report.cache_warm_ratio =
+                                            perf_report.compute_warm_ratio(true);
+                                        if perf_trace {
+                                            eprintln!(
+                                                "[perf] aot_native=loaded model={} bytes={}",
+                                                model_name,
+                                                blob.len()
+                                            );
+                                        }
+                                    } else {
+                                        perf_report.aot_native_load_status =
+                                            CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
+                                                .to_string();
+                                        perf_report.aot_native_load_detail = Some(
+                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                .to_string(),
+                                        );
+                                    }
+                                }
+                                #[cfg(not(any(windows, target_os = "linux")))]
+                                {
+                                    perf_report.aot_native_load_status =
+                                        CompilePerfReport::AOT_NATIVE_STATUS_UNSUPPORTED_OS
+                                            .to_string();
+                                }
+                            }
+                        } else {
+                            perf_report.aot_native_load_status =
+                                CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB.to_string();
+                        }
+                    } else if archive.model_names().iter().any(|n| *n == model_name) {
+                        perf_report.aot_native_load_status =
+                            CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY.to_string();
+                    } else {
+                        perf_report.aot_native_load_status =
+                            CompilePerfReport::AOT_NATIVE_STATUS_MODEL_NOT_IN_ARCHIVE.to_string();
+                    }
+                } else {
+                    perf_report.aot_native_load_status =
+                        CompilePerfReport::AOT_NATIVE_STATUS_ARCHIVE_READ_FAILED.to_string();
+                }
+            } else {
+                perf_report.aot_native_load_status =
+                    CompilePerfReport::AOT_NATIVE_STATUS_NO_ARCHIVE_FILE.to_string();
+            }
+        } else {
+            perf_report.aot_native_load_status =
+                CompilePerfReport::AOT_NATIVE_STATUS_NO_ARCHIVE_PATH.to_string();
+        }
+
+        let mut aot_jit_codegen_keepalive: Option<Box<crate::jit::codegen_cache::CachedFunction>> =
+            None;
+
         let mut jit = if all_symbols.is_empty() {
             Jit::new()
         } else {
             Jit::new_with_extra_symbols(Some(&all_symbols))
         };
         let jit_t0 = Instant::now();
-        let res = jit.compile(
-            &state_vars_sorted,
-            &discrete_vars_sorted,
-            &param_vars,
-            &output_vars,
-            &array_info,
-            &alg_equations,
-            &diff_equations,
-            &algorithms,
-            &clock_partition_schedule,
-            t_end,
-            &params,
-            &newton_tearing_var_names,
-            &external_names,
-            &const_fold_param_pairs,
-            &flat_model.stream_connection_set,
-            &flat_model.stream_flow_map,
-            &connector_connection_degree,
-        );
+        let res = if let Some(cf) = aot_native_cf {
+            let (w, c) = aot_native_when_cross.unwrap_or((0, 0));
+            let f = cf.func;
+            aot_jit_codegen_keepalive = Some(Box::new(cf));
+            Ok((f, w, c))
+        } else {
+            jit.compile(
+                &state_vars_sorted,
+                &discrete_vars_sorted,
+                &param_vars,
+                &output_vars,
+                &array_info,
+                &alg_equations,
+                &diff_equations,
+                &algorithms,
+                &clock_partition_schedule,
+                t_end,
+                &params,
+                &newton_tearing_var_names,
+                &external_names,
+                &const_fold_param_pairs,
+                &flat_model.stream_connection_set,
+                &flat_model.stream_flow_map,
+                &connector_connection_degree,
+            )
+        };
         let jit_elapsed = jit_t0.elapsed();
         perf_report.jit_inline_builtin_hits = crate::jit::translator::expr::take_inline_builtin_hits();
         let mut type_hash = Xxh64::new(0);
@@ -1814,7 +2318,16 @@ pub(crate) fn compile(
 
         match res {
             Ok((calc_derivs, when_count, crossings_count)) => {
-                perf_report.full_recompile_reason = Some("jit_full_compile".to_string());
+                let aot_native_used_here = aot_jit_codegen_keepalive.is_some();
+                perf_report.full_recompile_reason = if aot_native_used_here {
+                    Some("aot_native_blob".to_string())
+                } else {
+                    Some("jit_full_compile".to_string())
+                };
+                perf_report.cache_full_recompile_count += 1;
+                if !aot_native_used_here {
+                    perf_report.cache_warm_ratio = perf_report.compute_warm_ratio(false);
+                }
                 if matches!(compiler.options.compile_stop, CompileStopPhase::Full) {
                     if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
                         let artifact_key_s = artifact_key::artifact_cache_key(model_name, opts, &compiler.loader);
@@ -1884,6 +2397,160 @@ pub(crate) fn compile(
                         }
                     }
                 }
+                {
+                    let condenser_t0 = Instant::now();
+                    let mut condenser_reg = crate::condenser::CondenserRegistry::new();
+                    condenser_reg.register(Box::new(crate::condenser::CodegenCondenser));
+                    let mut condenser_ctx = crate::condenser::CondenserContext::new(
+                        model_name,
+                        crate::condenser::CondenserPhase::Warmup,
+                    )
+                    .with_quiet(compiler.options.quiet);
+                    if let Some(ref profile) = leyden_profile {
+                        condenser_ctx = condenser_ctx.with_profile(profile.clone());
+                    }
+                    let condenser_results = condenser_reg.run_applicable(&mut condenser_ctx);
+                    for result in &condenser_results {
+                        match result {
+                            Ok(out) => {
+                                if out.cache_hits > 0 {
+                                    perf_report.condenser_cache_hits += out.cache_hits;
+                                }
+                                perf_report.condenser_artifacts_written +=
+                                    out.artifacts_written;
+                            }
+                            Err(_) => {
+                                perf_report.condenser_errors += 1;
+                            }
+                        }
+                    }
+                    perf_report.condenser_total_elapsed_us +=
+                        condenser_t0.elapsed().as_micros() as u64;
+                }
+                {
+                    let mut builder = crate::jit::aot_archive::AotArchive::new_builder();
+                    let code_bytes = aot_native_blob.take().unwrap_or_else(|| {
+                        crate::jit::codegen_cache::CodegenCache::new()
+                            .try_read_object_bytes(&codegen_ck)
+                            .unwrap_or_default()
+                    });
+                    let import_symbols =
+                        crate::jit::codegen_cache::undefined_import_names_from_object(&code_bytes);
+                    builder.add_model(
+                        model_name,
+                        &codegen_ck.stable_hash(),
+                        code_bytes,
+                        import_symbols,
+                        when_count as u32,
+                        crossings_count as u32,
+                    );
+                    match builder.write_merged_to_default() {
+                        Ok(()) => {
+                            if perf_trace {
+                                eprintln!(
+                                    "[perf] aot_archive=merged model={}",
+                                    model_name,
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if perf_trace {
+                                eprintln!("[perf] aot_archive=merge_failed err={}", e);
+                            }
+                        }
+                    }
+                }
+                if let Ok(reg) = crate::jit::speculation::global_registry().read() {
+                    perf_report.speculation_invalidation_count = reg.invalidation_count() as u32;
+                }
+
+                let (final_calc_derivs, dual_generic, dual_keepalive) = if compiler.options.dual_compile
+                    && aot_jit_codegen_keepalive.is_none()
+                {
+                    let has_guards = crate::jit::speculation::global_registry()
+                        .read()
+                        .map(|r| r.active_guard_count() > 0)
+                        .unwrap_or(false);
+                    if has_guards {
+                        perf_report.dual_compile_status =
+                            CompilePerfReport::DUAL_COMPILE_STATUS_ATTEMPTED.to_string();
+                        let extra_sym = if all_symbols.is_empty() { None } else { Some(&all_symbols) };
+                        match crate::jit::deopt::dual_compile(
+                            &state_vars_sorted,
+                            &discrete_vars_sorted,
+                            &param_vars,
+                            &output_vars,
+                            &array_info,
+                            &alg_equations,
+                            &diff_equations,
+                            &algorithms,
+                            &clock_partition_schedule,
+                            t_end,
+                            &params,
+                            &newton_tearing_var_names,
+                            &external_names,
+                            &const_fold_param_pairs,
+                            &flat_model.stream_connection_set,
+                            &flat_model.stream_flow_map,
+                            &connector_connection_degree,
+                            extra_sym,
+                        ) {
+                            Ok(dual) => {
+                                let spec = dual.speculative;
+                                let gen = dual.generic;
+                                perf_report.dual_compile_ok = true;
+                                perf_report.dual_compile_speculation_count =
+                                    dual.speculation_count as u32;
+                                perf_report.dual_compile_status =
+                                    CompilePerfReport::DUAL_COMPILE_STATUS_OK.to_string();
+                                perf_report.dual_compile_error = None;
+                                if perf_trace {
+                                    eprintln!(
+                                        "[perf] dual_compile=ok speculations={}",
+                                        dual.speculation_count
+                                    );
+                                }
+                                perf_report.compile_tier = "dual_speculative".to_string();
+                                (spec, Some(gen), Some(Box::new(dual)))
+                            }
+                            Err(e) => {
+                                perf_report.dual_compile_ok = false;
+                                perf_report.dual_compile_status =
+                                    CompilePerfReport::DUAL_COMPILE_STATUS_FAILED.to_string();
+                                perf_report.dual_compile_error = Some(DualCompileErrorReport {
+                                    code: e.code().to_string(),
+                                    registry_poisoned: e.registry_poisoned(),
+                                    cranelift_phase: e
+                                        .cranelift_phase()
+                                        .map(|s| s.to_string()),
+                                    symbol_name: e.symbol_name().map(|s| s.to_string()),
+                                    detail: CompilePerfReport::truncate_dual_compile_error_detail(
+                                        &e.stable_detail(),
+                                    ),
+                                });
+                                if perf_trace {
+                                    eprintln!("[perf] dual_compile=failed err={}", e);
+                                }
+                                (calc_derivs, None, None)
+                            }
+                        }
+                    } else {
+                        perf_report.dual_compile_ok = false;
+                        perf_report.dual_compile_status =
+                            CompilePerfReport::DUAL_COMPILE_STATUS_SKIPPED_NO_GUARDS.to_string();
+                        perf_report.dual_compile_error = None;
+                        (calc_derivs, None, None)
+                    }
+                } else {
+                    if compiler.options.dual_compile && aot_jit_codegen_keepalive.is_some() {
+                        perf_report.dual_compile_ok = false;
+                        perf_report.dual_compile_status =
+                            CompilePerfReport::DUAL_COMPILE_STATUS_SKIPPED_AOT_NATIVE.to_string();
+                        perf_report.dual_compile_error = None;
+                    }
+                    (calc_derivs, None, None)
+                };
+
                 perf_report.jit_compile_ok = true;
                 perf_report.jit_error = None;
                 apply_fallback_snapshot(&mut perf_report);
@@ -1907,7 +2574,7 @@ pub(crate) fn compile(
                     }
                 }
                 Ok(CompileOutput::Simulation(Artifacts {
-                    calc_derivs,
+                    calc_derivs: final_calc_derivs,
                     states,
                     discrete_vals,
                     params,
@@ -1934,8 +2601,11 @@ pub(crate) fn compile(
                     output_interval: compiler.options.output_interval,
                     result_file: compiler.options.result_file.clone(),
                     user_stub_jits,
-                    calc_derivs_codegen_keepalive: None,
+                    calc_derivs_codegen_keepalive: aot_jit_codegen_keepalive.take(),
+                    jit_module_keepalive: None,
                     param_only_update: false,
+                    dual_compile_generic: dual_generic,
+                    dual_compile_keepalive: dual_keepalive,
                 }))
             }
             Err(e) => {

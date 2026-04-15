@@ -2,6 +2,7 @@ use rustmodlica::{
     run_simulation, run_simulation_collect, Artifacts, CompileOutput, CompileStopPhase, Compiler,
     WarningInfo,
 };
+use rustmodlica::jit::deopt::DeoptSimPerfSummary;
 use rustmodlica::runtime_perf_counters;
 use rustmodlica::error;
 use rustmodlica::fmi;
@@ -18,7 +19,7 @@ use super::args::parse_rustmodlica_overdet_tol;
 use super::cache_stats::run_cache_stats;
 use super::event_scan::run_event_scan;
 use super::perf_json::{compile_export_sidebar_json, maybe_write_perf_json};
-use super::precompile::run_precompile;
+use super::precompile::{run_precompile, run_msl_precompile_if_needed};
 use super::repl::run_repl_loop;
 use super::validate_json::{emit_validate_json, parse_validate_tier};
 
@@ -30,6 +31,23 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
     }
     if args.len() >= 2 && args[1] == "--cache-stats" {
         return run_cache_stats();
+    }
+    if args.len() >= 2 && args[1] == "--msl-precompile" {
+        let mut lib_paths = Vec::new();
+        let mut i = 2usize;
+        while i < args.len() {
+            let a = &args[i];
+            if let Some(v) = a.strip_prefix("--lib-path=") {
+                lib_paths.push(v.to_string());
+                i += 1;
+            } else if a == "--lib-path" && i + 1 < args.len() {
+                lib_paths.push(args[i + 1].to_string());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+        return run_msl_precompile_if_needed(&lib_paths);
     }
     if args.len() >= 3 && args[1] == "--precompile" {
         let mut precompile_lib_paths = Vec::new();
@@ -81,6 +99,10 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut validation_mode: Option<String> = None;
     let mut array_size_policy = "legacy".to_string();
     let mut array_sizes_json: Option<String> = None;
+    let mut training_run = false;
+    let mut use_profile: Option<String> = None;
+    let mut condenser_stats = false;
+    let mut dual_compile = false;
     // P8-1: CLI parameters for overdet check configuration
     let mut overdet_check: Option<bool> = None;
     let mut overdet_tol: Option<f64> = None;
@@ -218,6 +240,18 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if let Some(v) = a.strip_prefix("--perf-json=") {
             perf_json_path = Some(v.to_string());
             i += 1;
+        } else if a == "--training-run" {
+            training_run = true;
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--use-profile=") {
+            use_profile = Some(v.to_string());
+            i += 1;
+        } else if a == "--condenser-stats" {
+            condenser_stats = true;
+            i += 1;
+        } else if a == "--dual-compile" {
+            dual_compile = true;
+            i += 1;
         } else if !a.starts_with('-') {
             model_name = Some(a.clone());
             i += 1;
@@ -323,6 +357,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
     } else {
         CompileStopPhase::Full
     };
+    compiler.options.dual_compile = dual_compile;
     let run_repl = repl;
     let json_mode = validate_only || output_format.as_deref() == Some("json");
     if validate_only {
@@ -363,6 +398,51 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
 
     if flat_snapshot_only && emit_flat_snapshot.is_none() {
         return Err("--flat-snapshot-only requires --emit-flat-snapshot=<path>".into());
+    }
+
+    if training_run {
+        let profile_out = use_profile.as_ref().map(|p| std::path::PathBuf::from(p));
+        let config = rustmodlica::condenser::training_run::TrainingRunConfig {
+            model_name: effective_model.clone(),
+            lib_paths: lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect(),
+            output_profile_path: profile_out,
+            quiet: false,
+        };
+        let result = rustmodlica::condenser::training_run::execute_training_run(&config)
+            .map_err(|e| -> RunError { format!("training run: {}", e).into() })?;
+        eprintln!(
+            "[training-run] profile: steps={} hot_eqs={} wall={:.1}ms",
+            result.profile.total_steps,
+            result.profile.hot_equations.len(),
+            result.wall_us as f64 / 1000.0,
+        );
+        if let Some(ref p) = result.profile_path {
+            eprintln!("[training-run] saved to {}", p.display());
+        }
+        return Ok(());
+    }
+
+    if let Some(ref profile_path) = use_profile {
+        if !training_run {
+            match rustmodlica::condenser::training_run::load_profile_from_file(
+                std::path::Path::new(profile_path),
+            ) {
+                Ok(profile) => {
+                    rustmodlica::jit::speculation::init_global_registry(&profile);
+                    if !json_mode {
+                        eprintln!(
+                            "[profile] loaded profile from {} (steps={} hot_eqs={})",
+                            profile_path,
+                            profile.total_steps,
+                            profile.hot_equations.len(),
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[profile] failed to load {}: {}", profile_path, e);
+                }
+            }
+        }
     }
 
     if !json_mode {
@@ -419,6 +499,24 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
             eprintln!("[perf] compile_param_only_update={}", b);
         }
     }
+    if condenser_stats {
+        if let Some(perf) = compiler.last_compile_perf.as_ref() {
+            eprintln!("[condenser-stats] tier={} profile_guided={}", perf.compile_tier, perf.profile_guided);
+            eprintln!(
+                "[condenser-stats] condensers: elapsed={}us artifacts={} cache_hits={} errors={}",
+                perf.condenser_total_elapsed_us,
+                perf.condenser_artifacts_written,
+                perf.condenser_cache_hits,
+                perf.condenser_errors,
+            );
+            eprintln!(
+                "[condenser-stats] speculation: guards={} invalidations={}",
+                perf.speculation_guard_count,
+                perf.speculation_invalidation_count,
+            );
+        }
+    }
+
     let warn_level = compiler.options.warnings_level.as_str();
     if validate_only {
         match &out {
@@ -604,6 +702,9 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
             return Ok(());
         }
         CompileOutput::Simulation(artifacts) => {
+            if let Some(generic_fn) = artifacts.dual_compile_generic {
+                rustmodlica::jit::deopt::set_precompiled_generic(generic_fn);
+            }
             println!("{}", i18n::msg0("compilation_successful"));
             println!("{}", i18n::msg("states", &[&artifacts.states.len()]));
             println!(
@@ -674,6 +775,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 let sim_t0 = if perf_enabled { Some(Instant::now()) } else { None };
                 let sim_compile_sidebar =
                     compile_export_sidebar_json(&compile_perf, Some(&artifacts));
+                let mut deopt_perf_summary = DeoptSimPerfSummary::default();
                 let result = run_simulation_collect(
                     artifacts.calc_derivs,
                     artifacts.when_count,
@@ -698,6 +800,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     &artifacts.solver,
                     artifacts.output_interval,
                     &artifacts.clock_partition_schedule,
+                    Some(&mut deopt_perf_summary),
                 )?;
                 let sim_ms = sim_t0
                     .as_ref()
@@ -707,6 +810,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     eprintln!("[perf] sim_ms={}", sim_ms);
                 }
                 let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
+                let deopt_json = serde_json::to_value(&deopt_perf_summary)
+                    .unwrap_or(serde_json::Value::Null);
                 maybe_write_perf_json(
                     &perf_json_path,
                     &effective_model,
@@ -715,7 +820,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some(serde_json::json!({
                         "sim_ms": sim_ms,
                         "event_iter_total": event_iter_total,
-                        "clock_dispatch_total": clock_dispatch_total
+                        "clock_dispatch_total": clock_dispatch_total,
+                        "deopt": deopt_json
                     })),
                 )?;
                 let mut sim_json = serde_json::to_value(&result).unwrap_or(serde_json::Value::Null);
@@ -733,6 +839,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 println!("{}", i18n::msg0("starting_simulation"));
             }
             let sim_t0 = if perf_enabled { Some(Instant::now()) } else { None };
+            let mut deopt_perf_summary = DeoptSimPerfSummary::default();
             run_simulation(
                 artifacts.calc_derivs,
                 artifacts.when_count,
@@ -759,6 +866,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 artifacts.result_file.as_deref(),
                 &artifacts.clock_partition_schedule,
                 None,
+                Some(&mut deopt_perf_summary),
             )?;
             let sim_ms = sim_t0
                 .as_ref()
@@ -768,6 +876,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 eprintln!("[perf] sim_ms={}", sim_ms);
             }
             let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
+            let deopt_json = serde_json::to_value(&deopt_perf_summary)
+                .unwrap_or(serde_json::Value::Null);
             maybe_write_perf_json(
                 &perf_json_path,
                 &effective_model,
@@ -776,7 +886,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 Some(serde_json::json!({
                     "sim_ms": sim_ms,
                     "event_iter_total": event_iter_total,
-                    "clock_dispatch_total": clock_dispatch_total
+                    "clock_dispatch_total": clock_dispatch_total,
+                    "deopt": deopt_json
                 })),
             )?;
             if !json_mode {

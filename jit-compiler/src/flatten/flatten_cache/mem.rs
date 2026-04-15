@@ -206,8 +206,22 @@ fn software_install_root() -> Option<PathBuf> {
     Some(dir)
 }
 
+/// Detect a project-level cache directory: if CWD contains a `build/` directory
+/// or project marker (e.g. `package.mo`, `.modelica-project`), use `<cwd>/build/cache`.
+fn dev_project_cache_dir() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let build_dir = cwd.join("build");
+    let markers = ["package.mo", ".modelica-project", "modelica.toml"];
+    let has_marker = markers.iter().any(|m| cwd.join(m).exists());
+    if build_dir.is_dir() || has_marker {
+        Some(build_dir.join("cache"))
+    } else {
+        None
+    }
+}
+
 fn default_flatten_cache_dir() -> Option<PathBuf> {
-    software_install_root().map(|r| r.join("cache"))
+    dev_project_cache_dir().or_else(|| software_install_root().map(|r| r.join("cache")))
 }
 
 /// On-disk cache root for flatten hints, SQLite tiers, and IR epoch stamp.

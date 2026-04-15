@@ -155,6 +155,48 @@ pub fn check_stage_epochs_stamp(cache_root: &Path) -> Vec<CacheStage> {
     invalidate
 }
 
+/// When `stage_epochs.txt` disagrees with [`STAGE_EPOCHS`], delete matching rows from all
+/// scope SQLite caches, evict overlapping entries from the in-memory hot flatten cache, clear
+/// the connection pool, then rewrite the stamp file.
+pub fn apply_stage_epoch_drift(cache_root: &Path) -> std::io::Result<()> {
+    use crate::cache::cache_scope::CacheScope;
+
+    let drift = check_stage_epochs_stamp(cache_root);
+    let stamp_path = cache_root.join(EPOCH_STAMP_FILE);
+    if drift.is_empty() {
+        if !stamp_path.exists() {
+            write_stage_epochs_stamp(cache_root)?;
+        }
+        return Ok(());
+    }
+
+    let needles: Vec<String> = drift.iter().map(|st| format!(":{}:", st.tag())).collect();
+
+    for scope in [
+        CacheScope::GlobalStd,
+        CacheScope::UserExt,
+        CacheScope::Project,
+    ] {
+        if let Some(cfg) =
+            crate::flatten::cache_sqlite::sqlite_config_for_scope(scope, Some(cache_root))
+        {
+            if let Ok(conn) = rusqlite::Connection::open(&cfg.path) {
+                for needle in &needles {
+                    let pattern = format!("%{}%", needle);
+                    let _ = conn.execute(
+                        "DELETE FROM cache_entries WHERE key LIKE ?1",
+                        rusqlite::params![pattern],
+                    );
+                }
+            }
+        }
+    }
+
+    crate::flatten::flatten_cache::hot_full_cache_evict_matching_needles(&needles);
+    crate::flatten::cache_sqlite::sqlite_connection_pool_clear();
+    write_stage_epochs_stamp(cache_root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

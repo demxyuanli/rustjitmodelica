@@ -173,6 +173,7 @@ pub fn simulate_from_source(
         &artifacts.solver,
         artifacts.output_interval,
         &artifacts.clock_partition_schedule,
+        None,
     )?;
     Ok(result)
 }

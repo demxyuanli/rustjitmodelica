@@ -124,6 +124,7 @@ impl ScriptRunner {
                             arts.result_file.as_deref(),
                             &arts.clock_partition_schedule,
                             None,
+                            None,
                         )?;
                         Ok(true)
                     }
@@ -352,6 +353,7 @@ impl ScriptRunner {
                     arts.output_interval,
                     arts.result_file.as_deref(),
                     &arts.clock_partition_schedule,
+                    None,
                     None,
                 )?;
                 Ok(true)

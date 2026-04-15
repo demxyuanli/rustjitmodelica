@@ -133,6 +133,9 @@ pub(crate) fn flatten_and_inline(
         })?;
     if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
         flatten_cache::sync_flatten_cache_root_ir_epoch(cache_root.as_path());
+        if let Err(e) = crate::cache::ir_epoch::apply_stage_epoch_drift(cache_root.as_path()) {
+            eprintln!("[cache] apply_stage_epoch_drift: {}", e);
+        }
         apply_cache_invalidation_if_requested(cache_root.as_path());
         let full_key = flatten_cache::flatten_full_cache_key(
             model_name,

@@ -11,7 +11,7 @@ use crate::flatten::flat_cache_v1::{DepHashEntry, FlatCacheV1, FLAT_CACHE_SCHEMA
 use crate::flatten::flat_cache_v2::{self, FlatCacheV2, FLAT_CACHE_SCHEMA_V2};
 use crate::loader::ModelLoader;
 use crate::query_db::{record_cache_event, CacheEvent};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -281,9 +281,80 @@ pub fn write_flat_cache_v2(
     Ok(())
 }
 
-fn hot_full_cache() -> &'static RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>> {
-    static HOT: OnceLock<RwLock<HashMap<String, Arc<crate::flatten::FlattenedModel>>>> = OnceLock::new();
-    HOT.get_or_init(|| RwLock::new(HashMap::new()))
+struct HotFullCacheState {
+    map: HashMap<String, Arc<crate::flatten::FlattenedModel>>,
+    lru: VecDeque<String>,
+}
+
+fn hot_full_cache_max_entries() -> usize {
+    std::env::var("RUSTMODLICA_HOT_FULL_CACHE_MAX")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(512)
+}
+
+fn hot_full_cache_state() -> &'static RwLock<HotFullCacheState> {
+    static HOT: OnceLock<RwLock<HotFullCacheState>> = OnceLock::new();
+    HOT.get_or_init(|| {
+        RwLock::new(HotFullCacheState {
+            map: HashMap::new(),
+            lru: VecDeque::new(),
+        })
+    })
+}
+
+fn hot_full_cache_touch(key: &str) {
+    let Ok(mut g) = hot_full_cache_state().write() else {
+        return;
+    };
+    if !g.map.contains_key(key) {
+        return;
+    }
+    if let Some(i) = g.lru.iter().position(|k| k == key) {
+        g.lru.remove(i);
+    }
+    g.lru.push_back(key.to_string());
+}
+
+/// Remove hot in-memory flatten entries whose qualified cache key contains any `needle`
+/// (e.g. `":flat_full_v2:"` from stage tag).
+pub fn hot_full_cache_evict_matching_needles(needles: &[String]) {
+    let Ok(mut g) = hot_full_cache_state().write() else {
+        return;
+    };
+    let keys: Vec<String> = g.map.keys().cloned().collect();
+    for k in keys {
+        if needles.iter().any(|n| k.contains(n.as_str())) {
+            g.map.remove(&k);
+            while let Some(i) = g.lru.iter().position(|x| x == &k) {
+                g.lru.remove(i);
+            }
+        }
+    }
+}
+
+fn hot_full_cache_put(key: String, value: Arc<crate::flatten::FlattenedModel>) {
+    let max = hot_full_cache_max_entries();
+    let Ok(mut g) = hot_full_cache_state().write() else {
+        return;
+    };
+    if g.map.contains_key(&key) {
+        g.map.insert(key.clone(), value);
+        if let Some(i) = g.lru.iter().position(|k| k == &key) {
+            g.lru.remove(i);
+        }
+        g.lru.push_back(key);
+        return;
+    }
+    g.map.insert(key.clone(), value);
+    g.lru.push_back(key.clone());
+    while g.map.len() > max {
+        let Some(oldest) = g.lru.pop_front() else {
+            break;
+        };
+        g.map.remove(&oldest);
+    }
 }
 
 pub fn get_or_compute_flattened_model_v1<F>(
@@ -296,30 +367,27 @@ where
     F: FnOnce() -> Result<crate::flatten::FlattenedModel, crate::flatten::FlattenError>,
 {
     let scope_pf = scope_from_storage_key(key).prefix();
-    if let Ok(h) = hot_full_cache().read() {
-        if let Some(v) = h.get(key) {
+    if let Ok(h) = hot_full_cache_state().read() {
+        if let Some(v) = h.map.get(key) {
             record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
-            return Ok((**v).clone());
+            let out = (**v).clone();
+            drop(h);
+            hot_full_cache_touch(key);
+            return Ok(out);
         }
     }
     // Try V2 first (rkyv-based, zero-copy, faster deserialization)
     if let Some(v) = try_read_flat_cache_v2(dir, key, loader) {
-        if let Ok(mut h) = hot_full_cache().write() {
-            h.insert(key.to_string(), Arc::new(v.clone()));
-        }
+        hot_full_cache_put(key.to_string(), Arc::new(v.clone()));
         return Ok(v);
     }
     // Fall back to V1 (bincode-based)
     if let Some(v) = try_read_flat_cache_v1(dir, key, loader) {
-        if let Ok(mut h) = hot_full_cache().write() {
-            h.insert(key.to_string(), Arc::new(v.clone()));
-        }
+        hot_full_cache_put(key.to_string(), Arc::new(v.clone()));
         return Ok(v);
     }
     let v = compute()?;
-    if let Ok(mut h) = hot_full_cache().write() {
-        h.insert(key.to_string(), Arc::new(v.clone()));
-    }
+    hot_full_cache_put(key.to_string(), Arc::new(v.clone()));
     Ok(v)
 }
 

@@ -163,6 +163,29 @@ pub fn loaded_paths_fingerprint(paths: &[PathBuf]) -> String {
     format!("{:016x}", h.digest())
 }
 
+/// Warmup tier: controls how deep the warmup pre-populates caches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarmupTier {
+    /// Only flatten + analyze (L2 caches, no JIT). Default for background warmup.
+    Analyze,
+    /// Full compilation including JIT (populates codegen cache + artifact bundle).
+    Full,
+}
+
+fn warmup_tier() -> WarmupTier {
+    match std::env::var("RUSTMODLICA_WARMUP_TIER") {
+        Ok(v) => {
+            let t = v.trim().to_ascii_lowercase();
+            if t == "full" || t == "jit" || t == "codegen" {
+                WarmupTier::Full
+            } else {
+                WarmupTier::Analyze
+            }
+        }
+        Err(_) => WarmupTier::Analyze,
+    }
+}
+
 /// Trigger opportunistic warmup after a successful compilation.
 /// This runs in a background thread (fire-and-forget).
 /// `lib_paths` are forwarded to the background compiler's loader.
@@ -170,6 +193,16 @@ pub fn trigger_warmup(
     just_compiled: &str,
     loaded_paths: &[PathBuf],
     lib_paths: &[PathBuf],
+) {
+    trigger_warmup_with_tier(just_compiled, loaded_paths, lib_paths, warmup_tier());
+}
+
+/// Trigger warmup with an explicit tier.
+pub fn trigger_warmup_with_tier(
+    just_compiled: &str,
+    loaded_paths: &[PathBuf],
+    lib_paths: &[PathBuf],
+    tier: WarmupTier,
 ) {
     if !warmup_enabled() {
         return;
@@ -203,8 +236,13 @@ pub fn trigger_warmup(
                 return;
             }
 
+            let tier_label = match tier {
+                WarmupTier::Analyze => "L2 (analyze)",
+                WarmupTier::Full => "L3 (full JIT)",
+            };
             eprintln!(
-                "[warmup] starting L2 warmup for {} candidates (delay={}ms)",
+                "[warmup] starting {} warmup for {} candidates (delay={}ms)",
+                tier_label,
                 filtered.len(),
                 delay
             );
@@ -214,11 +252,16 @@ pub fn trigger_warmup(
                 compiler.loader.add_path(p.clone());
             }
 
+            let stop_phase = match tier {
+                WarmupTier::Analyze => crate::compiler::CompileStopPhase::Analyze,
+                WarmupTier::Full => crate::compiler::CompileStopPhase::Full,
+            };
+
             let mut ok = 0usize;
             let mut err = 0usize;
             for model in &filtered {
-                // Warmup to analyze tier only (populates flat_full + analysis caches)
-                compiler.options_mut().compile_stop = crate::compiler::CompileStopPhase::Analyze;
+                compiler.options_mut().compile_stop = stop_phase.clone();
+                compiler.options_mut().quiet = true;
                 match compiler.compile(model) {
                     Ok(_) => {
                         ok += 1;
@@ -239,4 +282,44 @@ pub fn trigger_warmup(
     {
         eprintln!("[warmup] thread spawn failed: {}", e);
     }
+}
+
+/// Run full precompilation for a list of models (synchronous, parallel via rayon).
+/// Used by `--precompile-msl` and install-time condensers.
+pub fn precompile_models_parallel(
+    models: &[String],
+    lib_paths: &[PathBuf],
+    quiet: bool,
+) -> (usize, usize) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let ok_count = AtomicUsize::new(0);
+    let err_count = AtomicUsize::new(0);
+
+    for model in models {
+        let mut compiler = crate::Compiler::new();
+        compiler.options_mut().quiet = quiet;
+        compiler.options_mut().compile_stop = crate::compiler::CompileStopPhase::Full;
+        for p in lib_paths {
+            compiler.loader.add_path(p.clone());
+        }
+        match compiler.compile(model) {
+            Ok(_) => {
+                ok_count.fetch_add(1, Ordering::Relaxed);
+                if !quiet {
+                    eprintln!("[precompile] OK {}", model);
+                }
+            }
+            Err(e) => {
+                err_count.fetch_add(1, Ordering::Relaxed);
+                if !quiet {
+                    eprintln!("[precompile] SKIP {} ({})", model, e);
+                }
+            }
+        }
+    }
+
+    (
+        ok_count.load(Ordering::Relaxed),
+        err_count.load(Ordering::Relaxed),
+    )
 }

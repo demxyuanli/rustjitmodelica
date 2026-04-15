@@ -40,6 +40,8 @@ Covers baseline simulation capabilities.
 powershell -NoProfile -ExecutionPolicy Bypass -File d:/source/repos/rustmodlica/run_regression.ps1
 ```
 
+The script defaults to full-optimization mode and does not override `RUSTMODLICA_JIT_CODEGEN_CACHE` / `RUSTMODLICA_AOT_NATIVE_LOAD`. Use `-DisableNativeAccelForStability` to force both to `0` when bisecting native reuse crashes (for example, stale disk codegen blobs or a mismatched default `aot_archive.bin`). Prefer `-File` (as above) so the process exit code is 0 or 1 for CI.
+
 单用例快速检查 / Single-case quick check:
 
 ```powershell

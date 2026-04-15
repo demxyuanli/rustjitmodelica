@@ -4,6 +4,7 @@ use crate::ast::Expression;
 use crate::compiler::ClockPartitionScheduleEntry;
 use crate::diag::fallback_counter;
 use crate::i18n;
+use crate::jit::deopt::DeoptSimPerfSummary;
 use crate::jit::{native, CalcDerivsFunc};
 use crate::solver::{AdaptiveRK45Solver, BackwardEulerSolver, RungeKutta4Solver, Solver, System};
 use std::collections::HashMap;
@@ -42,6 +43,18 @@ pub fn runtime_perf_counters() -> (u64, u64) {
     perf_snapshot()
 }
 
+fn fill_deopt_sim_perf_out(
+    deopt_manager: &Option<crate::jit::deopt::DeoptManager>,
+    deopt_sim_perf: Option<&mut DeoptSimPerfSummary>,
+) {
+    if let Some(out) = deopt_sim_perf {
+        *out = match deopt_manager {
+            Some(dm) => DeoptSimPerfSummary::from_manager(dm),
+            None => DeoptSimPerfSummary::default(),
+        };
+    }
+}
+
 pub fn run_simulation(
     calc_derivs: CalcDerivsFunc,
     when_count: usize,
@@ -70,6 +83,7 @@ pub fn run_simulation(
     result_file: Option<&str>,
     clock_partition_schedule: &[ClockPartitionScheduleEntry],
     mut result_collector: Option<&mut ResultCollector>,
+    deopt_sim_perf: Option<&mut DeoptSimPerfSummary>,
 ) -> Result<(), String> {
     if perf_enabled() {
         perf_reset_counters();
@@ -108,6 +122,7 @@ pub fn run_simulation(
                 );
             }
             if wants_cvode {
+                fill_deopt_sim_perf_out(&None, deopt_sim_perf);
                 return self::sundials::run_with_cvode(
                     calc_derivs,
                     when_count,
@@ -132,6 +147,7 @@ pub fn run_simulation(
                     result_collector,
                 );
             }
+            fill_deopt_sim_perf_out(&None, deopt_sim_perf);
             return self::sundials::run_with_ida(
                 calc_derivs,
                 when_count,
@@ -225,10 +241,104 @@ pub fn run_simulation(
     native::reset_terminate_flag();
     native::reset_assert_counter();
 
+    let training_run_active = std::env::var("RUSTMODLICA_TRAINING_RUN")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false);
+    let eq_count = state_vars.len() + crossings_count;
+    let mut profile_collector: Option<crate::condenser::profile_data::ProfileCollector> = if training_run_active {
+        Some(crate::condenser::profile_data::ProfileCollector::new("_sim_loop_", eq_count))
+    } else {
+        None
+    };
+
+    let deopt_enabled = crate::jit::speculation::global_registry()
+        .read()
+        .map(|r| r.total_guard_count() > 0)
+        .unwrap_or(false);
+    let precompiled_generic = crate::jit::deopt::take_precompiled_generic();
+    let deopt_dual_compile = precompiled_generic.is_some()
+        || std::env::var("RUSTMODLICA_DUAL_COMPILE")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+            .unwrap_or(false);
+    let mut deopt_manager = if deopt_enabled {
+        if let Some(generic_fn) = precompiled_generic {
+            Some(crate::jit::deopt::DeoptManager::with_fallback(
+                calc_derivs,
+                generic_fn,
+            ))
+        } else if deopt_dual_compile {
+            let mut compiler_for_generic = crate::Compiler::new();
+            compiler_for_generic.options_mut().quiet = true;
+            match compiler_for_generic.compile("_sim_loop_") {
+                Ok(crate::CompileOutput::Simulation(generic_artifacts)) => {
+                    Some(crate::jit::deopt::DeoptManager::with_fallback(
+                        calc_derivs,
+                        generic_artifacts.calc_derivs,
+                    ))
+                }
+                _ => Some(crate::jit::deopt::DeoptManager::new(calc_derivs)),
+            }
+        } else {
+            Some(crate::jit::deopt::DeoptManager::new(calc_derivs))
+        }
+    } else {
+        None
+    };
+
+    let tiered_enabled = std::env::var("RUSTMODLICA_TIERED_COMPILATION")
+        .ok()
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false);
+    let total_eq_count = state_vars.len() + crossings_count;
+    let mut tiered_scheduler: Option<crate::jit::tiered::TieredScheduler> = if tiered_enabled {
+        let policy = crate::jit::tiered::TieringPolicy::default();
+        let initial_tier = policy.select_initial_tier(total_eq_count);
+        let mut sched = crate::jit::tiered::TieredScheduler::new(
+            "_sim_loop_",
+            initial_tier,
+            calc_derivs,
+            policy,
+        );
+        if let Some(profile) = crate::condenser::training_run::load_cached_profile("_sim_loop_") {
+            sched = sched.with_profile(profile);
+        }
+        Some(sched)
+    } else {
+        None
+    };
+
+    let mut active_calc_derivs = calc_derivs;
+    let mut _step_count: u64 = 0;
+
     while time <= t_end + epsilon {
         native::reset_assert_counter();
-        // 1. Event Iteration Loop (Handle events at current time)
-        // Capture pre-states (left limit) before event iteration
+
+        _step_count += 1;
+        if let Some(ref mut collector) = profile_collector {
+            collector.record_step();
+            for (i, name) in state_vars.iter().enumerate() {
+                if i < states.len() {
+                    collector.record_state_value(name, states[i]);
+                }
+            }
+        }
+
+        let mut deopt_fired = false;
+        if let Some(ref mut dm) = deopt_manager {
+            if dm.check_and_apply() {
+                active_calc_derivs = dm.active_func();
+                deopt_fired = true;
+            }
+        }
+
+        if !deopt_fired {
+            if let Some(ref mut sched) = tiered_scheduler {
+                active_calc_derivs = sched.on_step();
+            }
+        }
+
         pre_states.copy_from_slice(&states);
         pre_discrete_vals.copy_from_slice(&discrete_vals);
 
@@ -258,7 +368,7 @@ pub fn run_simulation(
         match run_event_iteration_at_time(
             time,
             t_end,
-            calc_derivs,
+            active_calc_derivs,
             when_count,
             &mut states,
             &mut discrete_vals,
@@ -285,7 +395,10 @@ pub fn run_simulation(
             &mut **w,
             Some(&mut event_queue),
         )? {
-            EventIterationOutcome::TerminatedOk => return Ok(()),
+            EventIterationOutcome::TerminatedOk => {
+                fill_deopt_sim_perf_out(&deopt_manager, deopt_sim_perf);
+                return Ok(());
+            }
             EventIterationOutcome::Completed => {}
         }
         let dispatched_events = event_queue.drain_sorted();
@@ -297,6 +410,14 @@ pub fn run_simulation(
                     t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
                 })
                 .unwrap_or(false);
+            for ev in &dispatched_events {
+                if let QueuedEventKind::ClockPartition(id) = &ev.kind {
+                    if let Some(ref mut collector) = profile_collector {
+                        let idx = id.parse::<usize>().unwrap_or(0);
+                        collector.record_clock_activation(idx, 0);
+                    }
+                }
+            }
             if trace_dispatch {
                 for ev in &dispatched_events {
                     match &ev.kind {
@@ -331,7 +452,7 @@ pub fn run_simulation(
             time,
             epsilon,
             &states,
-            calc_derivs,
+            active_calc_derivs,
             &params,
             &mut discrete_vals,
             &mut outputs,
@@ -385,7 +506,7 @@ pub fn run_simulation(
         native::suppress_assert_begin();
         {
             let mut system = System {
-                calc_derivs,
+                calc_derivs: active_calc_derivs,
                 params: &params,
                 discrete: &mut discrete_vals,
                 outputs: &mut outputs,
@@ -428,7 +549,15 @@ pub fn run_simulation(
             } else {
                 rk4_solver.step(&mut system, time, dt, &mut states)
             };
+            if step_res.is_ok() {
+                if let Some(ref mut collector) = profile_collector {
+                    collector.record_newton_iteration(1, true);
+                }
+            }
             if let Err(status) = step_res {
+                if let Some(ref mut collector) = profile_collector {
+                    collector.record_newton_iteration(0, status != 2);
+                }
                 eprintln!(
                     "{}",
                     i18n::msg(
@@ -475,7 +604,7 @@ pub fn run_simulation(
         trial_discrete.copy_from_slice(&discrete_vals);
         trial_when_states.copy_from_slice(&when_states);
         unsafe {
-            let status = (calc_derivs)(
+            let status = (active_calc_derivs)(
                 t_trial,
                 states.as_mut_ptr(),
                 trial_discrete.as_mut_ptr(),
@@ -548,6 +677,9 @@ pub fn run_simulation(
 
             if c_prev * c_curr < 0.0 {
                 event_found = true;
+                if let Some(ref mut collector) = profile_collector {
+                    collector.record_zero_crossing(i, t_trial);
+                }
                 event_queue.push_unique(QueuedEvent {
                     time: t_trial,
                     kind: QueuedEventKind::ZeroCrossing(i),
@@ -576,7 +708,7 @@ pub fn run_simulation(
 
             {
                 let mut system = System {
-                    calc_derivs,
+                    calc_derivs: active_calc_derivs,
                     params: &params,
                     discrete: &mut discrete_vals,
                     outputs: &mut outputs,
@@ -675,6 +807,17 @@ pub fn run_simulation(
             time = t_trial;
         }
     }
+    if let Some(collector) = profile_collector.take() {
+        let wall_us = 0u64;
+        let final_profile = collector.finalize(wall_us);
+        if let Some(cache_root) = crate::flatten::flatten_cache_dir() {
+            let profiles_dir = cache_root.join("profiles");
+            let _ = std::fs::create_dir_all(&profiles_dir);
+            let safe_name = final_profile.model_name.replace('.', "_").replace('/', "_");
+            let path = profiles_dir.join(format!("{}.profile.bin", safe_name));
+            let _ = final_profile.write_to_file(&path);
+        }
+    }
     if use_adaptive {
         println!(
             "{}",
@@ -701,6 +844,7 @@ pub fn run_simulation(
             fallback.clock_degrade
         );
     }
+    fill_deopt_sim_perf_out(&deopt_manager, deopt_sim_perf);
     flush_writer(w)?;
     Ok(())
 }
