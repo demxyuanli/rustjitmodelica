@@ -864,7 +864,7 @@ pub(crate) fn compile(
             let condenser_phase = if leyden_profile.is_some() {
                 crate::condenser::CondenserPhase::FirstRun
             } else {
-                crate::condenser::CondenserPhase::BuildTime
+                crate::condenser::CondenserPhase::FirstRun
             };
             let mut condenser_ctx = crate::condenser::CondenserContext::new(
                 model_name,
@@ -2106,6 +2106,19 @@ pub(crate) fn compile(
         let tiering_policy = crate::jit::tiered::TieringPolicy::default();
         let eq_count = alg_equations.len() + diff_equations.len();
         let selected_tier = tiering_policy.select_initial_tier(eq_count);
+        if selected_tier == crate::jit::tiered::CompileTier::Interpreter
+            && crate::jit::interpreter::EquationInterpreter::is_interpretable(
+                alg_equations.len(),
+                diff_equations.len(),
+                state_vars_sorted.len(),
+            )
+        {
+            crate::jit::interpreter::install_interpreter_context(
+                state_vars_sorted.clone(),
+                param_vars.clone(),
+                diff_equations.clone(),
+            );
+        }
         perf_report.compile_tier = match selected_tier {
             crate::jit::tiered::CompileTier::Interpreter => "interpreter".to_string(),
             crate::jit::tiered::CompileTier::FastJit => "fast_jit".to_string(),
@@ -2573,6 +2586,8 @@ pub(crate) fn compile(
                         );
                     }
                 }
+                let loaded_paths = compiler.loader.loaded_source_paths();
+                crate::cache::warmup::trigger_warmup(model_name, &loaded_paths, &lib_paths);
                 Ok(CompileOutput::Simulation(Artifacts {
                     calc_derivs: final_calc_derivs,
                     states,

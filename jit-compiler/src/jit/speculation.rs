@@ -64,6 +64,7 @@ pub struct Guard {
 
 /// Deoptimization frame: captures the state needed to fall back from a speculative
 /// fast path to a generic implementation.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DeoptFrame {
     pub guard_id: u32,
@@ -157,18 +158,25 @@ impl SpeculationRegistry {
 
     pub fn add_speculation(&mut self, kind: SpeculationKind) -> u32 {
         let id = GUARD_COUNTER.fetch_add(1, Ordering::Relaxed) as u32;
+        self.guards.insert(id, Guard { id, speculation: kind, invalidation_count: 0, active: true });
+        id
+    }
+
+    pub fn restore_speculation(&mut self, id: u32, kind: SpeculationKind) {
         self.guards.insert(
             id,
             Guard {
                 id,
-                speculation: kind.clone(),
+                speculation: kind,
                 invalidation_count: 0,
                 active: true,
             },
         );
-        id
+        let next_counter = id as u64 + 1;
+        let _ = GUARD_COUNTER.fetch_max(next_counter, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     pub fn register_deopt_frame(&mut self, frame: DeoptFrame) {
         self.deopt_frames.insert(frame.guard_id, frame);
     }
@@ -259,7 +267,56 @@ pub fn global_registry() -> &'static RwLock<SpeculationRegistry> {
 
 pub fn init_global_registry(profile: &ModelProfile) {
     let reg = SpeculationRegistry::from_profile(profile);
+    if let Some(existing) = GLOBAL_REGISTRY.get() {
+        if let Ok(mut guard) = existing.write() {
+            *guard = reg;
+        }
+        return;
+    }
     let _ = GLOBAL_REGISTRY.set(RwLock::new(reg));
+}
+
+pub fn validate_runtime_assumptions(
+    state_vars: &[String],
+    states: &[f64],
+    clock_activations: &[usize],
+) {
+    let Ok(mut reg) = global_registry().write() else {
+        return;
+    };
+    let active: Vec<(u32, SpeculationKind)> = reg
+        .active_speculations_with_ids()
+        .into_iter()
+        .map(|(id, kind)| (id, kind.clone()))
+        .collect();
+    for (guard_id, spec) in active {
+        match spec {
+            SpeculationKind::StateValueRange {
+                var_name,
+                min_bits,
+                max_bits,
+            } => {
+                if let Some(var_idx) = state_vars.iter().position(|n| n == &var_name) {
+                    if let Some(v) = states.get(var_idx).copied() {
+                        let min = f64::from_bits(min_bits);
+                        let max = f64::from_bits(max_bits);
+                        if v < min || v > max {
+                            reg.invalidate(guard_id, "state_value_range_violation");
+                        }
+                    }
+                }
+            }
+            SpeculationKind::ClockPartitionInactive { partition_index } => {
+                if clock_activations.contains(&partition_index) {
+                    reg.invalidate(guard_id, "clock_partition_activated");
+                }
+            }
+            SpeculationKind::ParamConstant { .. } => {
+                reg.invalidate(guard_id, "param_constant_runtime_not_verifiable");
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Runtime guard check function exposed to JIT-generated code via C ABI.
@@ -284,6 +341,7 @@ pub extern "C" fn speculation_holds(guard_id: u32) -> i32 {
 
 /// Runtime deoptimization trigger exposed to JIT-generated code via C ABI.
 /// Marks a guard as invalidated and logs the event.
+#[allow(dead_code)]
 pub extern "C" fn deopt_trigger(guard_id: u32) {
     if let Ok(mut reg) = global_registry().write() {
         reg.invalidate(guard_id, "runtime_deopt_trigger");

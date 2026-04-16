@@ -391,9 +391,20 @@ impl Jit {
 
             if let Some(guard_fn_ref) = speculation_guard_fn_ref {
                 if speculation_guard_ids.len() == 1 {
+                    let after_guards = builder.create_block();
+                    let next_guard = builder.create_block();
                     let id_val =
                         builder.ins().iconst(cl_types::I32, speculation_guard_ids[0] as i64);
-                    builder.ins().call(guard_fn_ref, &[id_val]);
+                    let call_inst = builder.ins().call(guard_fn_ref, &[id_val]);
+                    let ret = builder.inst_results(call_inst)[0];
+                    let zero = builder.ins().iconst(cl_types::I32, 0);
+                    let failed = builder.ins().icmp(IntCC::Equal, ret, zero);
+                    builder.ins().brif(failed, after_guards, &[], next_guard, &[]);
+                    builder.switch_to_block(next_guard);
+                    builder.seal_block(next_guard);
+                    builder.ins().jump(after_guards, &[]);
+                    builder.switch_to_block(after_guards);
+                    builder.seal_block(after_guards);
                 } else if speculation_guard_ids.len() > 1 {
                     let after_guards = builder.create_block();
                     for &guard_id in &speculation_guard_ids {

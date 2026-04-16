@@ -293,12 +293,20 @@ pub fn run_simulation(
         .unwrap_or(false);
     let total_eq_count = state_vars.len() + crossings_count;
     let mut tiered_scheduler: Option<crate::jit::tiered::TieredScheduler> = if tiered_enabled {
+        crate::jit::tiered::clear_tiered_events();
         let policy = crate::jit::tiered::TieringPolicy::default();
         let initial_tier = policy.select_initial_tier(total_eq_count);
+        let initial_func = if initial_tier == crate::jit::tiered::CompileTier::Interpreter
+            && crate::jit::interpreter::is_context_installed()
+        {
+            crate::jit::interpreter::interpreter_trampoline as CalcDerivsFunc
+        } else {
+            calc_derivs
+        };
         let mut sched = crate::jit::tiered::TieredScheduler::new(
             "_sim_loop_",
             initial_tier,
-            calc_derivs,
+            initial_func,
             policy,
         );
         if let Some(profile) = crate::condenser::training_run::load_cached_profile("_sim_loop_") {
@@ -311,6 +319,7 @@ pub fn run_simulation(
 
     let mut active_calc_derivs = calc_derivs;
     let mut _step_count: u64 = 0;
+    let mut tiered_locked_by_deopt = false;
 
     while time <= t_end + epsilon {
         native::reset_assert_counter();
@@ -323,17 +332,28 @@ pub fn run_simulation(
                     collector.record_state_value(name, states[i]);
                 }
             }
+            for i in 0..eq_count {
+                collector.record_equation_eval(i);
+            }
+            let path = if use_implicit {
+                crate::condenser::profile_data::SolverPath::Dense
+            } else {
+                crate::condenser::profile_data::SolverPath::Scalar
+            };
+            collector.record_solver_branch(0, path);
         }
+        crate::jit::speculation::validate_runtime_assumptions(state_vars, &states, &[]);
 
         let mut deopt_fired = false;
         if let Some(ref mut dm) = deopt_manager {
             if dm.check_and_apply() {
                 active_calc_derivs = dm.active_func();
                 deopt_fired = true;
+                tiered_locked_by_deopt = true;
             }
         }
 
-        if !deopt_fired {
+        if !deopt_fired && !tiered_locked_by_deopt {
             if let Some(ref mut sched) = tiered_scheduler {
                 active_calc_derivs = sched.on_step();
             }
@@ -418,6 +438,18 @@ pub fn run_simulation(
                     }
                 }
             }
+            let activated_clock_partitions: Vec<usize> = dispatched_events
+                .iter()
+                .filter_map(|ev| match &ev.kind {
+                    QueuedEventKind::ClockPartition(id) => id.parse::<usize>().ok(),
+                    _ => None,
+                })
+                .collect();
+            crate::jit::speculation::validate_runtime_assumptions(
+                state_vars,
+                &states,
+                &activated_clock_partitions,
+            );
             if trace_dispatch {
                 for ev in &dispatched_events {
                     match &ev.kind {

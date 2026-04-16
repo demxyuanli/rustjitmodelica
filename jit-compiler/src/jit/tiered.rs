@@ -14,9 +14,35 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use std::sync::OnceLock;
 
 use super::types::CalcDerivsFunc;
 use crate::condenser::profile_data::ModelProfile;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TieredCompilationEvent {
+    pub from_tier: CompileTier,
+    pub to_tier: CompileTier,
+    pub step_number: u64,
+}
+
+fn tiered_events_store() -> &'static Mutex<Vec<TieredCompilationEvent>> {
+    static EVENTS: OnceLock<Mutex<Vec<TieredCompilationEvent>>> = OnceLock::new();
+    EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn clear_tiered_events() {
+    if let Ok(mut events) = tiered_events_store().lock() {
+        events.clear();
+    }
+}
+
+pub fn tiered_events_snapshot() -> Vec<TieredCompilationEvent> {
+    tiered_events_store()
+        .lock()
+        .map(|events| events.clone())
+        .unwrap_or_default()
+}
 
 /// Compilation tier levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
@@ -217,7 +243,20 @@ impl TieredScheduler {
     pub fn on_step(&mut self) -> CalcDerivsFunc {
         self.step_count += 1;
 
-        self.tiered_func.try_apply_upgrade();
+        let prev_tier = self.tiered_func.current_tier();
+        if self.tiered_func.try_apply_upgrade() {
+            let current_tier = self.tiered_func.current_tier();
+            if current_tier != prev_tier {
+                if let Ok(mut events) = tiered_events_store().lock() {
+                    events.push(TieredCompilationEvent {
+                        from_tier: prev_tier,
+                        to_tier: current_tier,
+                        step_number: self.step_count,
+                    });
+                }
+            }
+            self.tierup_in_flight = false;
+        }
 
         if !self.tierup_in_flight {
             let current = self.tiered_func.current_tier();

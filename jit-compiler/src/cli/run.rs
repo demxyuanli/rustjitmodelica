@@ -812,6 +812,9 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
                 let deopt_json = serde_json::to_value(&deopt_perf_summary)
                     .unwrap_or(serde_json::Value::Null);
+                let tiered_json =
+                    serde_json::to_value(rustmodlica::jit::tiered::tiered_events_snapshot())
+                        .unwrap_or(serde_json::Value::Null);
                 maybe_write_perf_json(
                     &perf_json_path,
                     &effective_model,
@@ -821,7 +824,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                         "sim_ms": sim_ms,
                         "event_iter_total": event_iter_total,
                         "clock_dispatch_total": clock_dispatch_total,
-                        "deopt": deopt_json
+                        "deopt": deopt_json,
+                        "tiered": tiered_json
                     })),
                 )?;
                 let mut sim_json = serde_json::to_value(&result).unwrap_or(serde_json::Value::Null);
@@ -878,6 +882,9 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
             let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
             let deopt_json = serde_json::to_value(&deopt_perf_summary)
                 .unwrap_or(serde_json::Value::Null);
+            let tiered_json =
+                serde_json::to_value(rustmodlica::jit::tiered::tiered_events_snapshot())
+                    .unwrap_or(serde_json::Value::Null);
             maybe_write_perf_json(
                 &perf_json_path,
                 &effective_model,
@@ -887,7 +894,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     "sim_ms": sim_ms,
                     "event_iter_total": event_iter_total,
                     "clock_dispatch_total": clock_dispatch_total,
-                    "deopt": deopt_json
+                    "deopt": deopt_json,
+                    "tiered": tiered_json
                 })),
             )?;
             if !json_mode {

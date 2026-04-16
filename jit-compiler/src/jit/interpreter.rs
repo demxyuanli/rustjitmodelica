@@ -216,3 +216,80 @@ impl EquationInterpreter {
         alg_eq_count + diff_eq_count <= 10 && state_count <= 5
     }
 }
+
+use std::sync::{Mutex, OnceLock};
+
+struct InterpreterContext {
+    state_vars: Vec<String>,
+    param_vars: Vec<String>,
+    diff_equations: Vec<Equation>,
+    state_count: usize,
+}
+
+static INTERPRETER_CTX: OnceLock<Mutex<InterpreterContext>> = OnceLock::new();
+
+pub fn is_context_installed() -> bool {
+    INTERPRETER_CTX.get().is_some()
+}
+
+pub fn install_interpreter_context(
+    state_vars: Vec<String>,
+    param_vars: Vec<String>,
+    diff_equations: Vec<Equation>,
+) {
+    let state_count = state_vars.len();
+    let ctx = InterpreterContext {
+        state_vars,
+        param_vars,
+        diff_equations,
+        state_count,
+    };
+    if let Some(existing) = INTERPRETER_CTX.get() {
+        if let Ok(mut guard) = existing.lock() {
+            *guard = ctx;
+        }
+    } else {
+        let _ = INTERPRETER_CTX.set(Mutex::new(ctx));
+    }
+}
+
+pub unsafe extern "C" fn interpreter_trampoline(
+    _time: f64,
+    states: *mut f64,
+    _discrete: *mut f64,
+    derivs: *mut f64,
+    params: *const f64,
+    _outputs: *mut f64,
+    _when_states: *mut f64,
+    _crossings: *mut f64,
+    _pre_states: *const f64,
+    _pre_discrete: *const f64,
+    _t_end: f64,
+    _diag_residual: *mut f64,
+    _diag_x: *mut f64,
+    _homotopy_lambda: *const f64,
+) -> i32 {
+    if states.is_null() || derivs.is_null() {
+        return -1;
+    }
+    let Some(ctx_lock) = INTERPRETER_CTX.get() else {
+        return -1;
+    };
+    let Ok(ctx) = ctx_lock.lock() else {
+        return -1;
+    };
+    let n = ctx.state_count;
+    let states_slice = std::slice::from_raw_parts(states, n);
+    let params_slice = if params.is_null() {
+        &[]
+    } else {
+        std::slice::from_raw_parts(params, ctx.param_vars.len())
+    };
+
+    let mut interp = EquationInterpreter::new();
+    interp.load_state(&ctx.state_vars, states_slice, &ctx.param_vars, params_slice);
+    interp.eval_all_diff_equations(&ctx.diff_equations);
+    let derivs_slice = std::slice::from_raw_parts_mut(derivs, n);
+    interp.write_derivatives(&ctx.state_vars, derivs_slice);
+    0
+}

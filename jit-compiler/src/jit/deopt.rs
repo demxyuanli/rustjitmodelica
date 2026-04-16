@@ -125,6 +125,7 @@ impl DeoptManager {
     }
 
     /// Replace the active function with a newly recompiled version (after deopt + reprofile).
+    #[allow(dead_code)]
     pub fn hot_replace(&mut self, new_func: CalcDerivsFunc) {
         self.active_func = new_func;
         self.total_recompilations += 1;
@@ -466,8 +467,8 @@ pub fn dual_compile(
             .map_err(|e| DualCompileError::SpeculationRegistryWrite {
                 kind: classify_registry_error(&e.to_string()),
             })?;
-        for (_, kind) in saved_guards {
-            reg.add_speculation(kind);
+        for (id, kind) in saved_guards {
+            reg.restore_speculation(id, kind);
         }
     }
 

@@ -120,6 +120,16 @@ pub(crate) fn run_event_iteration_at_time(
     w: &mut dyn std::io::Write,
     mut event_queue: Option<&mut EventQueue>,
 ) -> Result<EventIterationOutcome, String> {
+    // Pure algebraic, signal-free models can safely skip derivative evaluation.
+    // This avoids invoking generated derivative code paths that assume ODE state
+    // storage exists even when the model has zero states.
+    if states.is_empty() && when_count == 0 && crossings.is_empty() {
+        if outputs.len() == output_start_vals.len() {
+            outputs.copy_from_slice(output_start_vals);
+        }
+        return Ok(EventIterationOutcome::Completed);
+    }
+
     fn sample_active(time: f64, start: f64, interval: f64) -> bool {
         const SAMPLE_EPS: f64 = 1e-9;
         if interval <= 0.0 {

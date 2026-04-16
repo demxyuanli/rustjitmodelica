@@ -56,7 +56,21 @@ fn apply_cache_invalidation_if_requested(cache_root: &Path) {
     let action = invalidation_action(trigger, CacheScope::Project);
     match action {
         InvalidationAction::None => {}
-        InvalidationAction::SoftInvalidate | InvalidationAction::HardInvalidate => {
+        InvalidationAction::SoftInvalidate => {
+            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(
+                CacheScope::Project,
+                Some(cache_root),
+            ) {
+                let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+            }
+            crate::flatten::flatten_cache::hot_full_cache_evict_matching_needles(&[
+                ":flat_full_v1:".to_string(),
+                ":flat_full_v2:".to_string(),
+                ":array_sizes_v2:".to_string(),
+            ]);
+            crate::flatten::cache_sqlite::sqlite_connection_pool_clear();
+        }
+        InvalidationAction::HardInvalidate => {
             if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(
                 CacheScope::Project,
                 Some(cache_root),
@@ -132,6 +146,7 @@ pub(crate) fn flatten_and_inline(
             format!("array_sizes_json: {}", e).into()
         })?;
     if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
+        let _ = crate::cache::ir_epoch::check_stage_epochs_stamp(cache_root.as_path());
         flatten_cache::sync_flatten_cache_root_ir_epoch(cache_root.as_path());
         if let Err(e) = crate::cache::ir_epoch::apply_stage_epoch_drift(cache_root.as_path()) {
             eprintln!("[cache] apply_stage_epoch_drift: {}", e);
