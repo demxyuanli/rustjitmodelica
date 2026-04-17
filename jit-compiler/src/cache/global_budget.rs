@@ -2,8 +2,11 @@
 //!
 //! Scans SQLite cache directories and JIT codegen file cache, computes total usage,
 //! and evicts oldest entries when the budget is exceeded.
+//! When `codegen_path_index.sqlite` exists under the JIT root, JIT files are listed from the index.
 
 use std::path::{Path, PathBuf};
+
+use super::codegen_cache_index;
 
 const DEFAULT_MAX_BYTES: u64 = 1_073_741_824; // 1 GB
 const DEFAULT_TTL_DAYS: i64 = 30;
@@ -32,6 +35,25 @@ struct CacheFileEntry {
 }
 
 fn scan_jit_codegen_files(dir: &Path) -> Vec<CacheFileEntry> {
+    if let Some(rows) = codegen_cache_index::list_indexed_files(dir) {
+        let mut out = Vec::new();
+        for (path, size, mtime_ms) in rows {
+            let ext_ok = path
+                .extension()
+                .map(|ext| ext == "bin" || ext == "rawbin" || ext == "json")
+                .unwrap_or(false);
+            if ext_ok {
+                out.push(CacheFileEntry {
+                    path,
+                    size,
+                    modified_epoch_ms: mtime_ms,
+                });
+            }
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return out;

@@ -24,7 +24,7 @@ pub fn invalidation_action(trigger: InvalidationTrigger, scope: CacheScope) -> I
         (InvalidationTrigger::SourceChanged, CacheScope::UserExt) => InvalidationAction::HardInvalidate,
         (InvalidationTrigger::SourceChanged, CacheScope::GlobalStd) => InvalidationAction::WholeBucketDrop,
         (InvalidationTrigger::DepChanged, _) => InvalidationAction::HardInvalidate,
-        (InvalidationTrigger::CompileFlagsChanged, _) => InvalidationAction::None,
+        (InvalidationTrigger::CompileFlagsChanged, _) => InvalidationAction::SoftInvalidate,
         (InvalidationTrigger::IrEpochChanged, _) => InvalidationAction::WholeBucketDrop,
         (InvalidationTrigger::ToolchainChanged, _) => InvalidationAction::WholeBucketDrop,
         (InvalidationTrigger::PermissionContextChanged, _) => InvalidationAction::HardInvalidate,

@@ -55,3 +55,6 @@ baseline/**/ir_schema_epoch.txt
 baseline/**/aot_archive.bin
 baseline/**/model_hotness_v1.json
 baseline/**/cache_miss_agg_v1.json
+
+# realfft / test outputs dropped next to jit-compiler root
+jit-compiler/RealFFT*_resultFFT.matFile*

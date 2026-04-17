@@ -3,6 +3,7 @@ use rustmodlica::error;
 pub(crate) type RunError = error::AppError;
 
 mod args;
+mod cache_invalidate;
 mod cache_stats;
 mod event_scan;
 mod perf_json;

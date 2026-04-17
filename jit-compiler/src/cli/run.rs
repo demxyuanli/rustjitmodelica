@@ -1,22 +1,17 @@
 use rustmodlica::{
-    run_simulation, run_simulation_collect, Artifacts, CompileOutput, CompileStopPhase, Compiler,
-    WarningInfo,
+    run_simulation, run_simulation_collect, CompileOutput, CompileStopPhase, Compiler,
 };
 use rustmodlica::jit::deopt::DeoptSimPerfSummary;
 use rustmodlica::runtime_perf_counters;
-use rustmodlica::error;
 use rustmodlica::fmi;
 use rustmodlica::i18n;
 use rustmodlica::script;
-use serde::Serialize;
-use std::env;
-use std::fs;
 use std::io::Read;
-use std::thread;
 use std::time::Instant;
 
 use super::args::parse_rustmodlica_overdet_tol;
-use super::cache_stats::run_cache_stats;
+use super::cache_invalidate::run_cache_invalidate;
+use super::cache_stats::{run_cache_gc, run_cache_stats};
 use super::event_scan::run_event_scan;
 use super::perf_json::{compile_export_sidebar_json, maybe_write_perf_json};
 use super::precompile::{run_precompile, run_msl_precompile_if_needed};
@@ -30,7 +25,13 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
         return run_event_scan(&args);
     }
     if args.len() >= 2 && args[1] == "--cache-stats" {
-        return run_cache_stats();
+        return run_cache_stats(&args);
+    }
+    if args.len() >= 2 && args[1] == "--cache-gc" {
+        return run_cache_gc();
+    }
+    if args.len() >= 2 && args[1] == "--cache-invalidate" {
+        return run_cache_invalidate(&args);
     }
     if args.len() >= 2 && args[1] == "--msl-precompile" {
         let mut lib_paths = Vec::new();

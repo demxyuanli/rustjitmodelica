@@ -7,6 +7,7 @@ use super::cache_key::{
     codegen_cache_enabled, codegen_cache_root, codegen_host_tag, target_isa_id, CodegenCacheEntry,
     CodegenCacheKey, CODEGEN_CACHE_VERSION,
 };
+use crate::cache::codegen_cache_index;
 use super::exec_buffer::ExecCodeBuffer;
 
 #[cfg(windows)]
@@ -351,6 +352,7 @@ impl CodegenCache {
             "[jit-codegen-cache] WRITE model={} size={} bytes",
             key.model_name, code_bytes.len()
         );
+        codegen_cache_index::record_codegen_pair(&self.root, &key.stable_hash());
 
         Ok(())
     }
@@ -386,6 +388,7 @@ impl CodegenCache {
             key.model_name,
             object_bytes.len()
         );
+        codegen_cache_index::record_codegen_pair(&self.root, &key.stable_hash());
         Ok(())
     }
 

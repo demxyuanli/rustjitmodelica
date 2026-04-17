@@ -4,6 +4,7 @@ use crate::flatten::cache_sqlite;
 use std::cmp::max;
 use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 const LRU_CAP: usize = 32;
@@ -128,7 +129,27 @@ fn artifact_sqlite_row_cap() -> i64 {
         .unwrap_or(128)
 }
 
+static LAST_ARTIFACT_PRUNE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn prune_sqlite_throttle_ms() -> u64 {
+    std::env::var("RUSTMODLICA_ARTIFACT_PRUNE_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v >= 1_000)
+        .unwrap_or(60_000)
+}
+
 fn prune_sqlite(cache_root: &Path) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let last = LAST_ARTIFACT_PRUNE_MS.load(Ordering::Relaxed);
+    if now_ms.saturating_sub(last) < prune_sqlite_throttle_ms() {
+        return;
+    }
+    LAST_ARTIFACT_PRUNE_MS.store(now_ms, Ordering::Relaxed);
+
     let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(cache_root)) else {
         return;
     };

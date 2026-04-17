@@ -13,6 +13,7 @@ use crate::backend_dae::{
 use crate::cache::artifact_bundle::CompiledArtifactBundle;
 use crate::cache::{artifact_cache, artifact_key};
 use crate::cache::external_resolve_cache;
+use crate::cache::fold_benefit_record;
 use crate::diag::fallback_counter;
 use crate::diag::fallback_counter::FallbackCounterSnapshot;
 use crate::diag::fallback_registry;
@@ -58,10 +59,41 @@ pub(crate) fn compile(
     compiler: &mut Compiler,
     model_name: &str,
 ) -> Result<CompileOutput, Box<dyn std::error::Error + Send + Sync>> {
+        if !compiler.options.warm_background {
+            crate::cache::warmup_control::bump_compile_epoch();
+        }
+        struct CompileAuxPersistGuard {
+            compiler: *mut Compiler,
+            model_name: String,
+        }
+        impl Drop for CompileAuxPersistGuard {
+            fn drop(&mut self) {
+                // SAFETY: `compiler` outlives this guard for the whole `compile` call.
+                unsafe {
+                    let c = &mut *self.compiler;
+                    if let Some(ref p) = c.last_compile_perf {
+                        if let Some(root) = crate::flatten::flatten_cache_dir() {
+                            crate::cache::cache_miss_agg::append_from_report(root.as_path(), p);
+                            crate::cache::model_hotness_record::record_compile(
+                                Some(root.as_path()),
+                                self.model_name.as_str(),
+                                p.flat_full_cache_hits,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let _compile_aux_persist = CompileAuxPersistGuard {
+            compiler: compiler as *mut Compiler,
+            model_name: model_name.to_string(),
+        };
+
         let stage_trace = stage_trace_enabled();
         let perf_trace = perf_trace_enabled();
         compiler.last_compile_perf = None;
         crate::query_db::perf_reset();
+        fold_benefit_record::set_tierup_skip_const_fold(false);
 
         compiler.warnings.clear();
         compiler.loader.set_quiet(compiler.options.quiet);
@@ -71,12 +103,19 @@ pub(crate) fn compile(
             model_name: model_name.to_string(),
             ..Default::default()
         };
+        if let Some(w) = crate::cache::warmup::peek_last_warmup_run() {
+            perf_report.warmup_populated_count = w.ok;
+            perf_report.warmup_time_ms = w.elapsed_ms;
+            perf_report.warmup_attributable_hits = w.ok as u64;
+        }
         perf_report.jit_incremental_enabled = env_flag("RUSTMODLICA_JIT_INCREMENTAL_RECOMPILE", false);
         perf_report.jit_cache_variant = std::env::var("RUSTMODLICA_JIT_CACHE_VARIANT")
             .ok()
             .unwrap_or_else(|| "speed".to_string());
-        perf_report.const_fold_enabled = env_flag("RUSTMODLICA_CONST_FOLD", true);
-        perf_report.eq_dce_enabled = env_flag("RUSTMODLICA_EQ_DCE", true);
+        let env_const_fold_requested = env_flag("RUSTMODLICA_CONST_FOLD", true);
+        let env_eq_dce_requested = env_flag("RUSTMODLICA_EQ_DCE", true);
+        perf_report.const_fold_enabled = env_const_fold_requested;
+        perf_report.eq_dce_enabled = env_eq_dce_requested;
         perf_report.jit_inline_builtins_enabled = env_flag("RUSTMODLICA_JIT_INLINE_BUILTINS", false);
         perf_report.hotspot_threshold = env_u64("RUSTMODLICA_HOTSPOT_THRESHOLD", 1000);
         perf_report.simd_step_enabled = env_flag("RUSTMODLICA_SIMD_STEP", false);
@@ -464,6 +503,20 @@ pub(crate) fn compile(
                 perf_report.flatten_inline_ms
             );
         }
+        let lib_paths_heavy: Vec<std::path::PathBuf> = compiler
+            .options
+            .external_libs
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        if crate::cache::warmup::trigger_warmup_if_heavy(
+            perf_report.flatten_inline_ms,
+            model_name,
+            &compiler.loader.loaded_source_paths(),
+            &lib_paths_heavy,
+        ) {
+            perf_report.warmup_auto_enqueued = true;
+        }
         {
             let condenser_t0 = Instant::now();
             let mut condenser_reg = crate::condenser::CondenserRegistry::new();
@@ -689,6 +742,13 @@ pub(crate) fn compile(
                 perf_report.inline_declarations_with_start_value
             );
         }
+        perf_report.salsa_flat_full_get_us = perf_report
+            .cache_get_us
+            .saturating_add(perf_report.cache_deserialize_us);
+        perf_report.flatten_inline_subst_rewrite_us = perf_report.inline_substitute_us;
+        perf_report.flatten_inline_resolve_us = perf_report
+            .inline_us
+            .saturating_sub(perf_report.inline_substitute_us);
         if let Ok(stats_path) = std::env::var("RUSTMODLICA_CACHE_STATS_JSON") {
             let stats_path = stats_path.trim();
             if !stats_path.is_empty() {
@@ -807,6 +867,19 @@ pub(crate) fn compile(
 
         let analyze_t0 = Instant::now();
         let flat_h_pipeline = flat_model_hash(&flat_model);
+        let flat_pipeline_hex = format!("{:016x}", flat_h_pipeline);
+        let adaptive_fold = fold_benefit_record::adaptive_fold_policy_enabled();
+        let fold_record_at_start = if adaptive_fold {
+            flatten_cache::flatten_cache_dir().and_then(|root| {
+                fold_benefit_record::try_load(root.as_path(), &flat_pipeline_hex)
+            })
+        } else {
+            None
+        };
+        let fold_cooldown_at_start = fold_record_at_start
+            .as_ref()
+            .map(|r| r.cooldown_remaining > 0)
+            .unwrap_or(false);
         let (variable_layout, analysis_stage) =
             if pipeline_analysis_disk_cache_enabled() {
                 if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
@@ -905,6 +978,26 @@ pub(crate) fn compile(
         let params = variable_layout.params;
         let mut alg_equations = analysis_stage.alg_equations;
         let mut diff_equations = analysis_stage.diff_equations;
+        let algorithms = build_runtime_algorithms(&flat_model, stage_trace);
+        let mut external_sites_pre_fold: Vec<String> =
+            collect_external_raw_call_sites(&alg_equations, &diff_equations, &algorithms)
+                .into_iter()
+                .collect();
+        external_sites_pre_fold.sort_unstable();
+        if adaptive_fold {
+            if let Some(ref r) = fold_record_at_start {
+                if r.cooldown_remaining > 0 {
+                    perf_report.const_fold_cooldown_active = true;
+                    perf_report.const_fold_enabled = false;
+                    perf_report.eq_dce_enabled = false;
+                } else if r.last_fold_count == 0 && r.last_dce_removed == 0 {
+                    perf_report.const_fold_skipped_by_policy = true;
+                    perf_report.eq_dce_skipped_by_policy = true;
+                    perf_report.const_fold_enabled = false;
+                    perf_report.eq_dce_enabled = false;
+                }
+            }
+        }
         let (folded_alg, dce_alg, folded_vars_alg) = optimize_equations_for_constfold_dce(
             &mut alg_equations,
             perf_report.const_fold_enabled,
@@ -1234,31 +1327,30 @@ pub(crate) fn compile(
             );
         }
 
-        let algorithms = build_runtime_algorithms(&flat_model, stage_trace);
-
         let external_t0 = Instant::now();
+        let t_ext_gather = Instant::now();
+        let _post_external_names: HashSet<String> =
+            collect_external_raw_call_sites(&alg_equations, &diff_equations, &algorithms)
+                .into_iter()
+                .collect();
+        perf_report.external_resolve_gather_us = t_ext_gather.elapsed().as_micros() as u64;
         let external_list = if external_resolve_cache::external_resolve_cache_enabled() {
-            let mut sites: Vec<String> = collect_external_raw_call_sites(
-                &alg_equations,
-                &diff_equations,
-                &algorithms,
-            )
-            .into_iter()
-            .collect();
-            sites.sort_unstable();
             if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
                 let key = external_resolve_cache::compute_external_resolve_key(
                     model_name,
                     &compiler.loader,
-                    &sites,
+                    &external_sites_pre_fold,
                     &opts.external_libs,
                 );
+                let t_lookup = Instant::now();
                 if let Some(cached) =
                     external_resolve_cache::try_load(cache_root.as_path(), &key)
                 {
+                    perf_report.external_resolve_lookup_us = t_lookup.elapsed().as_micros() as u64;
                     perf_report.external_resolve_cache_status = "hit".to_string();
                     cached
                 } else {
+                    perf_report.external_resolve_lookup_us = t_lookup.elapsed().as_micros() as u64;
                     let miss_detail =
                         external_resolve_cache::diagnose_miss(cache_root.as_path(), &key);
                     perf_report.external_resolve_miss_detail = Some(miss_detail.clone());
@@ -1267,39 +1359,53 @@ pub(crate) fn compile(
                         reason: "cache_miss".to_string(),
                         detail: Some(miss_detail),
                     });
+                    let t_compute = Instant::now();
                     let computed = collect_external_calls(
                         &mut compiler.loader,
                         &alg_equations,
                         &diff_equations,
                         &algorithms,
                     );
+                    perf_report.external_resolve_compute_us =
+                        t_compute.elapsed().as_micros() as u64;
+                    let t_store = Instant::now();
                     perf_report.external_resolve_cache_status =
                         if external_resolve_cache::try_store(cache_root.as_path(), &key, &computed)
                             .is_ok()
                         {
+                            perf_report.external_resolve_store_us =
+                                t_store.elapsed().as_micros() as u64;
                             "put".to_string()
                         } else {
+                            perf_report.external_resolve_store_us =
+                                t_store.elapsed().as_micros() as u64;
                             "miss_compute".to_string()
                         };
                     computed
                 }
             } else {
                 perf_report.external_resolve_cache_status = "no_cache_dir".to_string();
-                collect_external_calls(
+                let t_compute = Instant::now();
+                let out = collect_external_calls(
                     &mut compiler.loader,
                     &alg_equations,
                     &diff_equations,
                     &algorithms,
-                )
+                );
+                perf_report.external_resolve_compute_us = t_compute.elapsed().as_micros() as u64;
+                out
             }
         } else {
             perf_report.external_resolve_cache_status = "disabled".to_string();
-            collect_external_calls(
+            let t_compute = Instant::now();
+            let out = collect_external_calls(
                 &mut compiler.loader,
                 &alg_equations,
                 &diff_equations,
                 &algorithms,
-            )
+            );
+            perf_report.external_resolve_compute_us = t_compute.elapsed().as_micros() as u64;
+            out
         };
 
         let all_called = collect_all_called_names(&alg_equations, &diff_equations, &algorithms);
@@ -1984,8 +2090,15 @@ pub(crate) fn compile(
                                 } else {
                                     "disabled".to_string()
                                 };
+                            let param_sig_delta = bundle.codegen_key.param_signature
+                                != codegen_ck.param_signature
+                                || bundle.codegen_key.type_profile_hash
+                                    != codegen_ck.type_profile_hash;
+                            if param_sig_delta {
+                                perf_report.param_only_update = true;
+                            }
                             perf_report.jit_cache_partial_recompile =
-                                perf_report.jit_incremental_enabled;
+                                perf_report.jit_incremental_enabled || param_sig_delta;
                             perf_report.jit_cache_recompiled_functions = 0;
                             perf_report.jit_cache_skipped_functions = 0;
                             perf_report.jit_ms = 0;
@@ -2021,9 +2134,24 @@ pub(crate) fn compile(
                             );
                             perf_report.jit_compile_ok = true;
                             perf_report.jit_error = None;
+                            fold_benefit_record::persist_and_tierup_flags(
+                                adaptive_fold,
+                                flatten_cache::flatten_cache_dir().as_deref(),
+                                &flat_pipeline_hex,
+                                fold_record_at_start.clone(),
+                                fold_cooldown_at_start,
+                                perf_report.const_fold_skipped_by_policy,
+                                perf_report.const_fold_cooldown_active,
+                                perf_report.const_fold_count,
+                                perf_report.eq_dce_removed,
+                                perf_report.alg_eq_count,
+                                perf_report.diff_eq_count,
+                                perf_report.external_resolve_ms,
+                            );
                             apply_fallback_snapshot(&mut perf_report);
                             compiler.last_compile_perf = Some(perf_report);
                             let cf = Box::new(cached);
+                            let param_only = param_sig_delta;
                             return Ok(CompileOutput::Simulation(Artifacts {
                                 calc_derivs,
                                 states,
@@ -2054,7 +2182,7 @@ pub(crate) fn compile(
                                 user_stub_jits,
                                 calc_derivs_codegen_keepalive: Some(cf),
                                 jit_module_keepalive: None,
-                                param_only_update: false,
+                                param_only_update: param_only,
                                 dual_compile_generic: None,
                                 dual_compile_keepalive: None,
                             }));
@@ -2235,12 +2363,41 @@ pub(crate) fn compile(
         } else {
             Jit::new_with_extra_symbols(Some(&all_symbols))
         };
+        let tier0_max_eq: usize = std::env::var("RUSTMODLICA_JIT_TIER0_BYPASS_MAX_EQ")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(150);
+        let tier0_bypass = env_flag("RUSTMODLICA_JIT_TIER0_BYPASS", false)
+            && aot_native_cf.is_none()
+            && perf_report.flat_full_cache_hits > 0
+            && when_equation_count == 0
+            && eq_count < tier0_max_eq
+            && crate::jit::interpreter::EquationInterpreter::is_interpretable(
+                alg_equations.len(),
+                diff_equations.len(),
+                state_vars_sorted.len(),
+            );
+        if tier0_bypass {
+            crate::jit::interpreter::install_interpreter_context(
+                state_vars_sorted.clone(),
+                param_vars.clone(),
+                diff_equations.clone(),
+            );
+        }
         let jit_t0 = Instant::now();
         let res = if let Some(cf) = aot_native_cf {
             let (w, c) = aot_native_when_cross.unwrap_or((0, 0));
             let f = cf.func;
             aot_jit_codegen_keepalive = Some(Box::new(cf));
             Ok((f, w, c))
+        } else if tier0_bypass {
+            perf_report.jit_bypassed_tier0 = true;
+            Ok((
+                crate::jit::interpreter::interpreter_trampoline
+                    as crate::jit::types::CalcDerivsFunc,
+                when_equation_count,
+                0usize,
+            ))
         } else {
             jit.compile(
                 &state_vars_sorted,
@@ -2566,6 +2723,20 @@ pub(crate) fn compile(
 
                 perf_report.jit_compile_ok = true;
                 perf_report.jit_error = None;
+                fold_benefit_record::persist_and_tierup_flags(
+                    adaptive_fold,
+                    flatten_cache::flatten_cache_dir().as_deref(),
+                    &flat_pipeline_hex,
+                    fold_record_at_start.clone(),
+                    fold_cooldown_at_start,
+                    perf_report.const_fold_skipped_by_policy,
+                    perf_report.const_fold_cooldown_active,
+                    perf_report.const_fold_count,
+                    perf_report.eq_dce_removed,
+                    perf_report.alg_eq_count,
+                    perf_report.diff_eq_count,
+                    perf_report.external_resolve_ms,
+                );
                 apply_fallback_snapshot(&mut perf_report);
                 compiler.last_compile_perf = Some(perf_report);
                 if user_stub_jits.is_empty()

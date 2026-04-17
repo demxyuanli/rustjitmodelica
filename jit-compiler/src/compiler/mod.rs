@@ -98,6 +98,9 @@ pub struct CompilerOptions {
     /// Leyden: dual-compile produces speculative + generic paths for deopt fallback.
     #[serde(default)]
     pub dual_compile: bool,
+    /// When true, this compile is a background warmup/precompile and must not bump the global compile epoch.
+    #[serde(default)]
+    pub warm_background: bool,
 }
 
 /// Structured cache miss event for diagnostics (L4-T08).
@@ -229,6 +232,18 @@ pub struct CompilePerfReport {
     pub analyze_ms: u64,
     pub backend_dae_ms: u64,
     pub external_resolve_ms: u64,
+    /// Microseconds spent collecting raw external call sites before resolve.
+    #[serde(default)]
+    pub external_resolve_gather_us: u64,
+    /// Microseconds spent in SQLite lookup for external resolve cache.
+    #[serde(default)]
+    pub external_resolve_lookup_us: u64,
+    /// Microseconds spent resolving externals (loader / compute path).
+    #[serde(default)]
+    pub external_resolve_compute_us: u64,
+    /// Microseconds spent persisting external resolve cache entry.
+    #[serde(default)]
+    pub external_resolve_store_us: u64,
     /// `hit` | `put` | `miss_compute` | `disabled` | `no_cache_dir` | `err_deser`
     pub external_resolve_cache_status: String,
     /// `hit` | `put` | `miss` | `disabled` | `no_cache_dir` | `err_deser`
@@ -312,6 +327,31 @@ pub struct CompilePerfReport {
     pub eq_dce_enabled: bool,
     pub const_fold_count: u64,
     pub eq_dce_removed: u64,
+    #[serde(default, skip_serializing_if = "serde_skip_false")]
+    pub const_fold_skipped_by_policy: bool,
+    #[serde(default, skip_serializing_if = "serde_skip_false")]
+    pub eq_dce_skipped_by_policy: bool,
+    #[serde(default, skip_serializing_if = "serde_skip_false")]
+    pub const_fold_cooldown_active: bool,
+    #[serde(default, skip_serializing_if = "serde_skip_false")]
+    pub jit_bypassed_tier0: bool,
+    #[serde(default, skip_serializing_if = "serde_skip_false")]
+    pub warmup_auto_enqueued: bool,
+    /// Snapshot from last background warmup run (best-effort; set at compile start).
+    #[serde(default)]
+    pub warmup_populated_count: u32,
+    /// Heuristic: prior warmup `ok` count surfaced as attributable signal.
+    #[serde(default)]
+    pub warmup_attributable_hits: u64,
+    #[serde(default)]
+    pub warmup_time_ms: u64,
+    /// Approximate flat-full cache read path (get + deserialize), microseconds.
+    #[serde(default)]
+    pub salsa_flat_full_get_us: u64,
+    #[serde(default)]
+    pub flatten_inline_subst_rewrite_us: u64,
+    #[serde(default)]
+    pub flatten_inline_resolve_us: u64,
     /// Number of parameter names participating in folded expressions.
     pub const_fold_param_count: usize,
     /// Comma-joined parameter names touched by folded expressions.
@@ -446,6 +486,7 @@ impl Default for CompilerOptions {
             validation_mode: "full".to_string(),
             compile_stop: CompileStopPhase::Full,
             dual_compile: false,
+            warm_background: false,
         }
     }
 }

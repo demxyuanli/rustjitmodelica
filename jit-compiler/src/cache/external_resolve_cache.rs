@@ -214,3 +214,27 @@ pub fn try_store(
     )
     .map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod stable_key_tests {
+    use super::*;
+    use crate::loader::ModelLoader;
+
+    #[test]
+    fn external_resolve_key_identical_for_same_inputs() {
+        let loader = ModelLoader::new();
+        let sites = vec!["A.f".to_string(), "B.g".to_string()];
+        let k1 = compute_external_resolve_key("Pkg.Model", &loader, &sites, &[]);
+        let k2 = compute_external_resolve_key("Pkg.Model", &loader, &sites, &[]);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn external_resolve_key_differs_by_model_name() {
+        let loader = ModelLoader::new();
+        let sites = vec!["A.f".to_string()];
+        let k1 = compute_external_resolve_key("M1", &loader, &sites, &[]);
+        let k2 = compute_external_resolve_key("M2", &loader, &sites, &[]);
+        assert_ne!(k1, k2);
+    }
+}

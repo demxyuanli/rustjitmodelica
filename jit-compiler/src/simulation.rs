@@ -294,7 +294,11 @@ pub fn run_simulation(
     let total_eq_count = state_vars.len() + crossings_count;
     let mut tiered_scheduler: Option<crate::jit::tiered::TieredScheduler> = if tiered_enabled {
         crate::jit::tiered::clear_tiered_events();
-        let policy = crate::jit::tiered::TieringPolicy::default();
+        let mut policy = crate::jit::tiered::TieringPolicy::default();
+        if crate::cache::fold_benefit_record::tierup_skip_const_fold() {
+            policy.force_adaptive_skip_const_fold = true;
+            policy.force_adaptive_skip_eq_dce = true;
+        }
         let initial_tier = policy.select_initial_tier(total_eq_count);
         let initial_func = if initial_tier == crate::jit::tiered::CompileTier::Interpreter
             && crate::jit::interpreter::is_context_installed()

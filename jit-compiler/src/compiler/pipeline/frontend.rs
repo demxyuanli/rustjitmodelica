@@ -4,7 +4,9 @@ use std::time::Instant;
 
 use crate::ast::Model;
 use crate::cache::cache_scope::CacheScope;
+use crate::cache::cache_selective_invalidate;
 use crate::cache::invalidation::{invalidation_action, InvalidationAction, InvalidationTrigger};
+use crate::cache::ir_epoch::CacheStage;
 use crate::flatten::flat_snapshot;
 use crate::flatten::flatten_cache;
 use crate::flatten::{ArraySizePolicy, Flattener, ValidationMode, load_array_sizes_json_optional};
@@ -57,12 +59,8 @@ fn apply_cache_invalidation_if_requested(cache_root: &Path) {
     match action {
         InvalidationAction::None => {}
         InvalidationAction::SoftInvalidate => {
-            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(
-                CacheScope::Project,
-                Some(cache_root),
-            ) {
-                let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
-            }
+            let _ = cache_selective_invalidate::soft_invalidate_stage(cache_root, CacheStage::FlatFull);
+            let _ = cache_selective_invalidate::soft_invalidate_stage(cache_root, CacheStage::ArraySizes);
             crate::flatten::flatten_cache::hot_full_cache_evict_matching_needles(&[
                 ":flat_full_v1:".to_string(),
                 ":flat_full_v2:".to_string(),

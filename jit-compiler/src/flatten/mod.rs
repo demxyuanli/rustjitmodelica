@@ -13,7 +13,9 @@ pub(crate) mod flatten_cache;
 pub use self::flatten_cache::flatten_cache_dir;
 mod decl_expand;
 pub(crate) mod cache_sqlite;
-pub use self::cache_sqlite::export_sqlite_kind_stats_layers;
+pub use self::cache_sqlite::{
+    export_sqlite_kind_stats_layers, sqlite_config_for_scope, CacheKindStatRow, CacheStatsLayerExport,
+};
 pub(crate) mod cache_shm;
 pub(crate) mod flat_cache_v1;
 pub(crate) mod flat_cache_v2;

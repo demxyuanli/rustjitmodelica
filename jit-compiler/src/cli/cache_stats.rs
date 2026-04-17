@@ -1,6 +1,10 @@
 use super::RunError;
 
-pub(crate) fn run_cache_stats() -> Result<(), RunError> {
+/// Read-only cache statistics (no eviction). Use `--cache-gc` to run budget enforcement.
+pub(crate) fn run_cache_stats(args: &[String]) -> Result<(), RunError> {
+    let miss_breakdown = args
+        .iter()
+        .any(|a| a == "--miss-breakdown" || a == "--cache-stats-miss");
     let Some(dir) = rustmodlica::flatten::flatten_cache_dir() else {
         return Err(RunError::Message(
             "flatten cache disabled or unset (configure RUSTMODLICA_FLATTEN_CACHE_DIR)".into(),
@@ -85,11 +89,7 @@ pub(crate) fn run_cache_stats() -> Result<(), RunError> {
             Err(_) => true,
         }
     };
-    let budget = rustmodlica::cache::global_budget::enforce_global_budget(
-        Some(dir.as_path()),
-        jit_dir.as_deref(),
-    );
-    let out = serde_json::json!({
+    let mut out = serde_json::json!({
         "cache_root": dir.display().to_string(),
         "jit_codegen_cache_dir": jit_dir.as_ref().map(|p| p.display().to_string()),
         "config": {
@@ -124,16 +124,71 @@ pub(crate) fn run_cache_stats() -> Result<(), RunError> {
             "total_jit_files": jit_object_count + jit_raw_count,
             "total_jit_bytes": jit_total_bytes + jit_raw_bytes,
         },
-        "global_budget": {
-            "total_bytes": budget.total_bytes,
-            "max_bytes": budget.max_bytes,
-            "jit_file_bytes": budget.jit_file_bytes,
-            "sqlite_file_bytes": budget.sqlite_file_bytes,
-            "files_scanned": budget.files_scanned,
-            "files_evicted": budget.files_evicted,
-            "bytes_evicted": budget.bytes_evicted,
+        "sqlite_hit_rates": hit_rates_from_layers(&layers),
+        "warmup_last_run": rustmodlica::cache::warmup::peek_last_warmup_run(),
+    });
+    if miss_breakdown {
+        let agg = rustmodlica::cache::cache_miss_agg::read_aggregate(dir.as_path());
+        out["cache_miss_breakdown"] = serde_json::json!({
+            "by_reason": agg.by_reason,
+            "by_layer": agg.by_layer,
+        });
+    }
+    println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    Ok(())
+}
+
+fn hit_rates_from_layers(layers: &[rustmodlica::flatten::CacheStatsLayerExport]) -> serde_json::Value {
+    let mut per_scope = serde_json::Map::new();
+    for layer in layers {
+        let mut kinds = serde_json::Map::new();
+        for row in &layer.rows {
+            let gets = row.get_count.max(0) as f64;
+            let hits = row.hit_count.max(0) as f64;
+            let rate = if gets > 0.0 { hits / gets } else { 0.0 };
+            kinds.insert(
+                row.kind.clone(),
+                serde_json::json!({
+                    "get_count": row.get_count,
+                    "hit_count": row.hit_count,
+                    "put_count": row.put_count,
+                    "hit_rate": rate,
+                }),
+            );
         }
+        per_scope.insert(layer.tier.clone(), serde_json::Value::Object(kinds));
+    }
+    serde_json::Value::Object(per_scope)
+}
+
+/// Run global budget enforcement (may delete WAL sidecars and JIT files over budget/TTL).
+pub(crate) fn run_cache_gc() -> Result<(), RunError> {
+    let Some(dir) = rustmodlica::flatten::flatten_cache_dir() else {
+        return Err(RunError::Message(
+            "flatten cache disabled or unset (configure RUSTMODLICA_FLATTEN_CACHE_DIR)".into(),
+        ));
+    };
+    let jit_dir = rustmodlica::jit::codegen_cache::codegen_cache_root();
+    let budget = rustmodlica::cache::global_budget::enforce_global_budget(
+        Some(dir.as_path()),
+        jit_dir.as_deref(),
+    );
+    let out = serde_json::json!({
+        "cache_root": dir.display().to_string(),
+        "jit_codegen_cache_dir": jit_dir.as_ref().map(|p| p.display().to_string()),
+        "global_budget": budget,
     });
     println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
     Ok(())
+}
+
+#[cfg(test)]
+mod cache_stats_shape_tests {
+    use super::hit_rates_from_layers;
+
+    #[test]
+    fn hit_rates_empty_layers_object() {
+        let v = hit_rates_from_layers(&[]);
+        assert!(v.is_object());
+    }
 }

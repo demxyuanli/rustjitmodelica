@@ -30,6 +30,24 @@ pub fn unified_file_hash(path: &Path) -> Option<String> {
         }
     }
 
+    if let Some(root) = crate::flatten::flatten_cache_dir() {
+        if let Some(h) =
+            crate::cache::path_hash_index::lookup(Some(root.as_path()), path, modified, len)
+        {
+            if let Ok(mut g) = hash_cache().write() {
+                g.insert(
+                    path.to_path_buf(),
+                    FileHashEntry {
+                        modified,
+                        len,
+                        hash: h.clone(),
+                    },
+                );
+            }
+            return Some(h);
+        }
+    }
+
     let is_modelica = path
         .extension()
         .and_then(|s| s.to_str())
@@ -54,6 +72,9 @@ pub fn unified_file_hash(path: &Path) -> Option<String> {
                 hash: hash.clone(),
             },
         );
+    }
+    if let Some(root) = crate::flatten::flatten_cache_dir() {
+        crate::cache::path_hash_index::store(Some(root.as_path()), path, modified, len, &hash);
     }
     Some(hash)
 }

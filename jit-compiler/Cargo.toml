@@ -48,6 +48,7 @@ salsa = "0.16.1"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 dirs = "5.0"
 rayon = "1.11.0"
+fs2 = "0.4.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Memory", "Win32_System_LibraryLoader"] }

@@ -306,5 +306,11 @@ impl AotArchiveBuilder {
 /// Try to load the default AOT archive from the cache directory.
 pub fn try_load_default_archive() -> Option<AotArchive> {
     let path = AotArchive::default_archive_path()?;
-    AotArchive::load(&path).ok()
+    match AotArchive::load(&path) {
+        Ok(a) => Some(a),
+        Err(e) => {
+            eprintln!("[aot] skip default archive ({}): {}", path.display(), e);
+            None
+        }
+    }
 }

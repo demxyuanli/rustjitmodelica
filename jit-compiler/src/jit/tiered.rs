@@ -93,6 +93,9 @@ pub struct TieringPolicy {
     pub tierup_step_threshold: u64,
     /// Whether profile-guided tier is available.
     pub profile_available: bool,
+    /// When set, background tier-up recompiles with CONST_FOLD/EQ_DCE off (adaptive policy).
+    pub force_adaptive_skip_const_fold: bool,
+    pub force_adaptive_skip_eq_dce: bool,
 }
 
 impl Default for TieringPolicy {
@@ -103,6 +106,8 @@ impl Default for TieringPolicy {
             background_tierup: true,
             tierup_step_threshold: 100,
             profile_available: false,
+            force_adaptive_skip_const_fold: false,
+            force_adaptive_skip_eq_dce: false,
         }
     }
 }
@@ -273,6 +278,8 @@ impl TieredScheduler {
         let tf = Arc::clone(&self.tiered_func);
         let model = self.model_name.clone();
         let profile = self.profile.clone();
+        let force_skip_cf = self.policy.force_adaptive_skip_const_fold;
+        let force_skip_dce = self.policy.force_adaptive_skip_eq_dce;
 
         if let Err(e) = std::thread::Builder::new()
             .name(format!("tierup-{}", target_tier as u32))
@@ -294,10 +301,10 @@ impl TieredScheduler {
                     "RUSTMODLICA_CRANELIFT_OPT_LEVEL",
                     target_tier.cranelift_opt_level(),
                 );
-                if target_tier.skip_const_fold() {
+                if target_tier.skip_const_fold() || force_skip_cf {
                     std::env::set_var("RUSTMODLICA_CONST_FOLD", "0");
                 }
-                if target_tier.skip_eq_dce() {
+                if target_tier.skip_eq_dce() || force_skip_dce {
                     std::env::set_var("RUSTMODLICA_EQ_DCE", "0");
                 }
 
