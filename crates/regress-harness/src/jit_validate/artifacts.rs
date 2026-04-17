@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use super::EnvOverlay;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunManifest {
     pub schema_version: u32,
@@ -24,6 +26,8 @@ pub struct RunManifest {
     pub force_flatten_full_cache: bool,
     #[serde(default)]
     pub worker_per_scenario: bool,
+    #[serde(default)]
+    pub child_env: EnvOverlay,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

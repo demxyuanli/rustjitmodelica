@@ -228,6 +228,7 @@ fn build_manifest(spec: &RunSpec, scenarios: &[ScenarioResolved]) -> RunManifest
             .map(|p| p.display().to_string()),
         force_flatten_full_cache: spec.force_flatten_full_cache,
         worker_per_scenario: spec.worker_per_scenario,
+        child_env: spec.child_env.clone(),
     }
 }
 
@@ -479,7 +480,17 @@ impl ValidatePerfRunner {
                     cmd.arg(model);
 
                     let mut env_set: BTreeMap<String, String> = resolved.env_set.clone();
-                    let env_unset: Vec<String> = resolved.env_unset.clone();
+                    let mut env_unset: Vec<String> = resolved.env_unset.clone();
+                    for k in &spec.child_env.unset {
+                        if !env_unset.contains(k) {
+                            env_unset.push(k.clone());
+                        }
+                    }
+                    env_unset.sort();
+                    env_unset.dedup();
+                    for (k, v) in &spec.child_env.set {
+                        env_set.insert(k.clone(), v.clone());
+                    }
                     env_set.insert(
                         "RUSTMODLICA_PERF_SALSA_STATS".to_string(),
                         "1".to_string(),

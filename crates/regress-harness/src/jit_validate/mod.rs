@@ -81,6 +81,9 @@ pub struct RunSpec {
     /// Current implementation keeps artifact parity with legacy one-case-one-process execution.
     #[serde(default)]
     pub worker_per_scenario: bool,
+    /// Extra env vars applied to every rustmodlica child (merged after scenario env).
+    #[serde(default)]
+    pub child_env: EnvOverlay,
 }
 
 pub fn normalize_model_list(models: &[String]) -> Vec<String> {

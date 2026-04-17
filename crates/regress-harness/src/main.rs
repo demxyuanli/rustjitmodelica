@@ -15,7 +15,7 @@ use regress_harness::runner::RunContext;
 use regress_harness::session_prep::prepare_session;
 use regress_harness::tiers::Filter;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -259,15 +259,18 @@ enum JitCommands {
         /// PoC mode: execute each scenario via worker entrypoint.
         #[arg(long)]
         worker_per_scenario: bool,
+        /// Extra env for each rustmodlica child, repeatable (`KEY=VAL`, e.g. `RUSTMODLICA_CRANELIFT_OPT_LEVEL=none`).
+        #[arg(long = "set-env", value_name = "KEY=VAL")]
+        set_env: Vec<String>,
     },
     /// Compare validate-perf report against a baseline JSON
     CompareBaseline {
         /// Path to current validate-perf report.json
         #[arg(long)]
         report: PathBuf,
-        /// Path to baseline JSON file
+        /// Path to baseline JSON (default: baseline/20260417_jit_cranelift_none/jit_perf_baseline.json)
         #[arg(long)]
-        baseline: PathBuf,
+        baseline: Option<PathBuf>,
     },
     /// Generate or update a baseline JSON from a validate-perf report
     UpdateBaseline {
@@ -476,6 +479,7 @@ fn run_cli() -> Result<()> {
                 shared_cache_dir,
                 force_flatten_full_cache,
                 worker_per_scenario,
+                set_env,
             } => {
                 let repo_root = discover_repo_root()?;
                 let exe_path = if let Some(p) = exe {
@@ -487,6 +491,21 @@ fn run_cli() -> Result<()> {
                 let out_dir = out_dir.unwrap_or_else(|| repo_root.join("build").join("jit_validate_perf"));
                 let lib_paths: Vec<PathBuf> = lib_path.unwrap_or_else(|| vec![repo_root.join("jit-compiler")]);
                 let scenarios_vec = regress_harness::jit_validate::runner::default_perf_scenarios(hot_runs);
+
+                let mut child_set: BTreeMap<String, String> = BTreeMap::new();
+                for pair in &set_env {
+                    let (k, v) = pair.split_once('=').with_context(|| {
+                        format!("--set-env expects KEY=VAL, got {pair}")
+                    })?;
+                    if k.is_empty() {
+                        bail!("empty env key in --set-env");
+                    }
+                    child_set.insert(k.to_string(), v.to_string());
+                }
+                let child_env = regress_harness::jit_validate::EnvOverlay {
+                    set: child_set,
+                    unset: Vec::new(),
+                };
 
                 let spec = regress_harness::jit_validate::RunSpec {
                     repo_root: repo_root.clone(),
@@ -507,6 +526,7 @@ fn run_cli() -> Result<()> {
                     shared_cache_dir,
                     force_flatten_full_cache,
                     worker_per_scenario,
+                    child_env,
                 };
                 let report = regress_harness::jit_validate::runner::ValidatePerfRunner::run(spec)?;
                 println!(
@@ -521,7 +541,11 @@ fn run_cli() -> Result<()> {
             JitCommands::CompareBaseline { report, baseline } => {
                 let repo_root = discover_repo_root()?;
                 let report_path = if report.is_absolute() { report } else { repo_root.join(&report) };
-                let baseline_path = if baseline.is_absolute() { baseline } else { repo_root.join(&baseline) };
+                let baseline_path = baseline
+                    .map(|p| if p.is_absolute() { p } else { repo_root.join(p) })
+                    .unwrap_or_else(|| {
+                        repo_root.join(regress_harness::jit_validate::baseline::DEFAULT_JIT_COMPARE_BASELINE_REL)
+                    });
 
                 let report_text = std::fs::read_to_string(&report_path)
                     .with_context(|| format!("read report {}", report_path.display()))?;

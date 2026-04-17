@@ -7,6 +7,10 @@ use std::path::Path;
 
 use super::artifacts::ValidatePerfReport;
 
+/// Default `jit compare-baseline --baseline` when omitted (repo-relative).
+pub const DEFAULT_JIT_COMPARE_BASELINE_REL: &str =
+    "baseline/20260417_jit_cranelift_none/jit_perf_baseline.json";
+
 // ---------------------------------------------------------------------------
 // Baseline schema
 // ---------------------------------------------------------------------------

@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-04-17T13:54:11.315535800+00:00",
+  "git_head": "87fa778d692eeea34a9925a109afc0b5974c4f41",
+  "host": {
+    "os": "windows",
+    "arch": "x86_64"
+  },
+  "thresholds": {
+    "duration_ms_regression_pct": 20.0,
+    "codegen_wall_us_regression_pct": 15.0,
+    "cache_hit_rate_min_pct": 85.0,
+    "speedup_min_ratio": 1.0
+  },
+  "benchmarks": {
+    "cold_empty_nsCOLD/ModelicaTest.JitStress.ComplexJitRegression": {
+      "duration_ms_p50": 4668,
+      "codegen_wall_us_p50": 20028,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 1
+    },
+    "cold_empty_nsCOLD/ModelicaTest.JitStress.MslBroadCoverage": {
+      "duration_ms_p50": 22090,
+      "codegen_wall_us_p50": 17305,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 1
+    },
+    "cold_empty_nsCOLD/ModelicaTest.JitStress.RobotElectricalControl": {
+      "duration_ms_p50": 1783,
+      "codegen_wall_us_p50": 13152,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 1
+    },
+    "cold_empty_nsCOLD/TestLib.BigFor": {
+      "duration_ms_p50": 1620,
+      "codegen_wall_us_p50": 10122,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 1
+    },
+    "cold_empty_nsCOLD/TestLib.MSLBlocksTest": {
+      "duration_ms_p50": 1927,
+      "codegen_wall_us_p50": 9818,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 1
+    },
+    "cold_empty_nsCOLD/TestLib.MultiTopCombined": {
+      "duration_ms_p50": 1585,
+      "codegen_wall_us_p50": 9985,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 1
+    },
+    "hot_nsA/ModelicaTest.JitStress.ComplexJitRegression": {
+      "duration_ms_p50": 1561,
+      "codegen_wall_us_p50": 0,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 2
+    },
+    "hot_nsA/ModelicaTest.JitStress.MslBroadCoverage": {
+      "duration_ms_p50": 1530,
+      "codegen_wall_us_p50": 0,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 2
+    },
+    "hot_nsA/ModelicaTest.JitStress.RobotElectricalControl": {
+      "duration_ms_p50": 1562,
+      "codegen_wall_us_p50": 0,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 2
+    },
+    "hot_nsA/TestLib.BigFor": {
+      "duration_ms_p50": 1551,
+      "codegen_wall_us_p50": 0,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 2
+    },
+    "hot_nsA/TestLib.MSLBlocksTest": {
+      "duration_ms_p50": 1545,
+      "codegen_wall_us_p50": 0,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 2
+    },
+    "hot_nsA/TestLib.MultiTopCombined": {
+      "duration_ms_p50": 1574,
+      "codegen_wall_us_p50": 0,
+      "flatten_wall_us_p50": 0,
+      "cache_l0_hits": 0,
+      "cache_l0_writes": 0,
+      "cache_l1_hits": 0,
+      "cache_l1_writes": 0,
+      "cache_l2_hits": 0,
+      "cache_l2_writes": 0,
+      "sample_count": 2
+    }
+  }
+}
