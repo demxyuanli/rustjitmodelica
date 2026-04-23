@@ -125,6 +125,8 @@ impl ScriptRunner {
                             &arts.clock_partition_schedule,
                             None,
                             None,
+                            self.current_model.as_deref().unwrap_or(""),
+                            self.compiler.loader.library_paths.clone(),
                         )?;
                         Ok(true)
                     }
@@ -355,6 +357,8 @@ impl ScriptRunner {
                     &arts.clock_partition_schedule,
                     None,
                     None,
+                    self.current_model.as_deref().unwrap_or(""),
+                    self.compiler.loader.library_paths.clone(),
                 )?;
                 Ok(true)
             }

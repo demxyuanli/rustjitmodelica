@@ -3,7 +3,7 @@ use crate::cache::cache_key::{CacheKeyV2, CacheStage};
 use crate::flatten::flat_cache_v1::DepHashEntry;
 use crate::flatten::ValidationMode;
 use crate::flatten::FlattenError;
-use crate::flatten::{cache_shm, cache_sqlite, flatten_cache};
+use crate::flatten::{cache_shm, cache_sqlite};
 use crate::query_db::{flags_for_query_stage, scope_from_path, QueryDb};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -163,7 +163,7 @@ pub fn constrainedby_holds_extends_q(
         input.import_scope.as_str(),
         input.msl_context.as_str(),
     );
-    let mut flags = flags_for_query_stage(db);
+    let mut flags = flags_for_query_stage(db, input.scope_model_name.as_str());
     flags.coarse_constrainedby_only = coarse;
     let key_v2 = CacheKeyV2::builder(
         CacheStage::ConstrainedBy,
@@ -188,7 +188,12 @@ pub fn constrainedby_holds_extends_q(
             if let Ok(cache) = bincode::deserialize::<ConstrainedByCacheV1>(&bytes) {
                 if cache.schema == CONSTRAINEDBY_CACHE_SCHEMA_V1
                     && cache.key == key
-                    && super::cache_deps_match_for_stage(&scope, "constrainedby", &cache.deps)
+                    && super::cache_deps_match_for_stage(
+                        &scope,
+                        "constrainedby",
+                        input.scope_model_name.as_str(),
+                        &cache.deps,
+                    )
                 {
                     crate::query_db::perf::record_cache_event(
                         scope.prefix(),
@@ -204,17 +209,20 @@ pub fn constrainedby_holds_extends_q(
                 }
             }
         }
-        if let Some(dir) = flatten_cache::flatten_cache_dir() {
             if let Some(bytes) = super::sqlite_get_with_scope_chain(
-                dir.as_path(),
-                scope.clone(),
+                scope,
                 key.as_str(),
                 "constrainedby_v1",
             ) {
                 if let Ok(cache) = bincode::deserialize::<ConstrainedByCacheV1>(&bytes) {
                     if cache.schema == CONSTRAINEDBY_CACHE_SCHEMA_V1
                         && cache.key == key
-                        && super::cache_deps_match_for_stage(&scope, "constrainedby", &cache.deps)
+                        && super::cache_deps_match_for_stage(
+                        &scope,
+                        "constrainedby",
+                        input.scope_model_name.as_str(),
+                        &cache.deps,
+                    )
                     {
                         crate::query_db::perf::record_cache_event(
                             scope.prefix(),
@@ -234,7 +242,6 @@ pub fn constrainedby_holds_extends_q(
                     }
                 }
             }
-        }
     }
 
     let out = match constrainedby_holds_extends_impl(db, &input) {
@@ -258,8 +265,7 @@ pub fn constrainedby_holds_extends_q(
         crate::query_db::perf::CacheEvent::Miss,
     );
     if cache_enabled {
-        if let Some(dir) = flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
+        if let Some(cfg) = cache_sqlite::sqlite_write_config_for_scope(scope) {
                 let cache = ConstrainedByCacheV1 {
                     schema: CONSTRAINEDBY_CACHE_SCHEMA_V1.to_string(),
                     key: key.clone(),
@@ -283,7 +289,6 @@ pub fn constrainedby_holds_extends_q(
                         deps_json.as_deref(),
                     );
                 }
-            }
         }
     }
 

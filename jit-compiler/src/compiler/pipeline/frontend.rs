@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::ast::Model;
-use crate::cache::cache_scope::CacheScope;
+use crate::cache::cache_scope::{scope_from_storage_key, CacheScope};
 use crate::cache::cache_selective_invalidate;
 use crate::cache::invalidation::{invalidation_action, InvalidationAction, InvalidationTrigger};
 use crate::cache::ir_epoch::CacheStage;
@@ -12,7 +12,7 @@ use crate::flatten::flatten_cache;
 use crate::flatten::{ArraySizePolicy, Flattener, ValidationMode, load_array_sizes_json_optional};
 use crate::loader::ModelLoader;
 use crate::query_db;
-use crate::query_db::QueryDb;
+use crate::query_db::{record_cache_event, CacheEvent, QueryDb};
 
 use crate::compiler::CompileStopPhase;
 
@@ -39,7 +39,7 @@ fn frontend_stage_from_flat(
     }
 }
 
-fn apply_cache_invalidation_if_requested(cache_root: &Path) {
+fn apply_cache_invalidation_if_requested() {
     let trigger = std::env::var("RUSTMODLICA_CACHE_INVALIDATE_TRIGGER")
         .ok()
         .map(|s| s.trim().to_ascii_lowercase())
@@ -56,11 +56,23 @@ fn apply_cache_invalidation_if_requested(cache_root: &Path) {
         _ => InvalidationTrigger::IrEpochChanged,
     };
     let action = invalidation_action(trigger, CacheScope::Project);
+    let all_scopes = [
+        CacheScope::GlobalStd,
+        CacheScope::UserExt,
+        CacheScope::Project,
+    ];
+    let project_only = [CacheScope::Project];
     match action {
         InvalidationAction::None => {}
         InvalidationAction::SoftInvalidate => {
-            let _ = cache_selective_invalidate::soft_invalidate_stage(cache_root, CacheStage::FlatFull);
-            let _ = cache_selective_invalidate::soft_invalidate_stage(cache_root, CacheStage::ArraySizes);
+            let _ = cache_selective_invalidate::soft_invalidate_stage_all_roots(
+                CacheStage::FlatFull,
+                &project_only,
+            );
+            let _ = cache_selective_invalidate::soft_invalidate_stage_all_roots(
+                CacheStage::ArraySizes,
+                &project_only,
+            );
             crate::flatten::flatten_cache::hot_full_cache_evict_matching_needles(&[
                 ":flat_full_v1:".to_string(),
                 ":flat_full_v2:".to_string(),
@@ -69,29 +81,36 @@ fn apply_cache_invalidation_if_requested(cache_root: &Path) {
             crate::flatten::cache_sqlite::sqlite_connection_pool_clear();
         }
         InvalidationAction::HardInvalidate => {
-            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(
-                CacheScope::Project,
-                Some(cache_root),
-            ) {
-                let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+            if let Some(proj_root) = flatten_cache::flatten_cache_dir() {
+                if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(
+                    CacheScope::Project,
+                    Some(proj_root.as_path()),
+                ) {
+                    let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+                }
+                let project_dir = CacheScope::Project.resolve_dir(proj_root.as_path());
+                let _ = std::fs::remove_dir_all(project_dir);
             }
-            let project_dir = CacheScope::Project.resolve_dir(cache_root);
-            let _ = std::fs::remove_dir_all(project_dir);
             crate::flatten::cache_sqlite::sqlite_connection_pool_clear();
         }
         InvalidationAction::WholeBucketDrop => {
-            for scope in [CacheScope::GlobalStd, CacheScope::UserExt, CacheScope::Project] {
+            for cache_root in flatten_cache::all_disk_cache_roots() {
+                for scope in all_scopes {
+                    if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(
+                        scope,
+                        Some(cache_root.as_path()),
+                    ) {
+                        let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+                    }
+                    let dir = scope.resolve_dir(cache_root.as_path());
+                    let _ = std::fs::remove_dir_all(dir);
+                }
                 if let Some(cfg) =
-                    crate::flatten::cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(cache_root))
+                    crate::flatten::cache_sqlite::sqlite_config(Some(cache_root.as_path()))
                 {
                     let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
+                    let _ = std::fs::remove_file(&cfg.path);
                 }
-                let dir = scope.resolve_dir(cache_root);
-                let _ = std::fs::remove_dir_all(dir);
-            }
-            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config(Some(cache_root)) {
-                let _ = crate::flatten::cache_sqlite::sqlite_invalidate_scope(&cfg.path);
-                let _ = std::fs::remove_file(&cfg.path);
             }
             crate::flatten::cache_sqlite::sqlite_connection_pool_clear();
         }
@@ -143,13 +162,19 @@ pub(crate) fn flatten_and_inline(
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
             format!("array_sizes_json: {}", e).into()
         })?;
-    if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
-        let _ = crate::cache::ir_epoch::check_stage_epochs_stamp(cache_root.as_path());
-        flatten_cache::sync_flatten_cache_root_ir_epoch(cache_root.as_path());
-        if let Err(e) = crate::cache::ir_epoch::apply_stage_epoch_drift(cache_root.as_path()) {
-            eprintln!("[cache] apply_stage_epoch_drift: {}", e);
+    for r in flatten_cache::all_disk_cache_roots() {
+        let _ = crate::cache::ir_epoch::check_stage_epochs_stamp(r.as_path());
+        flatten_cache::sync_flatten_cache_root_ir_epoch(r.as_path());
+        if let Err(e) = crate::cache::ir_epoch::apply_stage_epoch_drift(r.as_path()) {
+            eprintln!(
+                "[cache] apply_stage_epoch_drift: {} ({})",
+                e,
+                r.display()
+            );
         }
-        apply_cache_invalidation_if_requested(cache_root.as_path());
+    }
+    apply_cache_invalidation_if_requested();
+    if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
         let full_key = flatten_cache::flatten_full_cache_key(
             model_name,
             loader,
@@ -164,6 +189,8 @@ pub(crate) fn flatten_and_inline(
             let mem_key = format!("analyze_input_v1:{}", full_key);
             let inline_mem_key = format!("inline_result_v1:{}", full_key);
             if let Some(v) = flatten_cache::inline_result_mem_get(inline_mem_key.as_str()) {
+                let scope_pf = scope_from_storage_key(full_key.as_str()).prefix();
+                record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
                 let flat_model = match Arc::try_unwrap(v) {
                     Ok(v) => v,
                     Err(a) => (*a).clone(),
@@ -178,6 +205,8 @@ pub(crate) fn flatten_and_inline(
                 return Ok(frontend_stage_from_flat(flat_model, model_name, loader));
             }
             if let Some(v) = flatten_cache::analyze_input_mem_get(mem_key.as_str()) {
+                let scope_pf = scope_from_storage_key(full_key.as_str()).prefix();
+                record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
                 let mut flat_model = match Arc::try_unwrap(v) {
                     Ok(v) => v,
                     Err(a) => (*a).clone(),
@@ -220,7 +249,7 @@ pub(crate) fn flatten_and_inline(
             }
         }
         if let Some(mut flat_model) =
-            flatten_cache::try_read_flat_cache_v1(&cache_root, &full_key, loader)
+            flatten_cache::try_read_flat_cache_v1(&cache_root, &full_key, loader, model_name)
         {
             // Cache hit diagnostic with validation mode
             let hit_elapsed = started_at.elapsed();
@@ -346,7 +375,12 @@ pub(crate) fn flatten_and_inline(
             array_size_policy,
             warnings_level,
         );
-        let out = flatten_cache::get_or_compute_flattened_model_v1(&cache_root, &full_key, loader, || {
+        let out = flatten_cache::get_or_compute_flattened_model_v1(
+            &cache_root,
+            &full_key,
+            loader,
+            model_name,
+            || {
             // If salsa inheritance is enabled, `root_model` already includes inheritance.
             if salsa_enabled {
                 flattener.flatten_with_mode_preinherited(root_model, model_name)
@@ -451,5 +485,6 @@ pub(crate) fn flatten_and_inline(
         }
     }
 
+    crate::cache::msl_pack::on_flatten_success(model_name);
     Ok(frontend_stage_from_flat(flat_model, model_name, loader))
 }

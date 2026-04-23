@@ -91,6 +91,9 @@ struct ParsedCompilePerf {
     clock_partition_scan_ms: u64,
     clock_partition_scan_us: u64,
     parallel_candidate_share_pct: f64,
+    cache_warm_ratio: f64,
+    /// `Some(100)` when native AOT loaded; `Some(0)` when eligible but not loaded; `None` when not applicable.
+    aot_native_proxy_pct: Option<f64>,
 }
 
 fn parse_scope_stage_map(c: &serde_json::Value, key: &str) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -168,6 +171,22 @@ fn parse_compile_perf_metrics(perf_json_path: &Path) -> Option<ParsedCompilePerf
             .get("parallel_candidate_share_pct")
             .and_then(|x| x.as_f64())
             .unwrap_or(0.0),
+        cache_warm_ratio: c
+            .get("cache_warm_ratio")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0),
+        aot_native_proxy_pct: c
+            .get("aot_native_load_status")
+            .and_then(|x| x.as_str())
+            .and_then(|s| {
+                if s.contains("LOADED") {
+                    Some(100.0)
+                } else if s.eq_ignore_ascii_case("not_eligible") {
+                    None
+                } else {
+                    Some(0.0)
+                }
+            }),
     })
 }
 
@@ -197,6 +216,34 @@ fn update_min_max(opt_min: &mut Option<u64>, opt_max: &mut Option<u64>, v: u64) 
 fn update_min_max_f64(opt_min: &mut Option<f64>, opt_max: &mut Option<f64>, v: f64) {
     *opt_min = Some(opt_min.map(|x| x.min(v)).unwrap_or(v));
     *opt_max = Some(opt_max.map(|x| x.max(v)).unwrap_or(v));
+}
+
+fn update_max_f64(opt: &mut Option<f64>, v: f64) {
+    *opt = Some(opt.map(|x| x.max(v)).unwrap_or(v));
+}
+
+fn scope_stage_hit_pct(
+    hits: &BTreeMap<String, BTreeMap<String, u64>>,
+    misses: &BTreeMap<String, BTreeMap<String, u64>>,
+    scope: &str,
+    stage: &str,
+) -> Option<f64> {
+    let h = hits
+        .get(scope)
+        .and_then(|m| m.get(stage))
+        .copied()
+        .unwrap_or(0);
+    let m = misses
+        .get(scope)
+        .and_then(|m| m.get(stage))
+        .copied()
+        .unwrap_or(0);
+    let t = h + m;
+    if t == 0 {
+        None
+    } else {
+        Some(100.0 * h as f64 / t as f64)
+    }
 }
 
 fn rollup_salsa_db_totals(stats: &PerfStats) -> (u64, u64, u64) {
@@ -505,6 +552,31 @@ fn build_perf_stats(out_dir: &Path, cases: &[Case]) -> PerfStats {
                             .unwrap_or(m.decl_expand_ms),
                     );
                 }
+                if let Some(v) =
+                    scope_stage_hit_pct(&m.cache_scope_stage_hits, &m.cache_scope_stage_misses, "L0", "flat_full")
+                {
+                    update_max_f64(&mut s.std_flat_full_hit_rate_max, v);
+                }
+                if let Some(v) =
+                    scope_stage_hit_pct(&m.cache_scope_stage_hits, &m.cache_scope_stage_misses, "L1", "flat_full")
+                {
+                    update_max_f64(&mut s.user_flat_full_hit_rate_max, v);
+                }
+                if let Some(v) =
+                    scope_stage_hit_pct(&m.cache_scope_stage_hits, &m.cache_scope_stage_misses, "L2", "flat_full")
+                {
+                    update_max_f64(&mut s.l2_flat_full_hit_rate_max, v);
+                }
+                let proj_wall = m.flatten_wall_ms.saturating_add(m.codegen_wall_ms);
+                s.project_rebuild_wall_ms_min = Some(
+                    s.project_rebuild_wall_ms_min
+                        .map(|x| x.min(proj_wall))
+                        .unwrap_or(proj_wall),
+                );
+                if let Some(p) = m.aot_native_proxy_pct {
+                    update_max_f64(&mut s.aot_hit_rate_max, p);
+                }
+                update_max_f64(&mut s.cache_warm_ratio_max, m.cache_warm_ratio);
             }
         }
         if let Some(p) = c.cache_stats_json.as_ref() {

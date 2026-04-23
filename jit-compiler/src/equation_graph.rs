@@ -41,7 +41,7 @@ const DEFAULT_MAX_GRAPH_EDGES: usize = 2200;
 const TOP_LEVEL_MAX_GRAPH_NODES: usize = 220;
 const TOP_LEVEL_MAX_GRAPH_EDGES: usize = 1200;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum EquationGraphMode {
     Full,
@@ -387,9 +387,10 @@ pub fn build_structural_graph(model: &Model) -> EquationGraph {
     }
 }
 
-/// Build equation/variable dependency graph from a flattened model.
-/// Known vars (parameters, time) are excluded from the variable set; equations reference unknowns.
-pub fn build_equation_graph(flat_model: &FlattenedModel, mode: EquationGraphMode) -> EquationGraph {
+pub(crate) fn build_equation_graph_non_incremental(
+    flat_model: &FlattenedModel,
+    mode: EquationGraphMode,
+) -> EquationGraph {
     match mode {
         EquationGraphMode::Full => build_equation_variable_graph(flat_model, None, None),
         EquationGraphMode::Compact => build_equation_variable_graph(
@@ -407,4 +408,21 @@ pub fn build_equation_graph(flat_model: &FlattenedModel, mode: EquationGraphMode
             omitted_equations: flat_model.equations.len(),
         },
     }
+}
+
+/// Build equation/variable dependency graph from a flattened model.
+/// Known vars (parameters, time) are excluded from the variable set; equations reference unknowns.
+pub fn build_equation_graph(flat_model: &FlattenedModel, mode: EquationGraphMode) -> EquationGraph {
+    if !matches!(mode, EquationGraphMode::Structural)
+        && std::env::var("RUSTMODLICA_EQGRAPH_INCREMENTAL")
+            .ok()
+            .map(|v| {
+                let t = v.trim();
+                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    {
+        return crate::equation_graph_inc::build_or_update_equation_graph(flat_model, mode, None);
+    }
+    build_equation_graph_non_incremental(flat_model, mode)
 }

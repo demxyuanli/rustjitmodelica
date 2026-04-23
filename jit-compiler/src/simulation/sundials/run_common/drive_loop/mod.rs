@@ -208,7 +208,6 @@ unsafe fn refine_event_step(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub(super) unsafe fn drive_print_loop(

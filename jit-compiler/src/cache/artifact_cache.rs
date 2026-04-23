@@ -160,7 +160,7 @@ fn prune_sqlite(cache_root: &Path) {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let min_keep_created_ms = now_ms - ttl_days * 24 * 60 * 60 * 1000;
-    let mut conn = match rusqlite::Connection::open(&cfg.path) {
+    let mut conn = match cache_sqlite::conn_for_prune(&cfg.path) {
         Ok(c) => c,
         Err(_) => return,
     };

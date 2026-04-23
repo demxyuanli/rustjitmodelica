@@ -56,12 +56,70 @@ pub fn execute_training_run(
             let eq_count = eq_count_from_perf.max(artifacts.state_vars.len());
             let mut collector = ProfileCollector::new(&config.model_name, eq_count);
 
-            for (i, name) in artifacts.state_vars.iter().enumerate() {
-                if i < artifacts.states.len() {
-                    collector.record_state_value(name, artifacts.states[i]);
+            let max_steps = std::env::var("RUSTMODLICA_TRAINING_STEPS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(100);
+
+            let dt = artifacts.dt;
+            let t_end = artifacts.t_end;
+            let mut sim_states = artifacts.states.clone();
+            let mut sim_discrete = artifacts.discrete_vals.clone();
+            let mut sim_derivs = vec![0.0; sim_states.len()];
+            let mut sim_outputs = artifacts.output_start_vals.to_vec();
+            let mut sim_when_states = vec![0.0; artifacts.when_count * 2];
+            let mut sim_crossings = vec![0.0; artifacts.crossings_count];
+            let sim_pre_states = vec![0.0; sim_states.len()];
+            let sim_pre_discrete = vec![0.0; sim_discrete.len()];
+            let homotopy_lambda: f64 = 1.0;
+            let mut time = 0.0_f64;
+            let mut steps_done: u64 = 0;
+
+            while time < t_end && steps_done < max_steps {
+                // Record state values for profiling.
+                for (i, name) in artifacts.state_vars.iter().enumerate() {
+                    if i < sim_states.len() {
+                        collector.record_state_value(name, sim_states[i]);
+                    }
                 }
+                for i in 0..eq_count {
+                    collector.record_equation_eval(i);
+                }
+                collector.record_step();
+
+                // Evaluate derivatives via calc_derivs.
+                let status = unsafe {
+                    (artifacts.calc_derivs)(
+                        time,
+                        sim_states.as_mut_ptr(),
+                        sim_discrete.as_mut_ptr(),
+                        sim_derivs.as_mut_ptr(),
+                        artifacts.params.as_ptr(),
+                        sim_outputs.as_mut_ptr(),
+                        sim_when_states.as_mut_ptr(),
+                        sim_crossings.as_mut_ptr(),
+                        sim_pre_states.as_ptr(),
+                        sim_pre_discrete.as_ptr(),
+                        t_end,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        &homotopy_lambda as *const f64,
+                    )
+                };
+                if status != 0 {
+                    break;
+                }
+
+                // Forward Euler integration.
+                for (i, d) in sim_derivs.iter().enumerate() {
+                    if i < sim_states.len() {
+                        sim_states[i] += d * dt;
+                    }
+                }
+                time += dt;
+                steps_done += 1;
             }
-            collector.record_step();
 
             let wall_us = t0.elapsed().as_micros() as u64;
             collector.finalize(wall_us)

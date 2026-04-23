@@ -607,6 +607,7 @@ fn extract_line_annotation(fields: &[(String, AVal)]) -> Option<LineAnnotation> 
     let mut thickness = None;
     let mut pattern = None;
     let mut smooth = None;
+    let mut routing = None;
     for (name, val) in fields {
         match name.as_str() {
             "points" => points = extract_points(val),
@@ -614,6 +615,7 @@ fn extract_line_annotation(fields: &[(String, AVal)]) -> Option<LineAnnotation> 
             "thickness" => thickness = val.as_num(),
             "pattern" => pattern = ident_or_str(val),
             "smooth" => smooth = ident_or_str(val),
+            "routing" => routing = ident_or_str(val),
             _ => {}
         }
     }
@@ -626,6 +628,7 @@ fn extract_line_annotation(fields: &[(String, AVal)]) -> Option<LineAnnotation> 
         thickness,
         pattern,
         smooth,
+        routing,
     })
 }
 

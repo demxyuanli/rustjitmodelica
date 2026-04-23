@@ -15,10 +15,18 @@ use std::sync::OnceLock;
 
 use xxhash_rust::xxh64::Xxh64;
 
+use crate::cache::build_id::binary_build_id;
+use crate::cache::cache_scope::CacheScope;
+use crate::flatten::flatten_cache::{flatten_cache_dir, std_cache_root, user_cache_root};
 use crate::jit::types::ArrayInfo;
+use std::collections::HashSet;
+
+fn default_codegen_cache_scope() -> CacheScope {
+    CacheScope::Project
+}
 
 /// Cache version incremented when on-disk format or serialization contract changes.
-pub const CODEGEN_CACHE_VERSION: u32 = 4;
+pub const CODEGEN_CACHE_VERSION: u32 = 5;
 
 /// Bump when JIT `calc_derivs` ABI, raw blob layout, or reloc contract changes without a crate
 /// version or IR epoch bump (dev builds otherwise keep the same `CARGO_PKG_VERSION`).
@@ -32,13 +40,23 @@ pub fn target_isa_id() -> String {
     format!("{}-{}-{}", std::env::consts::OS, std::env::consts::ARCH, CRANELIFT_VERSION)
 }
 
-/// Host identity for JIT disk cache: crate version, flat IR epoch, and manual ABI revision.
+/// Host identity for JIT disk cache: crate version, flat IR epoch, manual ABI revision, and a
+/// per-binary fingerprint (`binary_build_id`).
+///
+/// The `bid:...` component ties every codegen cache key — and therefore every `.bin` filename
+/// and AOT TOC entry — to the exact running `rustmodlica.exe`. Rewriting the binary changes
+/// `binary_build_id`, which flows into [`CodegenCacheKey::stable_hash`] and in turn into the
+/// disk filename under `jit-codegen/`, so old machine-code blobs become unreachable (not
+/// served, not looked up) even when the crate version / IR epoch / ABI revision have not been
+/// bumped by hand. This closes the same "warm-cache -> Windows access violation" gap the
+/// SQLite parent-hash chain covers for flatten/IR rows, but for the native code tier.
 pub fn codegen_host_tag() -> String {
     format!(
-        "{}|ir{}|abi{}",
+        "{}|ir{}|abi{}|{}",
         env!("CARGO_PKG_VERSION"),
         crate::cache::ir_epoch::IR_SCHEMA_EPOCH,
-        CODEGEN_JIT_ABI_REVISION
+        CODEGEN_JIT_ABI_REVISION,
+        binary_build_id()
     )
 }
 
@@ -59,15 +77,68 @@ pub fn codegen_cache_enabled() -> bool {
     })
 }
 
-/// Get the cache root directory for codegen artifacts.
+const JIT_CODEGEN_REL: &str = "jit-codegen";
+
+fn legacy_global_codegen_dir() -> Option<PathBuf> {
+    let from_env = std::env::var("RUSTMODLICA_JIT_CODEGEN_CACHE_DIR").ok().and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(t))
+        }
+    });
+    from_env.or_else(|| dirs::cache_dir().map(|d| d.join("rustmodlica").join(JIT_CODEGEN_REL)))
+}
+
+/// Legacy single-root codegen cache (env `RUSTMODLICA_JIT_CODEGEN_CACHE_DIR` or host cache dir).
+/// When set, tiered roots are not used for JIT object I/O.
+pub fn codegen_cache_legacy_dir() -> Option<PathBuf> {
+    legacy_global_codegen_dir()
+}
+
+/// On-disk directory for writes for this tier (under std / user / project cache root).
+pub fn codegen_cache_write_dir_for_scope(scope: CacheScope) -> Option<PathBuf> {
+    if let Some(g) = codegen_cache_legacy_dir() {
+        return Some(g);
+    }
+    let base = match scope {
+        CacheScope::GlobalStd => std_cache_root().or_else(flatten_cache_dir)?,
+        CacheScope::UserExt => user_cache_root().or_else(flatten_cache_dir)?,
+        CacheScope::Project => flatten_cache_dir()?,
+    };
+    Some(base.join(JIT_CODEGEN_REL))
+}
+
+/// Read search order: same physical-root priority as flatten SQLite (`Project` -> user -> std, etc.).
+pub fn codegen_cache_read_dirs_for_scope(primary: CacheScope) -> Vec<PathBuf> {
+    if let Some(g) = codegen_cache_legacy_dir() {
+        return vec![g];
+    }
+    let p = flatten_cache_dir();
+    let u = user_cache_root();
+    let s = std_cache_root();
+    let ordered: Vec<Option<PathBuf>> = match primary {
+        CacheScope::Project => vec![p, u, s],
+        CacheScope::UserExt => vec![u, p, s],
+        CacheScope::GlobalStd => vec![s, u, p],
+    };
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for opt in ordered {
+        if let Some(r) = opt {
+            let j = r.join(JIT_CODEGEN_REL);
+            if seen.insert(j.clone()) {
+                out.push(j);
+            }
+        }
+    }
+    out
+}
+
+/// Primary project-tier codegen directory (for diagnostics and tools that expect one path).
 pub fn codegen_cache_root() -> Option<PathBuf> {
-    let root = std::env::var("RUSTMODLICA_JIT_CODEGEN_CACHE_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| {
-            dirs::cache_dir().map(|d| d.join("rustmodlica").join("jit-codegen"))
-        })?;
-    Some(root)
+    codegen_cache_write_dir_for_scope(CacheScope::Project)
 }
 
 /// Compute a stable hash of the flattened model for cache key generation.
@@ -157,6 +228,9 @@ pub struct CodegenCacheKey {
     /// Invalidates disk blobs across compiler releases and JIT ABI changes.
     #[serde(default)]
     pub host_tag: String,
+    /// Tier used when composing this key (affects [`CodegenCacheKey::stable_hash`]).
+    #[serde(default = "default_codegen_cache_scope")]
+    pub cache_scope: CacheScope,
     pub created_at: u64, // Unix timestamp
 }
 
@@ -168,6 +242,7 @@ impl CodegenCacheKey {
         cache_variant: &str,
         type_profile_hash: &str,
         param_signature: &str,
+        cache_scope: CacheScope,
     ) -> Self {
         Self {
             version: CODEGEN_CACHE_VERSION,
@@ -179,6 +254,7 @@ impl CodegenCacheKey {
             type_profile_hash: type_profile_hash.to_string(),
             param_signature: param_signature.to_string(),
             host_tag: codegen_host_tag(),
+            cache_scope,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -189,6 +265,7 @@ impl CodegenCacheKey {
     pub fn stable_hash(&self) -> String {
         let mut h = Xxh64::new(0);
         h.update(&self.version.to_le_bytes());
+        h.update(self.cache_scope.prefix().as_bytes());
         h.update(self.model_name.as_bytes());
         h.update(self.flat_hash.as_bytes());
         h.update(self.target_isa.as_bytes());
@@ -279,6 +356,7 @@ mod tests {
             "speed",
             "disabled",
             "disabled",
+            CacheScope::Project,
         );
         let k2 = CodegenCacheKey::new(
             "TestModel",
@@ -287,6 +365,7 @@ mod tests {
             "speed",
             "disabled",
             "disabled",
+            CacheScope::Project,
         );
 
         assert_eq!(k1.stable_hash(), k2.stable_hash());

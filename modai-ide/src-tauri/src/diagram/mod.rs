@@ -59,6 +59,7 @@ fn round_line_annotation(line: &LineAnnotation) -> LineAnnotation {
         thickness: line.thickness,
         pattern: line.pattern.clone(),
         smooth: line.smooth.clone(),
+        routing: line.routing.clone(),
     }
 }
 
@@ -78,7 +79,7 @@ fn round_persistent_state(state: &DiagramPersistentState) -> DiagramPersistentSt
 }
 
 /// Rejects path traversal and absolute paths; `relative_path` is a project-relative file path.
-fn validate_relative_path(relative_path: &str) -> Result<(), String> {
+pub(crate) fn validate_relative_path(relative_path: &str) -> Result<(), String> {
     let s = relative_path.trim();
     if s.is_empty() {
         return Err("relative path is empty".to_string());
@@ -514,3 +515,30 @@ fn extract_params(d: &Declaration) -> Option<Vec<ParamValue>> {
 
 
 include!("diagram_mod_tail.rs");
+
+#[cfg(test)]
+mod validate_path_tests {
+    use super::validate_relative_path;
+
+    #[test]
+    fn rejects_empty() {
+        assert!(validate_relative_path("").is_err());
+        assert!(validate_relative_path("   ").is_err());
+    }
+
+    #[test]
+    fn rejects_parent_segments() {
+        assert!(validate_relative_path("../secret.mo").is_err());
+        assert!(validate_relative_path("pkg/../other.mo").is_err());
+    }
+
+    #[test]
+    fn rejects_colon() {
+        assert!(validate_relative_path("C:/x.mo").is_err());
+    }
+
+    #[test]
+    fn accepts_normal_relative() {
+        assert!(validate_relative_path("pkg/Models/M.mo").is_ok());
+    }
+}

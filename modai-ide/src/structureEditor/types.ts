@@ -4,11 +4,20 @@ import type {
   LineAnnotation,
 } from "../components/diagramGraphicTypes";
 
+/** Optional port metadata for connector-aware rendering (aligns with OMEdit port semantics). */
+export interface PortHandleInfo {
+  id: string;
+  kind?: "input" | "output" | "flow" | "stream" | "signal";
+  typeName?: string;
+}
+
 export interface DiagramNodeData {
   [key: string]: unknown;
   typeName: string;
   libraryId?: string;
   portHandles: string[];
+  /** When set, overrides string-only portHandles for kind-aware UI. */
+  portInfos?: PortHandleInfo[];
   icon?: IconDiagramAnnotation;
   rotation?: number;
   params?: { name: string; value: string }[];
@@ -21,6 +30,10 @@ export interface DiagramNodeData {
   simValues?: Record<string, number>;
   hasError?: boolean;
   errorMessage?: string;
+  replaceable?: boolean;
+  constrainedbyType?: string;
+  condition?: string;
+  visible?: boolean;
 }
 
 export interface DiagramNode {
@@ -37,6 +50,8 @@ export interface DiagramLink {
   target: string;
   targetPort: string;
   vertices?: AnnotationPoint[];
+  /** JointJS router name; mirrored to ConnectionData.line.routing when present. */
+  router?: string;
 }
 
 export interface LayoutPoint {
@@ -73,6 +88,11 @@ export interface ComponentData {
   connectorKind?: string;
   isInput?: boolean;
   isOutput?: boolean;
+  replaceable?: boolean;
+  constrainedbyType?: string;
+  /** Parsed conditional component expression text (Modelica `if`). */
+  condition?: string;
+  visible?: boolean;
 }
 
 export interface ConnectionData {

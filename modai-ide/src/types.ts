@@ -174,6 +174,8 @@ export interface ComponentTypeSource {
   qualifiedName: string;
   source: string;
   path?: string;
+  /** Resolved `.mo` path relative to project root when the file is under the project directory. */
+  projectRelativePath?: string;
   libraryId: string;
   libraryName: string;
   libraryScope: string;

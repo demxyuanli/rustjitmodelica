@@ -38,6 +38,15 @@ export function snapToGrid(point: AnnotationPoint, options: GridOptions = DEFAUL
   };
 }
 
+/** Always align coordinates to the nearest grid intersection (structure diagram drag). */
+export function snapPointToGridStrict(point: AnnotationPoint, gridSize: number): AnnotationPoint {
+  if (gridSize <= 0) return point;
+  return {
+    x: Math.round(point.x / gridSize) * gridSize,
+    y: Math.round(point.y / gridSize) * gridSize,
+  };
+}
+
 /**
  * Snap an extent to the grid
  */

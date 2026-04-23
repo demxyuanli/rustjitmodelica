@@ -8,6 +8,10 @@ import type {
 } from "../../types";
 
 export type EquationGraphMode = "full" | "compact" | "top-level" | "structural";
+export type EquationGraphNodeKey =
+  | { Equation: { index: number; hash: number } }
+  | { Variable: number }
+  | { TopLevelComponent: number };
 
 // --- JIT / simulation ---
 
@@ -50,12 +54,16 @@ export async function getEquationGraph(
   modelName: string,
   projectDir?: string | null,
   graphMode: EquationGraphMode = "compact",
+  changedKeys?: EquationGraphNodeKey[] | null,
+  metricsSessionId?: string | null,
 ): Promise<EquationGraph> {
   return invoke<EquationGraph>("get_equation_graph", {
     code,
     modelName,
     projectDir: projectDir ?? undefined,
     graphMode,
+    changedKeys: changedKeys ?? undefined,
+    metricsSessionId: metricsSessionId ?? undefined,
   });
 }
 
@@ -64,12 +72,16 @@ export async function getEquationGraphV2(
   modelName: string,
   projectDir?: string | null,
   graphMode: EquationGraphMode = "compact",
+  changedKeys?: EquationGraphNodeKey[] | null,
+  metricsSessionId?: string | null,
 ): Promise<JitApiEnvelope<EquationGraph>> {
   return invoke<JitApiEnvelope<EquationGraph>>("get_equation_graph_v2", {
     code,
     modelName,
     projectDir: projectDir ?? undefined,
     graphMode,
+    changedKeys: changedKeys ?? undefined,
+    metricsSessionId: metricsSessionId ?? undefined,
   });
 }
 

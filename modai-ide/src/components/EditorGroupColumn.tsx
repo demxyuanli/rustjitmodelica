@@ -45,6 +45,7 @@ interface EditorGroupColumnProps {
   onRequestWorkbenchView?: (view: "simulation" | "analysis") => void;
   onViewModeChange?: (mode: "code" | "icon" | "diagram" | "diagramReadOnly") => void;
   onNavigateToType?: (typeName: string, libraryId?: string) => void;
+  onOpenTypeSource?: (typeName: string, libraryId?: string) => void;
   libraryRefreshToken?: number;
   theme?: "dark" | "light";
   onOpenDependencyGraphSettings?: () => void;
@@ -96,6 +97,7 @@ export function EditorGroupColumn({
   onRequestWorkbenchView,
   onViewModeChange,
   onNavigateToType,
+  onOpenTypeSource,
   libraryRefreshToken = 0,
   theme = "dark",
   onOpenDependencyGraphSettings,
@@ -279,6 +281,7 @@ export function EditorGroupColumn({
             mode={viewMode === "icon" ? "icon" : "diagram"}
             focusSymbolQuery={focusSymbolQuery}
             onNavigateToType={onNavigateToType}
+            onOpenTypeSource={onOpenTypeSource}
             libraryRefreshToken={libraryRefreshToken}
             onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}
             dependencyGraphBehavior={dependencyGraphBehavior}

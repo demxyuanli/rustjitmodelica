@@ -53,6 +53,9 @@ pub struct ExtensionsSettings {
     /// Third-party library path (e.g. Modelica standard library)
     #[serde(default)]
     pub modelica_stdlib_path: String,
+    /// HTTPS URL of `manifest.json` for remote MSL pre-pack updates (optional).
+    #[serde(default)]
+    pub msl_pack_manifest_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -380,6 +380,9 @@ pub struct LineAnnotation {
     pub pattern: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smooth: Option<String>,
+    /// Editor-only routing hint (e.g. manhattan, orthogonal); persisted in .modai JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

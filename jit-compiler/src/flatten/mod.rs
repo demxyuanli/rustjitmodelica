@@ -10,11 +10,14 @@ use std::sync::Arc;
 mod error;
 mod array_size_policy;
 pub(crate) mod flatten_cache;
-pub use self::flatten_cache::flatten_cache_dir;
+pub use self::flatten_cache::{
+    all_disk_cache_roots, flatten_cache_dir, std_cache_root, user_cache_root,
+};
 mod decl_expand;
 pub(crate) mod cache_sqlite;
 pub use self::cache_sqlite::{
-    export_sqlite_kind_stats_layers, sqlite_config_for_scope, CacheKindStatRow, CacheStatsLayerExport,
+    export_sqlite_kind_stats_layers, sqlite_config_for_scope, sqlite_read_try_configs,
+    sqlite_write_config_for_scope, CacheKindStatRow, CacheStatsLayerExport,
 };
 pub(crate) mod cache_shm;
 pub(crate) mod flat_cache_v1;

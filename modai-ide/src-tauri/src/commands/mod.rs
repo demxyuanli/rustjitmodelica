@@ -5,6 +5,7 @@ pub mod git_commands;
 pub mod index_commands;
 pub mod iterate_commands;
 pub mod jit;
+pub mod msl_cache;
 pub mod project;
 pub mod regression_commands;
 pub mod source_commands;

@@ -10,6 +10,7 @@ pub mod compiler;
 pub mod condenser;
 pub mod diag;
 pub mod equation_graph;
+pub mod equation_graph_inc;
 pub mod error;
 pub mod expr_eval;
 pub mod flatten;
@@ -40,6 +41,7 @@ pub use compiler::{
 pub use diag::{ParseErrorInfo, SourceLocation, WarningInfo};
 pub use string_intern::{StringInterner, VarId};
 pub use equation_graph::{EquationGraph, EquationGraphEdge, EquationGraphNode};
+pub use equation_graph_inc::{build_or_update_equation_graph, DirtySet, NodeKey};
 pub use loader::{LoadError, ModelLoader};
 pub use simulation::{run_simulation, run_simulation_collect, runtime_perf_counters, SimulationResult};
 pub use api::{
@@ -47,6 +49,10 @@ pub use api::{
     incremental_codegen_worthwhile_hint, provenance_index_for_flat_model,
 };
 pub use query_db::salsa_session::salsa_process_db_stats;
+pub use cache::msl_pack::manifest::read_manifest as read_msl_pack_manifest;
+pub use cache::msl_pack::tree_digest::compute_msl_tree_digest;
+pub use cache::msl_pack::version::read_msl_version_label;
+pub use flatten::cache_sqlite::sqlite_connection_pool_clear;
 pub use analysis::{ImpactAnalysisResult, ProvenanceIndex};
 #[cfg(feature = "sundials")]
 pub use simulation::{

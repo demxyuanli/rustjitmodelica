@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "cargo_exe": "cargo",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": {
+    "workers": 4,
+    "fail_fast": true
+  },
+  "incremental": {
+    "baseline_path": null,
+    "strategy": "none"
+  },
+  "tiers": {
+    "smoke": {
+      "include_tags": ["smoke"]
+    }
+  },
+  "cases": [
+    { "id": "s_parse_init_dummy",      "kind": "model", "target": "TestLib/InitDummy",      "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_parse_simple_test",     "kind": "model", "target": "TestLib/SimpleTest",     "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_parse_init_with_param", "kind": "model", "target": "TestLib/InitWithParam",  "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_lang_for",              "kind": "model", "target": "TestLib/ForTest",         "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_lang_if",               "kind": "model", "target": "TestLib/IfTest",          "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_pipe_blt",              "kind": "model", "target": "TestLib/BLTTest",         "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_pipe_tearing",          "kind": "model", "target": "TestLib/TearingTest",     "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_pipe_alg_loop",         "kind": "model", "target": "TestLib/AlgebraicLoop2Eq","tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_pipe_jacobian",         "kind": "model", "target": "TestLib/JacobianTest",    "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_evt_bouncing_ball",     "kind": "model", "target": "TestLib/BouncingBall",    "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_evt_when",              "kind": "model", "target": "TestLib/WhenTest",         "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_evt_discrete",          "kind": "model", "target": "TestLib/DiscreteTest",     "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_evt_no_event",          "kind": "model", "target": "TestLib/NoEventTest",      "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_func_simple_def",       "kind": "model", "target": "TestLib/SimpleFunctionDef","tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_func_recursive",        "kind": "model", "target": "TestLib/RecursiveFunc",   "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_func_multi_output",     "kind": "model", "target": "TestLib/MultiOutputFunc", "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_conn_circuit",          "kind": "model", "target": "TestLib/Circuit",          "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_conn_nested",           "kind": "model", "target": "TestLib/NestedConnect",   "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_type_array",            "kind": "model", "target": "TestLib/ArrayTest",        "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_type_record",           "kind": "model", "target": "TestLib/SimpleRecord",    "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_clock_partition",       "kind": "model", "target": "TestLib/ClockedPartitionTest", "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_block_solvable4",       "kind": "model", "target": "TestLib/SolvableBlock4Res","tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_type_alias",            "kind": "model", "target": "TestLib/TypeAliasTest",    "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_ann_parse",             "kind": "model", "target": "TestLib/AnnotationParse",  "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "s_inherit_sub",           "kind": "model", "target": "TestLib/Sub",              "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_mod_hierarchical",      "kind": "model", "target": "TestLib/HierarchicalMod", "tags": ["smoke"], "expect": { "kind": "exit_zero" } }
+  ]
+}

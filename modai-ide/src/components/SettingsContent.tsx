@@ -25,6 +25,7 @@ import { SettingsStorageSection } from "./settings/SettingsStorageSection";
 import { SettingsResourcesSection } from "./settings/SettingsResourcesSection";
 import { SettingsDocumentationSection } from "./settings/SettingsDocumentationSection";
 import { SettingsExtensionsSection } from "./settings/SettingsExtensionsSection";
+import { SettingsMslPackSection } from "./settings/SettingsMslPackSection";
 import { SettingsDependencyGraphSection } from "./settings/SettingsDependencyGraphSection";
 import { SettingsValidationSection } from "./settings/SettingsValidationSection";
 import type {
@@ -486,7 +487,10 @@ export function SettingsContent({
       )}
 
       {effectiveGroupId === "extensions" && onAppSettingsChange && appSettings && (
-        <SettingsExtensionsSection appSettings={appSettings} onAppSettingsChange={onAppSettingsChange} />
+        <>
+          <SettingsExtensionsSection appSettings={appSettings} onAppSettingsChange={onAppSettingsChange} />
+          <SettingsMslPackSection appSettings={appSettings} onAppSettingsChange={onAppSettingsChange} />
+        </>
       )}
 
       {effectiveGroupId === "developer" && onEnterDevMode && (

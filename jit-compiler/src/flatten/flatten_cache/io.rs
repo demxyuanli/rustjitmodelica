@@ -3,7 +3,7 @@ use super::keys::{
     ARRAY_SIZES_CACHE_SCHEMA_V2,
 };
 use super::mem::{mem_cache_get, mem_cache_put};
-use crate::cache::cache_scope::{scope_from_storage_key, sqlite_scope_lookup_chain};
+use crate::cache::cache_scope::scope_from_storage_key;
 use crate::cache::closure_hash;
 use crate::flatten::cache_shm;
 use crate::flatten::cache_sqlite;
@@ -19,6 +19,7 @@ pub fn try_read_flat_cache_v1(
     dir: &Path,
     key: &str,
     loader: &ModelLoader,
+    model_name: &str,
 ) -> Option<crate::flatten::FlattenedModel> {
     if !full_cache_enabled() {
         return None;
@@ -33,10 +34,9 @@ pub fn try_read_flat_cache_v1(
                 "cache_deserialize_us",
                 t_deser.elapsed().as_micros() as u64,
             );
-            if cache.schema == FLAT_CACHE_SCHEMA_V1
-                && cache.key == key
-                && deps_match(&cache.deps)
-            {
+            let deps_ok = deps_match(&cache.deps)
+                || crate::cache::msl_pack::context::flat_cache_relax_deps_for(model_name);
+            if cache.schema == FLAT_CACHE_SCHEMA_V1 && cache.key == key && deps_ok {
                 let _ = loader;
                 record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
                 return Some(cache.into_flat_model());
@@ -48,12 +48,9 @@ pub fn try_read_flat_cache_v1(
             );
         }
     }
-    // Tier 3: SQLite persistent store (optional): L2 -> L1 -> L0 on miss.
+    // Tier 3: SQLite persistent store (optional): tier chain across project/user/std roots.
     let primary = scope_from_storage_key(key);
-    for scope in sqlite_scope_lookup_chain(primary) {
-        let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) else {
-            continue;
-        };
+    for cfg in cache_sqlite::sqlite_read_try_configs(primary) {
         let t_get = std::time::Instant::now();
         let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key, "flat_cache_v1") else {
             continue;
@@ -65,10 +62,9 @@ pub fn try_read_flat_cache_v1(
                 "cache_deserialize_us",
                 t_deser.elapsed().as_micros() as u64,
             );
-            if cache.schema == FLAT_CACHE_SCHEMA_V1
-                && cache.key == key
-                && deps_match(&cache.deps)
-            {
+            let deps_ok = deps_match(&cache.deps)
+                || crate::cache::msl_pack::context::flat_cache_relax_deps_for(model_name);
+            if cache.schema == FLAT_CACHE_SCHEMA_V1 && cache.key == key && deps_ok {
                 let _ = loader;
                 let _ = cache_shm::shm_put(key, &bytes);
                 record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
@@ -86,14 +82,13 @@ pub fn try_read_flat_cache_v1(
     if path.is_file() {
         if let Ok(text) = std::fs::read_to_string(&path) {
             if let Ok(cache) = serde_json::from_str::<FlatCacheV1>(&text) {
-                if cache.schema == FLAT_CACHE_SCHEMA_V1
-                    && cache.key == key
-                    && deps_match(&cache.deps)
-                {
+                let deps_ok = deps_match(&cache.deps)
+                    || crate::cache::msl_pack::context::flat_cache_relax_deps_for(model_name);
+                if cache.schema == FLAT_CACHE_SCHEMA_V1 && cache.key == key && deps_ok {
                     if let Ok(bytes) = bincode::serialize(&cache) {
                         let _ = cache_shm::shm_put(key, &bytes);
                         if let Some(cfg) =
-                            cache_sqlite::sqlite_config_for_scope(scope_from_storage_key(key), Some(dir))
+                            cache_sqlite::sqlite_write_config_for_scope(scope_from_storage_key(key))
                         {
                             let deps_json = serde_json::to_string(&cache.deps).ok();
                             let _ = cache_sqlite::sqlite_put(
@@ -145,7 +140,7 @@ pub fn write_flat_cache_v1(
 
     // Also write V1 format for backward compatibility
     let cache = FlatCacheV1::from_flat_model(key.to_string(), model_name, flat, entries);
-    if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) {
+    if let Some(cfg) = cache_sqlite::sqlite_write_config_for_scope(scope) {
         let bytes = bincode::serialize(&cache).map_err(|e| e.to_string())?;
         let deps_json = serde_json::to_string(&cache.deps).map_err(|e| e.to_string())?;
         let _ = cache_sqlite::sqlite_put(
@@ -167,9 +162,10 @@ pub fn write_flat_cache_v1(
 /// Try reading V2 cache format (rkyv-based, zero-copy).
 /// Returns None if V2 not found or on error; caller should fall back to V1.
 pub fn try_read_flat_cache_v2(
-    dir: &Path,
+    _dir: &Path,
     key: &str,
     loader: &ModelLoader,
+    model_name: &str,
 ) -> Option<crate::flatten::FlattenedModel> {
     if !full_cache_enabled() {
         return None;
@@ -185,10 +181,9 @@ pub fn try_read_flat_cache_v2(
                 "cache_deserialize_us",
                 t_deser.elapsed().as_micros() as u64,
             );
-            if cache.schema == FLAT_CACHE_SCHEMA_V2
-                && cache.key == key
-                && deps_match(&cache.deps)
-            {
+            let deps_ok = deps_match(&cache.deps)
+                || crate::cache::msl_pack::context::flat_cache_relax_deps_for(model_name);
+            if cache.schema == FLAT_CACHE_SCHEMA_V2 && cache.key == key && deps_ok {
                 let _ = loader;
                 record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
                 return cache.into_flat_model().ok();
@@ -203,10 +198,7 @@ pub fn try_read_flat_cache_v2(
 
     // Tier 3: SQLite persistent store
     let primary = scope_from_storage_key(key);
-    for scope in sqlite_scope_lookup_chain(primary) {
-        let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) else {
-            continue;
-        };
+    for cfg in cache_sqlite::sqlite_read_try_configs(primary) {
         let t_get = std::time::Instant::now();
         let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key, "flat_cache_v2") else {
             continue;
@@ -218,10 +210,9 @@ pub fn try_read_flat_cache_v2(
                 "cache_deserialize_us",
                 t_deser.elapsed().as_micros() as u64,
             );
-            if cache.schema == FLAT_CACHE_SCHEMA_V2
-                && cache.key == key
-                && deps_match(&cache.deps)
-            {
+            let deps_ok = deps_match(&cache.deps)
+                || crate::cache::msl_pack::context::flat_cache_relax_deps_for(model_name);
+            if cache.schema == FLAT_CACHE_SCHEMA_V2 && cache.key == key && deps_ok {
                 let _ = loader;
                 let _ = cache_shm::shm_put(key, &bytes);
                 record_cache_event(scope_pf, "flat_full", CacheEvent::Hit);
@@ -266,7 +257,7 @@ pub fn write_flat_cache_v2(
     let bytes = flat_cache_v2::serialize_cache(&cache).map_err(|e| e.to_string())?;
     let _ = cache_shm::shm_put(key, &bytes);
 
-    if let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) {
+    if let Some(cfg) = cache_sqlite::sqlite_write_config_for_scope(scope) {
         let deps_json = serde_json::to_string(&cache.deps).map_err(|e| e.to_string())?;
         let _ = cache_sqlite::sqlite_put(
             &cfg.path,
@@ -361,6 +352,7 @@ pub fn get_or_compute_flattened_model_v1<F>(
     dir: &Path,
     key: &str,
     loader: &ModelLoader,
+    model_name: &str,
     compute: F,
 ) -> Result<crate::flatten::FlattenedModel, crate::flatten::FlattenError>
 where
@@ -377,12 +369,12 @@ where
         }
     }
     // Try V2 first (rkyv-based, zero-copy, faster deserialization)
-    if let Some(v) = try_read_flat_cache_v2(dir, key, loader) {
+    if let Some(v) = try_read_flat_cache_v2(dir, key, loader, model_name) {
         hot_full_cache_put(key.to_string(), Arc::new(v.clone()));
         return Ok(v);
     }
     // Fall back to V1 (bincode-based)
-    if let Some(v) = try_read_flat_cache_v1(dir, key, loader) {
+    if let Some(v) = try_read_flat_cache_v1(dir, key, loader, model_name) {
         hot_full_cache_put(key.to_string(), Arc::new(v.clone()));
         return Ok(v);
     }
@@ -419,10 +411,7 @@ pub fn merge_cached_array_sizes(
         }
     }
     let primary = scope_from_storage_key(k2.as_str());
-    for scope in sqlite_scope_lookup_chain(primary) {
-        let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(dir)) else {
-            continue;
-        };
+    for cfg in cache_sqlite::sqlite_read_try_configs(primary) {
         let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, k2.as_str(), "array_sizes_v2") else {
             continue;
         };
@@ -485,7 +474,7 @@ pub fn write_array_sizes_cache(dir: &Path, key: &str, sizes: &HashMap<String, us
         let scope_pf = scope_from_storage_key(k2.as_str()).prefix();
         let _ = cache_shm::shm_put(k2.as_str(), &bytes);
         if let Some(cfg) =
-            cache_sqlite::sqlite_config_for_scope(scope_from_storage_key(k2.as_str()), Some(dir))
+            cache_sqlite::sqlite_write_config_for_scope(scope_from_storage_key(k2.as_str()))
         {
             let _ = cache_sqlite::sqlite_put(
                 &cfg.path,

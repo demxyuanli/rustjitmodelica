@@ -19,7 +19,8 @@ import {
   type DiagramDocument,
 } from "../structureEditor/docSync";
 import type { ComponentData, ConnectionData, LayoutPoint } from "../structureEditor/types";
-import { createStructureGraphSession } from "../structureEditor/session";
+import { createStructureGraphSession, type StructureSnapMode } from "../structureEditor/session";
+import { STRUCTURE_GRID_DEFAULT } from "../structureEditor/layoutConstants";
 import { JointStructureEditor } from "../structureEditor/JointStructureEditor";
 import { IconEditorShell } from "../structureEditor/IconEditorShell";
 import { useStepDebug } from "../hooks/useStepDebug";
@@ -27,6 +28,7 @@ import { useDiagramSimulation } from "../hooks/useDiagramSimulation";
 import { useDiagramViewPaperState } from "../hooks/useDiagramViewPaperState";
 import { useDiagramGraphicInteraction } from "../hooks/useDiagramGraphicInteraction";
 import { applyDiagramLayout, type DiagramLayoutKind } from "../utils/diagramLayout";
+import { DiagramCoordinateStrip } from "./diagram/DiagramCoordinateStrip";
 import { DiagramToolbar } from "./diagram/DiagramToolbar";
 import { AlignmentToolbar } from "./diagram/AlignmentToolbar";
 import { MultiSelectToolbar } from "./diagram/MultiSelectToolbar";
@@ -42,6 +44,8 @@ export interface DiagramViewProps {
   onContentChange?: (newSource: string) => void;
   readOnly?: boolean;
   onNavigateToType?: (typeName: string, libraryId?: string) => void;
+  /** Alt+double-click on a component: open class source (read-only tab) when set. */
+  onOpenTypeSource?: (typeName: string, libraryId?: string) => void;
   mode?: "diagram" | "icon";
   focusSymbolQuery?: string | null;
   libraryRefreshToken?: number;
@@ -56,6 +60,7 @@ export function DiagramView({
   onContentChange,
   readOnly = false,
   onNavigateToType,
+  onOpenTypeSource,
   mode = "diagram",
   focusSymbolQuery = null,
   libraryRefreshToken = 0,
@@ -75,6 +80,9 @@ export function DiagramView({
   const [loadingMessage, setLoadingMessage] = useState(() => t("diagramLoading"));
   const [conflictPending, setConflictPending] = useState<DiagramDocument | null>(null);
   const [messages, setMessages] = useState<GraphicalMessage[]>([]);
+  const [structureSnapMode, setStructureSnapMode] = useState<StructureSnapMode>("grid");
+  const [structureGridSize, setStructureGridSize] = useState(STRUCTURE_GRID_DEFAULT);
+  const [pointerLocal, setPointerLocal] = useState<{ x: number; y: number } | null>(null);
 
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -153,6 +161,9 @@ export function DiagramView({
   } = useDiagramViewPaperState();
 
   const loadGraphGenerationRef = useRef(0);
+  // Track the last source string we ourselves emitted via syncToSource so we
+  // can skip the heavy reload round-trip when the parent feeds it back to us.
+  const lastSelfEmittedSourceRef = useRef<string | null>(null);
 
   const stepDebug = useStepDebug();
   const simOverlay = useDiagramSimulation(stepDebug);
@@ -193,6 +204,13 @@ export function DiagramView({
   }, [readOnly, session, sessionRevision]);
 
   useEffect(() => {
+    // Avoid the reload round-trip when the parent is just echoing back the
+    // source we produced via syncToSource. The session is already in sync,
+    // and re-running getGraphicalDocumentFromSource for large models can
+    // take seconds and shows a loading overlay over the canvas.
+    if (lastSelfEmittedSourceRef.current !== null && source === lastSelfEmittedSourceRef.current) {
+      return;
+    }
     let cancelled = false;
     const gen = ++loadGraphGenerationRef.current;
     setLoading(true);
@@ -306,6 +324,11 @@ export function DiagramView({
     const key = buildDiagramSyncKey(nodes, links, doc.graphical);
     if (key === lastAppliedRef.current) return;
     const { components, connections, layout } = nodesToDiagram(nodes, links);
+    const byName = new Map(doc.components.map((c) => [c.name, c]));
+    const mergedComponents = components.map((c) => {
+      const full = byName.get(c.name);
+      return full ? { ...full, ...c } : c;
+    });
     const previousKey = lastAppliedRef.current;
     lastAppliedRef.current = key;
     const syncToken = activeSyncTokenRef.current + 1;
@@ -326,7 +349,7 @@ export function DiagramView({
     }, SYNC_SLOW_HINT_MS);
     const nextDocument: DiagramDocument = {
       modelName: doc.modelName,
-      components,
+      components: mergedComponents,
       connections,
       graphical: {
         layout: Object.keys(layout).length > 0 ? layout : undefined,
@@ -342,6 +365,7 @@ export function DiagramView({
     )
       .then(({ newSource, warning }) => {
         if (activeSyncTokenRef.current !== syncToken) return;
+        lastSelfEmittedSourceRef.current = newSource;
         onContentChangeRef.current?.(newSource);
         if (warning) {
           setMessages((prev) =>
@@ -414,6 +438,36 @@ export function DiagramView({
     },
     [session],
   );
+
+  const handleCommitDiagramCoordinateSystem = useCallback(
+    (patch: import("./diagramGraphicTypes").CoordinateSystem) => {
+      session.setCoordinateSystemForMode("diagram", patch);
+    },
+    [session],
+  );
+
+  const handleUpdateDeclaredType = useCallback(
+    (typeName: string) => {
+      const sel = session.getStructureSelectionId();
+      if (!sel) return;
+      session.applyComponentDeclaredType(sel, typeName);
+    },
+    [session],
+  );
+
+  const handleUpdateComponentFlags = useCallback(
+    (patch: { condition?: string | null; visible?: boolean | null }) => {
+      const sel = session.getStructureSelectionId();
+      if (!sel) return;
+      session.applyComponentAnnotationFlags(sel, patch);
+    },
+    [session],
+  );
+
+  const navigationTrail = useMemo(() => {
+    const parts = [relativeFilePath?.replace(/\\/g, "/"), diagram?.modelName].filter(Boolean) as string[];
+    return parts.length ? parts.join(" > ") : null;
+  }, [relativeFilePath, diagram?.modelName]);
 
   const handleExportSvg = useCallback(() => {
     const annotation = diagram?.iconAnnotation;
@@ -508,6 +562,12 @@ export function DiagramView({
     return session.getNodesLinksForCanvas(handleDoubleClickRef.current).nodes.length;
   }, [session, sessionRevision]);
 
+  const structureSelectedElementIds = useMemo(() => {
+    void sessionRevision;
+    const LINK_ID = /^e-.+-\d+$/;
+    return session.getStructureSelectionIds().filter((id) => !LINK_ID.test(id));
+  }, [session, sessionRevision]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-[var(--text-muted)]">{loadingMessage}</div>
@@ -538,6 +598,7 @@ export function DiagramView({
   return (
     <GraphicalCanvas
       modelName={diagram.modelName}
+      navigationTrail={navigationTrail}
       projectDir={projectDir}
       mode={mode}
       readOnly={readOnly}
@@ -556,6 +617,8 @@ export function DiagramView({
       onDeleteGraphic={handleDeleteGraphic}
       onUpdateParam={updateSelectedParam}
       onUpdatePlacement={updateSelectedPlacement}
+      onUpdateDeclaredType={mode === "diagram" ? handleUpdateDeclaredType : undefined}
+      onUpdateComponentFlags={mode === "diagram" ? handleUpdateComponentFlags : undefined}
       onOpenType={handleDoubleClick}
       libraryRefreshToken={libraryRefreshToken}
       stepDebug={stepDebug}
@@ -695,15 +758,35 @@ export function DiagramView({
             paperHandle={paperHandle}
             showMiniMap={showMiniMap}
             onToggleMiniMap={() => setShowMiniMap((v) => !v)}
+            structureToolbar={{
+              snapMode: structureSnapMode,
+              onSnapMode: setStructureSnapMode,
+              gridSize: structureGridSize,
+              onGridSize: setStructureGridSize,
+              onRotate90: () => session.applyRotateSelected90(),
+              onFlipH: () => session.applyFlipSelected("horizontal"),
+              onFlipV: () => session.applyFlipSelected("vertical"),
+              pointerText: pointerLocal ? `${pointerLocal.x.toFixed(1)}, ${pointerLocal.y.toFixed(1)}` : null,
+              selectedElementIds: structureSelectedElementIds,
+            }}
+          />
+          <DiagramCoordinateStrip
+            readOnly={readOnly}
+            coordinateSystem={diagram.diagramAnnotation?.coordinateSystem}
+            onCommit={handleCommitDiagramCoordinateSystem}
           />
           <div className="flex-1 min-h-0">
             <JointStructureEditor
               session={session}
               readOnly={readOnly}
               onDoubleClick={handleDoubleClick}
+              onAltDoubleClick={onOpenTypeSource ?? handleDoubleClick}
               onPaperReady={setPaperHandle}
               showMiniMap={showMiniMap}
-              snapToGrid
+              snapToGrid={structureSnapMode !== "none"}
+              snapMode={structureSnapMode}
+              structureGridSize={structureGridSize}
+              onPointerPaperLocal={setPointerLocal}
               canConnect={canConnect}
               onDiagramSelection={() => setSelectedGraphicPath(null)}
             />

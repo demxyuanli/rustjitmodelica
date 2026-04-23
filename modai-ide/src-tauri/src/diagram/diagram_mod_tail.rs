@@ -31,6 +31,9 @@ fn try_load_type_icon(
 
 fn determine_connector_kind(type_name: &str, is_input: bool, is_output: bool) -> Option<String> {
     let lower = type_name.to_lowercase();
+    if lower.contains("expandable") {
+        return Some("expandable".to_string());
+    }
     if lower.contains("flange") || lower.contains("rotational") || lower.contains("translational") {
         return Some("mechanical".to_string());
     }
@@ -94,6 +97,8 @@ fn extract_diagram_from_model(m: &Model, project_dir: Option<&str>) -> DiagramMo
                 connector_kind,
                 is_input: d.is_input,
                 is_output: d.is_output,
+                replaceable: d.replaceable,
+                constrainedby_type: d.constrainedby_type.clone(),
             }
         })
         .collect();
@@ -274,8 +279,8 @@ fn declaration_from_component(c: &ComponentInstance) -> Declaration {
     let mut decl = Declaration {
         type_name: c.type_name.clone(),
         name: c.name.clone(),
-        replaceable: false,
-        constrainedby_type: None,
+        replaceable: c.replaceable,
+        constrainedby_type: c.constrainedby_type.clone(),
         is_parameter: false,
         is_flow: false,
         is_stream: false,
@@ -305,6 +310,8 @@ fn apply_component_to_declaration(decl: &mut Declaration, component: &ComponentI
     decl.type_name = component.type_name.clone();
     decl.is_input = component.is_input;
     decl.is_output = component.is_output;
+    decl.replaceable = component.replaceable;
+    decl.constrainedby_type = component.constrainedby_type.clone();
     decl.annotation = upsert_annotation_item(
         decl.annotation.as_ref(),
         "Placement(",

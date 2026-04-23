@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "solver": "rk4",
+    "t_end": 3.0,
+    "dt": 0.005
+  },
+  "execution": {
+    "workers": 3,
+    "fail_fast": false
+  },
+  "incremental": {
+    "strategy": "none"
+  },
+  "tiers": {
+    "solver_rk4": { "include_tags": ["solver-cross", "rk4"] },
+    "solver_rk45": { "include_tags": ["solver-cross", "rk45"] },
+    "solver_be": { "include_tags": ["solver-cross", "backward_euler"] },
+    "all_solvers": { "include_tags": ["solver-cross"] }
+  },
+  "cases": [
+    { "id": "sx_rk4_bouncing",  "kind": "model", "target": "TestLib/BouncingBall",     "tags": ["solver-cross", "rk4"],  "expect": { "kind": "exit_zero" } },
+    { "id": "sx_rk45_bouncing", "kind": "model", "target": "TestLib/BouncingBall",     "tags": ["solver-cross", "rk45"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=rk45"] },
+    { "id": "sx_be_bouncing",   "kind": "model", "target": "TestLib/BouncingBall",     "tags": ["solver-cross", "backward_euler"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=backward-euler"] },
+
+    { "id": "sx_rk4_circuit",   "kind": "model", "target": "TestLib/Circuit",          "tags": ["solver-cross", "rk4"],  "expect": { "kind": "exit_zero" } },
+    { "id": "sx_rk45_circuit",  "kind": "model", "target": "TestLib/Circuit",          "tags": ["solver-cross", "rk45"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=rk45"] },
+    { "id": "sx_be_circuit",    "kind": "model", "target": "TestLib/Circuit",          "tags": ["solver-cross", "backward_euler"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=backward-euler"] },
+
+    { "id": "sx_rk4_pendulum",  "kind": "model", "target": "TestLib/Pendulum",         "tags": ["solver-cross", "rk4"],  "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--index-reduction-method=dummyDerivative"] },
+    { "id": "sx_rk45_pendulum", "kind": "model", "target": "TestLib/Pendulum",         "tags": ["solver-cross", "rk45"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=rk45", "--index-reduction-method=dummyDerivative"] },
+    { "id": "sx_be_pendulum",   "kind": "model", "target": "TestLib/Pendulum",         "tags": ["solver-cross", "backward_euler"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=backward-euler", "--index-reduction-method=dummyDerivative"] },
+
+    { "id": "sx_rk4_cauer",     "kind": "model", "target": "Modelica.Electrical.Analog.Examples.CauerLowPassAnalog", "tags": ["solver-cross", "rk4"],  "expect": { "kind": "exit_zero" } },
+    { "id": "sx_rk45_cauer",    "kind": "model", "target": "Modelica.Electrical.Analog.Examples.CauerLowPassAnalog", "tags": ["solver-cross", "rk45"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=rk45"] },
+    { "id": "sx_be_cauer",      "kind": "model", "target": "Modelica.Electrical.Analog.Examples.CauerLowPassAnalog", "tags": ["solver-cross", "backward_euler"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=backward-euler"] },
+
+    { "id": "sx_rk4_rot_first", "kind": "model", "target": "Modelica.Mechanics.Rotational.Examples.First", "tags": ["solver-cross", "rk4"],  "expect": { "kind": "exit_zero" } },
+    { "id": "sx_rk45_rot_first","kind": "model", "target": "Modelica.Mechanics.Rotational.Examples.First", "tags": ["solver-cross", "rk45"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=rk45"] },
+    { "id": "sx_be_rot_first",  "kind": "model", "target": "Modelica.Mechanics.Rotational.Examples.First", "tags": ["solver-cross", "backward_euler"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=backward-euler"] },
+
+    { "id": "sx_rk4_broad",     "kind": "model", "target": "ModelicaTest/JitStress/MslBroadCoverage", "tags": ["solver-cross", "rk4"],  "expect": { "kind": "exit_zero" } },
+    { "id": "sx_rk45_broad",    "kind": "model", "target": "ModelicaTest/JitStress/MslBroadCoverage", "tags": ["solver-cross", "rk45"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=rk45"] },
+    { "id": "sx_be_broad",      "kind": "model", "target": "ModelicaTest/JitStress/MslBroadCoverage", "tags": ["solver-cross", "backward_euler"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--solver=backward-euler"] }
+  ]
+}

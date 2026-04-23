@@ -16,6 +16,7 @@ pub use keys::{
     ArraySizesCacheV2, ARRAY_SIZES_CACHE_SCHEMA_V2,
 };
 pub use mem::{
-    analyze_input_mem_get, analyze_input_mem_put, array_sizes_cache_counters_snapshot_reset,
-    flatten_cache_dir, inline_result_mem_get, inline_result_mem_put, sync_flatten_cache_root_ir_epoch,
+    all_disk_cache_roots, analyze_input_mem_get, analyze_input_mem_put,
+    array_sizes_cache_counters_snapshot_reset, flatten_cache_dir, inline_result_mem_get,
+    inline_result_mem_put, std_cache_root, sync_flatten_cache_root_ir_epoch, user_cache_root,
 };

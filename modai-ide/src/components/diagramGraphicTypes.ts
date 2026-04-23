@@ -237,6 +237,8 @@ export interface LineAnnotation {
   thickness?: number;
   pattern?: string;
   smooth?: string;
+  /** Editor routing hint: manhattan | orthogonal | normal (persisted in .modai state JSON). */
+  routing?: string;
 }
 
 export interface GraphicBounds {

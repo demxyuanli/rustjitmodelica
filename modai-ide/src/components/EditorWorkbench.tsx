@@ -322,6 +322,25 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
     [projectDir, focusedGroupIndex, editorGroups, setModelName, log]
   );
 
+  const handleNavigateToType = useCallback(
+    async (typeName: string, groupIndex?: number, libraryId?: string) => {
+      if (!projectDir) return;
+      const gi = groupIndex ?? focusedGroupIndex;
+      try {
+        const typeSource = await readComponentTypeSource(projectDir, typeName, libraryId);
+        const rel = typeSource.projectRelativePath?.replace(/\\/g, "/").trim();
+        if (rel) {
+          await handleOpenFile(rel, gi);
+          return;
+        }
+        await handleOpenType(typeName, gi, libraryId);
+      } catch (error) {
+        log("Navigate to type error: " + String(error));
+      }
+    },
+    [projectDir, focusedGroupIndex, log, handleOpenFile, handleOpenType],
+  );
+
   const handleCloseTab = useCallback(
     (groupIndex: number, tabIndex: number) => {
       setEditorGroups((prev) => {
@@ -507,6 +526,9 @@ export const EditorWorkbench = forwardRef<EditorWorkbenchRef, EditorWorkbenchPro
             onRequestWorkbenchView={onRequestWorkbenchView}
             onViewModeChange={gi === focusedGroupIndex ? onViewModeChange : undefined}
             onNavigateToType={(typeName, libraryId) => {
+              void handleNavigateToType(typeName, undefined, libraryId);
+            }}
+            onOpenTypeSource={(typeName, libraryId) => {
               void handleOpenType(typeName, undefined, libraryId);
             }}
             libraryRefreshToken={libraryRefreshToken}

@@ -16,8 +16,8 @@
 //!   - `RUSTMODLICA_WARMUP_TIER=analyze|full|auto` — auto picks tier from host load (best-effort).
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use fs2::FileExt;
@@ -29,8 +29,14 @@ use crate::cache::global_budget;
 use crate::cache::model_hotness_record;
 use crate::cache::warmup_control;
 
-static WARMUP_LOCK: OnceLock<()> = OnceLock::new();
+static WARMUP_TRIGGERED: AtomicBool = AtomicBool::new(false);
 static HEAVY_WARMUP_SPAWNS: AtomicU32 = AtomicU32::new(0);
+
+/// Allow the next warmup trigger to fire (e.g., called after cache invalidation
+/// or when a significantly different model is compiled).
+pub fn reset_warmup_trigger() {
+    WARMUP_TRIGGERED.store(false, Ordering::Relaxed);
+}
 
 /// Last background warmup run (for `cache stats`).
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -377,6 +383,25 @@ fn host_cpu_idle_ratio_best_effort() -> f64 {
     0.5
 }
 
+/// Acquire a cross-process warmup lock for a specific tier root and label.
+/// The lock file is named `.warmup-<label>.lock` under `tier_root`.
+/// Used by CLI `cache warmup|bake` to serialize tier operations.
+pub fn try_warmup_exclusive_lock(tier_root: &Path, label: &str) -> Option<std::fs::File> {
+    let _ = std::fs::create_dir_all(tier_root);
+    let path = tier_root.join(format!(".warmup-{}.lock", label));
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .ok()?;
+    use fs2::FileExt;
+    if f.try_lock_exclusive().is_err() {
+        return None;
+    }
+    Some(f)
+}
+
 fn try_cross_process_warmup_lock(cache_root: &Path) -> Option<std::fs::File> {
     let _ = std::fs::create_dir_all(cache_root);
     let path = cache_root.join(".warmup.lock");
@@ -472,6 +497,15 @@ pub fn trigger_warmup_if_heavy(
             let mut err = 0usize;
             let every = budget_check_every_n();
             let max_b = max_cache_bytes_soft_stop();
+
+            let mut compiler = crate::Compiler::new();
+            for p in &libs {
+                compiler.loader.add_path(p.clone());
+            }
+            compiler.options_mut().compile_stop = crate::compiler::CompileStopPhase::Analyze;
+            compiler.options_mut().quiet = true;
+            compiler.options_mut().warm_background = true;
+
             for (i, model) in filtered.iter().enumerate() {
                 if warmup_control::compile_epoch_changed_since(epoch_at_spawn) {
                     break;
@@ -488,13 +522,6 @@ pub fn trigger_warmup_if_heavy(
                         break;
                     }
                 }
-                let mut compiler = crate::Compiler::new();
-                for p in &libs {
-                    compiler.loader.add_path(p.clone());
-                }
-                compiler.options_mut().compile_stop = crate::compiler::CompileStopPhase::Analyze;
-                compiler.options_mut().quiet = true;
-                compiler.options_mut().warm_background = true;
                 match compiler.compile(model) {
                     Ok(_) => ok += 1,
                     Err(e) => {
@@ -553,7 +580,7 @@ pub fn trigger_warmup_with_tier(
     let Some(_lockfile) = try_cross_process_warmup_lock(cache_root.as_path()) else {
         return;
     };
-    if WARMUP_LOCK.set(()).is_err() {
+    if WARMUP_TRIGGERED.swap(true, Ordering::Relaxed) {
         return;
     }
 
@@ -607,6 +634,15 @@ pub fn trigger_warmup_with_tier(
             let mut err = 0usize;
             let every = budget_check_every_n();
             let max_b = max_cache_bytes_soft_stop();
+
+            let mut compiler = crate::Compiler::new();
+            for p in &libs {
+                compiler.loader.add_path(p.clone());
+            }
+            compiler.options_mut().compile_stop = stop_phase.clone();
+            compiler.options_mut().quiet = true;
+            compiler.options_mut().warm_background = true;
+
             for (i, model) in filtered.iter().enumerate() {
                 if warmup_control::compile_epoch_changed_since(epoch_at_spawn) {
                     eprintln!("[warmup] cancelled: foreground compile started");
@@ -624,13 +660,6 @@ pub fn trigger_warmup_with_tier(
                         break;
                     }
                 }
-                let mut compiler = crate::Compiler::new();
-                for p in &libs {
-                    compiler.loader.add_path(p.clone());
-                }
-                compiler.options_mut().compile_stop = stop_phase.clone();
-                compiler.options_mut().quiet = true;
-                compiler.options_mut().warm_background = true;
                 match compiler.compile(model) {
                     Ok(_) => ok += 1,
                     Err(e) => {

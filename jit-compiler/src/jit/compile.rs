@@ -32,6 +32,11 @@ pub struct Jit {
     pub(super) func_cache: HashMap<String, (CalcDerivsFunc, usize, usize)>,
     pub(super) disk_cache_live: Vec<codegen_cache::CachedFunction>,
     pub(super) runtime_symbols: HashMap<String, *const u8>,
+    /// Current model identity used as the disk-cache key discriminator. Must be set by the
+    /// caller before `compile` so that each model's codegen artifacts are stored under a
+    /// model-specific key, preventing cross-model contamination when models share the same
+    /// state / discrete / output var shapes.
+    pub(super) active_model_name: Option<String>,
 }
 
 impl Jit {
@@ -83,7 +88,24 @@ impl Jit {
             func_cache: HashMap::new(),
             disk_cache_live: Vec::new(),
             runtime_symbols,
+            active_model_name: None,
         }
+    }
+
+    /// Set the active model identity for subsequent `compile` calls. This name is folded
+    /// into the on-disk `flat_hash` and `CodegenCacheKey`, so distinct models cannot share
+    /// a cache entry even when their state / discrete / param / output signatures coincide.
+    pub fn set_active_model_name(&mut self, name: impl Into<String>) {
+        let s = name.into();
+        if s.is_empty() {
+            self.active_model_name = None;
+        } else {
+            self.active_model_name = Some(s);
+        }
+    }
+
+    fn codegen_cache_model_name(&self) -> &str {
+        self.active_model_name.as_deref().unwrap_or("calc_derivs")
     }
 
     pub fn compile(
@@ -135,8 +157,9 @@ impl Jit {
         let type_hash = type_profile_hash(param_values);
         let param_sig = param_signature(param_values);
         if let Some(ref cache) = self.codegen_cache {
+            let active_model = self.codegen_cache_model_name().to_string();
             let flat_hash = codegen_cache::flat_model_hash(
-                "calc_derivs",
+                &active_model,
                 state_vars,
                 discrete_vars,
                 param_vars,
@@ -149,12 +172,13 @@ impl Jit {
                 Some(connector_connection_degree),
             );
             let key = codegen_cache::CodegenCacheKey::new(
-                "calc_derivs",
+                &active_model,
                 &flat_hash,
                 &opt_level,
                 &cache_variant,
                 &type_hash,
                 &param_sig,
+                crate::cache::cache_scope::CacheScope::Project,
             );
             let runtime_param_map =
                 codegen_cache::param_values_by_name(param_vars, param_values);
@@ -535,8 +559,9 @@ impl Jit {
 
         if let Some(ref cache) = self.codegen_cache {
             if jit_policy::allow_codegen_disk_put(alg_equations.len(), diff_equations.len()) {
+                let active_model = self.codegen_cache_model_name().to_string();
                 let flat_hash = codegen_cache::flat_model_hash(
-                    "calc_derivs",
+                    &active_model,
                     state_vars,
                     discrete_vars,
                     param_vars,
@@ -549,12 +574,13 @@ impl Jit {
                     Some(connector_connection_degree),
                 );
                 let key = codegen_cache::CodegenCacheKey::new(
-                    "calc_derivs",
+                    &active_model,
                     &flat_hash,
                     &opt_level,
                     &cache_variant,
                     &type_hash,
                     &param_sig,
+                    crate::cache::cache_scope::CacheScope::Project,
                 );
                 let build_obj =
                     std::panic::catch_unwind(|| emit_object_cache_artifact(&ir_for_object_cache));

@@ -20,6 +20,7 @@ const SMOKE_CASES: &[(&str, &str)] = &[
     ("TestLib/TerminalWhen", "pass"),
     ("TestLib/SimpleBlockTest", "pass"),
     ("TestLib/SimpleTest", "pass"),
+    ("TestLib/SmoothTest", "pass"),
     ("TestLib/BadConnect", "fail"),
 ];
 

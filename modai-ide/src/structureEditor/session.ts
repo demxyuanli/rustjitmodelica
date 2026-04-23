@@ -1,4 +1,4 @@
-import type { GraphicItem } from "../components/diagramGraphicTypes";
+import type { CoordinateSystem, GraphicItem } from "../components/diagramGraphicTypes";
 import {
   attachFlowRoles,
   buildUndoHistoryKey,
@@ -7,18 +7,34 @@ import {
   nodeAndHandleToPath,
   pathToNodeAndHandle,
   roundCoord,
+  uniqueInstanceName,
   type DiagramDocument,
 } from "./docSync";
-import type { DiagramLink, DiagramNode, LayoutPoint } from "./types";
+import type { ComponentData, ConnectionData, DiagramLink, DiagramNode, LayoutPoint } from "./types";
 import { MAX_UNDO, MERGE_MS } from "./layoutConstants";
+import { snapPointToGridStrict } from "../utils/gridSnap";
 
 function cloneDoc(d: DiagramDocument): DiagramDocument {
   return structuredClone(d);
 }
 
+function remapConnPath(path: string, map: Map<string, string>): string {
+  const { nodeId, handleId } = pathToNodeAndHandle(path);
+  const nn = map.get(nodeId) ?? nodeId;
+  return nodeAndHandleToPath(nn, handleId);
+}
+
 type EditorMode = "diagram" | "icon";
 
 type UndoEntry = { doc: DiagramDocument; ts: number };
+
+export type StructureSnapMode = "none" | "grid" | "gridAndGuide";
+
+type StructureClipboardPayload = {
+  components: ComponentData[];
+  connections: ConnectionData[];
+  layout: Record<string, LayoutPoint>;
+};
 
 export class StructureGraphSession {
   private doc: DiagramDocument | null = null;
@@ -33,6 +49,10 @@ export class StructureGraphSession {
   /** Monotonic counter for document content; used to bind skip-next-undo to a specific doc generation. */
   private docContentVersion = 0;
   private skipUndoAtVersion = -1;
+
+  private structureSnapMode: StructureSnapMode = "grid";
+  private structureGridSize = 10;
+  private structureClipboard: StructureClipboardPayload | null = null;
 
   subscribe = (fn: () => void) => {
     this.subs.add(fn);
@@ -85,6 +105,16 @@ export class StructureGraphSession {
 
   getStructureSelectionIds() {
     return [...this.selection];
+  }
+
+  setStructureMultiSelection(ids: string[]) {
+    this.selection = [...ids];
+    this.emit();
+  }
+
+  setStructureSnapOptions(opts: { mode?: StructureSnapMode; gridSize?: number }) {
+    if (opts.mode !== undefined) this.structureSnapMode = opts.mode;
+    if (opts.gridSize !== undefined) this.structureGridSize = Math.max(1, opts.gridSize);
   }
 
   getStructureSelectionId() {
@@ -200,15 +230,19 @@ export class StructureGraphSession {
 
   applyNodePosition(id: string, p: LayoutPoint) {
     if (!this.doc) return;
+    let next = p;
+    if (this.structureSnapMode === "grid" || this.structureSnapMode === "gridAndGuide") {
+      next = snapPointToGridStrict(p, this.structureGridSize);
+    }
     const prev = this.doc.graphical.layout?.[id];
     if (
       prev &&
-      roundCoord(prev.x) === roundCoord(p.x) &&
-      roundCoord(prev.y) === roundCoord(p.y)
+      roundCoord(prev.x) === roundCoord(next.x) &&
+      roundCoord(prev.y) === roundCoord(next.y)
     ) {
       return;
     }
-    const layout = { ...(this.doc.graphical.layout ?? {}), [id]: p };
+    const layout = { ...(this.doc.graphical.layout ?? {}), [id]: next };
     this.doc = { ...this.doc, graphical: { ...this.doc.graphical, layout } };
     this.bumpDocContentVersion();
     const { nodes, links } = this.getNodesLinksForCanvas(() => {});
@@ -301,6 +335,87 @@ export class StructureGraphSession {
     this.emit();
   }
 
+  applyComponentDeclaredType(compName: string, nextTypeName: string) {
+    if (!this.doc) return;
+    const trimmed = nextTypeName.trim();
+    if (!trimmed) return;
+    const components = this.doc.components.map((c) => (c.name !== compName ? c : { ...c, typeName: trimmed }));
+    this.doc = { ...this.doc, components };
+    this.bumpDocContentVersion();
+    const { nodes, links } = this.getNodesLinksForCanvas(() => {});
+    this.afterTopo(nodes, links);
+  }
+
+  applyComponentAnnotationFlags(
+    compName: string,
+    patch: { condition?: string | null; visible?: boolean | null },
+  ) {
+    if (!this.doc) return;
+    const components = this.doc.components.map((c) => {
+      if (c.name !== compName) return c;
+      let next = { ...c };
+      if (patch.condition !== undefined) {
+        const v = patch.condition?.trim();
+        next = v ? { ...next, condition: v } : { ...next, condition: undefined };
+      }
+      if (patch.visible !== undefined) {
+        next =
+          patch.visible === null ? { ...next, visible: undefined } : { ...next, visible: Boolean(patch.visible) };
+      }
+      return next;
+    });
+    this.doc = { ...this.doc, components };
+    this.bumpDocContentVersion();
+    this.emit();
+  }
+
+  setCoordinateSystemForMode(mode: EditorMode, patch: Partial<CoordinateSystem>) {
+    if (!this.doc) return;
+    if (mode === "icon") {
+      const prev = this.doc.graphical.iconAnnotation ?? { graphics: [] };
+      const prevCs = prev.coordinateSystem ?? {};
+      const coordinateSystem = { ...prevCs, ...patch };
+      this.doc = {
+        ...this.doc,
+        graphical: {
+          ...this.doc.graphical,
+          iconAnnotation: {
+            ...prev,
+            coordinateSystem,
+          },
+        },
+      };
+    } else {
+      const prev = this.doc.graphical.diagramAnnotation ?? { graphics: [] };
+      const prevCs = prev.coordinateSystem ?? {};
+      const coordinateSystem = { ...prevCs, ...patch };
+      this.doc = {
+        ...this.doc,
+        graphical: {
+          ...this.doc.graphical,
+          diagramAnnotation: {
+            ...prev,
+            coordinateSystem,
+          },
+        },
+      };
+    }
+    this.bumpDocContentVersion();
+    const now = Date.now();
+    const snap = cloneDoc(this.doc);
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (top && this.undoStack.length >= 2 && now - top.ts < MERGE_MS) {
+      top.doc = snap;
+      top.ts = now;
+      this.redoStack = [];
+    } else {
+      this.undoStack.push({ doc: snap, ts: now });
+      if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
+      this.redoStack = [];
+    }
+    this.emit();
+  }
+
   applyComponentPlacement(
     name: string,
     patch: { x?: number; y?: number; rotation?: number },
@@ -329,11 +444,11 @@ export class StructureGraphSession {
     if (!link) return;
     const fp = nodeAndHandleToPath(link.source, link.sourcePort);
     const tp = nodeAndHandleToPath(link.target, link.targetPort);
-    const connections = this.doc.connections.map((c) =>
-      c.from === fp && c.to === tp ?
-        { ...c, line: vertices.length ? { points: vertices } : undefined }
-      : c,
-    );
+    const connections = this.doc.connections.map((c) => {
+      if (c.from !== fp || c.to !== tp) return c;
+      if (!vertices.length) return { ...c, line: undefined };
+      return { ...c, line: { ...(c.line ?? {}), points: vertices } };
+    });
     this.doc = { ...this.doc, connections };
     this.bumpDocContentVersion();
     const next = this.getNodesLinksForCanvas(() => {});
@@ -356,6 +471,162 @@ export class StructureGraphSession {
         Math.round(p.y * f) === Math.round(vertices[i].y * f),
     );
     if (!same) this.applyLinkVertices(linkId, vertices);
+  }
+
+  applyLinkRouting(linkId: string, router: string) {
+    if (!this.doc) return;
+    const { links } = this.getNodesLinksForCanvas(() => {});
+    const link = links.find((l) => l.id === linkId);
+    if (!link) return;
+    const fp = nodeAndHandleToPath(link.source, link.sourcePort);
+    const tp = nodeAndHandleToPath(link.target, link.targetPort);
+    const connections = this.doc.connections.map((c) => {
+      if (c.from !== fp || c.to !== tp) return c;
+      const pts = c.line?.points ?? [];
+      if (!pts.length) return c;
+      return { ...c, line: { ...(c.line ?? {}), points: pts, routing: router } };
+    });
+    this.doc = { ...this.doc, connections };
+    this.bumpDocContentVersion();
+    const next = this.getNodesLinksForCanvas(() => {});
+    this.afterTopo(next.nodes, next.links);
+  }
+
+  copyStructureSelection() {
+    if (!this.doc) return;
+    const sel = new Set(this.selection);
+    const comps = this.doc.components.filter((c) => sel.has(c.name));
+    if (!comps.length) {
+      this.structureClipboard = null;
+      return;
+    }
+    const nameSet = new Set(comps.map((c) => c.name));
+    const conns = this.doc.connections.filter((c) => {
+      const f = pathToNodeAndHandle(c.from).nodeId;
+      const t = pathToNodeAndHandle(c.to).nodeId;
+      return nameSet.has(f) && nameSet.has(t);
+    });
+    const layout: Record<string, LayoutPoint> = {};
+    const allLayout = this.doc.graphical.layout ?? {};
+    for (const c of comps) {
+      const p = allLayout[c.name];
+      if (p) layout[c.name] = { ...p };
+    }
+    this.structureClipboard = {
+      components: structuredClone(comps),
+      connections: structuredClone(conns),
+      layout,
+    };
+  }
+
+  pasteStructureClipboard(offset: LayoutPoint = { x: 24, y: 24 }) {
+    if (!this.doc || !this.structureClipboard) return;
+    const existing = this.doc.components.map((c) => c.name);
+    const idMap = new Map<string, string>();
+    for (const c of this.structureClipboard.components) {
+      idMap.set(c.name, uniqueInstanceName(c.typeName, [...existing, ...idMap.values()]));
+    }
+    const newComps: ComponentData[] = this.structureClipboard.components.map((c) => ({
+      ...structuredClone(c),
+      name: idMap.get(c.name)!,
+    }));
+    const newConns: ConnectionData[] = this.structureClipboard.connections.map((c) => ({
+      ...structuredClone(c),
+      from: remapConnPath(c.from, idMap),
+      to: remapConnPath(c.to, idMap),
+    }));
+    const layout = { ...(this.doc.graphical.layout ?? {}) };
+    for (const c of this.structureClipboard.components) {
+      const oldId = c.name;
+      const nid = idMap.get(oldId)!;
+      const p = this.structureClipboard.layout[oldId] ?? layout[oldId] ?? { x: 0, y: 0 };
+      layout[nid] = { x: p.x + offset.x, y: p.y + offset.y };
+    }
+    this.doc = {
+      ...this.doc,
+      components: [...this.doc.components, ...newComps],
+      connections: [...this.doc.connections, ...newConns],
+      graphical: { ...this.doc.graphical, layout },
+    };
+    this.bumpDocContentVersion();
+    this.selection = newComps.map((c) => c.name);
+    const { nodes, links } = this.getNodesLinksForCanvas(() => {});
+    this.afterTopo(nodes, links);
+  }
+
+  duplicateStructureSelection(offset: LayoutPoint = { x: 24, y: 24 }) {
+    this.copyStructureSelection();
+    this.pasteStructureClipboard(offset);
+  }
+
+  selectAllStructureNodes() {
+    if (!this.doc) return;
+    this.selection = this.doc.components.map((c) => c.name);
+    this.emit();
+  }
+
+  applyNudgeSelected(delta: LayoutPoint) {
+    if (!this.doc) return;
+    const sel = new Set(this.selection);
+    const layout = { ...(this.doc.graphical.layout ?? {}) };
+    let any = false;
+    for (const id of sel) {
+      if (!this.doc.components.some((c) => c.name === id)) continue;
+      const cur = layout[id] ?? { x: 0, y: 0 };
+      layout[id] = { x: cur.x + delta.x, y: cur.y + delta.y };
+      any = true;
+    }
+    if (!any) return;
+    this.doc = { ...this.doc, graphical: { ...this.doc.graphical, layout } };
+    this.bumpDocContentVersion();
+    const { nodes, links } = this.getNodesLinksForCanvas(() => {});
+    this.afterTopo(nodes, links);
+  }
+
+  applyRotateSelected90() {
+    if (!this.doc) return;
+    const sel = new Set(this.selection);
+    const components = this.doc.components.map((c) => {
+      if (!sel.has(c.name)) return c;
+      const r = (c.rotation ?? 0) + 90;
+      const nr = ((r % 360) + 360) % 360;
+      return { ...c, rotation: nr };
+    });
+    this.doc = { ...this.doc, components };
+    this.bumpDocContentVersion();
+    const { nodes, links } = this.getNodesLinksForCanvas(() => {});
+    this.afterTopo(nodes, links);
+  }
+
+  applyFlipSelected(axis: "horizontal" | "vertical") {
+    if (!this.doc) return;
+    const sel = new Set(this.selection);
+    const components = this.doc.components.map((c) => {
+      if (!sel.has(c.name)) return c;
+      const tr = c.placement?.transformation;
+      const ext = tr?.extent;
+      if (!ext) return c;
+      const flipX = (x: number) => -x;
+      const flipY = (y: number) => -y;
+      const nextExtent =
+        axis === "horizontal" ?
+          { p1: { x: flipX(ext.p1.x), y: ext.p1.y }, p2: { x: flipX(ext.p2.x), y: ext.p2.y } }
+        : { p1: { x: ext.p1.x, y: flipY(ext.p1.y) }, p2: { x: ext.p2.x, y: flipY(ext.p2.y) } };
+      return {
+        ...c,
+        placement: {
+          ...c.placement,
+          transformation: {
+            ...tr,
+            extent: nextExtent,
+          },
+        },
+      };
+    });
+    this.doc = { ...this.doc, components };
+    this.bumpDocContentVersion();
+    const { nodes, links } = this.getNodesLinksForCanvas(() => {});
+    this.afterTopo(nodes, links);
   }
 
   setGraphicsForMode(mode: EditorMode, graphics: GraphicItem[]) {
@@ -452,6 +723,10 @@ export class StructureGraphSession {
           rotation: node.data?.rotation,
         },
       },
+      replaceable: node.data?.replaceable,
+      constrainedbyType: node.data?.constrainedbyType,
+      condition: node.data?.condition,
+      visible: node.data?.visible,
     };
   }
 

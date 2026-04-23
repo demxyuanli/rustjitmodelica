@@ -22,7 +22,7 @@ pub fn soft_invalidate_stage(cache_root: &Path, stage: CacheStage) -> Result<u64
         if !cfg.path.is_file() {
             continue;
         }
-        let conn = rusqlite::Connection::open(&cfg.path).map_err(|e| e.to_string())?;
+        let conn = cache_sqlite::conn_for_prune(&cfg.path).map_err(|e| e.to_string())?;
         let pattern = format!("{}:{}:%", scope.prefix(), tag);
         let n = conn
             .execute(
@@ -30,29 +30,77 @@ pub fn soft_invalidate_stage(cache_root: &Path, stage: CacheStage) -> Result<u64
                 params![pattern],
             )
             .map_err(|e| e.to_string())?;
+        cache_sqlite::sqlite_connection_pool_evict(&cfg.path);
         total += n as u64;
     }
     Ok(total)
 }
 
-/// Delete artifact and sim-bundle rows for a model (keys embed `model_name` with `_` for dots).
-pub fn invalidate_model_sqlite(cache_root: &Path, model_name: &str) -> Result<u64, String> {
-    let safe = model_name.replace('.', "_");
-    let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(cache_root))
-    else {
-        return Ok(0);
-    };
-    if !cfg.path.is_file() {
-        return Ok(0);
+/// Soft (stage): apply to all disk cache roots and the given scopes.
+/// This is the API used by the compilation pipeline (CompileFlagsChanged).
+pub fn soft_invalidate_stage_all_roots(
+    stage: CacheStage,
+    scopes: &[CacheScope],
+) -> Result<u64, String> {
+    let tag = stage.tag();
+    let mut total = 0_u64;
+    for root in crate::flatten::flatten_cache::all_disk_cache_roots() {
+        for scope in scopes {
+            let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(root.as_path()))
+            else {
+                continue;
+            };
+            if !cfg.path.is_file() {
+                continue;
+            }
+            let conn = cache_sqlite::conn_for_prune(&cfg.path).map_err(|e| e.to_string())?;
+            let pattern = format!("{}:{}:%", scope.prefix(), tag);
+            let n = conn
+                .execute(
+                    "DELETE FROM cache_entries WHERE key LIKE ?1",
+                    params![pattern],
+                )
+                .map(|n| n as u64)
+                .unwrap_or(0);
+            cache_sqlite::sqlite_connection_pool_evict(&cfg.path);
+            total += n;
+        }
     }
-    let conn = rusqlite::Connection::open(&cfg.path).map_err(|e| e.to_string())?;
+    Ok(total)
+}
+
+/// Delete artifact and sim-bundle rows for a model (keys embed `model_name` with `_` for dots).
+pub fn invalidate_model_sqlite(_cache_root: &Path, model_name: &str) -> Result<u64, String> {
+    let safe = model_name.replace('.', "_");
     let art = format!("artifact_v1:{}:%", safe);
     let sim = format!("sim_bundle_v1_{}_%", safe);
-    let n1 = conn
-        .execute("DELETE FROM cache_entries WHERE key LIKE ?1", params![art])
-        .map_err(|e| e.to_string())?;
-    let n2 = conn
-        .execute("DELETE FROM cache_entries WHERE key LIKE ?1", params![sim])
-        .map_err(|e| e.to_string())?;
-    Ok((n1 + n2) as u64)
+    let mut total = 0_u64;
+    let scopes = [
+        CacheScope::Project,
+        CacheScope::UserExt,
+        CacheScope::GlobalStd,
+    ];
+    for root in crate::flatten::flatten_cache::all_disk_cache_roots() {
+        for &scope in &scopes {
+            let Some(cfg) = cache_sqlite::sqlite_config_for_scope(scope, Some(root.as_path()))
+            else {
+                continue;
+            };
+            if !cfg.path.is_file() {
+                continue;
+            }
+            let conn = cache_sqlite::conn_for_prune(&cfg.path).map_err(|e| e.to_string())?;
+            let n1: u64 = conn
+                .execute("DELETE FROM cache_entries WHERE key LIKE ?1", rusqlite::params![art])
+                .map(|n| n as u64)
+                .unwrap_or(0);
+            let n2: u64 = conn
+                .execute("DELETE FROM cache_entries WHERE key LIKE ?1", rusqlite::params![sim])
+                .map(|n| n as u64)
+                .unwrap_or(0);
+            cache_sqlite::sqlite_connection_pool_evict(&cfg.path);
+            total += n1 + n2;
+        }
+    }
+    Ok(total)
 }

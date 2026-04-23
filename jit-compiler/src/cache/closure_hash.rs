@@ -30,10 +30,7 @@ pub fn unified_file_hash(path: &Path) -> Option<String> {
         }
     }
 
-    if let Some(root) = crate::flatten::flatten_cache_dir() {
-        if let Some(h) =
-            crate::cache::path_hash_index::lookup(Some(root.as_path()), path, modified, len)
-        {
+    if let Some(h) = crate::cache::path_hash_index::lookup(None, path, modified, len) {
             if let Ok(mut g) = hash_cache().write() {
                 g.insert(
                     path.to_path_buf(),
@@ -45,7 +42,6 @@ pub fn unified_file_hash(path: &Path) -> Option<String> {
                 );
             }
             return Some(h);
-        }
     }
 
     let is_modelica = path
@@ -73,9 +69,7 @@ pub fn unified_file_hash(path: &Path) -> Option<String> {
             },
         );
     }
-    if let Some(root) = crate::flatten::flatten_cache_dir() {
-        crate::cache::path_hash_index::store(Some(root.as_path()), path, modified, len, &hash);
-    }
+    crate::cache::path_hash_index::store(None, path, modified, len, &hash);
     Some(hash)
 }
 

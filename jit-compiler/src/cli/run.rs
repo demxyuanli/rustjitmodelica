@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use super::args::parse_rustmodlica_overdet_tol;
 use super::cache_invalidate::run_cache_invalidate;
+use super::cache_ops::run_cache_command;
 use super::cache_stats::{run_cache_gc, run_cache_stats};
 use super::event_scan::run_event_scan;
 use super::perf_json::{compile_export_sidebar_json, maybe_write_perf_json};
@@ -21,6 +22,9 @@ use super::validate_json::{emit_validate_json, parse_validate_tier};
 use super::RunError;
 
 pub fn run(args: Vec<String>) -> Result<(), RunError> {
+    if args.len() >= 2 && args[1] == "cache" {
+        return run_cache_command(&args);
+    }
     if args.len() >= 2 && args[1] == "event-scan" {
         return run_event_scan(&args);
     }
@@ -766,7 +770,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 }
             }
             if run_repl {
-                run_repl_loop(artifacts)?;
+                run_repl_loop(artifacts, &effective_model, lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect())?;
                 return Ok(());
             }
             if emit_fmu_dir.is_some() || emit_fmu_me_dir.is_some() {
@@ -802,6 +806,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     artifacts.output_interval,
                     &artifacts.clock_partition_schedule,
                     Some(&mut deopt_perf_summary),
+                    &effective_model,
+                    lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect(),
                 )?;
                 let sim_ms = sim_t0
                     .as_ref()
@@ -872,6 +878,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 &artifacts.clock_partition_schedule,
                 None,
                 Some(&mut deopt_perf_summary),
+                &effective_model,
+                lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect(),
             )?;
             let sim_ms = sim_t0
                 .as_ref()

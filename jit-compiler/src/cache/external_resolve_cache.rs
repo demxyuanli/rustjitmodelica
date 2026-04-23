@@ -1,12 +1,11 @@
 //! Persistent cache for `collect_external_calls` resolution (Modelica name -> C symbol + Library hint).
 
-use crate::cache::cache_scope::CacheScope;
+use crate::cache::cache_scope::{classify_model_scope_with_heuristics, CacheScope};
 use crate::cache::lib_epoch::DepClosureFingerprint;
 use crate::flatten::cache_sqlite;
 use crate::loader::ModelLoader;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
-use std::path::Path;
 use xxhash_rust::xxh64::Xxh64;
 
 const SCHEMA: &str = "erV1";
@@ -28,8 +27,13 @@ fn external_resolve_lru_max() -> i64 {
         .unwrap_or(2048)
 }
 
-fn prune(cache_root: &Path) {
-    let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(cache_root)) else {
+fn model_scope(model_name: &str, loader: &ModelLoader) -> CacheScope {
+    let p = loader.get_path_for_model(model_name);
+    classify_model_scope_with_heuristics(p.as_deref(), Some(model_name))
+}
+
+fn prune(scope: CacheScope) {
+    let Some(cfg) = cache_sqlite::sqlite_write_config_for_scope(scope) else {
         return;
     };
     let ttl_days = external_resolve_ttl_days();
@@ -150,51 +154,58 @@ pub fn compute_external_resolve_key(
 }
 
 pub fn try_load(
-    cache_root: &Path,
+    model_name: &str,
+    loader: &ModelLoader,
     key: &str,
 ) -> Option<Vec<(String, String, Option<String>)>> {
+    let scope = model_scope(model_name, loader);
     if external_resolve_cache_enabled() {
-        prune(cache_root);
+        prune(scope);
     }
-    let cfg = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(cache_root))?;
-    let bytes = cache_sqlite::sqlite_get(&cfg.path, key, KIND).ok()??;
-    let recs: Vec<ExternalResolveRecord> = bincode::deserialize(&bytes).ok()?;
-    Some(
-        recs
-            .into_iter()
-            .map(|r| (r.modelica_name, r.c_name, r.lib_hint))
-            .collect(),
-    )
+    for cfg in cache_sqlite::sqlite_read_try_configs(scope) {
+        if let Ok(Some(bytes)) = cache_sqlite::sqlite_get(&cfg.path, key, KIND) {
+            let recs: Vec<ExternalResolveRecord> = bincode::deserialize(&bytes).ok()?;
+            return Some(
+                recs
+                    .into_iter()
+                    .map(|r| (r.modelica_name, r.c_name, r.lib_hint))
+                    .collect(),
+            );
+        }
+    }
+    None
 }
 
 /// Diagnose why a cache lookup missed: key absent, deserialization error, or other.
-pub fn diagnose_miss(cache_root: &Path, key: &str) -> String {
-    let cfg = match cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(cache_root)) {
-        Some(c) => c,
-        None => return "no_sqlite_config".to_string(),
-    };
-    match cache_sqlite::sqlite_get(&cfg.path, key, KIND) {
-        Ok(Some(bytes)) => {
-            match bincode::deserialize::<Vec<ExternalResolveRecord>>(&bytes) {
-                Ok(_) => "key_found_but_stale_or_fingerprint_mismatch".to_string(),
-                Err(e) => format!("deserialize_error: {}", e),
+pub fn diagnose_miss(model_name: &str, loader: &ModelLoader, key: &str) -> String {
+    let scope = model_scope(model_name, loader);
+    for cfg in cache_sqlite::sqlite_read_try_configs(scope) {
+        match cache_sqlite::sqlite_get(&cfg.path, key, KIND) {
+            Ok(Some(bytes)) => {
+                return match bincode::deserialize::<Vec<ExternalResolveRecord>>(&bytes) {
+                    Ok(_) => "key_found_but_stale_or_fingerprint_mismatch".to_string(),
+                    Err(e) => format!("deserialize_error: {}", e),
+                };
             }
+            Ok(None) => continue,
+            Err(e) => return format!("sqlite_error: {}", e),
         }
-        Ok(None) => "key_not_found".to_string(),
-        Err(e) => format!("sqlite_error: {}", e),
     }
+    "key_not_found".to_string()
 }
 
 pub fn try_store(
-    cache_root: &Path,
+    model_name: &str,
+    loader: &ModelLoader,
     key: &str,
     list: &[(String, String, Option<String>)],
 ) -> Result<(), String> {
+    let scope = model_scope(model_name, loader);
     if external_resolve_cache_enabled() {
-        prune(cache_root);
+        prune(scope);
     }
-    let cfg = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(cache_root))
-        .ok_or_else(|| "no sqlite config for project scope".to_string())?;
+    let cfg = cache_sqlite::sqlite_write_config_for_scope(scope)
+        .ok_or_else(|| "no sqlite config for tier scope".to_string())?;
     let recs: Vec<ExternalResolveRecord> = list
         .iter()
         .map(|(a, b, c)| ExternalResolveRecord {

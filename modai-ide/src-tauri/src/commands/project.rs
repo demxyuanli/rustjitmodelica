@@ -494,6 +494,9 @@ pub struct ComponentTypeSource {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Path of the resolved `.mo` file relative to `project_dir`, when the file lies under the project root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_relative_path: Option<String>,
     pub library_id: String,
     pub library_name: String,
     pub library_scope: String,

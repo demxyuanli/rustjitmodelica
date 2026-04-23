@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "includes": ["regress_quick.json"],
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "cargo_exe": "cargo",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": {
+    "workers": 4,
+    "fail_fast": false
+  },
+  "incremental": {
+    "strategy": "none"
+  },
+  "tiers": {
+    "smoke": {
+      "include_tags": ["smoke"]
+    },
+    "quick": {
+      "extends": "smoke",
+      "include_tags": ["smoke", "quick"]
+    },
+    "full": {
+      "extends": "quick",
+      "include_tags": ["smoke", "quick", "full"]
+    },
+    "msl": {
+      "include_tags": ["msl"]
+    },
+    "stress": {
+      "include_tags": ["stress"]
+    },
+    "mos": {
+      "include_tags": ["mos"]
+    }
+  },
+  "cases": [
+    { "id": "f_lang_algebraic_loop_warn",    "kind": "model", "target": "TestLib/AlgebraicLoopWarn",              "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_lang_alias_chain_pkg",        "kind": "model", "target": "TestLib/AliasChainPkg",                  "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_lang_alias_chain_type_mismatch", "kind": "model", "target": "TestLib/AliasChainTypeMismatch",     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_lang_array_and_scalar_outputs", "kind": "model", "target": "TestLib/ArrayAndScalarOutputs",       "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_lang_algorithm_else_when_dup", "kind": "model", "target": "TestLib/AlgorithmElseWhen",            "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_elec_capacitor",              "kind": "model", "target": "TestLib/Capacitor",                      "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_ground",                 "kind": "model", "target": "TestLib/Ground",                         "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_inductor",               "kind": "model", "target": "TestLib/Inductor",                      "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_main_pin",               "kind": "model", "target": "TestLib/MainPin",                      "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_pin",                    "kind": "model", "target": "TestLib/Pin",                           "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_resistor",               "kind": "model", "target": "TestLib/Resistor",                     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_sub_pin",                "kind": "model", "target": "TestLib/SubPin",                       "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_two_pin",                "kind": "model", "target": "TestLib/TwoPin",                       "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_voltage_source",         "kind": "model", "target": "TestLib/VoltageSource",                "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_elec_simple_block",           "kind": "model", "target": "TestLib/SimpleBlock",                  "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_clock_invalid_factor_clamp",  "kind": "model", "target": "TestLib/ClockedInvalidFactorClampTest","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_nested_sub_super",      "kind": "model", "target": "TestLib/ClockedNestedSubSuperTest",    "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_start_and_back_sample", "kind": "model", "target": "TestLib/ClockedStartAndBackSampleTest","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_start_and_shift",       "kind": "model", "target": "TestLib/ClockedStartAndShiftTest",     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_start_and_sub_sample",  "kind": "model", "target": "TestLib/ClockedStartAndSubSampleTest", "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_start_and_super_sample","kind": "model", "target": "TestLib/ClockedStartAndSuperSampleTest","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_start_shift_then_back", "kind": "model", "target": "TestLib/ClockedStartShiftThenBackSampleTest",    "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_start_shift_then_sub",  "kind": "model", "target": "TestLib/ClockedStartShiftThenSubSampleTest",   "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_clock_start_shift_then_super","kind": "model", "target": "TestLib/ClockedStartShiftThenSuperSampleTest","tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_multi_comprehension_scalar",  "kind": "model", "target": "TestLib/ComprehensionAndScalarOutputs", "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_conn_a",                      "kind": "model", "target": "TestLib/ConnA",                         "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_conn_b",                      "kind": "model", "target": "TestLib/ConnB",                         "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_cross_layer_comp",      "kind": "model", "target": "TestLib/CrossLayerComprehensionOutputs", "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_cross_mod_comp_mismatch","kind": "model", "target": "TestLib/CrossModuleComprehensionMismatch", "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_cross_mod_comp_outputs","kind": "model", "target": "TestLib/CrossModuleComprehensionOutputs", "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_cross_mod_rec_mismatch","kind": "model", "target": "TestLib/CrossModuleRecordCompositeMismatch", "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_cross_mod_rec_outputs", "kind": "model", "target": "TestLib/CrossModuleRecordCompositeOutputs", "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_rec_deep_nested_mismatch",    "kind": "model", "target": "TestLib/DeepRecordNestedMismatch",      "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_rec_deep_outputs",            "kind": "model", "target": "TestLib/DeepRecordOutputs",             "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_func_default_arg_func",       "kind": "model", "target": "TestLib/DefaultArgFunc",               "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_func_ext_array_arg",          "kind": "model", "target": "TestLib/ExtFuncArrayArg",              "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_func_ext_string_arg",         "kind": "model", "target": "TestLib/ExtFuncStringArg",             "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_func_factorial",              "kind": "model", "target": "TestLib/Factorial",                    "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_func_for_bound1",             "kind": "model", "target": "TestLib/ForBound1",                    "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_func_rest_param",             "kind": "model", "target": "TestLib/RestParamFunc",               "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_evt_discrete_test_dup",       "kind": "model", "target": "TestLib/DiscreteTest",                 "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_evt_init_two_vars",           "kind": "model", "target": "TestLib/InitTwoVars",                  "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_evt_init_when",               "kind": "model", "target": "TestLib/InitWhen",                     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_evt_reinit_in_when_dup",      "kind": "model", "target": "TestLib/ReinitInWhenTest",             "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_block_solvable32_sparse",     "kind": "model", "target": "TestLib/SolvableBlock32Sparse",        "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_block_solvable64_sparse",     "kind": "model", "target": "TestLib/SolvableBlock64Sparse",        "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_block_solvable_sparse3",      "kind": "model", "target": "TestLib/SolvableBlockSparse3",         "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_misc_if_eq_test",             "kind": "model", "target": "TestLib/IfEqTest",                     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_misc_loop",                   "kind": "model", "target": "TestLib/Loop",                         "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_misc_loop_test",              "kind": "model", "target": "TestLib/LoopTest",                     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_misc_math_test",              "kind": "model", "target": "TestLib/MathTest",                     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_misc_nested_der",             "kind": "model", "target": "TestLib/NestedDer",                    "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_misc_nested_expr_outputs",    "kind": "model", "target": "TestLib/NestedExprOutputs",           "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_misc_overdetermined_dup",     "kind": "model", "target": "TestLib/OverdeterminedIndex2Warn",     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_misc_point",                  "kind": "model", "target": "TestLib/Point",                        "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_rec_and_scalar_outputs",      "kind": "model", "target": "TestLib/RecordAndScalarOutputs",       "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_rec_nested_array_outputs",    "kind": "model", "target": "TestLib/RecordNestedArrayOutputs",     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_matrix_and_scalar_outputs",   "kind": "model", "target": "TestLib/MatrixAndScalarOutputs",       "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_matrix_skew",                 "kind": "model", "target": "TestLib/MatrixSkew",                   "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_mixed_four_scalar",           "kind": "model", "target": "TestLib/MixedFourScalarOutputs",       "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mixed_multi_target_field_fail","kind": "model", "target": "TestLib/MixedMultiTargetFieldStoreFail","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mixed_multi_target_safe",     "kind": "model", "target": "TestLib/MixedMultiTargetSafePass",     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mixed_nested_lhs_mismatch",   "kind": "model", "target": "TestLib/MixedNestedLhsFieldStoreMismatch","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mixed_nested_targets_pass",   "kind": "model", "target": "TestLib/MixedNestedTargetsPass",       "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mixed_scalar_outputs",        "kind": "model", "target": "TestLib/MixedScalarOutputs",           "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_multi_2d_array_shape_mismatch","kind": "model", "target": "TestLib/MultiOutput2DArrayShapeMismatch","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_comp_shape_mismatch",   "kind": "model", "target": "TestLib/MultiOutputComprehensionShapeMismatch","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_complex_lhs_field",     "kind": "model", "target": "TestLib/MultiOutputComplexLhsFieldStore","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_cross_layer_comp_mismatch","kind": "model","target": "TestLib/MultiOutputCrossLayerComprehensionMismatch","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_mixed_array_scalar",    "kind": "model", "target": "TestLib/MultiOutputMixedArrayScalar",  "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_nested_expr",           "kind": "model", "target": "TestLib/MultiOutputNestedExpr",        "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_rec_nested_array_mismatch","kind": "model","target": "TestLib/MultiOutputRecordNestedArrayMismatch","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_rec_shape_mismatch",    "kind": "model", "target": "TestLib/MultiOutputRecordShapeMismatch","tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_multi_shape_mismatch",        "kind": "model", "target": "TestLib/MultiOutputShapeMismatch",     "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_func_add_one",                "kind": "model", "target": "TestLib/addOne",                        "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_func_ext_log",                "kind": "model", "target": "TestLib/extLog",                        "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_func_sum_vec",                "kind": "model", "target": "TestLib/sumVec",                        "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_misc_string_arg_ext_func",    "kind": "model", "target": "TestLib/StringArgExtFunc",             "tags": ["full"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_stress_robot_elec",           "kind": "model", "target": "ModelicaTest/JitStress/RobotElectricalControl",  "tags": ["full", "stress"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_stress_complex_jit",          "kind": "model", "target": "ModelicaTest/JitStress/ComplexJitRegression",    "tags": ["full", "stress"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_stress_sync_om_compare",      "kind": "model", "target": "ModelicaTest/JitStress/SyncOmCompare",          "tags": ["full", "stress"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_mos_named_simulate",          "kind": "mos",   "target": "scripts/omc_regression_named_simulate.mos",           "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_if_for",                  "kind": "mos",   "target": "scripts/omc_regression_if_for.mos",                   "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_for_range",               "kind": "mos",   "target": "scripts/omc_regression_for_range.mos",                "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_simulate_named_combo",    "kind": "mos",   "target": "scripts/omc_regression_simulate_named_combo.mos",     "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_elseif_nested_for",       "kind": "mos",   "target": "scripts/omc_regression_elseif_nested_for.mos",       "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_reverse_range",           "kind": "mos",   "target": "scripts/omc_regression_reverse_range.mos",           "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_mixed_simulate_args",     "kind": "mos",   "target": "scripts/omc_regression_mixed_simulate_args.mos",     "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_sync_signal",             "kind": "mos",   "target": "scripts/omc_regression_sync_signal.mos",             "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_sync_super_shift",        "kind": "mos",   "target": "scripts/omc_regression_sync_super_shift.mos",        "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_newton_symbolic_dense",   "kind": "mos",   "target": "scripts/omc_regression_newton_symbolic_dense.mos",   "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_newton_symbolic_sparse",  "kind": "mos",   "target": "scripts/omc_regression_newton_symbolic_sparse.mos",  "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_stream_semantics",        "kind": "mos",   "target": "scripts/omc_regression_stream_semantics.mos",        "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_algorithm_elsewhen",      "kind": "mos",   "target": "scripts/omc_regression_algorithm_elsewhen.mos",      "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_direction_switch_stream", "kind": "mos",   "target": "scripts/omc_regression_direction_switch_stream.mos",  "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_msl_elec_cauer_low_pass",     "kind": "model", "target": "Modelica.Electrical.Analog.Examples.CauerLowPassAnalog",   "tags": ["full", "msl", "electrical"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_elec_rectifier",          "kind": "model", "target": "Modelica.Electrical.Analog.Examples.Rectifier",             "tags": ["full", "msl", "electrical"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_elec_chua_circuit",       "kind": "model", "target": "Modelica.Electrical.Analog.Examples.ChuaCircuit",           "tags": ["full", "msl", "electrical"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_elec_resistor",           "kind": "model", "target": "Modelica.Electrical.Analog.Examples.Resistor",              "tags": ["full", "msl", "electrical"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_msl_rot_first",               "kind": "model", "target": "Modelica.Mechanics.Rotational.Examples.First",              "tags": ["full", "msl", "rotational"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_rot_coupled_clutches",    "kind": "model", "target": "Modelica.Mechanics.Rotational.Examples.CoupledClutches",     "tags": ["full", "msl", "rotational"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_rot_friction",            "kind": "model", "target": "Modelica.Mechanics.Rotational.Examples.Friction",            "tags": ["full", "msl", "rotational"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_msl_mb_double_pendulum",      "kind": "model", "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.DoublePendulum","tags": ["full", "msl", "multibody"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_mb_pendulum",             "kind": "model", "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.Pendulum",    "tags": ["full", "msl", "multibody"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_msl_thermal_two_masses",      "kind": "model", "target": "Modelica.Thermal.HeatTransfer.Examples.TwoMasses",          "tags": ["full", "msl", "thermal"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_thermal_controlled_temp", "kind": "model", "target": "Modelica.Thermal.HeatTransfer.Examples.ControlledTemperature","tags": ["full", "msl", "thermal"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_msl_blocks_pid_controller",   "kind": "model", "target": "Modelica.Blocks.Examples.PID_Controller",                   "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_blocks_filter",           "kind": "model", "target": "Modelica.Blocks.Examples.Filter",                           "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_blocks_real_network1",    "kind": "model", "target": "Modelica.Blocks.Examples.RealNetwork1",                     "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_msl_clocked_discrete_ctrl",   "kind": "model", "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ClockedWithDiscreteController","tags": ["full", "msl", "clocked"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_mtest_redeclare_extends",     "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareExtendsExample",       "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_redeclare_modifier",    "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareModifierExample",      "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_redeclare_replaceable", "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareReplaceableExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_redeclare_constrained", "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareConstrainedByExample","tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_redeclare_short",       "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareShortClassExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_redeclare_component",   "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareComponentExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_redeclare_inner_outer", "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareInnerOuterExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_mtest_tables_combi_table1d",  "kind": "model", "target": "ModelicaTest/Tables/CombiTable1D",                           "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_tables_combi_table2d",  "kind": "model", "target": "ModelicaTest/Tables/CombiTable2D",                           "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_tables_combi_time_table","kind": "model", "target": "ModelicaTest/Tables/CombiTimeTable",                         "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_tables_combi_table1ds", "kind": "model", "target": "ModelicaTest/Tables/CombiTable1Ds",                          "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_tables_combi_table2ds", "kind": "model", "target": "ModelicaTest/Tables/CombiTable2Ds",                          "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "f_mtest_root_all_actual",       "kind": "model", "target": "ModelicaTest/TestAllActual",                                "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_root_test_real",        "kind": "model", "target": "ModelicaTest/TestReal2",                                    "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_root_test_integer",     "kind": "model", "target": "ModelicaTest/TestInteger",                                  "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_root_test_boolean",     "kind": "model", "target": "ModelicaTest/TestBoolean",                                  "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mtest_root_test_string",      "kind": "model", "target": "ModelicaTest/TestString",                                   "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } }
+  ]
+}

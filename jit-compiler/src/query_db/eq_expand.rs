@@ -307,6 +307,12 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
     let st = db.source_text(model_name.clone());
     let root_hash = semantic_hash_text(st.text.as_str());
     let scope = super::scope_from_path(st.path.as_str(), model_name.as_str());
+    let target_platform =
+        if crate::cache::msl_pack::context::is_active() && model_name.starts_with("Modelica.") {
+            "msl-pack".to_string()
+        } else {
+            format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+        };
     let key_v2 = CacheKeyV2::builder(
         CacheStage::EqExpand,
         scope.clone(),
@@ -320,7 +326,7 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         coarse_constrainedby_only: coarse,
         array_size_policy: 0,
         warnings_level: String::new(),
-        target_platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        target_platform,
     })
     .build();
     let (cache_enabled, key) = super::key_with_policy(key_v2.to_qualified_key());
@@ -330,7 +336,12 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
             if let Ok(cache) = bincode::deserialize::<EqExpandCacheV1>(&bytes) {
                 if cache.schema == EQ_EXPAND_CACHE_SCHEMA_V1
                     && cache.key == key
-                    && super::cache_deps_match_for_stage(&scope, "eq_expand", &cache.deps)
+                    && super::cache_deps_match_for_stage(
+                        &scope,
+                        "eq_expand",
+                        model_name.as_str(),
+                        &cache.deps,
+                    )
                 {
                     crate::query_db::perf::record_cache_event(
                         scope.prefix(),
@@ -349,17 +360,20 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
                 }
             }
         }
-        if let Some(dir) = crate::flatten::flatten_cache::flatten_cache_dir() {
             if let Some(bytes) = super::sqlite_get_with_scope_chain(
-                dir.as_path(),
-                scope.clone(),
+                scope,
                 key.as_str(),
                 "eq_expand_v1",
             ) {
                 if let Ok(cache) = bincode::deserialize::<EqExpandCacheV1>(&bytes) {
                     if cache.schema == EQ_EXPAND_CACHE_SCHEMA_V1
                         && cache.key == key
-                        && super::cache_deps_match_for_stage(&scope, "eq_expand", &cache.deps)
+                        && super::cache_deps_match_for_stage(
+                        &scope,
+                        "eq_expand",
+                        model_name.as_str(),
+                        &cache.deps,
+                    )
                     {
                         crate::query_db::perf::record_cache_event(
                             scope.prefix(),
@@ -379,7 +393,6 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
                     }
                 }
             }
-        }
     }
 
     let root = db.inheritance_flattened(model_name.clone()).0;
@@ -536,8 +549,7 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
     );
 
     if cache_enabled {
-        if let Some(dir) = crate::flatten::flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path())) {
+        if let Some(cfg) = crate::flatten::cache_sqlite::sqlite_write_config_for_scope(scope) {
                 let cache = EqExpandCacheV1 {
                     schema: EQ_EXPAND_CACHE_SCHEMA_V1.to_string(),
                     key: key.clone(),
@@ -563,7 +575,6 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
                         deps_json.as_deref(),
                     );
                 }
-            }
         }
     }
 

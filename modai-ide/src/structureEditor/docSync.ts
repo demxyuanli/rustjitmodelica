@@ -96,6 +96,10 @@ export function diagramToNodes(
         isOutput: comp.isOutput,
         isSourceNode: !incoming && outgoing,
         isSinkNode: incoming && !outgoing,
+        replaceable: comp.replaceable,
+        constrainedbyType: comp.constrainedbyType,
+        condition: comp.condition,
+        visible: comp.visible,
         onDoubleClick,
       },
     };
@@ -111,6 +115,7 @@ export function diagramToNodes(
       target: b.nodeId,
       targetPort: b.handleId,
       vertices: conn.line?.points,
+      router: conn.line?.routing,
     };
   });
 
@@ -139,11 +144,21 @@ export function nodesToDiagram(
     params: n.data?.params,
     isInput: Boolean(n.data?.isInput),
     isOutput: Boolean(n.data?.isOutput),
+    replaceable: Boolean(n.data?.replaceable),
+    constrainedbyType: n.data?.constrainedbyType as string | undefined,
+    ...(n.data?.condition !== undefined && n.data.condition !== "" ? { condition: n.data.condition } : {}),
+    ...(n.data?.visible !== undefined ? { visible: n.data.visible } : {}),
   }));
   const connections = links.map((l) => ({
     from: nodeAndHandleToPath(l.source, l.sourcePort),
     to: nodeAndHandleToPath(l.target, l.targetPort),
-    line: l.vertices?.length ? { points: l.vertices } : undefined,
+    line:
+      l.vertices?.length ?
+        {
+          points: l.vertices,
+          ...(l.router ? { routing: l.router } : {}),
+        }
+      : undefined,
   }));
   const layout: Record<string, LayoutPoint> = {};
   nodes.forEach((n) => {
@@ -200,6 +215,7 @@ export function buildUndoHistoryKey(nodes: DiagramNode[], links: DiagramLink[]):
       sourcePort: l.sourcePort,
       target: l.target,
       targetPort: l.targetPort,
+      router: l.router,
       vertices:
         l.vertices?.map((pt) => ({
           x: roundCoord(pt.x),

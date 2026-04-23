@@ -174,6 +174,8 @@ pub fn simulate_from_source(
         artifacts.output_interval,
         &artifacts.clock_partition_schedule,
         None,
+        model_name,
+        compiler.loader.library_paths.clone(),
     )?;
     Ok(result)
 }

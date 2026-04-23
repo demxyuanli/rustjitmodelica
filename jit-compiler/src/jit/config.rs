@@ -159,6 +159,8 @@ pub fn compute_jit_compile_cache_key(
 
 /// Build the same [`codegen_cache::CodegenCacheKey`] used for `calc_derivs` disk cache I/O.
 pub fn calc_derivs_codegen_cache_key(
+    model_name: &str,
+    loader: &crate::loader::ModelLoader,
     state_vars: &[String],
     discrete_vars: &[String],
     param_vars: &[String],
@@ -172,7 +174,7 @@ pub fn calc_derivs_codegen_cache_key(
     let type_hash = type_profile_hash(param_values);
     let param_sig = param_signature(param_values);
     let flat_hash = codegen_cache::flat_model_hash(
-        "calc_derivs",
+        model_name,
         state_vars,
         discrete_vars,
         param_vars,
@@ -184,12 +186,18 @@ pub fn calc_derivs_codegen_cache_key(
         &param_sig,
         connector_connection_degree,
     );
+    let src = loader.get_path_for_model(model_name);
+    let cache_scope = crate::cache::cache_scope::classify_model_scope_with_heuristics(
+        src.as_deref(),
+        Some(model_name),
+    );
     codegen_cache::CodegenCacheKey::new(
-        "calc_derivs",
+        model_name,
         &flat_hash,
         &opt_level,
         &cache_variant,
         &type_hash,
         &param_sig,
+        cache_scope,
     )
 }

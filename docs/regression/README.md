@@ -63,7 +63,7 @@ Quick policy:
 | `RUSTMODLICA_CRANELIFT_AOT_OPT_LEVEL` | implementation default | AOT Cranelift opt level | Affects AOT generation |
 | `RUSTMODLICA_AOT_CACHE_DIR` | disabled when unset | AOT marker cache root | Empty string also disables |
 | `RUSTMODLICA_JIT_POLICY_JSON` | unset | JIT policy overlay file | Runtime policy override |
-| `RUSTMODLICA_JIT_CODEGEN_CACHE` | disabled | JIT codegen cache switch | Pair with cache dir |
+| `RUSTMODLICA_JIT_CODEGEN_CACHE` | **on** when unset (`0`/`false`/`no` disables) | JIT codegen disk cache switch | AOT v2 merge reads reloc objects from this cache; see `CHANGELOG.md` |
 | `RUSTMODLICA_JIT_CODEGEN_CACHE_DIR` | implementation default | JIT codegen cache root | Prefer fixed path in CI |
 | `RUSTMODLICA_JIT_STUB_PARALLEL` | disabled | Parallel JIT stub compilation | Helps larger models |
 | `RUSTMODLICA_JIT_PARTITION_SCAN_PARALLEL` | disabled | Parallel partition scanning | Helps heavy clock/partition models |

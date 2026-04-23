@@ -24,7 +24,8 @@ use crate::expr_eval;
 use crate::flatten::{ArraySizePolicy, Flattener};
 use crate::jit::{CalcDerivsFunc, Jit};
 use crate::loader::ModelLoader;
-use pipeline::{flatten_and_inline, stage_trace_enabled};
+pub(crate) use pipeline::flatten_and_inline;
+use pipeline::stage_trace_enabled;
 pub use pipeline::geometric_default_for_name;
 
 /// Stops compilation after the named phase when not `Full`. Used for tiered IDE validation.

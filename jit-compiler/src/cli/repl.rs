@@ -3,7 +3,7 @@ use rustmodlica::i18n;
 
 use super::RunError;
 
-pub(crate) fn run_repl_loop(artifacts: Artifacts) -> Result<(), RunError> {
+pub(crate) fn run_repl_loop(artifacts: Artifacts, model_name: &str, lib_paths: Vec<std::path::PathBuf>) -> Result<(), RunError> {
     use std::io::{self, BufRead, Write};
     println!(
         "REPL: type variable name to inspect, 'simulate' to run, 'list' for vars, 'quit' to exit."
@@ -54,6 +54,8 @@ pub(crate) fn run_repl_loop(artifacts: Artifacts) -> Result<(), RunError> {
                 &artifacts.clock_partition_schedule,
                 None,
                 None,
+                model_name,
+                lib_paths.clone(),
             )?;
             println!("{}", i18n::msg0("simulation_completed"));
             continue;

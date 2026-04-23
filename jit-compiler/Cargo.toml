@@ -11,6 +11,10 @@ path = "src/lib.rs"
 name = "rustmodlica"
 path = "src/main.rs"
 
+[[bin]]
+name = "msl_pack_bake"
+path = "src/bin/msl_pack_bake.rs"
+
 [features]
 default = []
 # SUNDIALS CVODE/IDA/KINSOL via sundials-sys (system install or enable `sundials-vendor`).
@@ -45,10 +49,11 @@ faer = { version = "0.24", default-features = false, features = ["std", "sparse-
 libc = "0.2"
 sundials-sys = { version = "0.6.2", optional = true, default-features = false, features = ["cvode", "ida", "kinsol"] }
 salsa = "0.16.1"
-xxhash-rust = { version = "0.8", features = ["xxh64"] }
+xxhash-rust = { version = "0.8", features = ["xxh64", "xxh3"] }
 dirs = "5.0"
 rayon = "1.11.0"
 fs2 = "0.4.3"
+toml = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Memory", "Win32_System_LibraryLoader"] }

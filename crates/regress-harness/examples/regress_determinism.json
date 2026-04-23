@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": {
+    "workers": 1,
+    "fail_fast": false
+  },
+  "incremental": {
+    "strategy": "none"
+  },
+  "tiers": {
+    "det_smoke": { "include_tags": ["determinism", "det_smoke"] },
+    "det_clocked": { "include_tags": ["determinism", "det_clocked"] },
+    "det_msl": { "include_tags": ["determinism", "det_msl"] },
+    "det_all": { "include_tags": ["determinism"] }
+  },
+  "cases": [
+    { "id": "d_simple_test",       "kind": "model", "target": "TestLib/SimpleTest",       "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_bouncing_ball",     "kind": "model", "target": "TestLib/BouncingBall",     "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_circuit",           "kind": "model", "target": "TestLib/Circuit",          "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_pendulum",          "kind": "model", "target": "TestLib/Pendulum",         "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--index-reduction-method=dummyDerivative"] },
+    { "id": "d_for_test",          "kind": "model", "target": "TestLib/ForTest",          "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_when_test",         "kind": "model", "target": "TestLib/WhenTest",         "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_discrete",          "kind": "model", "target": "TestLib/DiscreteTest",     "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_alg_loop",          "kind": "model", "target": "TestLib/AlgebraicLoop2Eq", "tags": ["determinism", "det_smoke"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "d_clock_partition",   "kind": "model", "target": "TestLib/ClockedPartitionTest",   "tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_two_rates",   "kind": "model", "target": "TestLib/ClockedTwoRates",       "tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_sub_super",   "kind": "model", "target": "TestLib/SubSuperShiftSampleTest","tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_hold_prev",   "kind": "model", "target": "TestLib/HoldPreviousTest",      "tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_back_sample", "kind": "model", "target": "TestLib/BackSampleClockTest",   "tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_interval",    "kind": "model", "target": "TestLib/IntervalClockTest",     "tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_sub",         "kind": "model", "target": "TestLib/ClockedStartAndSubSampleTest","tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_super",       "kind": "model", "target": "TestLib/ClockedStartAndSuperSampleTest","tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_shift",       "kind": "model", "target": "TestLib/ClockedStartAndShiftTest","tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_clock_back",        "kind": "model", "target": "TestLib/ClockedStartAndBackSampleTest","tags": ["determinism", "det_clocked"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "d_msl_cauer",         "kind": "model", "target": "Modelica.Electrical.Analog.Examples.CauerLowPassAnalog", "tags": ["determinism", "det_msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_msl_rectifier",     "kind": "model", "target": "Modelica.Electrical.Analog.Examples.Rectifier",           "tags": ["determinism", "det_msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_msl_rot_first",     "kind": "model", "target": "Modelica.Mechanics.Rotational.Examples.First",           "tags": ["determinism", "det_msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_msl_thermal_two",   "kind": "model", "target": "Modelica.Thermal.HeatTransfer.Examples.TwoMasses",       "tags": ["determinism", "det_msl"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "d_stress_broad",      "kind": "model", "target": "ModelicaTest/JitStress/MslBroadCoverage",   "tags": ["determinism", "det_msl"], "expect": { "kind": "exit_zero" } },
+    { "id": "d_stress_complex",    "kind": "model", "target": "ModelicaTest/JitStress/ComplexJitRegression","tags": ["determinism", "det_msl"], "expect": { "kind": "exit_zero" } }
+  ]
+}

@@ -54,7 +54,8 @@ function createBlockElement(opts: CreateElementOptions, colors: ReturnType<typeo
   const lines = displayLabel.split("\n");
   const height = Math.max(60, 20 + lines.length * 14);
   const maxLineLen = Math.max(...lines.map((l) => l.length));
-  const width = Math.max(160, maxLineLen * 7 + 20);
+  const isExpandable = opts.connectorKind === "expandable";
+  const width = Math.max(isExpandable ? 240 : 160, maxLineLen * 7 + 20);
 
   const el = new shapes.standard.Rectangle({
     id: opts.id,
@@ -235,6 +236,8 @@ export function createLink(
     target: string;
     targetPort: string;
     vertices?: { x: number; y: number }[];
+    routerName?: string;
+    gridStep?: number;
   },
   graph?: dia.Graph
 ): dia.Link {
@@ -248,11 +251,14 @@ export function createLink(
     targetPort = resolvePortId(graph, opts.target, opts.targetPort, "target");
   }
 
+  const rname = opts.routerName && opts.routerName.length ? opts.routerName : "manhattan";
+  const step = opts.gridStep && opts.gridStep > 0 ? opts.gridStep : 10;
+
   const link = new shapes.standard.Link({
     id: opts.id,
     source: { id: opts.source, port: sourcePort },
     target: { id: opts.target, port: targetPort },
-    router: { name: "manhattan", args: { step: 10 } },
+    router: { name: rname, args: { step } },
     connector: { name: "rounded", args: { radius: 4 } },
     attrs: {
       line: {

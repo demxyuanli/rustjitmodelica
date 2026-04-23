@@ -3,8 +3,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 const FILE_NAME: &str = "model_hotness_v1.json";
+
+static CACHED_HOTNESS: OnceLock<ModelHotnessFile> = OnceLock::new();
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ModelHotnessFile {
@@ -45,7 +48,7 @@ pub fn score_for_model(cache_root: Option<&Path>, model_name: &str) -> f64 {
     let Some(root) = cache_root else {
         return 0.0;
     };
-    let file = load_disk(root);
+    let file = CACHED_HOTNESS.get_or_init(|| load_disk(root));
     let c = *file.compile_count.get(model_name).unwrap_or(&0) as f64;
     let h = *file.flat_full_hits.get(model_name).unwrap_or(&0) as f64;
     c * 10.0 + h

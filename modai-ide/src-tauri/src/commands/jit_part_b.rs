@@ -53,6 +53,8 @@ fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult
         artifacts.output_interval,
         &artifacts.clock_partition_schedule,
         None,
+        &model_name,
+        compiler.loader.library_paths.clone(),
     )
     .map_err(|e| e.to_string())
 }
@@ -140,16 +142,29 @@ fn get_equation_graph_sync(
     model_name: String,
     project_dir: Option<String>,
     graph_mode: Option<EquationGraphMode>,
+    changed_keys: Option<Vec<rustmodlica::NodeKey>>,
 ) -> Result<rustmodlica::EquationGraph, String> {
-    let mut compiler = rustmodlica::Compiler::new();
-    with_loader_paths(&mut compiler, project_dir.as_ref(), None);
-    compiler
-        .get_equation_graph_from_source(
-            &model_name,
-            &code,
-            graph_mode.unwrap_or(EquationGraphMode::Compact),
-        )
-        .map_err(|e| e.to_string())
+    let loader_paths = collect_loader_paths(project_dir.as_ref(), None);
+    crate::equation_graph_actor::build_equation_graph_blocking(
+        crate::equation_graph_actor::EquationGraphBuildRequest {
+            code,
+            model_name,
+            project_dir,
+            loader_paths,
+            graph_mode: graph_mode.unwrap_or(EquationGraphMode::Compact),
+            changed_keys,
+        },
+    )
+}
+
+fn perf_delta(
+    before: &std::collections::HashMap<String, u64>,
+    after: &std::collections::HashMap<String, u64>,
+    key: &str,
+) -> u64 {
+    let b = before.get(key).copied().unwrap_or(0);
+    let a = after.get(key).copied().unwrap_or(0);
+    a.saturating_sub(b)
 }
 
 #[tauri::command]
@@ -158,8 +173,13 @@ pub async fn get_equation_graph(
     model_name: String,
     project_dir: Option<String>,
     graph_mode: Option<EquationGraphMode>,
+    changed_keys: Option<Vec<rustmodlica::NodeKey>>,
+    metrics_session_id: Option<String>,
 ) -> Result<rustmodlica::EquationGraph, String> {
-    tokio::task::spawn_blocking(move || get_equation_graph_sync(code, model_name, project_dir, graph_mode))
+    let _ = metrics_session_id;
+    tokio::task::spawn_blocking(move || {
+        get_equation_graph_sync(code, model_name, project_dir, graph_mode, changed_keys)
+    })
         .await
         .map_err(|e| format!("blocking task join error: {e}"))?
 }
@@ -171,11 +191,35 @@ pub async fn get_equation_graph_v2(
     model_name: String,
     project_dir: Option<String>,
     graph_mode: Option<EquationGraphMode>,
+    changed_keys: Option<Vec<rustmodlica::NodeKey>>,
+    metrics_session_id: Option<String>,
 ) -> Result<JitApiEnvelope<rustmodlica::EquationGraph>, String> {
     let task_name = "equation-graph";
-    emit_jit_progress(&app, task_name, "started", 0, "Equation graph build started");
+    let metrics_sid = metrics_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    if let Some(sid) = metrics_sid.as_deref() {
+        emit_jit_progress_for_session(
+            &app,
+            sid,
+            task_name,
+            "started",
+            0,
+            "Equation graph build started",
+            None,
+            None,
+            None,
+        );
+    } else {
+        emit_jit_progress(&app, task_name, "started", 0, "Equation graph build started");
+    }
     let started = Instant::now();
-    let mut task = tokio::task::spawn_blocking(move || get_equation_graph_sync(code, model_name, project_dir, graph_mode));
+    let perf_before = rustmodlica::query_db::perf_snapshot();
+    let mut task = tokio::task::spawn_blocking(move || {
+        get_equation_graph_sync(code, model_name, project_dir, graph_mode, changed_keys)
+    });
     let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let join = loop {
@@ -185,18 +229,45 @@ pub async fn get_equation_graph_v2(
             }
             _ = heartbeat.tick() => {
                 let elapsed = started.elapsed().as_secs().max(1);
-                emit_jit_progress(
-                    &app,
-                    task_name,
-                    "running",
-                    elapsed,
-                    format!("Equation graph building ({}s)...", elapsed),
-                );
+                if let Some(sid) = metrics_sid.as_deref() {
+                    emit_jit_progress_for_session(
+                        &app,
+                        sid,
+                        task_name,
+                        "running",
+                        elapsed,
+                        format!("Equation graph building ({}s)...", elapsed),
+                        None,
+                        None,
+                        None,
+                    );
+                } else {
+                    emit_jit_progress(
+                        &app,
+                        task_name,
+                        "running",
+                        elapsed,
+                        format!("Equation graph building ({}s)...", elapsed),
+                    );
+                }
             }
         }
     };
     match join
         .map_err(|e| {
+            if let Some(sid) = metrics_sid.as_deref() {
+                emit_jit_progress_for_session(
+                    &app,
+                    sid,
+                    task_name,
+                    "failed",
+                    started.elapsed().as_secs().max(1),
+                    format!("Equation graph join error: {e}"),
+                    None,
+                    None,
+                    Some("join"),
+                );
+            }
             emit_jit_error(
                 &app,
                 task_name,
@@ -208,8 +279,74 @@ pub async fn get_equation_graph_v2(
             format!("blocking task join error: {e}")
         })?
     {
-        Ok(data) => Ok(envelope_ok("equationGraph", data)),
+        Ok(data) => {
+            let perf_after = rustmodlica::query_db::perf_snapshot();
+            let match_skip = perf_delta(
+                &perf_before,
+                &perf_after,
+                "eqgraph_caller_hash_match_skip_count",
+            );
+            let mismatch_dirty = perf_delta(
+                &perf_before,
+                &perf_after,
+                "eqgraph_caller_hash_mismatch_dirty_count",
+            );
+            let out_of_range_dirty = perf_delta(
+                &perf_before,
+                &perf_after,
+                "eqgraph_caller_hash_out_of_range_dirty_count",
+            );
+            let var_dirty =
+                perf_delta(&perf_before, &perf_after, "eqgraph_caller_var_dirty_count");
+            let denom = match_skip + mismatch_dirty;
+            let ratio = if denom > 0 {
+                (match_skip as f64) / (denom as f64)
+            } else {
+                0.0
+            };
+            if let Some(sid) = metrics_sid.as_deref() {
+                emit_jit_progress_for_session(
+                    &app,
+                    sid,
+                    task_name,
+                    "metrics",
+                    started.elapsed().as_secs().max(1),
+                    format!(
+                        "eqgraph caller-hash metrics: skip_match={} mismatch_dirty={} out_of_range_dirty={} var_dirty={} skip_ratio={:.3}",
+                        match_skip, mismatch_dirty, out_of_range_dirty, var_dirty, ratio
+                    ),
+                    None,
+                    None,
+                    None,
+                );
+            } else {
+                emit_jit_progress(
+                    &app,
+                    task_name,
+                    "metrics",
+                    started.elapsed().as_secs().max(1),
+                    format!(
+                        "eqgraph caller-hash metrics: skip_match={} mismatch_dirty={} out_of_range_dirty={} var_dirty={} skip_ratio={:.3}",
+                        match_skip, mismatch_dirty, out_of_range_dirty, var_dirty, ratio
+                    ),
+                );
+            }
+            Ok(envelope_ok("equationGraph", data))
+        }
         Err(message) => {
+            if let Some(sid) = metrics_sid.as_deref() {
+                emit_jit_progress_for_session(
+                    &app,
+                    sid,
+                    task_name,
+                    "failed",
+                    started.elapsed().as_secs().max(1),
+                    format!("Equation graph failed: {}", message),
+                    None,
+                    None,
+                    Some("equation-graph"),
+                );
+            }
             let d = diagnostics_from_error_message(&message);
             emit_jit_error(
                 &app,
@@ -233,13 +370,27 @@ pub async fn get_equation_graph_v2(
     }
     .map(|env| {
         if env.ok {
-            emit_jit_progress(
-                &app,
-                task_name,
-                "completed",
-                started.elapsed().as_secs().max(1),
-                "Equation graph build completed",
-            );
+            if let Some(sid) = metrics_sid.as_deref() {
+                emit_jit_progress_for_session(
+                    &app,
+                    sid,
+                    task_name,
+                    "completed",
+                    started.elapsed().as_secs().max(1),
+                    "Equation graph build completed",
+                    None,
+                    None,
+                    None,
+                );
+            } else {
+                emit_jit_progress(
+                    &app,
+                    task_name,
+                    "completed",
+                    started.elapsed().as_secs().max(1),
+                    "Equation graph build completed",
+                );
+            }
         }
         env
     })
@@ -348,6 +499,8 @@ fn start_simulation_session_sync(request: StartSessionRequest) -> Result<String,
         artifacts.output_interval,
         &artifacts.clock_partition_schedule,
         None,
+        &model_name,
+        compiler.loader.library_paths.clone(),
     )
     .map_err(|e| e.to_string())?;
 

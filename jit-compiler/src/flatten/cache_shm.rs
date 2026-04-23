@@ -11,6 +11,7 @@
 //! Index entries use a stable 64-bit hash of the full key string ([`hash_key64`]); writers update
 //! the arena before publishing `seg`/`off`/`len`, and readers verify the embedded key bytes match.
 
+use crate::cache::build_id::binary_build_id;
 use crate::cache::ir_epoch::IR_SCHEMA_EPOCH;
 use shared_memory::{Shmem, ShmemConf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -39,7 +40,9 @@ fn shm_base_name() -> String {
 }
 
 fn shm_seg_name(seg: u32) -> String {
-    format!("{}_e{}_v{}_seg{}", shm_base_name(), IR_SCHEMA_EPOCH, VERSION, seg)
+    let bid = binary_build_id();
+    let bid_short = &bid[..8.min(bid.len())];
+    format!("{}_e{}_v{}_b{}_seg{}", shm_base_name(), IR_SCHEMA_EPOCH, VERSION, bid_short, seg)
 }
 
 #[repr(C)]

@@ -9,7 +9,17 @@ use super::artifacts::ValidatePerfReport;
 
 /// Default `jit compare-baseline --baseline` when omitted (repo-relative).
 pub const DEFAULT_JIT_COMPARE_BASELINE_REL: &str =
-    "baseline/20260417_jit_cranelift_none/jit_perf_baseline.json";
+    "baseline/20260418_three_tier_devloop/jit_perf_baseline.json";
+
+/// Full **TestLib** matrix (`jit validate-perf`, 172 models x five scenarios) with compare thresholds
+/// tuned for **analyze-tier** runs: no L0/L1 tier gates, `speedup_min_ratio=0` (cold/hot not enforced).
+/// Use: `jit compare-baseline --report <report.json> --baseline <this path>`.
+pub const TESTLIB_VALIDATE_PERF_V1_BASELINE_REL: &str =
+    "baseline/testlib_validate_perf_v1/jit_perf_baseline.json";
+
+/// Large-matrix perf baseline (same model matrix as v1 + optional JitStress when recorded with `--include-jitstress-probe`).
+pub const LARGE_SCALE_VALIDATE_PERF_V2_BASELINE_REL: &str =
+    "baseline/large_scale_jit_validate_perf_v2/jit_perf_baseline.json";
 
 // ---------------------------------------------------------------------------
 // Baseline schema
@@ -50,6 +60,18 @@ pub struct BaselineThresholds {
     pub cache_hit_rate_min_pct: f64,
     /// Minimum hot/cold speedup ratio. Default 1.5.
     pub speedup_min_ratio: f64,
+    /// Optional L0 hit-rate floor for tiered cache (0–100). When absent, not enforced.
+    #[serde(default)]
+    pub std_hit_rate_min_pct: Option<f64>,
+    /// Optional L1 hit-rate floor (0–100).
+    #[serde(default)]
+    pub user_hit_rate_min_pct: Option<f64>,
+    /// Optional AOT TOC hit-rate floor (0–100).
+    #[serde(default)]
+    pub aot_hit_rate_min_pct: Option<f64>,
+    /// Optional max regression % for project-tier rebuild wall time.
+    #[serde(default)]
+    pub project_rebuild_regression_pct: Option<f64>,
 }
 
 impl Default for BaselineThresholds {
@@ -59,7 +81,25 @@ impl Default for BaselineThresholds {
             codegen_wall_us_regression_pct: 15.0,
             cache_hit_rate_min_pct: 85.0,
             speedup_min_ratio: 1.5,
+            std_hit_rate_min_pct: None,
+            user_hit_rate_min_pct: None,
+            aot_hit_rate_min_pct: None,
+            project_rebuild_regression_pct: None,
         }
+    }
+}
+
+/// Thresholds for `large-scale-v2` preset (analyze-tier friendly, slightly looser duration/codegen gates).
+pub fn thresholds_large_scale_v2() -> BaselineThresholds {
+    BaselineThresholds {
+        duration_ms_regression_pct: 25.0,
+        codegen_wall_us_regression_pct: 20.0,
+        cache_hit_rate_min_pct: 85.0,
+        speedup_min_ratio: 0.0,
+        std_hit_rate_min_pct: None,
+        user_hit_rate_min_pct: None,
+        aot_hit_rate_min_pct: None,
+        project_rebuild_regression_pct: Some(30.0),
     }
 }
 
@@ -75,13 +115,21 @@ pub struct BenchmarkEntry {
     pub cache_l2_hits: Option<u64>,
     pub cache_l2_writes: Option<u64>,
     pub sample_count: usize,
+    #[serde(default)]
+    pub project_rebuild_wall_ms_p50: Option<u64>,
+    #[serde(default)]
+    pub std_flat_full_hit_rate_p50: Option<f64>,
+    #[serde(default)]
+    pub user_flat_full_hit_rate_p50: Option<f64>,
+    #[serde(default)]
+    pub aot_hit_rate_p50: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
 // Comparison result
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Verdict {
     Pass,
     Warn,
@@ -102,10 +150,22 @@ pub struct BenchmarkComparison {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TierMetricCheck {
+    pub key: String,
+    pub metric: String,
+    pub current: Option<f64>,
+    pub threshold: f64,
+    pub verdict: Verdict,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompareResult {
     pub overall_verdict: Verdict,
     pub comparisons: Vec<BenchmarkComparison>,
     pub speedup_checks: Vec<SpeedupCheck>,
+    #[serde(default)]
+    pub tier_checks: Vec<TierMetricCheck>,
     pub summary: String,
 }
 
@@ -146,6 +206,10 @@ pub fn update_baseline_from_report(
                 cache_l2_hits: None,
                 cache_l2_writes: None,
                 sample_count: stats.runs,
+                project_rebuild_wall_ms_p50: stats.project_rebuild_wall_ms_min,
+                std_flat_full_hit_rate_p50: stats.std_flat_full_hit_rate_max,
+                user_flat_full_hit_rate_p50: stats.user_flat_full_hit_rate_max,
+                aot_hit_rate_p50: stats.aot_hit_rate_max,
             };
 
             if let Some(layer_stats) = &stats.cache_layer_stats {
@@ -219,6 +283,14 @@ fn pct_delta(current: u64, baseline: u64) -> f64 {
     ((current as f64 - baseline as f64) / baseline as f64) * 100.0
 }
 
+fn bump_worst(worst: &mut Verdict, v: Verdict) {
+    match v {
+        Verdict::Fail => *worst = Verdict::Fail,
+        Verdict::Warn if *worst == Verdict::Pass => *worst = Verdict::Warn,
+        _ => {}
+    }
+}
+
 pub fn compare_report_to_baseline(
     report: &ValidatePerfReport,
     baseline: &BaselineFile,
@@ -226,6 +298,7 @@ pub fn compare_report_to_baseline(
     let thresholds = &baseline.thresholds;
     let mut comparisons = Vec::new();
     let mut speedup_checks = Vec::new();
+    let mut tier_checks = Vec::new();
     let mut worst_verdict = Verdict::Pass;
 
     // Collect all (scenario, model) pairs from current report
@@ -321,8 +394,8 @@ pub fn compare_report_to_baseline(
     }
 
     // Speedup checks: compare cold vs hot scenario durations for same model
-    let cold_scenario = "cold_empty_nsCOLD";
-    let hot_scenario = "hot_nsA";
+    let cold_scenario = "stdlib_bake";
+    let hot_scenario = "devloop_multi_model";
     if let (Some(cold_models), Some(hot_models)) = (
         models_by_scenario.get(cold_scenario),
         models_by_scenario.get(hot_scenario),
@@ -412,6 +485,168 @@ pub fn compare_report_to_baseline(
         }
     }
 
+    for (scenario, models) in &report.stats.by_scenario {
+        for (model, st) in models {
+            let key = format!("{}/{}", scenario, model);
+            let base_entry = baseline.benchmarks.get(&key);
+
+            if let Some(th) = thresholds.std_hit_rate_min_pct {
+                // Hot devloop only: `stdlib_bake` is a deliberate cold scenario; enforcing L0 flat_full
+                // floor there would false-fail once real scope/stage counters exist.
+                if scenario == "devloop_multi_model" {
+                    let cur = st.std_flat_full_hit_rate_max;
+                    let (verdict, detail) = match cur {
+                        Some(c) if c + 1e-9 < th => (
+                            Verdict::Fail,
+                            format!(
+                                "L0 flat_full hit rate {:.2}% below floor {:.2}%",
+                                c, th
+                            ),
+                        ),
+                        Some(c) => (
+                            Verdict::Pass,
+                            format!("L0 flat_full hit rate {:.2}% >= {:.2}%", c, th),
+                        ),
+                        None => (
+                            Verdict::Warn,
+                            "L0 flat_full hit rate missing (no compile_perf scope/stage data)"
+                                .to_string(),
+                        ),
+                    };
+                    bump_worst(&mut worst_verdict, verdict);
+                    tier_checks.push(TierMetricCheck {
+                        key: key.clone(),
+                        metric: "std_flat_full_hit_rate_pct".to_string(),
+                        current: cur,
+                        threshold: th,
+                        verdict,
+                        detail,
+                    });
+                }
+            }
+
+            if let Some(th) = thresholds.user_hit_rate_min_pct {
+                if scenario == "devloop_multi_model" {
+                    let cur = st.user_flat_full_hit_rate_max;
+                    let (verdict, detail) = match cur {
+                        Some(c) if c + 1e-9 < th => (
+                            Verdict::Fail,
+                            format!(
+                                "L1 flat_full hit rate {:.2}% below floor {:.2}%",
+                                c, th
+                            ),
+                        ),
+                        Some(c) => (
+                            Verdict::Pass,
+                            format!("L1 flat_full hit rate {:.2}% >= {:.2}%", c, th),
+                        ),
+                        None => (
+                            Verdict::Warn,
+                            "L1 flat_full hit rate missing (no compile_perf scope/stage data)"
+                                .to_string(),
+                        ),
+                    };
+                    bump_worst(&mut worst_verdict, verdict);
+                    tier_checks.push(TierMetricCheck {
+                        key: key.clone(),
+                        metric: "user_flat_full_hit_rate_pct".to_string(),
+                        current: cur,
+                        threshold: th,
+                        verdict,
+                        detail,
+                    });
+                }
+            }
+
+            if let Some(th) = thresholds.aot_hit_rate_min_pct {
+                if scenario == "devloop_multi_model" {
+                    let Some(cur_v) = st.aot_hit_rate_max else {
+                        continue;
+                    };
+                    let (verdict, detail) = if cur_v + 1e-9 < th {
+                        (
+                            Verdict::Fail,
+                            format!("AOT native load proxy {:.2}% below floor {:.2}%", cur_v, th),
+                        )
+                    } else {
+                        (
+                            Verdict::Pass,
+                            format!("AOT native load proxy {:.2}% >= {:.2}%", cur_v, th),
+                        )
+                    };
+                    bump_worst(&mut worst_verdict, verdict);
+                    tier_checks.push(TierMetricCheck {
+                        key: key.clone(),
+                        metric: "aot_hit_rate_pct".to_string(),
+                        current: Some(cur_v),
+                        threshold: th,
+                        verdict,
+                        detail,
+                    });
+                }
+            }
+
+            if let Some(th_pct) = thresholds.project_rebuild_regression_pct {
+                if scenario == "devloop_multi_model" {
+                    let Some(base_ms) = base_entry
+                        .and_then(|e| e.project_rebuild_wall_ms_p50)
+                        .filter(|b| *b > 0)
+                    else {
+                        continue;
+                    };
+                    let cur_ms = st.project_rebuild_wall_ms_min;
+                    let (verdict, detail, current_as_f) = match cur_ms {
+                        Some(cur) => {
+                            let delta = pct_delta(cur, base_ms);
+                            if delta > th_pct {
+                                (
+                                    Verdict::Fail,
+                                    format!(
+                                        "project rebuild wall {}ms vs baseline {}ms ({:+.1}% > {}% cap)",
+                                        cur, base_ms, delta, th_pct
+                                    ),
+                                    Some(cur as f64),
+                                )
+                            } else if delta > th_pct * 0.5 {
+                                (
+                                    Verdict::Warn,
+                                    format!(
+                                        "project rebuild wall {}ms vs baseline {}ms ({:+.1}%)",
+                                        cur, base_ms, delta
+                                    ),
+                                    Some(cur as f64),
+                                )
+                            } else {
+                                (
+                                    Verdict::Pass,
+                                    format!(
+                                        "project rebuild wall {}ms vs baseline {}ms ({:+.1}%)",
+                                        cur, base_ms, delta
+                                    ),
+                                    Some(cur as f64),
+                                )
+                            }
+                        }
+                        None => (
+                            Verdict::Warn,
+                            "project rebuild wall missing in current report".to_string(),
+                            None,
+                        ),
+                    };
+                    bump_worst(&mut worst_verdict, verdict);
+                    tier_checks.push(TierMetricCheck {
+                        key: key.clone(),
+                        metric: "project_rebuild_wall_ms".to_string(),
+                        current: current_as_f,
+                        threshold: th_pct,
+                        verdict,
+                        detail,
+                    });
+                }
+            }
+        }
+    }
+
     let pass_count = comparisons
         .iter()
         .filter(|c| c.verdict == Verdict::Pass)
@@ -425,19 +660,32 @@ pub fn compare_report_to_baseline(
         .filter(|c| c.verdict == Verdict::Fail)
         .count();
 
+    let tier_fail = tier_checks
+        .iter()
+        .filter(|t| t.verdict == Verdict::Fail)
+        .count();
+    let tier_warn = tier_checks
+        .iter()
+        .filter(|t| t.verdict == Verdict::Warn)
+        .count();
+
     let summary = format!(
-        "Compared {} benchmarks: {} pass, {} warn, {} fail. Speedup checks: {}.",
+        "Compared {} benchmarks: {} pass, {} warn, {} fail. Speedup checks: {}. Tier metric checks: {} ({} fail, {} warn).",
         comparisons.len(),
         pass_count,
         warn_count,
         fail_count,
         speedup_checks.len(),
+        tier_checks.len(),
+        tier_fail,
+        tier_warn,
     );
 
     CompareResult {
         overall_verdict: worst_verdict,
         comparisons,
         speedup_checks,
+        tier_checks,
         summary,
     }
 }

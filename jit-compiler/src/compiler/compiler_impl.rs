@@ -1,6 +1,6 @@
 /// Deferred artifact write data — stored here until confirm_artifact_stored() is called.
 pub(crate) struct DeferredArtifactWrite {
-    pub cache_root: std::path::PathBuf,
+    pub model_name: String,
     pub key: String,
     pub bundle: crate::cache::artifact_bundle::CompiledArtifactBundle,
 }
@@ -71,6 +71,16 @@ impl Compiler {
         code: &str,
         mode: EquationGraphMode,
     ) -> Result<equation_graph::EquationGraph, Box<dyn std::error::Error + Send + Sync>> {
+        self.get_equation_graph_from_source_with_dirty(model_name, code, mode, None)
+    }
+
+    pub fn get_equation_graph_from_source_with_dirty(
+        &mut self,
+        model_name: &str,
+        code: &str,
+        mode: EquationGraphMode,
+        changed_keys: Option<&[crate::NodeKey]>,
+    ) -> Result<equation_graph::EquationGraph, Box<dyn std::error::Error + Send + Sync>> {
         self.loader
             .load_model_from_source(model_name, code)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
@@ -113,7 +123,22 @@ impl Compiler {
         )?;
         self.last_provenance_index = Some(stage.provenance_index.clone());
         let flat_model = stage.flat_model;
-        Ok(equation_graph::build_equation_graph(&flat_model, mode))
+        let inc_enabled = std::env::var("RUSTMODLICA_EQGRAPH_INCREMENTAL")
+            .ok()
+            .map(|v| {
+                let t = v.trim();
+                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false);
+        if inc_enabled {
+            Ok(crate::equation_graph_inc::build_or_update_equation_graph(
+                &flat_model,
+                mode,
+                changed_keys,
+            ))
+        } else {
+            Ok(equation_graph::build_equation_graph(&flat_model, mode))
+        }
     }
 
     /// Run a function once with given inputs (or 0.0 per input if not provided) and return the output (F3-1).
@@ -216,8 +241,10 @@ impl Compiler {
     /// a no-op since the artifact was already written during compile().
     pub fn confirm_artifact_stored(&mut self, _model_name: &str) -> Result<(), String> {
         if let Some(deferred) = self.deferred_artifact.take() {
+            let cache_root = crate::flatten::flatten_cache_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
             crate::cache::artifact_cache::put(
-                deferred.cache_root.as_path(),
+                &cache_root,
                 &deferred.key,
                 &deferred.bundle,
             )?;

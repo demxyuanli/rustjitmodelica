@@ -35,7 +35,7 @@ use super::types::{
 };
 
 use linsol::attach_for_cvode_ida;
-use run_common::run_sundials_common;
+use run_common::{run_sundials_common, SundialsKind};
 
 const CSV_ROWS_PER_FLUSH: u32 = 64;
 

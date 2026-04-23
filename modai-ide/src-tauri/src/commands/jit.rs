@@ -634,6 +634,67 @@ fn resolve_model_name(source: &str, requested: Option<&String>) -> Result<String
     })
 }
 
+/// Collect the loader paths for a project + optional explicit resolver
+/// context, using the same precedence rules as `with_loader_paths`. Lets
+/// the equation-graph actor build a deterministic cache key without
+/// constructing a Compiler first.
+pub(crate) fn collect_loader_paths(
+    project_dir: Option<&String>,
+    resolver_context: Option<&ResolverContext>,
+) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    if let Some(ctx) = resolver_context {
+        for p in &ctx.library_paths {
+            out.push(PathBuf::from(p));
+        }
+        return out;
+    }
+    if let Ok(paths) = component_library::compiler_loader_paths(project_dir.map(Path::new)) {
+        for path in paths {
+            out.push(path);
+        }
+    }
+
+    let mut added_modelica = false;
+    if let Ok(settings) = app_settings::load_settings() {
+        let raw = settings.extensions.modelica_stdlib_path;
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let p = PathBuf::from(trimmed);
+            let as_root = p.join("Modelica").join("package.mo");
+            let as_modelica = p.join("package.mo");
+            if as_root.is_file() {
+                out.push(p);
+                added_modelica = true;
+            } else if as_modelica.is_file() {
+                if let Some(parent) = p.parent() {
+                    out.push(parent.to_path_buf());
+                    added_modelica = true;
+                }
+            }
+        }
+    }
+
+    if !added_modelica {
+        if let Ok(root) = component_library::installed_libraries_root() {
+            let modelica_package = PathBuf::from("Modelica").join("package.mo");
+            if root.join(&modelica_package).is_file() {
+                out.push(root);
+            } else if let Ok(entries) = std::fs::read_dir(&root) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() && path.join(&modelica_package).is_file() {
+                        out.push(path);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
 fn with_loader_paths(
     compiler: &mut rustmodlica::Compiler,
     project_dir: Option<&String>,

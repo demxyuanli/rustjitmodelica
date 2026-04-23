@@ -127,7 +127,7 @@ A **manifest** row per model: key = `(model, solver, dt, t_end, lib_fp, exe_hash
 
 **Sharing cache with the next DIR run or other tools**
 
-- **`-WriteDirCacheEnvScript <path>`** (relative to repo root or absolute): after `Apply-DirPrivateCacheEnv` succeeds, writes a small PowerShell script that sets `RUSTMODLICA_CACHE_SQLITE`, `RUSTMODLICA_QUERY_CACHE_NAMESPACE`, `RUSTMODLICA_FLATTEN_CACHE_DIR`, and `RUSTMODLICA_AOT_CACHE_DIR` for the current `run_<key>`. Dot-source it in the same shell before `rustmodlica --validate` or another driver so the **same** query/flatten namespace is reused without re-running DIR.
+- **`-WriteDirCacheEnvScript <path>`** (relative to repo root or absolute): after `Set-DirPrivateCacheEnv` succeeds, writes a small PowerShell script that sets `RUSTMODLICA_CACHE_SQLITE`, `RUSTMODLICA_QUERY_CACHE_NAMESPACE`, `RUSTMODLICA_FLATTEN_CACHE_DIR`, and `RUSTMODLICA_AOT_CACHE_DIR` for the current `run_<key>`. Dot-source it in the same shell before `rustmodlica --validate` or another driver so the **same** query/flatten namespace is reused without re-running DIR.
 - **`scripts/run_dir_cache_shared_smoke.ps1`**: three-step smoke — (1) DIR with `-UsePrivateCache` and a fixed `build\dir_cache_shared_test` root, (2) second DIR pass with a different `-OutDir` but the same `PrivateCacheRoot`, (3) dot-source `build\dir_cache_shared_env.ps1` and run `rustmodlica --validate` on a small model. Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_dir_cache_shared_smoke.ps1` (optional `-MaxCases`, `-Root`).
 
 ## Residual checklist

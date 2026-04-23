@@ -1,0 +1,752 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": { "workers": 4, "fail_fast": false },
+  "incremental": { "strategy": "none" },
+  "tiers": {
+    "redeclare": { "include_tags": ["modelicatest", "redeclare"] },
+    "tables": { "include_tags": ["modelicatest", "tables"] },
+    "electrical": { "include_tags": ["modelicatest", "electrical"] },
+    "magnetic": { "include_tags": ["modelicatest", "magnetic"] },
+    "root": { "include_tags": ["modelicatest", "root"] },
+    "all": { "include_tags": ["modelicatest"] }
+  },
+  "cases": [
+    {
+      "id": "mt_rs_constrained_coarse",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/ConstrainedByCoarseFalse",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_rs_constrained_illegal",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/ConstrainedByIllegal",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_rs_constrained_usage",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/ConstrainedUsage",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_rs_each_modifier",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/EachModifierSmoke",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_rs_inner_outer",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/InnerOuterModifierSmoke",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_rs_public_modifier",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/PublicModifierSmoke",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_rs_redeclare_extends",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareExtendsExample",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_rs_redeclare_via_extends",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareViaExtendsSmoke",
+      "tags": ["modelicatest", "redeclare"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_tbl_1ds_test1",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test1",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test2",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test2",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test3",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test3",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test4",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test4",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test5",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test5",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test6",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test6",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test7",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test7",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test8",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test8",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test11",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test11",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test12",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test12",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test15",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test15",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test16",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test16",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test26",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test26",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test29",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test29",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test30",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test30",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1ds_test34",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds/Test34",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_tbl_1dv_test1",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Dv/Test1",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1dv_test2",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Dv/Test2",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1dv_test3",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Dv/Test3",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1dv_test7",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Dv/Test7",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1dv_test11",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Dv/Test11",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_1dv_test15",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Dv/Test15",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_tbl_2ds_test1",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds/Test1",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2ds_test4",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds/Test4",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2ds_test7",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds/Test7",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2ds_test19",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds/Test19",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2ds_test20",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds/Test20",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2ds_test21",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds/Test21",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2ds_test22",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds/Test22",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_tbl_2dv_test1",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Dv/Test1",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2dv_test4",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Dv/Test4",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2dv_test7",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Dv/Test7",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2dv_test19",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Dv/Test19",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2dv_test20",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Dv/Test20",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_2dv_test21",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Dv/Test21",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_tbl_tt_test1",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test1",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test2",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test2",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test4",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test4",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test9",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test9",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test10",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test10",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test14",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test14",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test35",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test35",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test37",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test37",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test40",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test40",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test65",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test65",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test73",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test73",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test77",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test77",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_tbl_tt_test87",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable/Test87",
+      "tags": ["modelicatest", "tables"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_elec_analog_gyrator",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/Analog/TestGyrator",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_analog_saturating",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/Analog/TestSaturatingInductor",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_analog_ideal_twoway",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/Analog/Ideal/IdealTwoWaySwitches",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_machines_smpm",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/Machines/SMPM_VoltageSourceWithLosses",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_multisensor",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/MultiSensorTest",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_powerconv_halfbridge",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/PowerConverters/HalfControlledBridge2mPulse",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_powerconv_thyristor",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/PowerConverters/ThyristorBridge2mPulse_R",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_singular_xformer",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/SingularTransfomer",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_qs_sp_serial",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/QuasiStatic/SinglePhase/SerialConnection",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_qs_sp_ideal",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/QuasiStatic/SinglePhase/Ideal",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_qs_sp_freq_sweep",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/QuasiStatic/SinglePhase/FrequencySweep",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_qs_pp_serial",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/QuasiStatic/Polyphase/SerialConnection",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_qs_pp_ideal",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/QuasiStatic/Polyphase/Ideal",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_elec_qs_pp_freq_sweep",
+      "kind": "model",
+      "target": "ModelicaTest/Electrical/QuasiStatic/Polyphase/FrequencySweep",
+      "tags": ["modelicatest", "electrical"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_mag_ft_basic",
+      "kind": "model",
+      "target": "ModelicaTest/Magnetic/FluxTubes/BasicComponents",
+      "tags": ["modelicatest", "magnetic"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_mag_ft_sources",
+      "kind": "model",
+      "target": "ModelicaTest/Magnetic/FluxTubes/Sources",
+      "tags": ["modelicatest", "magnetic"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_mag_ft_sensors",
+      "kind": "model",
+      "target": "ModelicaTest/Magnetic/FluxTubes/Sensors",
+      "tags": ["modelicatest", "magnetic"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_mag_ft_variable",
+      "kind": "model",
+      "target": "ModelicaTest/Magnetic/FluxTubes/VariableComponents",
+      "tags": ["modelicatest", "magnetic"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_mag_qs_ft_leakage",
+      "kind": "model",
+      "target": "ModelicaTest/Magnetic/QuasiStatic/FluxTubes/NoPhysicalTestLeakage",
+      "tags": ["modelicatest", "magnetic"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_mag_qs_ft_variable",
+      "kind": "model",
+      "target": "ModelicaTest/Magnetic/QuasiStatic/FluxTubes/VariableComponents",
+      "tags": ["modelicatest", "magnetic"],
+      "expect": { "kind": "exit_zero" }
+    },
+
+    {
+      "id": "mt_root_blocks_continuous",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Continuous",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_steady",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Continuous_SteadyState",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_init_state",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Continuous_InitialState",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_init_output",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Continuous_InitialOutput",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_self_reset",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/SelfResettingIntegrator",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_reset_hold",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/ResetHoldIntegrator",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_lim_reset",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/LimResetIntegrator",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_integrator_force",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/IntegratorForceState",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_limiters",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Limiters",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_strict_limiters",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/StrictLimiters",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_limiters_homotopy",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/LimitersHomotopy",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_kinematic_ptp",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/KinematicPTP",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_unit_deduction",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/UnitDeduction",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_logical",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Logical",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_integer_table",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/IntegerTable",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_boolean_table",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/BooleanTable",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_rms",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/RootMeanSquare",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_foh",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/FirstOrderHold",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_on_delay",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/OnDelay",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_mean",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Mean",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_conversion",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/ConversionBlocks",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_pade_delay1",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/PadeDelay1",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_pade_delay2",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/PadeDelay2",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_discrete",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Discrete",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_hysteresis",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/Hysteresis",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_mux_demux",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/MuxDemux",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    },
+    {
+      "id": "mt_root_blocks_lim_pid",
+      "kind": "model",
+      "target": "ModelicaTest/Blocks/LimPID",
+      "tags": ["modelicatest", "root"],
+      "expect": { "kind": "exit_zero" }
+    }
+  ]
+}

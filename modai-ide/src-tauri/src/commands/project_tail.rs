@@ -111,10 +111,25 @@ pub fn read_component_type_source(
         .ok_or_else(|| format!("Component type not found: {}", type_name))?;
     let content = fs::read_to_string(&resolved.absolute_path).map_err(|e| e.to_string())?;
 
+    let project_relative_path = project_dir
+        .as_ref()
+        .map(|root| Path::new(root))
+        .and_then(|root| resolved.absolute_path.strip_prefix(root).ok())
+        .and_then(|rel| {
+            let s = rel.to_string_lossy().replace('\\', "/");
+            let trimmed = s.trim_start_matches('/').to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
     Ok(ComponentTypeSource {
         qualified_name: resolved.qualified_name,
         source: resolved.source,
         path: resolved.relative_path,
+        project_relative_path,
         library_id: resolved.library_id,
         library_name: resolved.library_name,
         library_scope: resolved.library_scope,

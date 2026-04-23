@@ -216,7 +216,8 @@ enum JitCommands {
         /// Path to rustmodlica.exe (optional, defaults to workspace target/release)
         #[arg(long)]
         exe: Option<PathBuf>,
-        /// Repeatable Modelica library roots for --lib-path
+        /// Repeatable Modelica library roots for child `--lib-path` (default: `jit-compiler` +
+        /// `jit-compiler/TestLib` [+ `StandardLib` when present], same ordering as `run_regression.ps1`)
         #[arg(long, value_delimiter = ',')]
         lib_path: Option<Vec<PathBuf>>,
         /// Output directory (default: build/jit_validate_perf)
@@ -228,11 +229,18 @@ enum JitCommands {
         /// Validation mode (full|quick|superfast)
         #[arg(long, default_value = "full")]
         validation_mode: String,
+        /// Use the default TestLib matrix from `run_regression.ps1` JIT_VALIDATE_PERF (requires `--models` empty)
+        #[arg(long)]
+        default_correctness_models: bool,
+        /// Append `ModelicaTest.JitStress.*` models when `jit-compiler/ModelicaTest/JitStress` exists
+        #[arg(long)]
+        include_jitstress_probe: bool,
         /// Models to run (repeatable, or comma-delimited)
         #[arg(long, value_delimiter = ',')]
         models: Vec<String>,
-        /// Hot scenario run count (applies to hot_nsA)
-        #[arg(long, default_value_t = 2)]
+        /// Repeat count for `devloop_multi_model` / `devloop_edit_leaf` scenarios (extra hot passes
+        /// stabilize `compile_perf` L0/L1 `flat_full` hit rates for baseline tier checks).
+        #[arg(long, default_value_t = 3)]
         hot_runs: usize,
         /// Enable stage timing trace (env RUSTMODLICA_STAGE_TRACE=1 for child)
         #[arg(long)]
@@ -240,7 +248,7 @@ enum JitCommands {
         /// Enable perf trace (env RUSTMODLICA_PERF_TRACE=1 for child)
         #[arg(long)]
         perf_trace: bool,
-        /// Optional scenario allow-list (comma-delimited): cold_empty_nsCOLD,cold_qcache0,hot_nsA,legacy_salsa0
+        /// Optional scenario allow-list (comma-delimited): stdlib_bake,userlib_bake,devloop_multi_model,devloop_edit_leaf,devloop_edit_dep_only
         #[arg(long, value_delimiter = ',')]
         scenarios: Option<Vec<String>>,
         /// Incremental mode: only run models affected by changed dependency files.
@@ -259,6 +267,12 @@ enum JitCommands {
         /// PoC mode: execute each scenario via worker entrypoint.
         #[arg(long)]
         worker_per_scenario: bool,
+        /// Optional `RUSTMODLICA_STD_CACHE_ROOT` for every child process.
+        #[arg(long)]
+        std_cache_root: Option<PathBuf>,
+        /// Optional `RUSTMODLICA_USER_CACHE_ROOT` for every child process.
+        #[arg(long)]
+        user_cache_root: Option<PathBuf>,
         /// Extra env for each rustmodlica child, repeatable (`KEY=VAL`, e.g. `RUSTMODLICA_CRANELIFT_OPT_LEVEL=none`).
         #[arg(long = "set-env", value_name = "KEY=VAL")]
         set_env: Vec<String>,
@@ -268,9 +282,12 @@ enum JitCommands {
         /// Path to current validate-perf report.json
         #[arg(long)]
         report: PathBuf,
-        /// Path to baseline JSON (default: baseline/20260417_jit_cranelift_none/jit_perf_baseline.json)
+        /// Path to baseline JSON (default: baseline/20260418_three_tier_devloop/jit_perf_baseline.json)
         #[arg(long)]
         baseline: Option<PathBuf>,
+        /// Preset: `large-scale-v2` selects `baseline/large_scale_jit_validate_perf_v2/jit_perf_baseline.json` when `--baseline` is omitted
+        #[arg(long)]
+        preset: Option<String>,
     },
     /// Generate or update a baseline JSON from a validate-perf report
     UpdateBaseline {
@@ -283,6 +300,39 @@ enum JitCommands {
         /// Confirm overwriting existing baseline
         #[arg(long)]
         confirm: bool,
+        /// Preset: `large-scale-v2` seeds thresholds for a new baseline file (when output does not exist yet)
+        #[arg(long)]
+        preset: Option<String>,
+    },
+    /// Record TestLib correctness baseline (`validate_ok.json` + `expect_fail.json`) from a validate-perf run
+    RecordCorrectness {
+        #[arg(long)]
+        exe: Option<PathBuf>,
+        #[arg(long, value_delimiter = ',')]
+        lib_path: Option<Vec<PathBuf>>,
+        #[arg(long)]
+        out_dir: PathBuf,
+        #[arg(long, default_value = "analyze")]
+        validate_tier: String,
+        #[arg(long, default_value = "full")]
+        validation_mode: String,
+        #[arg(long, default_value_t = 3)]
+        hot_runs: usize,
+        #[arg(long, value_delimiter = ',')]
+        models: Vec<String>,
+        #[arg(long)]
+        default_correctness_models: bool,
+    },
+    /// Compare current validate-perf report + negative probes to a correctness baseline directory
+    CompareCorrectness {
+        #[arg(long)]
+        baseline_dir: PathBuf,
+        #[arg(long)]
+        current_report: PathBuf,
+        #[arg(long)]
+        exe: Option<PathBuf>,
+        #[arg(long, value_delimiter = ',')]
+        lib_path: Option<Vec<PathBuf>>,
     },
 }
 
@@ -469,6 +519,8 @@ fn run_cli() -> Result<()> {
                 out_dir,
                 validate_tier,
                 validation_mode,
+                default_correctness_models,
+                include_jitstress_probe,
                 models,
                 hot_runs,
                 stage_trace,
@@ -479,6 +531,8 @@ fn run_cli() -> Result<()> {
                 shared_cache_dir,
                 force_flatten_full_cache,
                 worker_per_scenario,
+                std_cache_root,
+                user_cache_root,
                 set_env,
             } => {
                 let repo_root = discover_repo_root()?;
@@ -489,7 +543,9 @@ fn run_cli() -> Result<()> {
                     repo_root.join("target").join("release").join("rustmodlica.exe")
                 };
                 let out_dir = out_dir.unwrap_or_else(|| repo_root.join("build").join("jit_validate_perf"));
-                let lib_paths: Vec<PathBuf> = lib_path.unwrap_or_else(|| vec![repo_root.join("jit-compiler")]);
+                let lib_paths: Vec<PathBuf> = lib_path.unwrap_or_else(|| {
+                    regress_harness::jit_validate::default_jit_validate_perf_lib_paths(&repo_root)
+                });
                 let scenarios_vec = regress_harness::jit_validate::runner::default_perf_scenarios(hot_runs);
 
                 let mut child_set: BTreeMap<String, String> = BTreeMap::new();
@@ -506,6 +562,23 @@ fn run_cli() -> Result<()> {
                     set: child_set,
                     unset: Vec::new(),
                 };
+
+                let mut models = models;
+                if default_correctness_models {
+                    if !models.is_empty() {
+                        bail!("--default-correctness-models requires empty --models");
+                    }
+                    models = regress_harness::jit_validate::correctness::default_correctness_validate_perf_models();
+                }
+                if include_jitstress_probe {
+                    models.extend(regress_harness::jit_validate::probe_optional_jitstress_models(
+                        &repo_root,
+                    ));
+                }
+                models = regress_harness::jit_validate::normalize_model_list(&models);
+                if models.is_empty() {
+                    bail!("jit validate-perf: no models (pass --models, or --default-correctness-models)");
+                }
 
                 let spec = regress_harness::jit_validate::RunSpec {
                     repo_root: repo_root.clone(),
@@ -527,6 +600,8 @@ fn run_cli() -> Result<()> {
                     force_flatten_full_cache,
                     worker_per_scenario,
                     child_env,
+                    std_cache_root,
+                    user_cache_root,
                 };
                 let report = regress_harness::jit_validate::runner::ValidatePerfRunner::run(spec)?;
                 println!(
@@ -538,14 +613,26 @@ fn run_cli() -> Result<()> {
                 }
                 Ok(())
             }
-            JitCommands::CompareBaseline { report, baseline } => {
+            JitCommands::CompareBaseline {
+                report,
+                baseline,
+                preset,
+            } => {
                 let repo_root = discover_repo_root()?;
                 let report_path = if report.is_absolute() { report } else { repo_root.join(&report) };
-                let baseline_path = baseline
-                    .map(|p| if p.is_absolute() { p } else { repo_root.join(p) })
-                    .unwrap_or_else(|| {
-                        repo_root.join(regress_harness::jit_validate::baseline::DEFAULT_JIT_COMPARE_BASELINE_REL)
-                    });
+                let baseline_path = match (preset.as_deref(), baseline.as_ref()) {
+                    (Some("large-scale-v2"), None) => repo_root.join(
+                        regress_harness::jit_validate::baseline::LARGE_SCALE_VALIDATE_PERF_V2_BASELINE_REL,
+                    ),
+                    (_, Some(p)) => {
+                        if p.is_absolute() {
+                            p.clone()
+                        } else {
+                            repo_root.join(p)
+                        }
+                    }
+                    (_, None) => repo_root.join(regress_harness::jit_validate::baseline::DEFAULT_JIT_COMPARE_BASELINE_REL),
+                };
 
                 let report_text = std::fs::read_to_string(&report_path)
                     .with_context(|| format!("read report {}", report_path.display()))?;
@@ -563,7 +650,12 @@ fn run_cli() -> Result<()> {
                 }
                 Ok(())
             }
-            JitCommands::UpdateBaseline { report, output, confirm } => {
+            JitCommands::UpdateBaseline {
+                report,
+                output,
+                confirm,
+                preset,
+            } => {
                 if output.exists() && !confirm {
                     bail!("output file exists; use --confirm to overwrite");
                 }
@@ -582,13 +674,188 @@ fn run_cli() -> Result<()> {
                     .ok()
                     .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None });
 
+                let thresholds = if output_path.exists() {
+                    regress_harness::jit_validate::baseline::load_baseline(&output_path)
+                        .with_context(|| {
+                            format!(
+                                "read existing baseline for thresholds {}",
+                                output_path.display()
+                            )
+                        })?
+                        .thresholds
+                } else if preset.as_deref() == Some("large-scale-v2") {
+                    regress_harness::jit_validate::baseline::thresholds_large_scale_v2()
+                } else {
+                    let default_path = repo_root.join(
+                        regress_harness::jit_validate::baseline::DEFAULT_JIT_COMPARE_BASELINE_REL,
+                    );
+                    regress_harness::jit_validate::baseline::load_baseline(&default_path)
+                        .ok()
+                        .map(|b| b.thresholds)
+                        .unwrap_or_default()
+                };
+
                 let bl = regress_harness::jit_validate::baseline::update_baseline_from_report(
                     &report,
-                    regress_harness::jit_validate::baseline::BaselineThresholds::default(),
+                    thresholds,
                     git_head,
                 );
                 regress_harness::jit_validate::baseline::save_baseline(&bl, &output_path)?;
                 println!("baseline saved to {} ({} benchmarks)", output_path.display(), bl.benchmarks.len());
+                Ok(())
+            }
+            JitCommands::RecordCorrectness {
+                exe,
+                lib_path,
+                out_dir,
+                validate_tier,
+                validation_mode,
+                hot_runs,
+                models,
+                default_correctness_models,
+            } => {
+                let repo_root = discover_repo_root()?;
+                let exe_path = exe.unwrap_or_else(|| repo_root.join("target").join("release").join("rustmodlica.exe"));
+                let out_dir_abs = if out_dir.is_absolute() {
+                    out_dir
+                } else {
+                    repo_root.join(&out_dir)
+                };
+                std::fs::create_dir_all(&out_dir_abs)?;
+                let work_dir = repo_root.join("build").join("record_correctness_validate_perf");
+                let _ = std::fs::remove_dir_all(&work_dir);
+                std::fs::create_dir_all(&work_dir)?;
+                let lib_paths: Vec<PathBuf> = lib_path.unwrap_or_else(|| {
+                    regress_harness::jit_validate::default_jit_validate_perf_lib_paths(&repo_root)
+                });
+                let mut models = models;
+                if default_correctness_models {
+                    if !models.is_empty() {
+                        bail!("--default-correctness-models requires empty --models");
+                    }
+                    models = regress_harness::jit_validate::correctness::default_correctness_validate_perf_models();
+                }
+                models = regress_harness::jit_validate::normalize_model_list(&models);
+                if models.is_empty() {
+                    bail!("record-correctness: no models");
+                }
+                let scenarios_vec = regress_harness::jit_validate::runner::default_perf_scenarios(hot_runs);
+                let spec = regress_harness::jit_validate::RunSpec {
+                    repo_root: repo_root.clone(),
+                    exe_path: exe_path.clone(),
+                    lib_paths: lib_paths.clone(),
+                    out_dir: work_dir,
+                    models,
+                    validate: regress_harness::jit_validate::ValidateArgs {
+                        validate_tier: validate_tier.clone(),
+                        validation_mode: validation_mode.clone(),
+                    },
+                    stage_trace: false,
+                    perf_trace: false,
+                    scenarios: scenarios_vec,
+                    scenario_filter: Vec::new(),
+                    incremental: false,
+                    purge_scenario_caches: false,
+                    shared_cache_dir: None,
+                    force_flatten_full_cache: false,
+                    worker_per_scenario: false,
+                    child_env: regress_harness::jit_validate::EnvOverlay::default(),
+                    std_cache_root: None,
+                    user_cache_root: None,
+                };
+                let report = regress_harness::jit_validate::runner::ValidatePerfRunner::run(spec)?;
+                if report.summary.failed > 0 {
+                    bail!(
+                        "record-correctness: validate-perf had {} failure(s); fix before recording baseline",
+                        report.summary.failed
+                    );
+                }
+                let git_head = std::process::Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .current_dir(&repo_root)
+                    .output()
+                    .ok()
+                    .and_then(|o| {
+                        if o.status.success() {
+                            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        } else {
+                            None
+                        }
+                    });
+                let ok_bl = regress_harness::jit_validate::correctness::record_correctness_from_report(
+                    &report,
+                    git_head,
+                    validate_tier,
+                    validation_mode,
+                );
+                regress_harness::jit_validate::correctness::save_correctness_baseline(
+                    &out_dir_abs.join("validate_ok.json"),
+                    &ok_bl,
+                )?;
+                regress_harness::jit_validate::correctness::ensure_negative_fixtures_fail(
+                    &exe_path,
+                    &lib_paths,
+                    &repo_root.join("jit-compiler").join("TestLib"),
+                )?;
+                regress_harness::jit_validate::correctness::write_expect_fail_baseline(
+                    &out_dir_abs.join("expect_fail.json"),
+                )?;
+                println!(
+                    "correctness baseline written to {} (validate_ok.json, expect_fail.json)",
+                    out_dir_abs.display()
+                );
+                Ok(())
+            }
+            JitCommands::CompareCorrectness {
+                baseline_dir,
+                current_report,
+                exe,
+                lib_path,
+            } => {
+                let repo_root = discover_repo_root()?;
+                let base_dir = if baseline_dir.is_absolute() {
+                    baseline_dir
+                } else {
+                    repo_root.join(&baseline_dir)
+                };
+                let report_path = if current_report.is_absolute() {
+                    current_report
+                } else {
+                    repo_root.join(&current_report)
+                };
+                let exe_path = exe.unwrap_or_else(|| repo_root.join("target").join("release").join("rustmodlica.exe"));
+                let lib_paths: Vec<PathBuf> = lib_path.unwrap_or_else(|| {
+                    regress_harness::jit_validate::default_jit_validate_perf_lib_paths(&repo_root)
+                });
+                let report_text = std::fs::read_to_string(&report_path)
+                    .with_context(|| format!("read report {}", report_path.display()))?;
+                let report: regress_harness::jit_validate::artifacts::ValidatePerfReport =
+                    serde_json::from_str(&report_text)?;
+                let baseline_ok = regress_harness::jit_validate::correctness::load_correctness_baseline(
+                    &base_dir.join("validate_ok.json"),
+                )?;
+                let baseline_expect = regress_harness::jit_validate::correctness::load_expect_fail_baseline(
+                    &base_dir.join("expect_fail.json"),
+                )?;
+                let unexpected = regress_harness::jit_validate::correctness::negative_stems_that_pass_validate(
+                    &exe_path,
+                    &lib_paths,
+                    &repo_root.join("jit-compiler").join("TestLib"),
+                )?;
+                let full = regress_harness::jit_validate::correctness::compare_correctness_full(
+                    &baseline_ok,
+                    &report,
+                    &baseline_expect,
+                    &unexpected,
+                );
+                println!("{}", serde_json::to_string_pretty(&full)?);
+                use regress_harness::jit_validate::correctness::CorrectnessVerdict as Cv;
+                if full.overall_verdict == Cv::Warn {
+                    eprintln!("[compare-correctness] WARN: {}", full.validate_perf.summary);
+                }
+                if full.overall_verdict == Cv::Fail {
+                    bail!("compare-correctness failed");
+                }
                 Ok(())
             }
         },

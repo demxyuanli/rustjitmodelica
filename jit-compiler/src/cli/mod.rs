@@ -4,6 +4,7 @@ pub(crate) type RunError = error::AppError;
 
 mod args;
 mod cache_invalidate;
+mod cache_ops;
 mod cache_stats;
 mod event_scan;
 mod perf_json;

@@ -1,9 +1,9 @@
 use super::*;
 
 pub(super) struct EventDetection {
-    root_triggered: bool,
-    event_found: bool,
-    min_alpha: f64,
+    pub(super) root_triggered: bool,
+    pub(super) event_found: bool,
+    pub(super) min_alpha: f64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -59,7 +59,7 @@ pub(super) unsafe fn handle_root_triggered_event(
         if t_force <= *time + min_step {
             t_force = (*time + min_step).min(t_end);
         }
-        force_advance_reinit(
+        super::force_advance_reinit(
             kind,
             mem,
             y,
@@ -143,7 +143,7 @@ pub(super) unsafe fn handle_crossing_refine_event(
         if t_force <= *time + min_step {
             t_force = (*time + min_step).min(t_end);
         }
-        force_advance_reinit(
+        super::force_advance_reinit(
             kind,
             mem,
             y,
@@ -184,7 +184,7 @@ pub(super) unsafe fn handle_crossing_refine_event(
         return Err("SUNDIALS returned null state vector pointer before refine".to_string());
     }
     ptr::copy(states.as_ptr(), y_ptr, states.len());
-    refine_event_step(
+    super::refine_event_step(
         kind,
         mem,
         y,
@@ -363,4 +363,3 @@ pub(super) unsafe fn post_step_evaluate_and_detect_events(
         min_alpha,
     })
 }
-

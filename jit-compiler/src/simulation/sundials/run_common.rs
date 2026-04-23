@@ -4,13 +4,14 @@ mod drive_loop;
 
 use drive_loop::drive_print_loop;
 
-enum SundialsKind {
+#[derive(Clone, Copy)]
+pub(crate) enum SundialsKind {
     Cvode,
     Ida,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_sundials_common(
+pub(crate) fn run_sundials_common(
     kind: SundialsKind,
     calc_derivs: CalcDerivsFunc,
     when_count: usize,

@@ -250,6 +250,64 @@ pub fn flatten_cache_dir() -> Option<PathBuf> {
     }
 }
 
+fn env_path_or_disabled(var: &str, default_if_unset: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
+    match std::env::var(var) {
+        Ok(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                default_if_unset()
+            } else if t == "0"
+                || t.eq_ignore_ascii_case("false")
+                || t.eq_ignore_ascii_case("no")
+                || t.eq_ignore_ascii_case("none")
+            {
+                None
+            } else {
+                Some(PathBuf::from(t))
+            }
+        }
+        Err(_) => default_if_unset(),
+    }
+}
+
+fn default_std_cache_root() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .map(|p| PathBuf::from(p).join("rustmodlica").join("std-cache"))
+}
+
+fn default_user_cache_root() -> Option<PathBuf> {
+    std::env::var("APPDATA")
+        .ok()
+        .map(|p| PathBuf::from(p).join("rustmodlica").join("user-cache"))
+}
+
+/// Global standard-library tier cache root (L0 SQLite + artifacts). Override with `RUSTMODLICA_STD_CACHE_ROOT`.
+pub fn std_cache_root() -> Option<PathBuf> {
+    env_path_or_disabled("RUSTMODLICA_STD_CACHE_ROOT", default_std_cache_root)
+}
+
+/// Shared user-extension tier cache root (L1). Override with `RUSTMODLICA_USER_CACHE_ROOT`.
+pub fn user_cache_root() -> Option<PathBuf> {
+    env_path_or_disabled("RUSTMODLICA_USER_CACHE_ROOT", default_user_cache_root)
+}
+
+/// All configured on-disk cache roots (project, user extension, global std) for purge / invalidation.
+pub fn all_disk_cache_roots() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    let mut add = |p: Option<PathBuf>| {
+        if let Some(p) = p {
+            if !v.iter().any(|x| x == &p) {
+                v.push(p);
+            }
+        }
+    };
+    add(flatten_cache_dir());
+    add(user_cache_root());
+    add(std_cache_root());
+    v
+}
+
 const IR_SCHEMA_EPOCH_STAMP: &str = "ir_schema_epoch.txt";
 
 fn clear_flatten_mem_caches_for_disk_purge() {

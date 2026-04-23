@@ -1,5 +1,5 @@
 use crate::cache::cache_key::{CacheKeyV2, CacheStage, CompileFlagsKey};
-use crate::cache::cache_scope::{classify_model_scope, CacheScope};
+use crate::cache::cache_scope::{classify_model_scope_with_heuristics, CacheScope};
 use crate::cache::closure_hash;
 use crate::flatten::flat_cache_v1::DepHashEntry;
 use crate::flatten::ArraySizePolicy;
@@ -31,10 +31,10 @@ pub fn flatten_array_sizes_cache_key(
     warnings_level: &str,
 ) -> String {
     let source_path = loader.get_path_for_model(model_name);
-    let scope = source_path
-        .as_deref()
-        .map(classify_model_scope)
-        .unwrap_or(CacheScope::Project);
+    let scope = classify_model_scope_with_heuristics(
+        source_path.as_deref(),
+        Some(model_name),
+    );
     let mut root_hash = String::new();
     if let Some(p) = source_path {
         if let Some(h) = closure_hash::unified_file_hash(&p) {
@@ -48,6 +48,9 @@ pub fn flatten_array_sizes_cache_key(
     };
     flags.warnings_level = warnings_level.to_string();
     flags.compile_stop = "flatten".to_string();
+    if crate::cache::msl_pack::context::is_active() && model_name.starts_with("Modelica.") {
+        flags.target_platform = "msl-pack".to_string();
+    }
     if let Some(jp) = array_sizes_json {
         if let Some(h) = closure_hash::unified_file_hash(jp) {
             root_hash.push_str(h.as_str());
@@ -110,10 +113,10 @@ pub fn flatten_full_cache_key_with_deps(
     loaded_paths: Option<&[PathBuf]>,
 ) -> String {
     let source_path = loader.get_path_for_model(model_name);
-    let scope = source_path
-        .as_deref()
-        .map(classify_model_scope)
-        .unwrap_or(CacheScope::Project);
+    let scope = classify_model_scope_with_heuristics(
+        source_path.as_deref(),
+        Some(model_name),
+    );
     let mut root_hash = String::new();
     if let Some(p) = source_path {
         if let Some(h) = closure_hash::unified_file_hash(&p) {
@@ -135,32 +138,31 @@ pub fn flatten_full_cache_key_with_deps(
         })
         .unwrap_or(true); // Enabled by default
 
+    // Only fingerprint sources actually loaded for this compile (not every file under lib dirs).
+    // Avoids invalidating all flat_full keys when unrelated .mo mtimes change under MSL trees.
     let libs_fingerprint = if libs_epoch_enabled {
-        // Use loaded paths if available (after compilation), otherwise library directories (sorted for stable keys).
-        let paths: Vec<PathBuf> = loaded_paths
-            .map(|p| p.to_vec())
-            .unwrap_or_else(|| {
-                let mut v = loader.library_paths.clone();
-                v.sort_by_key(|p| p.to_string_lossy().to_string());
-                v.dedup();
-                v
-            });
-        let mut lib_dirs = loader.library_paths.clone();
-        lib_dirs.sort_by_key(|p| p.to_string_lossy().to_string());
-        lib_dirs.dedup();
-        crate::cache::lib_epoch::DepClosureFingerprint::compute(&paths, &lib_dirs)
-    } else {
-        // Fallback: empty fingerprint
-        crate::cache::lib_epoch::DepClosureFingerprint {
-            libs_epoch: String::new(),
-            deps_hash: String::new(),
-            deps_count: 0,
+        if let Some(paths) = loaded_paths {
+            let mut parts: Vec<String> = paths
+                .iter()
+                .filter_map(|p| closure_hash::unified_file_hash(p))
+                .collect();
+            parts.sort();
+            parts.concat()
+        } else {
+            String::new()
         }
+    } else {
+        String::new()
     };
 
-    // Include libs fingerprint in root hash
-    root_hash.push_str(&libs_fingerprint.combined_hash());
+    root_hash.push_str(&libs_fingerprint);
 
+    let target_platform =
+        if crate::cache::msl_pack::context::is_active() && model_name.starts_with("Modelica.") {
+            "msl-pack".to_string()
+        } else {
+            format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+        };
     let flags = CompileFlagsKey {
         validation_mode: format!("{validation_mode:?}"),
         compile_stop: compile_stop.to_string(),
@@ -170,7 +172,7 @@ pub fn flatten_full_cache_key_with_deps(
             ArraySizePolicy::Strict => 1,
         },
         warnings_level: warnings_level.to_string(),
-        target_platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        target_platform,
     };
     CacheKeyV2::builder(CacheStage::FlatFull, scope, model_name)
         .libs_from_path_bufs(loader.library_paths.as_slice())

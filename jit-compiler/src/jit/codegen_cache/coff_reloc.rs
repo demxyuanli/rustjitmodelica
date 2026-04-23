@@ -5,25 +5,68 @@ use std::collections::HashMap;
 use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget, SymbolSection};
 
 use super::exec_buffer::ExecCodeBuffer;
+use super::reloc_trace;
+
+/// Sections omitted from the in-memory image for both **disk** and **AOT** COFF loads.
+///
+/// Cranelift emits unwind/metadata sections (`.pdata` / `.xdata`) that are not required to
+/// execute `calc_derivs` from an anonymous RX mapping. More importantly, **`load_aot_blob`
+/// and `load_coff_object` must use the same inclusion rules** so the same on-disk object
+/// bytes map to the **same** virtual layout whether the loader is the tiered AOT path or the
+/// `jit-codegen` disk cache path. Previously `load_coff_object` kept `.pdata` / `.xdata` while
+/// `load_aot_blob` dropped them, which could make one path accept a blob and produce a
+/// different `base_addr` / relocation outcome than the other — a prime suspect for intermittent
+/// warm-cache access violations when the artifact tier flips between runs.
+fn include_section_in_image(section_name: &str) -> bool {
+    if section_name.starts_with(".debug") {
+        return false;
+    }
+    if section_name.starts_with(".pdata") {
+        return false;
+    }
+    if section_name.starts_with(".xdata") {
+        return false;
+    }
+    true
+}
 
 pub(crate) fn load_coff_object_exec_windows(
     raw: &[u8],
     runtime_symbols: &HashMap<String, *const u8>,
+    trace_ctx: &str,
 ) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
-    let obj = object::File::parse(raw).ok()?;
+    if reloc_trace::trace_basic() {
+        reloc_trace::trace_line(format_args!(
+            "{} load_coff_object raw_len={} runtime_syms={}",
+            trace_ctx,
+            raw.len(),
+            runtime_symbols.len()
+        ));
+    }
+    let obj = match object::File::parse(raw) {
+        Ok(o) => o,
+        Err(e) => {
+            if reloc_trace::trace_basic() {
+                reloc_trace::trace_line(format_args!("{} COFF parse failed: {e}", trace_ctx));
+            }
+            return None;
+        }
+    };
     let mut layouts: HashMap<object::SectionIndex, (usize, usize)> = HashMap::new();
     let mut total_len = 0usize;
 
     let mut import_slots: Vec<Box<usize>> = Vec::new();
+    let mut section_kept = 0usize;
     for section in obj.sections() {
         let size = usize::try_from(section.size()).ok()?;
         if size == 0 {
             continue;
         }
         let name = section.name().ok().unwrap_or("");
-        if name.starts_with(".debug") {
+        if !include_section_in_image(name) {
             continue;
         }
+        section_kept += 1;
         let align = usize::try_from(section.align()).ok()?.max(1);
         total_len = align_up(total_len, align);
         layouts.insert(section.index(), (total_len, size));
@@ -31,6 +74,9 @@ pub(crate) fn load_coff_object_exec_windows(
     }
 
     if total_len == 0 {
+        if reloc_trace::trace_basic() {
+            reloc_trace::trace_line(format_args!("{} abort: empty image after section filter", trace_ctx));
+        }
         return None;
     }
 
@@ -51,10 +97,13 @@ pub(crate) fn load_coff_object_exec_windows(
     }
 
     let base_addr = exec.as_ptr() as usize;
+    let mut reloc_total = 0usize;
+    let mut reloc_by_section: HashMap<String, usize> = HashMap::new();
     for section in obj.sections() {
         let Some((base_off, _)) = layouts.get(&section.index()).copied() else {
             continue;
         };
+        let sec_name = section.name().ok().unwrap_or("").to_string();
         for (rel_off, reloc) in section.relocations() {
             let place_off = base_off.saturating_add(usize::try_from(rel_off).ok()?);
             let target_addr = match reloc.target() {
@@ -84,13 +133,42 @@ pub(crate) fn load_coff_object_exec_windows(
                 reloc.size(),
                 reloc.addend(),
             )?;
+            reloc_total += 1;
+            if reloc_trace::trace_sections() {
+                *reloc_by_section.entry(sec_name.clone()).or_insert(0) += 1;
+            }
         }
     }
 
     let sym = obj.symbol_by_name("calc_derivs")?;
     let func_offset = symbol_runtime_offset_windows(&sym, &layouts)?;
     if !exec.make_rx() {
+        if reloc_trace::trace_basic() {
+            reloc_trace::trace_line(format_args!(
+                "{} VirtualProtect RX failed func_offset=0x{:x}",
+                trace_ctx, func_offset
+            ));
+        }
         return None;
+    }
+    if reloc_trace::trace_basic() {
+        reloc_trace::trace_line(format_args!(
+            "{} ok sections={} image_len={} relocs={} import_slots={} func_off=0x{:x} base=0x{:x}",
+            trace_ctx,
+            section_kept,
+            total_len,
+            reloc_total,
+            import_slots.len(),
+            func_offset,
+            base_addr
+        ));
+    }
+    if reloc_trace::trace_sections() && !reloc_by_section.is_empty() {
+        let mut pairs: Vec<_> = reloc_by_section.into_iter().collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        for (n, c) in pairs {
+            reloc_trace::trace_line(format_args!("{}   reloc section {:?} count={}", trace_ctx, n, c));
+        }
     }
     Some((exec, func_offset, import_slots))
 }
@@ -308,20 +386,38 @@ pub(crate) fn load_aot_blob_exec_windows(
     raw: &[u8],
     import_symbols: &[String],
     runtime_symbols: &HashMap<String, *const u8>,
+    trace_ctx: &str,
 ) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
     if raw.is_empty() {
         return None;
     }
 
+    if reloc_trace::trace_basic() {
+        reloc_trace::trace_line(format_args!(
+            "{} load_aot_blob raw_len={} import_syms={} runtime_syms={}",
+            trace_ctx,
+            raw.len(),
+            import_symbols.len(),
+            runtime_symbols.len()
+        ));
+    }
+
     let obj = match object::File::parse(raw) {
         Ok(o) => o,
-        Err(_) => {
-            return load_raw_blob_fallback(raw);
+        Err(e) => {
+            if reloc_trace::trace_basic() {
+                reloc_trace::trace_line(format_args!(
+                    "{} COFF parse failed ({e}); trying raw blob fallback",
+                    trace_ctx
+                ));
+            }
+            return load_raw_blob_fallback(raw, trace_ctx);
         }
     };
 
     let mut layouts: HashMap<object::SectionIndex, (usize, usize)> = HashMap::new();
     let mut total_len = 0usize;
+    let mut section_kept = 0usize;
 
     for section in obj.sections() {
         let size = usize::try_from(section.size()).ok()?;
@@ -329,9 +425,10 @@ pub(crate) fn load_aot_blob_exec_windows(
             continue;
         }
         let name = section.name().ok().unwrap_or("");
-        if name.starts_with(".debug") || name.starts_with(".pdata") || name.starts_with(".xdata") {
+        if !include_section_in_image(name) {
             continue;
         }
+        section_kept += 1;
         let alignment = usize::try_from(section.align()).ok()?.max(1);
         total_len = align_up(total_len, alignment);
         layouts.insert(section.index(), (total_len, size));
@@ -339,7 +436,13 @@ pub(crate) fn load_aot_blob_exec_windows(
     }
 
     if total_len == 0 {
-        return load_raw_blob_fallback(raw);
+        if reloc_trace::trace_basic() {
+            reloc_trace::trace_line(format_args!(
+                "{} empty image after section filter; raw fallback",
+                trace_ctx
+            ));
+        }
+        return load_raw_blob_fallback(raw, trace_ctx);
     }
 
     let exec = ExecCodeBuffer::alloc_rw(total_len)?;
@@ -360,6 +463,8 @@ pub(crate) fn load_aot_blob_exec_windows(
 
     let mut import_slots: Vec<Box<usize>> = Vec::new();
     let mut merged_symbols = runtime_symbols.clone();
+    let mut prefetch_ok = 0usize;
+    let mut prefetch_miss = 0usize;
     for sym_name in import_symbols {
         if !merged_symbols.contains_key(sym_name) {
             if let Some(addr) = resolve_external_symbol_windows(
@@ -368,15 +473,36 @@ pub(crate) fn load_aot_blob_exec_windows(
                 &mut import_slots,
             ) {
                 merged_symbols.insert(sym_name.clone(), addr as *const u8);
+                prefetch_ok += 1;
+            } else {
+                prefetch_miss += 1;
+                if reloc_trace::trace_basic() {
+                    reloc_trace::trace_line(format_args!(
+                        "{} prefetch miss for import symbol {:?}",
+                        trace_ctx, sym_name
+                    ));
+                }
             }
         }
     }
+    if reloc_trace::trace_basic() {
+        reloc_trace::trace_line(format_args!(
+            "{} import prefetch ok={} miss={} merged_syms={}",
+            trace_ctx,
+            prefetch_ok,
+            prefetch_miss,
+            merged_symbols.len()
+        ));
+    }
 
     let base_addr = exec.as_ptr() as usize;
+    let mut reloc_total = 0usize;
+    let mut reloc_by_section: HashMap<String, usize> = HashMap::new();
     for section in obj.sections() {
         let Some((base_off, _)) = layouts.get(&section.index()).copied() else {
             continue;
         };
+        let sec_name = section.name().ok().unwrap_or("").to_string();
         for (rel_off, reloc) in section.relocations() {
             let place_off = base_off.saturating_add(usize::try_from(rel_off).ok()?);
             let target_addr = match reloc.target() {
@@ -404,26 +530,86 @@ pub(crate) fn load_aot_blob_exec_windows(
                 reloc.size(),
                 reloc.addend(),
             )?;
+            reloc_total += 1;
+            if reloc_trace::trace_sections() {
+                *reloc_by_section.entry(sec_name.clone()).or_insert(0) += 1;
+            }
         }
     }
 
     let sym = obj.symbol_by_name("calc_derivs")?;
     let func_offset = symbol_runtime_offset_windows(&sym, &layouts)?;
     if !exec.make_rx() {
+        if reloc_trace::trace_basic() {
+            reloc_trace::trace_line(format_args!(
+                "{} VirtualProtect RX failed func_offset=0x{:x}",
+                trace_ctx, func_offset
+            ));
+        }
         return None;
+    }
+    if reloc_trace::trace_basic() {
+        reloc_trace::trace_line(format_args!(
+            "{} ok sections={} image_len={} relocs={} import_slots={} func_off=0x{:x} base=0x{:x}",
+            trace_ctx,
+            section_kept,
+            total_len,
+            reloc_total,
+            import_slots.len(),
+            func_offset,
+            base_addr
+        ));
+        let show = import_slots.len().min(16);
+        for (i, slot) in import_slots.iter().take(show).enumerate() {
+            reloc_trace::trace_line(format_args!(
+                "{}   import_slot[{}] *slot={:p} value=0x{:x}",
+                trace_ctx,
+                i,
+                slot.as_ref() as *const usize,
+                **slot
+            ));
+        }
+        if import_slots.len() > show {
+            reloc_trace::trace_line(format_args!(
+                "{}   ... {} more import_slots omitted (trace shows first {})",
+                trace_ctx,
+                import_slots.len() - show,
+                show
+            ));
+        }
+    }
+    if reloc_trace::trace_sections() && !reloc_by_section.is_empty() {
+        let mut pairs: Vec<_> = reloc_by_section.into_iter().collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        for (n, c) in pairs {
+            reloc_trace::trace_line(format_args!("{}   reloc section {:?} count={}", trace_ctx, n, c));
+        }
     }
     Some((exec, func_offset, import_slots))
 }
 
-fn load_raw_blob_fallback(raw: &[u8]) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
+fn load_raw_blob_fallback(
+    raw: &[u8],
+    trace_ctx: &str,
+) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
     if raw.is_empty() {
         return None;
+    }
+    if reloc_trace::trace_basic() {
+        reloc_trace::trace_line(format_args!(
+            "{} raw_fallback len={} (no COFF reloc; func_off=0)",
+            trace_ctx,
+            raw.len()
+        ));
     }
     let exec = ExecCodeBuffer::alloc_rw(raw.len())?;
     unsafe {
         std::ptr::copy_nonoverlapping(raw.as_ptr(), exec.as_mut_ptr(), raw.len());
     }
     if !exec.make_rx() {
+        if reloc_trace::trace_basic() {
+            reloc_trace::trace_line(format_args!("{} raw_fallback VirtualProtect failed", trace_ctx));
+        }
         return None;
     }
     Some((exec, 0, Vec::new()))

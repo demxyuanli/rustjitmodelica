@@ -42,6 +42,10 @@ interface SelectedComponent {
   libraryId?: string;
   params?: ParamValue[];
   placement?: PlacementData;
+  replaceable?: boolean;
+  constrainedbyType?: string;
+  condition?: string;
+  visible?: boolean;
 }
 
 function groupKey(tab?: string, group?: string) {
@@ -212,6 +216,8 @@ interface ModelicaPropertyPanelProps {
   onDeleteGraphic: (path: number[]) => void;
   onUpdateParam: (name: string, value: string) => void;
   onUpdatePlacement: (patch: { x?: number; y?: number; rotation?: number }) => void;
+  onUpdateDeclaredType?: (typeName: string) => void;
+  onUpdateComponentFlags?: (patch: { condition?: string | null; visible?: boolean | null }) => void;
   source?: string;
   modelName?: string;
   onOpenDependencyGraphSettings?: () => void;
@@ -879,12 +885,17 @@ export function ModelicaPropertyPanel({
   onDeleteGraphic,
   onUpdateParam,
   onUpdatePlacement,
+  onUpdateDeclaredType,
+  onUpdateComponentFlags,
   source,
   modelName,
   onOpenDependencyGraphSettings,
   dependencyGraphBehavior,
 }: ModelicaPropertyPanelProps) {
   const [typeInfo, setTypeInfo] = useState<ComponentTypeInfo | null>(null);
+  const [redeclareDraft, setRedeclareDraft] = useState("");
+  const [conditionDraft, setConditionDraft] = useState("");
+  const [visibleDraft, setVisibleDraft] = useState(true);
   const [showDepGraph, setShowDepGraph] = useState(false);
   const [depGraphModal, setDepGraphModal] = useState(false);
   const [depPaperHandle, setDepPaperHandle] = useState<JointPaperHandle | null>(null);
@@ -897,6 +908,18 @@ export function ModelicaPropertyPanel({
     setShowDepGraph(false);
     setDepPaperHandle(null);
   }, [selectedComponent?.name]);
+
+  useEffect(() => {
+    if (!selectedComponent) {
+      setRedeclareDraft("");
+      setConditionDraft("");
+      setVisibleDraft(true);
+      return;
+    }
+    setRedeclareDraft(selectedComponent.typeName);
+    setConditionDraft(selectedComponent.condition ?? "");
+    setVisibleDraft(selectedComponent.visible !== false);
+  }, [selectedComponent]);
 
   useEffect(() => {
     if (!projectDir || !selectedComponent?.typeName) {
@@ -947,9 +970,16 @@ export function ModelicaPropertyPanel({
   const currentGraphicFields =
     currentGraphic && editPath ? graphicFields(currentGraphic, (next) => onUpdateGraphic(editPath, next)) : [];
   const showGraphicLibrary = presentation === "sidebar";
-  const showComponentSection = Boolean(selectedComponent) && (mode === "icon" || groupedParams.length > 0);
+  const showComponentSection =
+    Boolean(selectedComponent) &&
+    (mode === "icon" || groupedParams.length > 0 || (mode === "diagram" && Boolean(selectedComponent)));
   const showGraphicsSection = mode === "icon" || currentGraphic != null || presentation === "sidebar";
-  const hasVisibleDiagramDetails = showComponentSection || currentGraphic != null;
+  const showDiagramAnnotSection =
+    mode === "diagram" &&
+    Boolean(selectedComponent) &&
+    Boolean(onUpdateDeclaredType || onUpdateComponentFlags);
+  const hasVisibleDiagramDetails =
+    showComponentSection || currentGraphic != null || showDiagramAnnotSection;
   const containerClass =
     presentation === "floating"
       ? mode === "diagram"
@@ -1021,6 +1051,63 @@ export function ModelicaPropertyPanel({
                 </div>
               </div>
             ))}
+            {mode === "diagram" && selectedComponent.replaceable && onUpdateDeclaredType && (
+              <div className="space-y-2 border border-[var(--border)] rounded p-2">
+                <div className="text-[var(--text-muted)]">{t("diagramRedeclareType")}</div>
+                {selectedComponent.constrainedbyType ?
+                  <div className="text-[10px] text-[var(--text-muted)]">
+                    {t("diagramConstrainedBy")}: {selectedComponent.constrainedbyType}
+                  </div>
+                : null}
+                <input
+                  type="text"
+                  value={redeclareDraft}
+                  onChange={(e) => setRedeclareDraft(e.target.value)}
+                  className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
+                />
+                <button
+                  type="button"
+                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] py-1 hover:bg-white/10"
+                  onClick={() => onUpdateDeclaredType(redeclareDraft.trim())}
+                >
+                  {t("diagramApplyRedeclare")}
+                </button>
+              </div>
+            )}
+            {mode === "diagram" && onUpdateComponentFlags && (
+              <div className="space-y-2 border border-[var(--border)] rounded p-2">
+                <div className="text-[var(--text-muted)]">{t("diagramAnnotationFlags")}</div>
+                <label className="block">
+                  <div className="mb-1 text-[var(--text-muted)]">{t("diagramConditionExpr")}</div>
+                  <input
+                    type="text"
+                    value={conditionDraft}
+                    onChange={(e) => setConditionDraft(e.target.value)}
+                    className="w-full rounded bg-[var(--surface)] border border-[var(--border)] px-2 py-1"
+                  />
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={visibleDraft}
+                    onChange={(e) => setVisibleDraft(e.target.checked)}
+                  />
+                  <span>{t("diagramVisibleInDiagram")}</span>
+                </label>
+                <button
+                  type="button"
+                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] py-1 hover:bg-white/10"
+                  onClick={() =>
+                    onUpdateComponentFlags({
+                      condition: conditionDraft.trim() || null,
+                      visible: visibleDraft,
+                    })
+                  }
+                >
+                  {t("diagramApplyFlags")}
+                </button>
+              </div>
+            )}
           </section>
         )}
 

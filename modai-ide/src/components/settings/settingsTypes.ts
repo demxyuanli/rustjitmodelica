@@ -38,7 +38,7 @@ export interface AppSettingsForm {
   storage?: { indexPathPolicy?: string; allowProjectWrites?: boolean };
   resources?: { librarySearchPaths?: string[]; packageCacheDir?: string };
   documentation?: { helpBaseUrl?: string; showWelcomeOnFirstLaunch?: boolean };
-  extensions?: { pluginDir?: string; modelicaStdlibPath?: string };
+  extensions?: { pluginDir?: string; modelicaStdlibPath?: string; mslPackManifestUrl?: string };
   indexCache?: IndexCacheSettingsForm;
   indexing?: IndexingSettingsForm;
   dependencyGraph?: DependencyGraphSettingsForm;

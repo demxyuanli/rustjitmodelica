@@ -1,7 +1,7 @@
 # Compare two jit validate-perf output directories (report.json + perf_*.json).
 #
 # Interpretation: baseline and compare use separate out_dir trees; each has its own
-# cache_cold_* / cache_hot_* SQLite + SHM state. Scenario hot_nsA uses CreateIfMissing,
+# cache_* SQLite + SHM state. Scenario devloop_multi_model uses PreserveBetweenScenarios,
 # so an L2 flat_full hit in baseline may be leftover from an earlier run into that folder.
 # Large d_flat_us rows usually pair with cache_l2_hits=0 vs 1 (miss vs hit), not codegen regressions.
 # For fair A/B: run both benches with the same flags and add

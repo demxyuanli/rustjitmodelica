@@ -719,7 +719,7 @@ function renderGraphicItem(
         const y2 = cy + ry * Math.sin(svgEndRad);
 
         const largeArc = Math.abs(endRad - startRad) > Math.PI ? 1 : 0;
-        const sweep = (endRad > startAngle) ? 0 : 1; // SVG Y 轴翻转
+        const sweep = svgEndRad > svgStartRad ? 1 : 0;
 
         // 扇形路径：从中心到起点，沿弧到终点，回到中心
         const d = `M ${cx} ${cy} L ${x1} ${y1} A ${rx} ${ry} 0 ${largeArc} ${sweep} ${x2} ${y2} Z`;

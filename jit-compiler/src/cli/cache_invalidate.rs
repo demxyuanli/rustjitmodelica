@@ -1,4 +1,5 @@
 use super::RunError;
+use rustmodlica::cache::cache_scope::CacheScope;
 use rustmodlica::cache::cache_selective_invalidate;
 use rustmodlica::cache::ir_epoch::CacheStage;
 
@@ -36,8 +37,15 @@ pub(crate) fn run_cache_invalidate(args: &[String]) -> Result<(), RunError> {
             let stage = resolve_stage_tag(&tag).ok_or_else(|| {
                 RunError::Message(format!("unknown cache stage tag: {tag}"))
             })?;
-            let n = cache_selective_invalidate::soft_invalidate_stage(dir.as_path(), stage)
-                .map_err(|e| RunError::Message(e))?;
+            let n = cache_selective_invalidate::soft_invalidate_stage_all_roots(
+                stage,
+                &[
+                    CacheScope::Project,
+                    CacheScope::UserExt,
+                    CacheScope::GlobalStd,
+                ],
+            )
+            .map_err(|e| RunError::Message(e))?;
             eprintln!("[cache-invalidate] soft stage={:?} deleted_rows={}", stage, n);
         }
         "hard" => {

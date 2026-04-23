@@ -110,6 +110,12 @@ impl CacheKeyV2Builder {
     }
 
     pub fn libs_from_path_bufs(mut self, libs: &[std::path::PathBuf]) -> Self {
+        if self.key.model_name.starts_with("Modelica.") {
+            if let Some(d) = crate::cache::msl_pack::context::pack_libs_closure_digest() {
+                self.key.libs_closure_hash = d;
+                return self;
+            }
+        }
         let normalized: Vec<String> = libs
             .iter()
             .map(|p| normalize_path_for_key(p.as_path()))

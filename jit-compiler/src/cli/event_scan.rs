@@ -197,7 +197,7 @@ fn scan_metrics_from_csv(csv_content: &str) -> ScanMetrics {
     }
 }
 
-fn run_collect_with_solver(artifacts: &Artifacts, solver: &str) -> Result<ScanMetrics, RunError> {
+fn run_collect_with_solver(artifacts: &Artifacts, solver: &str, model_name: &str, lib_paths: Vec<std::path::PathBuf>) -> Result<ScanMetrics, RunError> {
     let temp_name = format!(
         "rustmodlica_event_scan_{}_{}_{}.csv",
         solver,
@@ -236,6 +236,8 @@ fn run_collect_with_solver(artifacts: &Artifacts, solver: &str) -> Result<ScanMe
         &artifacts.clock_partition_schedule,
         None,
         None,
+        model_name,
+        lib_paths,
     )?;
     let csv = std::fs::read_to_string(&temp_path)
         .map_err(|e| format!("failed to read scan csv '{}': {}", temp_path_str, e))?;
@@ -462,7 +464,7 @@ pub(crate) fn run_event_scan(args: &[String]) -> Result<(), RunError> {
                 }
             };
             let (supported_solvers, unsupported_reason) = detect_supported_solvers(&artifacts);
-            let baseline_rk4 = match run_collect_with_solver(&artifacts, "rk4") {
+            let baseline_rk4 = match run_collect_with_solver(&artifacts, "rk4", model_name, lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect()) {
                 Ok(v) => v,
                 Err(e) => {
                     models.push(EventScanModelOutput {
@@ -479,7 +481,7 @@ pub(crate) fn run_event_scan(args: &[String]) -> Result<(), RunError> {
                     continue;
                 }
             };
-            let baseline_rk45 = match run_collect_with_solver(&artifacts, "rk45") {
+            let baseline_rk45 = match run_collect_with_solver(&artifacts, "rk45", model_name, lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect()) {
                 Ok(v) => v,
                 Err(e) => {
                     models.push(EventScanModelOutput {
@@ -523,7 +525,7 @@ pub(crate) fn run_event_scan(args: &[String]) -> Result<(), RunError> {
                     env::set_var("RUSTMODLICA_TAIL_VELOCITY_DEADBAND", tv.to_string());
                     let mut solver_metrics = Vec::new();
                     for solver_name in &candidate_solvers {
-                        match run_collect_with_solver(&artifacts, solver_name) {
+                        match run_collect_with_solver(&artifacts, solver_name, model_name, lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect()) {
                             Ok(m) => solver_metrics.push(SolverScanMetrics {
                                 solver: solver_name.clone(),
                                 metrics: m,

@@ -16,6 +16,28 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use crate::cache::build_id::binary_build_id;
+use crate::cache::cache_scope::CacheScope;
+use crate::flatten::flatten_cache::{flatten_cache_dir, std_cache_root, user_cache_root};
+
+/// Composite fingerprint stamped into [`AotArchiveHeader::compiler_version`]. Format:
+/// `<CARGO_PKG_VERSION>|<binary_build_id>`. The load path rejects archives with any other
+/// string, so rewriting `rustmodlica.exe` invalidates the entire archive (per tier) on the
+/// next process start rather than silently loading native code built by the previous
+/// binary — the classic "warm AOT archive -> STATUS_ACCESS_VIOLATION" trap.
+pub fn aot_archive_compiler_fingerprint() -> String {
+    format!(
+        "{}|{}",
+        crate::cache::ir_epoch::COMPILER_VERSION,
+        binary_build_id()
+    )
+}
+
+const AOT_ARCHIVE_PROJECT: &str = "aot_archive-project.bin";
+const AOT_ARCHIVE_USER: &str = "aot_archive-user.bin";
+const AOT_ARCHIVE_STD: &str = "aot_archive-std.bin";
+const AOT_ARCHIVE_LEGACY: &str = "aot_archive.bin";
+
 /// When `RUSTMODLICA_AOT_NATIVE_LOAD` is `0`, `false`, or `no`, skip loading `calc_derivs` from the
 /// default `aot_archive.bin` under the flatten cache root (artifact fast-path, sim-bundle path,
 /// and full compile). In-process JIT compilation is used instead.
@@ -35,7 +57,10 @@ pub fn aot_default_archive_native_load_enabled() -> bool {
 
 const AOT_ARCHIVE_MAGIC: &[u8; 8] = b"RMJITAOT";
 /// v2: TOC entries include `when_count` / `crossings_count` for AOT native load without JIT.
-const AOT_ARCHIVE_VERSION: u32 = 2;
+/// v3: bumped in sync with `CODEGEN_CACHE_VERSION=5` / tiered lookup fix. Existing archives
+/// produced by older binaries are rejected with "version mismatch" to avoid loading stale
+/// native code that can trigger Windows access violations during simulation.
+const AOT_ARCHIVE_VERSION: u32 = 3;
 
 /// Header at the start of an AOT archive file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,7 +148,7 @@ impl AotArchive {
                 header.target_triple, expected_triple
             ));
         }
-        let expected_compiler = crate::cache::ir_epoch::COMPILER_VERSION;
+        let expected_compiler = aot_archive_compiler_fingerprint();
         if !header.compiler_version.is_empty() && header.compiler_version != expected_compiler {
             return Err(format!(
                 "compiler version mismatch: archive={} host={} (regenerate aot_archive.bin)",
@@ -193,10 +218,135 @@ impl AotArchive {
         })
     }
 
-    /// Default archive path within the cache directory.
+    /// Default archive path within the project flatten cache directory.
     pub fn default_archive_path() -> Option<PathBuf> {
-        crate::flatten::flatten_cache_dir()
-            .map(|root| root.join("aot_archive.bin"))
+        flatten_cache_dir().map(|root| root.join(AOT_ARCHIVE_LEGACY))
+    }
+
+    /// Tier-split archive path for writes and primary reads.
+    pub fn archive_path_for_scope(scope: CacheScope) -> Option<PathBuf> {
+        let base = match scope {
+            CacheScope::GlobalStd => std_cache_root().or_else(flatten_cache_dir)?,
+            CacheScope::UserExt => user_cache_root().or_else(flatten_cache_dir)?,
+            CacheScope::Project => flatten_cache_dir()?,
+        };
+        let name = match scope {
+            CacheScope::GlobalStd => AOT_ARCHIVE_STD,
+            CacheScope::UserExt => AOT_ARCHIVE_USER,
+            CacheScope::Project => AOT_ARCHIVE_PROJECT,
+        };
+        Some(base.join(name))
+    }
+}
+
+fn try_load_archive(path: &Path) -> Option<AotArchive> {
+    if !path.is_file() {
+        return None;
+    }
+    AotArchive::load(path).ok()
+}
+
+/// Loaded tier AOT archives (project, user extension, global std). Lookup follows that order.
+pub struct AotArchiveSet {
+    project: Option<AotArchive>,
+    user: Option<AotArchive>,
+    global_std: Option<AotArchive>,
+}
+
+impl AotArchiveSet {
+    /// Load split archives plus legacy `aot_archive.bin` fallbacks under each tier root.
+    pub fn load_tiered() -> Option<Self> {
+        let project = flatten_cache_dir().and_then(|r| {
+            try_load_archive(&r.join(AOT_ARCHIVE_PROJECT))
+                .or_else(|| try_load_archive(&r.join(AOT_ARCHIVE_LEGACY)))
+        });
+        let user = user_cache_root().and_then(|r| {
+            try_load_archive(&r.join(AOT_ARCHIVE_USER))
+                .or_else(|| try_load_archive(&r.join(AOT_ARCHIVE_LEGACY)))
+        });
+        let global_std = std_cache_root().and_then(|r| {
+            try_load_archive(&r.join(AOT_ARCHIVE_STD))
+                .or_else(|| try_load_archive(&r.join(AOT_ARCHIVE_LEGACY)))
+        });
+        if project.is_none() && user.is_none() && global_std.is_none() {
+            return None;
+        }
+        Some(Self {
+            project,
+            user,
+            global_std,
+        })
+    }
+
+    pub fn lookup_entry(&self, model_name: &str, codegen_key_hash: &str) -> Option<&AotTocEntry> {
+        self.project
+            .as_ref()
+            .and_then(|a| a.lookup_entry(model_name, codegen_key_hash))
+            .or_else(|| {
+                self.user
+                    .as_ref()
+                    .and_then(|a| a.lookup_entry(model_name, codegen_key_hash))
+            })
+            .or_else(|| {
+                self.global_std
+                    .as_ref()
+                    .and_then(|a| a.lookup_entry(model_name, codegen_key_hash))
+            })
+    }
+
+    /// Same as [`Self::lookup_entry`], then read the code slice from the **same** archive that
+    /// matched. [`Self::get_code`] must not be used after a tiered lookup: another tier may map
+    /// the same stable hash to a different model's object, which would load the wrong native code.
+    pub fn lookup_entry_with_blob(
+        &self,
+        model_name: &str,
+        codegen_key_hash: &str,
+    ) -> Option<(&[u8], &AotTocEntry)> {
+        if let Some(a) = &self.project {
+            if let Some(ent) = a.lookup_entry(model_name, codegen_key_hash) {
+                let blob = a.get_code(codegen_key_hash)?;
+                return Some((blob, ent));
+            }
+        }
+        if let Some(a) = &self.user {
+            if let Some(ent) = a.lookup_entry(model_name, codegen_key_hash) {
+                let blob = a.get_code(codegen_key_hash)?;
+                return Some((blob, ent));
+            }
+        }
+        if let Some(a) = &self.global_std {
+            if let Some(ent) = a.lookup_entry(model_name, codegen_key_hash) {
+                let blob = a.get_code(codegen_key_hash)?;
+                return Some((blob, ent));
+            }
+        }
+        None
+    }
+
+    pub fn get_code(&self, codegen_key_hash: &str) -> Option<&[u8]> {
+        self.project
+            .as_ref()
+            .and_then(|a| a.get_code(codegen_key_hash))
+            .or_else(|| self.user.as_ref().and_then(|a| a.get_code(codegen_key_hash)))
+            .or_else(|| {
+                self.global_std
+                    .as_ref()
+                    .and_then(|a| a.get_code(codegen_key_hash))
+            })
+    }
+
+    pub fn model_names(&self) -> Vec<&str> {
+        let mut v = Vec::new();
+        for a in [&self.project, &self.user, &self.global_std] {
+            if let Some(ar) = a {
+                for n in ar.model_names() {
+                    if !v.iter().any(|x| *x == n) {
+                        v.push(n);
+                    }
+                }
+            }
+        }
+        v
     }
 }
 
@@ -256,7 +406,7 @@ impl AotArchiveBuilder {
             entry_count: self.entries.len() as u32,
             toc_size_bytes: toc_bytes.len() as u64,
             code_size_bytes: code_section.len() as u64,
-            compiler_version: crate::cache::ir_epoch::COMPILER_VERSION.to_string(),
+            compiler_version: aot_archive_compiler_fingerprint(),
             target_triple: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
         };
         let header_bytes =
@@ -291,10 +441,23 @@ impl AotArchiveBuilder {
     /// Load the default archive (if it exists), merge into this builder, then
     /// write the combined result back.  New models added via `add_model` before
     /// this call take precedence over entries with the same name in the old archive.
-    pub fn write_merged_to_default(mut self) -> Result<(), String> {
-        let path = AotArchive::default_archive_path()
-            .ok_or_else(|| "no default archive path".to_string())?;
-        if path.exists() {
+    pub fn write_merged_to_default(self) -> Result<(), String> {
+        self.write_merged_for_scope(CacheScope::Project)
+    }
+
+    /// Merge with existing tier archive at [`AotArchive::archive_path_for_scope`], then write.
+    pub fn write_merged_for_scope(mut self, scope: CacheScope) -> Result<(), String> {
+        let path = AotArchive::archive_path_for_scope(scope)
+            .ok_or_else(|| "no archive path for scope".to_string())?;
+        if let Some(dir) = path.parent() {
+            let legacy = dir.join(AOT_ARCHIVE_LEGACY);
+            if legacy.is_file() && legacy != path {
+                if let Ok(old) = AotArchive::load(&legacy) {
+                    self.merge_from_existing(&old);
+                }
+            }
+        }
+        if path.is_file() {
             if let Ok(old) = AotArchive::load(&path) {
                 self.merge_from_existing(&old);
             }
@@ -311,6 +474,55 @@ pub fn try_load_default_archive() -> Option<AotArchive> {
         Err(e) => {
             eprintln!("[aot] skip default archive ({}): {}", path.display(), e);
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archive_rejects_foreign_binary_fingerprint() {
+        let mut builder = AotArchive::new_builder();
+        builder.add_model(
+            "TestModel",
+            "hash-00-ok",
+            vec![0x90u8; 32],
+            vec![],
+            0,
+            0,
+        );
+        let bytes = builder.build().expect("build archive");
+
+        // Round-trip with the current binary fingerprint succeeds.
+        let _ = AotArchive::from_bytes(&bytes).expect("current-binary archive loads");
+
+        // Mutate the header to simulate an archive written by a different binary.
+        let mut tampered = bytes.clone();
+        let header_len_bytes: [u8; 4] = tampered[8..12].try_into().unwrap();
+        let header_len = u32::from_le_bytes(header_len_bytes) as usize;
+        let mut header: AotArchiveHeader =
+            bincode::deserialize(&tampered[12..12 + header_len]).unwrap();
+        header.compiler_version = "0.0.0|bin:deadbeefdeadbeef".to_string();
+        let new_header_bytes = bincode::serialize(&header).unwrap();
+        // Replacing the header bytes is only safe when lengths line up; pad with spaces
+        // in `compiler_version` above isn't needed because `bincode` is length-prefixed per
+        // field and our replacement re-encodes the full header.
+        let mut rebuilt = Vec::new();
+        rebuilt.extend_from_slice(AOT_ARCHIVE_MAGIC);
+        rebuilt.extend_from_slice(&(new_header_bytes.len() as u32).to_le_bytes());
+        rebuilt.extend_from_slice(&new_header_bytes);
+        let toc_end = 12 + header_len;
+        rebuilt.extend_from_slice(&tampered[toc_end..]);
+        tampered = rebuilt;
+
+        match AotArchive::from_bytes(&tampered) {
+            Ok(_) => panic!("foreign compiler_version must be rejected"),
+            Err(e) => assert!(
+                e.contains("compiler version mismatch"),
+                "unexpected error: {e}"
+            ),
         }
     }
 }

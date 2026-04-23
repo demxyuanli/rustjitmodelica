@@ -212,6 +212,7 @@ pub struct TieredScheduler {
     policy: TieringPolicy,
     tiered_func: Arc<TieredFunction>,
     model_name: String,
+    lib_paths: Vec<std::path::PathBuf>,
     step_count: u64,
     profile: Option<ModelProfile>,
     tierup_in_flight: bool,
@@ -220,6 +221,7 @@ pub struct TieredScheduler {
 impl TieredScheduler {
     pub fn new(
         model_name: &str,
+        lib_paths: Vec<std::path::PathBuf>,
         initial_tier: CompileTier,
         func: CalcDerivsFunc,
         policy: TieringPolicy,
@@ -228,6 +230,7 @@ impl TieredScheduler {
             policy,
             tiered_func: Arc::new(TieredFunction::new(initial_tier, func)),
             model_name: model_name.to_string(),
+            lib_paths,
             step_count: 0,
             profile: None,
             tierup_in_flight: false,
@@ -277,6 +280,7 @@ impl TieredScheduler {
         self.tierup_in_flight = true;
         let tf = Arc::clone(&self.tiered_func);
         let model = self.model_name.clone();
+        let lib_paths = self.lib_paths.clone();
         let profile = self.profile.clone();
         let force_skip_cf = self.policy.force_adaptive_skip_const_fold;
         let force_skip_dce = self.policy.force_adaptive_skip_eq_dce;
@@ -310,6 +314,9 @@ impl TieredScheduler {
 
                 let mut compiler = crate::Compiler::new();
                 compiler.options_mut().quiet = true;
+                for p in &lib_paths {
+                    compiler.loader.add_path(p.clone());
+                }
                 if target_tier.enable_speculation() {
                     compiler.options_mut().dual_compile = true;
                 }

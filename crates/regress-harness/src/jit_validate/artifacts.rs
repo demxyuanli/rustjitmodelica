@@ -28,6 +28,10 @@ pub struct RunManifest {
     pub worker_per_scenario: bool,
     #[serde(default)]
     pub child_env: EnvOverlay,
+    #[serde(default)]
+    pub std_cache_root: Option<String>,
+    #[serde(default)]
+    pub user_cache_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -169,6 +173,21 @@ pub struct ModelPerfStats {
     pub salsa_process_db_misses_sum: u64,
     #[serde(default)]
     pub salsa_process_db_evictions_sum: u64,
+    /// Best `flat_full` SQLite hit % for scope L0 across runs (from `compile_perf.cache_scope_stage_*`).
+    #[serde(default)]
+    pub std_flat_full_hit_rate_max: Option<f64>,
+    #[serde(default)]
+    pub user_flat_full_hit_rate_max: Option<f64>,
+    #[serde(default)]
+    pub l2_flat_full_hit_rate_max: Option<f64>,
+    /// Best-run AOT native load proxy: 100 when `aot_native_load_status` indicates loaded, else 0.
+    #[serde(default)]
+    pub aot_hit_rate_max: Option<f64>,
+    /// Min observed `flatten_wall_ms + codegen_wall_ms` from `compile_perf` (project-tier work proxy).
+    #[serde(default)]
+    pub project_rebuild_wall_ms_min: Option<u64>,
+    #[serde(default)]
+    pub cache_warm_ratio_max: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

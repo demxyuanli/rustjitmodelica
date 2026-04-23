@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::cache_key::{
-    codegen_cache_enabled, codegen_cache_root, codegen_host_tag, target_isa_id, CodegenCacheEntry,
-    CodegenCacheKey, CODEGEN_CACHE_VERSION,
+    codegen_cache_enabled, codegen_cache_read_dirs_for_scope, codegen_cache_write_dir_for_scope,
+    codegen_host_tag, target_isa_id, CodegenCacheEntry, CodegenCacheKey, CODEGEN_CACHE_VERSION,
 };
+use crate::cache::cache_scope::CacheScope;
 use crate::cache::codegen_cache_index;
 use super::exec_buffer::ExecCodeBuffer;
 
@@ -67,7 +68,6 @@ impl CachedFunction {
 
 /// The codegen cache manager.
 pub struct CodegenCache {
-    root: PathBuf,
     enabled: bool,
 }
 
@@ -75,14 +75,25 @@ impl CodegenCache {
     /// Create a new cache manager.
     pub fn new() -> Self {
         let enabled = codegen_cache_enabled();
-        let root = codegen_cache_root().unwrap_or_else(|| std::env::temp_dir().join("rustmodlica-jit-cache"));
 
         if enabled {
-            let _ = std::fs::create_dir_all(&root);
-            eprintln!("[jit-codegen-cache] enabled, root={}", root.display());
+            if let Some(r) = codegen_cache_write_dir_for_scope(CacheScope::Project) {
+                let _ = std::fs::create_dir_all(&r);
+                eprintln!(
+                    "[jit-codegen-cache] enabled, project tier root={}",
+                    r.display()
+                );
+            } else {
+                let fallback = std::env::temp_dir().join("rustmodlica-jit-cache");
+                let _ = std::fs::create_dir_all(&fallback);
+                eprintln!(
+                    "[jit-codegen-cache] enabled, no project cache dir; fallback={}",
+                    fallback.display()
+                );
+            }
         }
 
-        Self { root, enabled }
+        Self { enabled }
     }
 
     /// Check if cache is enabled.
@@ -90,22 +101,23 @@ impl CodegenCache {
         self.enabled
     }
 
-    fn object_path(&self, key: &CodegenCacheKey) -> PathBuf {
-        self.root.join(format!("{}.bin", key.stable_hash()))
+    fn object_path_in(root: &std::path::Path, key: &CodegenCacheKey) -> PathBuf {
+        root.join(format!("{}.bin", key.stable_hash()))
     }
 
     /// Read raw object/code bytes from the codegen disk cache for this key (if present).
     pub fn try_read_object_bytes(&self, key: &CodegenCacheKey) -> Option<Vec<u8>> {
-        let raw = std::fs::read(self.object_path(key)).ok()?;
-        if raw.is_empty() {
-            None
-        } else {
-            Some(raw)
+        for root in codegen_cache_read_dirs_for_scope(key.cache_scope) {
+            let raw = std::fs::read(Self::object_path_in(&root, key)).ok()?;
+            if !raw.is_empty() {
+                return Some(raw);
+            }
         }
+        None
     }
 
-    fn entry_path(&self, key: &CodegenCacheKey) -> PathBuf {
-        self.root.join(format!("{}.json", key.stable_hash()))
+    fn entry_path_in(root: &std::path::Path, key: &CodegenCacheKey) -> PathBuf {
+        root.join(format!("{}.json", key.stable_hash()))
     }
 
     /// Try to load cached native code for the given model.
@@ -127,79 +139,85 @@ impl CodegenCache {
         runtime_symbols: &HashMap<String, *const u8>,
         runtime_param_values: Option<&HashMap<String, f64>>,
     ) -> Option<CachedFunction> {
-        let object_path = self.object_path(key);
-        let entry_path = self.entry_path(key);
+        for root in codegen_cache_read_dirs_for_scope(key.cache_scope) {
+            let object_path = Self::object_path_in(&root, key);
+            let entry_path = Self::entry_path_in(&root, key);
 
-        let entry_bytes = std::fs::read(&entry_path).ok()?;
-        let entry: CodegenCacheEntry = serde_json::from_slice(&entry_bytes).ok()?;
+            let entry_bytes = std::fs::read(&entry_path).ok()?;
+            let entry: CodegenCacheEntry = serde_json::from_slice(&entry_bytes).ok()?;
 
-        if entry.key.version != CODEGEN_CACHE_VERSION {
-            eprintln!("[jit-codegen-cache] version mismatch, invalidating");
-            let _ = std::fs::remove_file(&object_path);
-            let _ = std::fs::remove_file(&entry_path);
-            return None;
-        }
-
-        if entry.key.target_isa != target_isa_id() {
-            eprintln!("[jit-codegen-cache] target ISA mismatch, invalidating");
-            let _ = std::fs::remove_file(&object_path);
-            let _ = std::fs::remove_file(&entry_path);
-            return None;
-        }
-
-        if entry.key.host_tag != codegen_host_tag() {
-            eprintln!("[jit-codegen-cache] host tag mismatch, invalidating");
-            let _ = std::fs::remove_file(&object_path);
-            let _ = std::fs::remove_file(&entry_path);
-            return None;
-        }
-
-        match const_fold_params_match_detail(&entry, runtime_param_values) {
-            ConstFoldMatchResult::AllMatch => {}
-            ConstFoldMatchResult::ValueOnlyDiff { ref changed } => {
-                eprintln!(
-                    "[jit-codegen-cache] const-fold value-only diff ({}), reusing code",
-                    changed.join(", ")
-                );
-            }
-            ConstFoldMatchResult::StructuralMismatch { ref param } => {
-                eprintln!(
-                    "[jit-codegen-cache] const-fold structural mismatch (param={}), invalidating",
-                    param
-                );
+            if entry.key.version != CODEGEN_CACHE_VERSION {
+                eprintln!("[jit-codegen-cache] version mismatch, invalidating");
                 let _ = std::fs::remove_file(&object_path);
                 let _ = std::fs::remove_file(&entry_path);
-                return None;
+                continue;
             }
-            ConstFoldMatchResult::NoRuntimeMap => {
-                eprintln!("[jit-codegen-cache] no runtime param map but entry has const-fold params, invalidating");
+
+            if entry.key.target_isa != target_isa_id() {
+                eprintln!("[jit-codegen-cache] target ISA mismatch, invalidating");
                 let _ = std::fs::remove_file(&object_path);
                 let _ = std::fs::remove_file(&entry_path);
-                return None;
+                continue;
             }
-        }
 
-        let raw = std::fs::read(&object_path).ok()?;
-        if raw.len() != entry.object_size {
-            eprintln!("[jit-codegen-cache] object size mismatch, invalidating");
-            let _ = std::fs::remove_file(&object_path);
-            let _ = std::fs::remove_file(&entry_path);
-            return None;
-        }
-
-        match entry.artifact_kind.as_str() {
-            "object" => self.load_object_artifact(key, &entry, &raw, runtime_symbols),
-            "raw" => self.load_raw_artifact(key, &entry, &raw),
-            other => {
-                eprintln!(
-                    "[jit-codegen-cache] unknown artifact kind='{}', invalidating",
-                    other
-                );
+            if entry.key.host_tag != codegen_host_tag() {
+                eprintln!("[jit-codegen-cache] host tag mismatch, invalidating");
                 let _ = std::fs::remove_file(&object_path);
                 let _ = std::fs::remove_file(&entry_path);
-                None
+                continue;
+            }
+
+            match const_fold_params_match_detail(&entry, runtime_param_values) {
+                ConstFoldMatchResult::AllMatch => {}
+                ConstFoldMatchResult::ValueOnlyDiff { ref changed } => {
+                    eprintln!(
+                        "[jit-codegen-cache] const-fold value-only diff ({}), reusing code",
+                        changed.join(", ")
+                    );
+                }
+                ConstFoldMatchResult::StructuralMismatch { ref param } => {
+                    eprintln!(
+                        "[jit-codegen-cache] const-fold structural mismatch (param={}), invalidating",
+                        param
+                    );
+                    let _ = std::fs::remove_file(&object_path);
+                    let _ = std::fs::remove_file(&entry_path);
+                    continue;
+                }
+                ConstFoldMatchResult::NoRuntimeMap => {
+                    eprintln!("[jit-codegen-cache] no runtime param map but entry has const-fold params, invalidating");
+                    let _ = std::fs::remove_file(&object_path);
+                    let _ = std::fs::remove_file(&entry_path);
+                    continue;
+                }
+            }
+
+            let raw = std::fs::read(&object_path).ok()?;
+            if raw.len() != entry.object_size {
+                eprintln!("[jit-codegen-cache] object size mismatch, invalidating");
+                let _ = std::fs::remove_file(&object_path);
+                let _ = std::fs::remove_file(&entry_path);
+                continue;
+            }
+
+            let loaded = match entry.artifact_kind.as_str() {
+                "object" => self.load_object_artifact(key, &entry, &raw, runtime_symbols),
+                "raw" => self.load_raw_artifact(key, &entry, &raw),
+                other => {
+                    eprintln!(
+                        "[jit-codegen-cache] unknown artifact kind='{}', invalidating",
+                        other
+                    );
+                    let _ = std::fs::remove_file(&object_path);
+                    let _ = std::fs::remove_file(&entry_path);
+                    None
+                }
+            };
+            if loaded.is_some() {
+                return loaded;
             }
         }
+        None
     }
 
     fn load_raw_artifact(
@@ -274,7 +292,8 @@ impl CodegenCache {
         raw: &[u8],
         runtime_symbols: &HashMap<String, *const u8>,
     ) -> Option<CachedFunction> {
-        let (exec, func_offset, import_slots) = load_coff_object_exec_windows(raw, runtime_symbols)?;
+        let (exec, func_offset, import_slots) =
+            load_coff_object_exec_windows(raw, runtime_symbols, "jit-disk-object")?;
         let func_ptr = unsafe { exec.as_ptr().add(func_offset) };
         let func: crate::jit::types::CalcDerivsFunc = unsafe { std::mem::transmute(func_ptr) };
 
@@ -330,8 +349,12 @@ impl CodegenCache {
             return Ok(());
         }
 
-        let object_path = self.object_path(key);
-        let entry_path = self.entry_path(key);
+        let write_root = codegen_cache_write_dir_for_scope(key.cache_scope)
+            .unwrap_or_else(|| std::env::temp_dir().join("rustmodlica-jit-cache"));
+        std::fs::create_dir_all(&write_root)?;
+
+        let object_path = Self::object_path_in(&write_root, key);
+        let entry_path = Self::entry_path_in(&write_root, key);
 
         std::fs::write(&object_path, code_bytes)?;
 
@@ -352,7 +375,7 @@ impl CodegenCache {
             "[jit-codegen-cache] WRITE model={} size={} bytes",
             key.model_name, code_bytes.len()
         );
-        codegen_cache_index::record_codegen_pair(&self.root, &key.stable_hash());
+        codegen_cache_index::record_codegen_pair(&write_root, &key.stable_hash());
 
         Ok(())
     }
@@ -368,8 +391,11 @@ impl CodegenCache {
         if !self.enabled {
             return Ok(());
         }
-        let object_path = self.object_path(key);
-        let entry_path = self.entry_path(key);
+        let write_root = codegen_cache_write_dir_for_scope(key.cache_scope)
+            .unwrap_or_else(|| std::env::temp_dir().join("rustmodlica-jit-cache"));
+        std::fs::create_dir_all(&write_root)?;
+        let object_path = Self::object_path_in(&write_root, key);
+        let entry_path = Self::entry_path_in(&write_root, key);
         std::fs::write(&object_path, object_bytes)?;
         let entry = CodegenCacheEntry {
             key: key.clone(),
@@ -388,7 +414,7 @@ impl CodegenCache {
             key.model_name,
             object_bytes.len()
         );
-        codegen_cache_index::record_codegen_pair(&self.root, &key.stable_hash());
+        codegen_cache_index::record_codegen_pair(&write_root, &key.stable_hash());
         Ok(())
     }
 
@@ -398,12 +424,16 @@ impl CodegenCache {
         }
 
         let mut count = 0;
-        for entry in std::fs::read_dir(&self.root)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().map(|e| e == "bin" || e == "json").unwrap_or(false) {
-                std::fs::remove_file(&path)?;
-                count += 1;
+        for root in codegen_cache_read_dirs_for_scope(CacheScope::Project) {
+            if let Ok(rd) = std::fs::read_dir(&root) {
+                for entry in rd {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "bin" || e == "json").unwrap_or(false) {
+                        std::fs::remove_file(&path)?;
+                        count += 1;
+                    }
+                }
             }
         }
 
@@ -418,13 +448,24 @@ impl CodegenCache {
             return stats;
         }
 
-        if let Ok(entries) = std::fs::read_dir(&self.root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map(|e| e == "bin").unwrap_or(false) {
-                    stats.object_count += 1;
-                    if let Ok(metadata) = entry.metadata() {
-                        stats.total_bytes += metadata.len() as u64;
+        let mut roots: Vec<PathBuf> = codegen_cache_read_dirs_for_scope(CacheScope::Project);
+        for s in [CacheScope::UserExt, CacheScope::GlobalStd] {
+            if let Some(p) = codegen_cache_write_dir_for_scope(s) {
+                if !roots.iter().any(|x| x == &p) {
+                    roots.push(p);
+                }
+            }
+        }
+
+        for root in roots {
+            if let Ok(entries) = std::fs::read_dir(&root) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "bin").unwrap_or(false) {
+                        stats.object_count += 1;
+                        if let Ok(metadata) = entry.metadata() {
+                            stats.total_bytes += metadata.len() as u64;
+                        }
                     }
                 }
             }

@@ -1,5 +1,7 @@
 //! Executable anonymous RWX/RX buffer for cached JIT bytes.
 
+use super::reloc_trace;
+
 /// RWX anonymous mapping: file-backed `mmap` is not executable on Windows (and often not on Unix).
 pub(crate) struct ExecCodeBuffer {
     ptr: *mut u8,
@@ -26,6 +28,13 @@ impl ExecCodeBuffer {
             };
             if ptr.is_null() {
                 return None;
+            }
+            if reloc_trace::trace_basic() {
+                reloc_trace::trace_line(format_args!(
+                    "exec_buffer VirtualAlloc RW ptr={:p} len={}",
+                    ptr as *const u8,
+                    len
+                ));
             }
             return Some(Self {
                 ptr: ptr as *mut u8,
@@ -73,7 +82,21 @@ impl ExecCodeBuffer {
         {
             use windows_sys::Win32::System::Memory::{VirtualProtect, PAGE_EXECUTE_READ};
             let mut old_protect = 0u32;
-            unsafe { VirtualProtect(self.ptr as *mut _, self.len, PAGE_EXECUTE_READ, &mut old_protect) != 0 }
+            let ok = unsafe {
+                VirtualProtect(
+                    self.ptr as *mut _,
+                    self.len,
+                    PAGE_EXECUTE_READ,
+                    &mut old_protect,
+                ) != 0
+            };
+            if reloc_trace::trace_basic() {
+                reloc_trace::trace_line(format_args!(
+                    "exec_buffer VirtualProtect RX ptr={:p} len={} ok={} old_protect=0x{:x}",
+                    self.ptr, self.len, ok, old_protect
+                ));
+            }
+            ok
         }
         #[cfg(unix)]
         {

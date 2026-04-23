@@ -172,7 +172,7 @@ pub(crate) fn compile(
         };
         fallback_registry::print_fallback_config();
         if matches!(compiler.options.compile_stop, CompileStopPhase::Full) {
-            if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
+            if let Some(_cache_root) = flatten_cache::flatten_cache_dir() {
                 let artifact_key = artifact_key::artifact_cache_key(model_name, opts, &compiler.loader);
                 if !artifact_cache::artifact_cache_enabled() {
                     perf_report.cache_miss_reason = Some("artifact_cache_disabled".to_string());
@@ -181,7 +181,8 @@ pub(crate) fn compile(
                         reason: "disabled".to_string(),
                         detail: None,
                     });
-                } else if let Some(bundle) = artifact_cache::get(cache_root.as_path(), &artifact_key)
+                } else if let Some(bundle) =
+                    artifact_cache::get(&_cache_root, &artifact_key)
                 {
                     if bundle.schema_version != 1 {
                         perf_report.cache_miss_reason = Some("artifact_schema_mismatch".to_string());
@@ -225,54 +226,57 @@ pub(crate) fn compile(
                         #[cfg(any(windows, target_os = "linux"))]
                         {
                             if crate::jit::aot_archive::aot_default_archive_native_load_enabled() {
-                                if let Some(default_path) =
-                                    crate::jit::aot_archive::AotArchive::default_archive_path()
+                                if let Some(archives) =
+                                    crate::jit::aot_archive::AotArchiveSet::load_tiered()
                                 {
-                                    if default_path.exists() {
-                                        if let Ok(archive) =
-                                            crate::jit::aot_archive::AotArchive::load(&default_path)
-                                        {
                                             let key_h = bundle.codegen_key.stable_hash();
-                                            if let Some(ent) = archive.lookup_entry(model_name, &key_h) {
-                                                if let Some(blob) = archive.get_code(&ent.codegen_key_hash) {
-                                                    if !blob.is_empty() {
-                                                        cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
-                                                            blob,
-                                                            &ent.import_symbols,
-                                                            &runtime_symbols,
-                                                            ent.when_count as usize,
-                                                            ent.crossings_count as usize,
+                                            if let Some((blob, ent)) =
+                                                archives.lookup_entry_with_blob(model_name, &key_h)
+                                            {
+                                                if ent.when_count as usize != bundle.when_count
+                                                    || ent.crossings_count as usize
+                                                        != bundle.crossings_count
+                                                {
+                                                    perf_report.aot_native_load_status =
+                                                        CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY
+                                                            .to_string();
+                                                    perf_report.aot_native_load_detail = Some(
+                                                        "toc_when_crossing_mismatch_vs_bundle"
+                                                            .to_string(),
+                                                    );
+                                                } else if !blob.is_empty() {
+                                                    cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
+                                                        blob,
+                                                        &ent.import_symbols,
+                                                        &runtime_symbols,
+                                                        ent.when_count as usize,
+                                                        ent.crossings_count as usize,
+                                                    );
+                                                    if cached_fn.is_some() {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOADED
+                                                                .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                .to_string(),
                                                         );
-                                                        if cached_fn.is_some() {
-                                                            perf_report.aot_native_load_status =
-                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOADED
-                                                                    .to_string();
-                                                            perf_report.aot_native_load_detail = Some(
-                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
-                                                                    .to_string(),
-                                                            );
-                                                            perf_report.compile_tier =
-                                                                "aot_native_loaded".to_string();
-                                                        } else {
-                                                            perf_report.aot_native_load_status =
-                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
-                                                                    .to_string();
-                                                            perf_report.aot_native_load_detail = Some(
-                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
-                                                                    .to_string(),
-                                                            );
-                                                        }
+                                                        perf_report.compile_tier =
+                                                            "aot_native_loaded".to_string();
                                                     } else {
                                                         perf_report.aot_native_load_status =
-                                                            CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
                                                                 .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                .to_string(),
+                                                        );
                                                     }
                                                 } else {
                                                     perf_report.aot_native_load_status =
                                                         CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
                                                             .to_string();
                                                 }
-                                            } else if let Some(blob) = archive.get_code(&key_h) {
+                                            } else if let Some(blob) = archives.get_code(&key_h) {
                                                 if !blob.is_empty() {
                                                     cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
                                                         blob,
@@ -305,7 +309,7 @@ pub(crate) fn compile(
                                                         CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
                                                             .to_string();
                                                 }
-                                            } else if archive.model_names().iter().any(|n| *n == model_name) {
+                                            } else if archives.model_names().iter().any(|n| *n == model_name) {
                                                 perf_report.aot_native_load_status =
                                                     CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY
                                                         .to_string();
@@ -315,8 +319,6 @@ pub(crate) fn compile(
                                                         .to_string();
                                             }
                                         }
-                                    }
-                                }
                             } else {
                                 perf_report.aot_native_load_status =
                                     CompilePerfReport::AOT_NATIVE_STATUS_DISABLED_BY_ENV.to_string();
@@ -497,6 +499,11 @@ pub(crate) fn compile(
             compiler.options.warnings_level.as_str(),
         )?;
         perf_report.flatten_inline_ms = flatten_t0.elapsed().as_millis() as u64;
+        // Leyden `FlattenCondenser` runs next and calls `compile()` recursively; that inner
+        // `compile` executes `query_db::perf_reset()` and would wipe counters gathered above.
+        // Snapshot query_db perf here so `CompilePerfReport` / `--perf-json` stay aligned with
+        // this compile's flatten+inline work (tier checks, cache_scope_stage_*, wall timers).
+        let qperf_after_flatten_inline = crate::query_db::perf_snapshot();
         if perf_trace {
             eprintln!(
                 "[perf] compile_phase.flatten_inline_ms={}",
@@ -545,7 +552,7 @@ pub(crate) fn compile(
             }
             perf_report.condenser_total_elapsed_us += condenser_t0.elapsed().as_micros() as u64;
         }
-        let qperf = crate::query_db::perf_snapshot();
+        let qperf = qperf_after_flatten_inline;
         perf_report.parse_us = *qperf.get("parse_us").unwrap_or(&0);
         perf_report.inheritance_us = *qperf.get("inheritance_us").unwrap_or(&0);
         perf_report.decl_expand_us = *qperf.get("decl_expand_us").unwrap_or(&0);
@@ -1335,65 +1342,51 @@ pub(crate) fn compile(
                 .collect();
         perf_report.external_resolve_gather_us = t_ext_gather.elapsed().as_micros() as u64;
         let external_list = if external_resolve_cache::external_resolve_cache_enabled() {
-            if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
-                let key = external_resolve_cache::compute_external_resolve_key(
-                    model_name,
-                    &compiler.loader,
-                    &external_sites_pre_fold,
-                    &opts.external_libs,
-                );
-                let t_lookup = Instant::now();
-                if let Some(cached) =
-                    external_resolve_cache::try_load(cache_root.as_path(), &key)
-                {
-                    perf_report.external_resolve_lookup_us = t_lookup.elapsed().as_micros() as u64;
-                    perf_report.external_resolve_cache_status = "hit".to_string();
-                    cached
-                } else {
-                    perf_report.external_resolve_lookup_us = t_lookup.elapsed().as_micros() as u64;
-                    let miss_detail =
-                        external_resolve_cache::diagnose_miss(cache_root.as_path(), &key);
-                    perf_report.external_resolve_miss_detail = Some(miss_detail.clone());
-                    perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
-                        layer: "external_resolve".to_string(),
-                        reason: "cache_miss".to_string(),
-                        detail: Some(miss_detail),
-                    });
-                    let t_compute = Instant::now();
-                    let computed = collect_external_calls(
-                        &mut compiler.loader,
-                        &alg_equations,
-                        &diff_equations,
-                        &algorithms,
-                    );
-                    perf_report.external_resolve_compute_us =
-                        t_compute.elapsed().as_micros() as u64;
-                    let t_store = Instant::now();
-                    perf_report.external_resolve_cache_status =
-                        if external_resolve_cache::try_store(cache_root.as_path(), &key, &computed)
-                            .is_ok()
-                        {
-                            perf_report.external_resolve_store_us =
-                                t_store.elapsed().as_micros() as u64;
-                            "put".to_string()
-                        } else {
-                            perf_report.external_resolve_store_us =
-                                t_store.elapsed().as_micros() as u64;
-                            "miss_compute".to_string()
-                        };
-                    computed
-                }
+            let key = external_resolve_cache::compute_external_resolve_key(
+                model_name,
+                &compiler.loader,
+                &external_sites_pre_fold,
+                &opts.external_libs,
+            );
+            let t_lookup = Instant::now();
+            if let Some(cached) =
+                external_resolve_cache::try_load(model_name, &compiler.loader, &key)
+            {
+                perf_report.external_resolve_lookup_us = t_lookup.elapsed().as_micros() as u64;
+                perf_report.external_resolve_cache_status = "hit".to_string();
+                cached
             } else {
-                perf_report.external_resolve_cache_status = "no_cache_dir".to_string();
+                perf_report.external_resolve_lookup_us = t_lookup.elapsed().as_micros() as u64;
+                let miss_detail =
+                    external_resolve_cache::diagnose_miss(model_name, &compiler.loader, &key);
+                perf_report.external_resolve_miss_detail = Some(miss_detail.clone());
+                perf_report.cache_miss_events.push(crate::compiler::CacheMissEvent {
+                    layer: "external_resolve".to_string(),
+                    reason: "cache_miss".to_string(),
+                    detail: Some(miss_detail),
+                });
                 let t_compute = Instant::now();
-                let out = collect_external_calls(
+                let computed = collect_external_calls(
                     &mut compiler.loader,
                     &alg_equations,
                     &diff_equations,
                     &algorithms,
                 );
                 perf_report.external_resolve_compute_us = t_compute.elapsed().as_micros() as u64;
-                out
+                let t_store = Instant::now();
+                perf_report.external_resolve_cache_status =
+                    if external_resolve_cache::try_store(model_name, &compiler.loader, &key, &computed)
+                        .is_ok()
+                    {
+                        perf_report.external_resolve_store_us =
+                            t_store.elapsed().as_micros() as u64;
+                        "put".to_string()
+                    } else {
+                        perf_report.external_resolve_store_us =
+                            t_store.elapsed().as_micros() as u64;
+                        "miss_compute".to_string()
+                    };
+                computed
             }
         } else {
             perf_report.external_resolve_cache_status = "disabled".to_string();
@@ -1928,6 +1921,8 @@ pub(crate) fn compile(
         let connector_connection_degree =
             crate::jit::build_connector_connection_degree(&flat_model.connections);
         let codegen_ck = crate::jit::calc_derivs_codegen_cache_key(
+            model_name,
+            &compiler.loader,
             &state_vars_sorted,
             &discrete_vars_sorted,
             &param_vars,
@@ -1936,7 +1931,7 @@ pub(crate) fn compile(
             &params,
             Some(&connector_connection_degree),
         );
-        let sim_bundle_storage = flatten_cache::flatten_cache_dir().and_then(|cache_root| {
+        let sim_bundle_key = flatten_cache::flatten_cache_dir().map(|_| {
             let flat_full_key = flatten_cache::flatten_full_cache_key(
                 model_name,
                 &compiler.loader,
@@ -1947,10 +1942,7 @@ pub(crate) fn compile(
                 array_size_policy,
                 compiler.options.warnings_level.as_str(),
             );
-            Some((
-                cache_root,
-                crate::cache::sim_bundle_cache::storage_key(&flat_full_key, model_name),
-            ))
+            crate::cache::sim_bundle_cache::storage_key(&flat_full_key, model_name)
         });
         if !crate::cache::sim_bundle_cache::sim_bundle_cache_enabled() {
             perf_report.artifact_bundle_cache_status = "disabled".to_string();
@@ -1960,9 +1952,11 @@ pub(crate) fn compile(
             perf_report.artifact_bundle_cache_status = "skipped_codegen_disk".to_string();
         } else {
             perf_report.artifact_bundle_cache_status = "miss".to_string();
-            if let Some((ref cache_root, ref sk)) = sim_bundle_storage {
+            if let Some(ref sk) = sim_bundle_key {
+                let cache_root_sb = crate::flatten::flatten_cache_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
                 if let Some(bundle) =
-                    crate::cache::sim_bundle_cache::try_load(cache_root.as_path(), sk)
+                    crate::cache::sim_bundle_cache::try_load(&cache_root_sb, sk)
                 {
                     if bundle.var_layout_fingerprint == layout_fp
                         && bundle.codegen_key.stable_hash() == codegen_ck.stable_hash()
@@ -1974,50 +1968,57 @@ pub(crate) fn compile(
                         #[cfg(any(windows, target_os = "linux"))]
                         {
                             if crate::jit::aot_archive::aot_default_archive_native_load_enabled() {
-                                if let Some(default_path) =
-                                    crate::jit::aot_archive::AotArchive::default_archive_path()
+                                if let Some(archives) =
+                                    crate::jit::aot_archive::AotArchiveSet::load_tiered()
                                 {
-                                    if default_path.exists() {
-                                        if let Ok(archive) =
-                                            crate::jit::aot_archive::AotArchive::load(&default_path)
-                                        {
                                             let key_h = bundle.codegen_key.stable_hash();
-                                            if let Some(ent) = archive.lookup_entry(model_name, &key_h) {
-                                                if let Some(blob) = archive.get_code(&ent.codegen_key_hash) {
-                                                    if !blob.is_empty() {
-                                                        cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
-                                                            blob,
-                                                            &ent.import_symbols,
-                                                            &all_symbols,
-                                                            ent.when_count as usize,
-                                                            ent.crossings_count as usize,
+                                            if let Some((blob, ent)) =
+                                                archives.lookup_entry_with_blob(model_name, &key_h)
+                                            {
+                                                if ent.when_count as usize != bundle.when_count
+                                                    || ent.crossings_count as usize
+                                                        != bundle.crossings_count
+                                                {
+                                                    perf_report.aot_native_load_status =
+                                                        CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY
+                                                            .to_string();
+                                                    perf_report.aot_native_load_detail = Some(
+                                                        "toc_when_crossing_mismatch_vs_bundle"
+                                                            .to_string(),
+                                                    );
+                                                } else if !blob.is_empty() {
+                                                    cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
+                                                        blob,
+                                                        &ent.import_symbols,
+                                                        &all_symbols,
+                                                        ent.when_count as usize,
+                                                        ent.crossings_count as usize,
+                                                    );
+                                                    if cached_fn.is_some() {
+                                                        perf_report.aot_native_load_status =
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOADED
+                                                                .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                .to_string(),
                                                         );
-                                                        if cached_fn.is_some() {
-                                                            perf_report.aot_native_load_status =
-                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOADED
-                                                                    .to_string();
-                                                            perf_report.aot_native_load_detail = Some(
-                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
-                                                                    .to_string(),
-                                                            );
-                                                            perf_report.compile_tier =
-                                                                "aot_native_loaded".to_string();
-                                                        } else {
-                                                            perf_report.aot_native_load_status =
-                                                                CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
-                                                                    .to_string();
-                                                            perf_report.aot_native_load_detail = Some(
-                                                                CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
-                                                                    .to_string(),
-                                                            );
-                                                        }
+                                                        perf_report.compile_tier =
+                                                            "aot_native_loaded".to_string();
                                                     } else {
                                                         perf_report.aot_native_load_status =
-                                                            CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                            CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
                                                                 .to_string();
+                                                        perf_report.aot_native_load_detail = Some(
+                                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
+                                                                .to_string(),
+                                                        );
                                                     }
+                                                } else {
+                                                    perf_report.aot_native_load_status =
+                                                        CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
+                                                            .to_string();
                                                 }
-                                            } else if let Some(blob) = archive.get_code(&key_h) {
+                                            } else if let Some(blob) = archives.get_code(&key_h) {
                                                 if !blob.is_empty() {
                                                     cached_fn = crate::jit::codegen_cache::load_aot_code_blob(
                                                         blob,
@@ -2050,7 +2051,7 @@ pub(crate) fn compile(
                                                         CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB
                                                             .to_string();
                                                 }
-                                            } else if archive.model_names().iter().any(|n| *n == model_name) {
+                                            } else if archives.model_names().iter().any(|n| *n == model_name) {
                                                 perf_report.aot_native_load_status =
                                                     CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY
                                                         .to_string();
@@ -2060,8 +2061,6 @@ pub(crate) fn compile(
                                                         .to_string();
                                             }
                                         }
-                                    }
-                                }
                             } else {
                                 perf_report.aot_native_load_status =
                                     CompilePerfReport::AOT_NATIVE_STATUS_DISABLED_BY_ENV.to_string();
@@ -2202,25 +2201,12 @@ pub(crate) fn compile(
         let aot_archive_hit = {
             if !crate::jit::aot_archive::aot_default_archive_native_load_enabled() {
                 false
-            } else if let Some(ref default_path) = crate::jit::aot_archive::AotArchive::default_archive_path() {
-                if default_path.exists() {
-                    match crate::jit::aot_archive::AotArchive::load(default_path) {
-                        Ok(archive) => {
-                            let found = archive.model_names().iter().any(|n| *n == model_name);
-                            if found {
-                                if perf_trace {
-                                    eprintln!("[perf] aot_archive=hit model={}", model_name);
-                                }
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        Err(_) => false,
-                    }
-                } else {
-                    false
+            } else if let Some(archives) = crate::jit::aot_archive::AotArchiveSet::load_tiered() {
+                let found = archives.model_names().iter().any(|n| *n == model_name);
+                if found && perf_trace {
+                    eprintln!("[perf] aot_archive=hit model={}", model_name);
                 }
+                found
             } else {
                 false
             }
@@ -2269,90 +2255,78 @@ pub(crate) fn compile(
                 CompilePerfReport::AOT_NATIVE_STATUS_DISABLED_BY_ENV.to_string();
             perf_report.aot_native_load_detail =
                 Some("RUSTMODLICA_AOT_NATIVE_LOAD=0".to_string());
-        } else if let Some(ref default_path) = crate::jit::aot_archive::AotArchive::default_archive_path() {
-            if default_path.exists() {
-                if let Ok(archive) = crate::jit::aot_archive::AotArchive::load(default_path) {
+        } else if let Some(archives) = crate::jit::aot_archive::AotArchiveSet::load_tiered() {
                     let key_h = codegen_ck.stable_hash();
-                    if let Some(ent) = archive.lookup_entry(model_name, &key_h) {
-                        if let Some(blob) = archive.get_code(&ent.codegen_key_hash) {
-                            if blob.is_empty() {
-                                perf_report.aot_native_load_status =
-                                    CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB.to_string();
-                            } else {
-                                #[cfg(any(windows, target_os = "linux"))]
-                                {
-                                    let mut runtime_symbols = builtin_jit_symbol_ptrs();
-                                    for (k, v) in &all_symbols {
-                                        runtime_symbols.insert(k.clone(), *v);
-                                    }
-                                    let wc = ent.when_count as usize;
-                                    let cc = ent.crossings_count as usize;
-                                    if let Some(cf) = crate::jit::codegen_cache::load_aot_code_blob(
-                                        blob,
-                                        &ent.import_symbols,
-                                        &runtime_symbols,
-                                        wc,
-                                        cc,
-                                    ) {
-                                        aot_native_blob = Some(blob.to_vec());
-                                        aot_native_cf = Some(cf);
-                                        aot_native_when_cross = Some((wc, cc));
-                                        perf_report.aot_native_load_status =
-                                            CompilePerfReport::AOT_NATIVE_STATUS_LOADED.to_string();
-                                        perf_report.aot_native_load_detail = Some(
-                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
-                                                .to_string(),
-                                        );
-                                        perf_report.compile_tier = "aot_native_loaded".to_string();
-                                        perf_report.structural_cache_hit = true;
-                                        perf_report.cache_warm_ratio =
-                                            perf_report.compute_warm_ratio(true);
-                                        if perf_trace {
-                                            eprintln!(
-                                                "[perf] aot_native=loaded model={} bytes={}",
-                                                model_name,
-                                                blob.len()
-                                            );
-                                        }
-                                    } else {
-                                        perf_report.aot_native_load_status =
-                                            CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED
-                                                .to_string();
-                                        perf_report.aot_native_load_detail = Some(
-                                            CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH
-                                                .to_string(),
-                                        );
-                                    }
-                                }
-                                #[cfg(not(any(windows, target_os = "linux")))]
-                                {
-                                    perf_report.aot_native_load_status =
-                                        CompilePerfReport::AOT_NATIVE_STATUS_UNSUPPORTED_OS
-                                            .to_string();
-                                }
-                            }
-                        } else {
+                    if let Some((blob, ent)) =
+                        archives.lookup_entry_with_blob(model_name, &key_h)
+                    {
+                        if ent.when_count as usize != when_equation_count {
+                            perf_report.aot_native_load_status =
+                                CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY.to_string();
+                            perf_report.aot_native_load_detail =
+                                Some("toc_when_count_mismatch_vs_flatten".to_string());
+                        } else if blob.is_empty() {
                             perf_report.aot_native_load_status =
                                 CompilePerfReport::AOT_NATIVE_STATUS_NO_BLOB.to_string();
+                        } else {
+                            #[cfg(any(windows, target_os = "linux"))]
+                            {
+                                let mut runtime_symbols = builtin_jit_symbol_ptrs();
+                                for (k, v) in &all_symbols {
+                                    runtime_symbols.insert(k.clone(), *v);
+                                }
+                                let wc = ent.when_count as usize;
+                                let cc = ent.crossings_count as usize;
+                                if let Some(cf) = crate::jit::codegen_cache::load_aot_code_blob(
+                                    blob,
+                                    &ent.import_symbols,
+                                    &runtime_symbols,
+                                    wc,
+                                    cc,
+                                ) {
+                                    aot_native_blob = Some(blob.to_vec());
+                                    aot_native_cf = Some(cf);
+                                    aot_native_when_cross = Some((wc, cc));
+                                    perf_report.aot_native_load_status =
+                                        CompilePerfReport::AOT_NATIVE_STATUS_LOADED.to_string();
+                                    perf_report.aot_native_load_detail = Some(
+                                        CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH.to_string(),
+                                    );
+                                    perf_report.compile_tier = "aot_native_loaded".to_string();
+                                    perf_report.structural_cache_hit = true;
+                                    perf_report.cache_warm_ratio =
+                                        perf_report.compute_warm_ratio(true);
+                                    if perf_trace {
+                                        eprintln!(
+                                            "[perf] aot_native=loaded model={} bytes={}",
+                                            model_name,
+                                            blob.len()
+                                        );
+                                    }
+                                } else {
+                                    perf_report.aot_native_load_status =
+                                        CompilePerfReport::AOT_NATIVE_STATUS_LOAD_FAILED.to_string();
+                                    perf_report.aot_native_load_detail = Some(
+                                        CompilePerfReport::AOT_NATIVE_DETAIL_TOC_MATCH.to_string(),
+                                    );
+                                }
+                            }
+                            #[cfg(not(any(windows, target_os = "linux")))]
+                            {
+                                perf_report.aot_native_load_status =
+                                    CompilePerfReport::AOT_NATIVE_STATUS_UNSUPPORTED_OS.to_string();
+                            }
                         }
-                    } else if archive.model_names().iter().any(|n| *n == model_name) {
+                    } else if archives.model_names().iter().any(|n| *n == model_name) {
                         perf_report.aot_native_load_status =
                             CompilePerfReport::AOT_NATIVE_STATUS_WRONG_KEY.to_string();
                     } else {
                         perf_report.aot_native_load_status =
                             CompilePerfReport::AOT_NATIVE_STATUS_MODEL_NOT_IN_ARCHIVE.to_string();
                     }
-                } else {
-                    perf_report.aot_native_load_status =
-                        CompilePerfReport::AOT_NATIVE_STATUS_ARCHIVE_READ_FAILED.to_string();
-                }
-            } else {
-                perf_report.aot_native_load_status =
-                    CompilePerfReport::AOT_NATIVE_STATUS_NO_ARCHIVE_FILE.to_string();
-            }
         } else {
             perf_report.aot_native_load_status =
-                CompilePerfReport::AOT_NATIVE_STATUS_NO_ARCHIVE_PATH.to_string();
+                CompilePerfReport::AOT_NATIVE_STATUS_NO_ARCHIVE_FILE.to_string();
         }
 
         let mut aot_jit_codegen_keepalive: Option<Box<crate::jit::codegen_cache::CachedFunction>> =
@@ -2363,6 +2337,7 @@ pub(crate) fn compile(
         } else {
             Jit::new_with_extra_symbols(Some(&all_symbols))
         };
+        jit.set_active_model_name(model_name);
         let tier0_max_eq: usize = std::env::var("RUSTMODLICA_JIT_TIER0_BYPASS_MAX_EQ")
             .ok()
             .and_then(|v| v.trim().parse().ok())
@@ -2499,7 +2474,7 @@ pub(crate) fn compile(
                     perf_report.cache_warm_ratio = perf_report.compute_warm_ratio(false);
                 }
                 if matches!(compiler.options.compile_stop, CompileStopPhase::Full) {
-                    if let Some(cache_root) = flatten_cache::flatten_cache_dir() {
+                    if let Some(_cache_root) = flatten_cache::flatten_cache_dir() {
                         let artifact_key_s = artifact_key::artifact_cache_key(model_name, opts, &compiler.loader);
                         let mut deps = Vec::new();
                         for p in compiler.loader.loaded_source_paths() {
@@ -2511,6 +2486,8 @@ pub(crate) fn compile(
                             }
                         }
                         let codegen_key = crate::jit::calc_derivs_codegen_cache_key(
+                            model_name,
+                            &compiler.loader,
                             &state_vars_sorted,
                             &discrete_vars_sorted,
                             &param_vars,
@@ -2555,14 +2532,18 @@ pub(crate) fn compile(
                         if artifact_cache::artifact_deferred_write() {
                             compiler.deferred_artifact = Some(
                                 crate::compiler::DeferredArtifactWrite {
-                                    cache_root: cache_root.clone(),
+                                    model_name: model_name.to_string(),
                                     key: artifact_key_s,
                                     bundle,
                                 },
                             );
                             perf_report.artifact_bundle_cache_status = "deferred".to_string();
                         } else {
-                            let _ = artifact_cache::put(cache_root.as_path(), &artifact_key_s, &bundle);
+                            let _ = artifact_cache::put(
+                                &_cache_root,
+                                &artifact_key_s,
+                                &bundle,
+                            );
                             perf_report.artifact_bundle_cache_status = "put".to_string();
                         }
                     }
@@ -2614,7 +2595,7 @@ pub(crate) fn compile(
                         when_count as u32,
                         crossings_count as u32,
                     );
-                    match builder.write_merged_to_default() {
+                    match builder.write_merged_for_scope(codegen_ck.cache_scope) {
                         Ok(()) => {
                             if perf_trace {
                                 eprintln!(
@@ -2742,7 +2723,7 @@ pub(crate) fn compile(
                 if user_stub_jits.is_empty()
                     && crate::cache::sim_bundle_cache::sim_bundle_cache_enabled()
                 {
-                    if let Some((ref cache_root, ref sk)) = sim_bundle_storage {
+                    if let Some(ref sk) = sim_bundle_key {
                         let bundle = crate::cache::sim_bundle_cache::CompiledSimBundle {
                             schema_ver: 1,
                             codegen_key: codegen_ck.clone(),
@@ -2750,8 +2731,10 @@ pub(crate) fn compile(
                             crossings_count,
                             var_layout_fingerprint: layout_fp.clone(),
                         };
+                        let cache_root = crate::flatten::flatten_cache_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."));
                         let _ = crate::cache::sim_bundle_cache::try_store(
-                            cache_root.as_path(),
+                            &cache_root,
                             sk,
                             &bundle,
                         );

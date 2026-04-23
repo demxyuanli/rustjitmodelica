@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "includes": ["regress_smoke_v2.json"],
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": {
+    "workers": 4,
+    "fail_fast": false
+  },
+  "incremental": {
+    "strategy": "none"
+  },
+  "tiers": {
+    "smoke": {
+      "include_tags": ["smoke"]
+    },
+    "quick": {
+      "extends": "smoke",
+      "include_tags": ["smoke", "quick"]
+    }
+  },
+  "cases": [
+    { "id": "q_lang_while",              "kind": "model", "target": "TestLib/WhileTest",           "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_lang_alg",                "kind": "model", "target": "TestLib/AlgTest",             "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_lang_init_alg",           "kind": "model", "target": "TestLib/InitAlg",            "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_evt_reinit",              "kind": "model", "target": "TestLib/ReinitTest",          "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_reinit_in_when",      "kind": "model", "target": "TestLib/ReinitInWhenTest",    "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_pre_edge",            "kind": "model", "target": "TestLib/PreEdgeChange",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_no_event_in_when",    "kind": "model", "target": "TestLib/NoEventInWhen",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_no_event_in_alg",     "kind": "model", "target": "TestLib/NoEventInAlg",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_assert_terminate",    "kind": "model", "target": "TestLib/AssertTerminateTest", "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_else_when",           "kind": "model", "target": "TestLib/ElseWhenPriorityTest","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_alg_else_when",       "kind": "model", "target": "TestLib/AlgorithmElseWhen",   "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_terminal_when",       "kind": "model", "target": "TestLib/TerminalWhen",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_smooth",              "kind": "model", "target": "TestLib/SmoothTest",           "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_conn_loop",               "kind": "model", "target": "TestLib/LoopConnect",         "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_conn_array",              "kind": "model", "target": "TestLib/ArrayConnect",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_conn_in_when",            "kind": "model", "target": "TestLib/ConnectInWhen",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_type_array_loop",         "kind": "model", "target": "TestLib/ArrayLoopTest",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_type_array_arg",          "kind": "model", "target": "TestLib/ArrayArgTest",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_type_matrix_outer",       "kind": "model", "target": "TestLib/MatrixOuterProduct",  "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_type_matrix_identity",    "kind": "model", "target": "TestLib/MatrixIdentity",      "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_type_record_eq",          "kind": "model", "target": "TestLib/RecordEqTest",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_type_multi_assign_rec",   "kind": "model", "target": "TestLib/MultiAssignRecord",   "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_type_comprehension",      "kind": "model", "target": "TestLib/MultiAssignComprehension","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_func_inline",             "kind": "model", "target": "TestLib/FuncInline",          "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_func_default_arg",        "kind": "model", "target": "TestLib/DefaultArgTest",      "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_func_rest_param",         "kind": "model", "target": "TestLib/RestParamTest",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_func_two_outputs",        "kind": "model", "target": "TestLib/TwoOutputs",          "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_func_operator",           "kind": "model", "target": "TestLib/OperatorFunctionShortClassDecl","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_block_sparse16",          "kind": "model", "target": "TestLib/SolvableBlock16Sparse","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_block_multi_res",         "kind": "model", "target": "TestLib/SolvableBlockMultiRes","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_clock_two_rates",         "kind": "model", "target": "TestLib/ClockedTwoRates",     "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_clock_hold_prev",         "kind": "model", "target": "TestLib/HoldPreviousTest",    "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_clock_sub_super_shift",   "kind": "model", "target": "TestLib/SubSuperShiftSampleTest","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_clock_back_sample",       "kind": "model", "target": "TestLib/BackSampleClockTest", "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_clock_interval",          "kind": "model", "target": "TestLib/IntervalClockTest",   "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_inherit_base",            "kind": "model", "target": "TestLib/Base",                "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_inherit_parent",          "kind": "model", "target": "TestLib/Parent",              "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_inherit_child",           "kind": "model", "target": "TestLib/Child",               "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_inherit_child_mod",       "kind": "model", "target": "TestLib/ChildWithMod",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_inherit_container",       "kind": "model", "target": "TestLib/Container",           "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_inherit_component",       "kind": "model", "target": "TestLib/Component",           "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_msl_blocks",              "kind": "model", "target": "TestLib/MSLBlocksTest",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_msl_block_simple",        "kind": "model", "target": "TestLib/SimpleBlockTest",     "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_msl_tf",                  "kind": "model", "target": "TestLib/MSLTransferFunctionTest","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_solver_adaptive",         "kind": "model", "target": "TestLib/AdaptiveRKTest",      "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_solver_pendulum",         "kind": "model", "target": "TestLib/Pendulum",            "tags": ["quick"], "expect": { "kind": "exit_zero" }, "extra_rust_args": ["--index-reduction-method=dummyDerivative"] },
+
+    { "id": "q_misc_constraint",         "kind": "model", "target": "TestLib/ConstraintEq",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_overdetermined",     "kind": "model", "target": "TestLib/OverdeterminedIndex2Warn","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_alias_removal",      "kind": "model", "target": "TestLib/AliasRemoval",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_library",            "kind": "model", "target": "TestLib/LibraryTest",         "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_multi_top",          "kind": "model", "target": "TestLib/MultiTopCombined",    "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_math_builtins",      "kind": "model", "target": "TestLib/MathBuiltins",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_nested_der",         "kind": "model", "target": "TestLib/NestedDerTest",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_siunits",            "kind": "model", "target": "TestLib/SIunitsTest",         "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_deep_inner",         "kind": "model", "target": "TestLib/DeepInner",           "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_deep_outer",         "kind": "model", "target": "TestLib/DeepOuter",           "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_big_for",            "kind": "model", "target": "TestLib/BigFor",              "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_small_for",          "kind": "model", "target": "TestLib/SmallFor",            "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_replaceable",        "kind": "model", "target": "TestLib/ReplaceableTest",     "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_redeclare_op",       "kind": "model", "target": "TestLib/RedeclareOperatorFunctionExtendsDecl","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_constrainedby",      "kind": "model", "target": "TestLib/ConstrainedByRedeclarePerf","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_expandable",         "kind": "model", "target": "TestLib/ExpandableConnectorAliasUse","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_stream_smoke",       "kind": "model", "target": "TestLib/StreamSemanticSmoke","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_direction_switch",   "kind": "model", "target": "TestLib/DirectionSwitchStream","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_ext_func_array",     "kind": "model", "target": "TestLib/ExtFuncArrayArgTest", "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_ext_func_string",    "kind": "model", "target": "TestLib/ExtFuncStringArgTest","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_ext_lib_ann",        "kind": "model", "target": "TestLib/ExtLibAnnotationTest","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_component_cov",      "kind": "model", "target": "TestLib/ComponentLibraryCoverage","tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_misc_fft_smoke",          "kind": "model", "target": "TestLib/RealFftJitSmoke",     "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+
+    { "id": "q_neg_bad_syntax",          "kind": "model", "target": "TestLib/negative/BadSyntax",      "tags": ["quick", "negative"], "expect": { "kind": "non_zero" } },
+    { "id": "q_neg_bad_connect",         "kind": "model", "target": "TestLib/negative/BadConnect",     "tags": ["quick", "negative"], "expect": { "kind": "non_zero" } },
+    { "id": "q_neg_unknown_type",        "kind": "model", "target": "TestLib/negative/UnknownTypeError","tags": ["quick", "negative"], "expect": { "kind": "non_zero" } },
+
+    { "id": "q_stress_broad",            "kind": "model", "target": "ModelicaTest/JitStress/MslBroadCoverage", "tags": ["quick", "stress"], "expect": { "kind": "exit_zero" } }
+  ]
+}

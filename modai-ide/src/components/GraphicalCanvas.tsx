@@ -31,6 +31,10 @@ interface SelectedComponent {
   libraryId?: string;
   params?: ParamValue[];
   placement?: PlacementData;
+  replaceable?: boolean;
+  constrainedbyType?: string;
+  condition?: string;
+  visible?: boolean;
 }
 
 export interface GraphicalMessage {
@@ -40,6 +44,8 @@ export interface GraphicalMessage {
 
 interface GraphicalCanvasProps {
   modelName: string;
+  /** Optional breadcrumb (e.g. file path and model name). */
+  navigationTrail?: string | null;
   projectDir: string | null;
   mode: "icon" | "diagram";
   readOnly: boolean;
@@ -56,6 +62,8 @@ interface GraphicalCanvasProps {
   onDeleteGraphic: (path: number[]) => void;
   onUpdateParam: (name: string, value: string) => void;
   onUpdatePlacement: (patch: { x?: number; y?: number; rotation?: number }) => void;
+  onUpdateDeclaredType?: (typeName: string) => void;
+  onUpdateComponentFlags?: (patch: { condition?: string | null; visible?: boolean | null }) => void;
   onOpenType?: (typeName: string, libraryId?: string) => void;
   libraryRefreshToken?: number;
   onDrop?: (event: DragEvent) => void;
@@ -97,6 +105,7 @@ type BottomTab = "messages" | "equations" | "variables" | "debug";
 
 export function GraphicalCanvas({
   modelName,
+  navigationTrail = null,
   projectDir,
   mode,
   readOnly,
@@ -113,6 +122,8 @@ export function GraphicalCanvas({
   onDeleteGraphic,
   onUpdateParam,
   onUpdatePlacement,
+  onUpdateDeclaredType,
+  onUpdateComponentFlags,
   onOpenType,
   libraryRefreshToken = 0,
   onDrop,
@@ -198,8 +209,10 @@ export function GraphicalCanvas({
               <AnnotationGraphicsSvg annotation={annotation} size={{ width: 900, height: 700 }} />
             </div>
           )}
-          <div className="absolute top-2 left-3 z-10 text-xs text-[var(--text-muted)] pointer-events-none">
-            {modelName}
+          <div className="absolute top-2 left-3 z-10 text-xs text-[var(--text-muted)] pointer-events-none max-w-[min(100%,48rem)] truncate">
+            {navigationTrail ?
+              <span title={navigationTrail}>{navigationTrail}</span>
+            : <span>{modelName}</span>}
           </div>
           {((mode === "icon" && primaryGraphicRoot >= 0) || (mode === "diagram" && (primaryGraphicRoot >= 0 || selectedComponent != null))) && (
             <div className="absolute right-3 top-14 z-20">
@@ -216,6 +229,8 @@ export function GraphicalCanvas({
                 onDeleteGraphic={onDeleteGraphic}
                 onUpdateParam={onUpdateParam}
                 onUpdatePlacement={onUpdatePlacement}
+                onUpdateDeclaredType={onUpdateDeclaredType}
+                onUpdateComponentFlags={onUpdateComponentFlags}
                 source={source}
                 modelName={modelName}
                 onOpenDependencyGraphSettings={onOpenDependencyGraphSettings}

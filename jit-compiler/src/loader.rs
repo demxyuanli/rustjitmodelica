@@ -118,9 +118,35 @@ impl ModelLoader {
         out
     }
 
-    pub fn add_path(&mut self, path: PathBuf) {
-        self.library_paths.push(path);
+    /// Fully-qualified names currently registered (e.g. after `load_model("Modelica")`).
+    pub fn loaded_model_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.loaded_models.keys().cloned().collect();
+        v.sort();
+        v
     }
+
+    pub fn add_path(&mut self, path: PathBuf) {
+        self.library_paths.push(path.clone());
+        if path.join("Modelica").join("package.mo").is_file() {
+            let _ = crate::cache::msl_pack::on_msl_library_path_added(&path);
+        }
+    }
+
+    /// Drop a single cached model entry so the next `load_model_from_source`
+    /// or `load_model` call for `name` re-parses fresh source. All other
+    /// cached classes (typically MSL) stay warm. Used by the IDE
+    /// equation-graph actor to reuse a Compiler across calls without
+    /// being poisoned by a stale source for the model under edit.
+    pub fn forget_model(&mut self, name: &str) {
+        self.loaded_models.remove(name);
+        self.loaded_paths.remove(name);
+        let short = name.rsplit('.').next().unwrap_or(name);
+        if short != name {
+            self.loaded_models.remove(short);
+            self.loaded_paths.remove(short);
+        }
+    }
+
 
     pub fn load_model(&mut self, name: &str) -> Result<Arc<Model>, LoadError> {
         self.load_model_impl(name, false)

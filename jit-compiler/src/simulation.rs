@@ -84,6 +84,8 @@ pub fn run_simulation(
     clock_partition_schedule: &[ClockPartitionScheduleEntry],
     mut result_collector: Option<&mut ResultCollector>,
     deopt_sim_perf: Option<&mut DeoptSimPerfSummary>,
+    model_name: &str,
+    lib_paths: Vec<std::path::PathBuf>,
 ) -> Result<(), String> {
     if perf_enabled() {
         perf_reset_counters();
@@ -247,7 +249,7 @@ pub fn run_simulation(
         .unwrap_or(false);
     let eq_count = state_vars.len() + crossings_count;
     let mut profile_collector: Option<crate::condenser::profile_data::ProfileCollector> = if training_run_active {
-        Some(crate::condenser::profile_data::ProfileCollector::new("_sim_loop_", eq_count))
+        Some(crate::condenser::profile_data::ProfileCollector::new(model_name, eq_count))
     } else {
         None
     };
@@ -271,7 +273,7 @@ pub fn run_simulation(
         } else if deopt_dual_compile {
             let mut compiler_for_generic = crate::Compiler::new();
             compiler_for_generic.options_mut().quiet = true;
-            match compiler_for_generic.compile("_sim_loop_") {
+            match compiler_for_generic.compile(model_name) {
                 Ok(crate::CompileOutput::Simulation(generic_artifacts)) => {
                     Some(crate::jit::deopt::DeoptManager::with_fallback(
                         calc_derivs,
@@ -308,12 +310,13 @@ pub fn run_simulation(
             calc_derivs
         };
         let mut sched = crate::jit::tiered::TieredScheduler::new(
-            "_sim_loop_",
+            model_name,
+            lib_paths.clone(),
             initial_tier,
             initial_func,
             policy,
         );
-        if let Some(profile) = crate::condenser::training_run::load_cached_profile("_sim_loop_") {
+        if let Some(profile) = crate::condenser::training_run::load_cached_profile(model_name) {
             sched = sched.with_profile(profile);
         }
         Some(sched)

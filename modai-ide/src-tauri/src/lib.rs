@@ -9,6 +9,8 @@ mod component_library_index;
 mod compiler_config;
 mod db;
 mod diagram;
+mod equation_graph_actor;
+mod msl_pack_bootstrap;
 mod file_watcher;
 mod git;
 mod index_db;
@@ -46,6 +48,9 @@ use commands::jit::{
     get_equation_graph, get_equation_graph_v2, get_monitor_events, get_simulation_state, jit_validate, jit_validate_v2,
     list_monitor_event_sessions, run_simulation_cmd, run_simulation_cmd_v2,
     simulation_command, simulation_step, start_simulation_session,
+};
+use commands::msl_cache::{
+    msl_cache_check_update, msl_cache_clear, msl_cache_download_update, msl_cache_rebuild_local, msl_cache_status,
 };
 use commands::project::{
     add_component_library, apply_diagram_edits, apply_equation_edits,
@@ -96,6 +101,12 @@ pub fn run() {
     init_tracing_subscriber();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            if let Err(e) = msl_pack_bootstrap::init(app.handle()) {
+                eprintln!("[msl-pack] bootstrap: {e}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             open_devtools,
@@ -124,6 +135,11 @@ pub fn run() {
             search_in_project,
             get_equation_graph,
             get_equation_graph_v2,
+            msl_cache_status,
+            msl_cache_clear,
+            msl_cache_check_update,
+            msl_cache_download_update,
+            msl_cache_rebuild_local,
             start_simulation_session,
             simulation_step,
             simulation_command,

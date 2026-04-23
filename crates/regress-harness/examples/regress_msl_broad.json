@@ -1,0 +1,6682 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": {
+    "workers": 4,
+    "fail_fast": false
+  },
+  "incremental": {
+    "strategy": "none"
+  },
+  "tiers": {
+    "msl_electrical_basic": {
+      "include_tags": [
+        "msl",
+        "analog"
+      ]
+    },
+    "msl_electrical_machines": {
+      "include_tags": [
+        "msl",
+        "machines"
+      ]
+    },
+    "msl_electrical_power": {
+      "include_tags": [
+        "msl",
+        "power_converters"
+      ]
+    },
+    "msl_electrical_batteries": {
+      "include_tags": [
+        "msl",
+        "batteries"
+      ]
+    },
+    "msl_electrical_polyphase": {
+      "include_tags": [
+        "msl",
+        "polyphase"
+      ]
+    },
+    "msl_mechanics_rotational": {
+      "include_tags": [
+        "msl",
+        "rotational"
+      ]
+    },
+    "msl_mechanics_translational": {
+      "include_tags": [
+        "msl",
+        "translational"
+      ]
+    },
+    "msl_mechanics_multibody": {
+      "include_tags": [
+        "msl",
+        "multibody"
+      ]
+    },
+    "msl_clocked_all": {
+      "include_tags": [
+        "msl",
+        "clocked"
+      ]
+    },
+    "msl_magnetic": {
+      "include_tags": [
+        "msl",
+        "magnetic"
+      ]
+    },
+    "msl_thermal": {
+      "include_tags": [
+        "msl",
+        "thermal"
+      ]
+    },
+    "msl_fluid": {
+      "include_tags": [
+        "msl",
+        "fluid"
+      ]
+    },
+    "msl_blocks": {
+      "include_tags": [
+        "msl",
+        "blocks"
+      ]
+    },
+    "msl_all": {
+      "include_tags": [
+        "msl"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "msl_clo_absolute_clocks",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.CascadeControlledDrive.AbsoluteClocks",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_continuous",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.CascadeControlledDrive.Continuous",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sub_clocked",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.CascadeControlledDrive.SubClocked",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_super_sampled",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.CascadeControlledDrive.SuperSampled",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.AssignClock",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock_vectorized",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.AssignClockVectorized",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_back_sample",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.BackSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_hold",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.Hold",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample1",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.Sample1",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.Sample2",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample_clocked",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.SampleClocked",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample_vectorized_and_clocked",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.SampleVectorizedAndClocked",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_shift_sample",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.ShiftSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sub_sample",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.SubSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_super_sample",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.SuperSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_tick_based_pulse",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.TickBasedPulse",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_tick_based_step",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.TickBasedStep",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_time_based_pulse",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.TimeBasedPulse",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_time_based_step",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.TimeBasedStep",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_up_sample",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.BooleanSignals.UpSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_logical_sample",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.ClockSignals.LogicalSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_rotational_sample",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.ClockSignals.RotationalSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_shift_sample_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.ClockSignals.ShiftSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sub_sample_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.ClockSignals.SubSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_super_sample_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.ClockSignals.SuperSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.AssignClock",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock_vectorized_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.AssignClockVectorized",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_back_sample_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.BackSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_hold_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.Hold",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample1_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.Sample1",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample2_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.Sample2",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample_clocked_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.SampleClocked",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample_vectorized_and_clocked_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.SampleVectorizedAndClocked",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_shift_sample_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.ShiftSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sub_sample_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.SubSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_super_sample_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.SuperSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_tick_based_step_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.TickBasedStep",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_time_based_step_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.TimeBasedStep",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_up_sample_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.IntegerSignals.UpSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.AssignClock",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock_to_square_wave_hold",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.AssignClockToSquareWaveHold",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock_to_trigger_hold",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.AssignClockToTriggerHold",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_assign_clock_vectorized_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.AssignClockVectorized",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_back_sample_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.BackSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_fractional_delay",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.FractionalDelay",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_hold_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.Hold",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_hold_with_daeffects1",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.HoldWithDAeffects1",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_hold_with_daeffects2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.HoldWithDAeffects2",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample1_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.Sample1",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample2_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.Sample2",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.Sample3",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample_clocked_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.SampleClocked",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample_vectorized_and_clocked_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.SampleVectorizedAndClocked",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sample_with_adeffects",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.SampleWithADeffects",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_shift_sample_4",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.ShiftSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_sub_sample_4",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.SubSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_super_sample_4",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.SuperSample",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_super_sample_interpolated",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.SuperSampleInterpolated",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_tick_based_ramp",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.TickBasedRamp",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_tick_based_sine",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.TickBasedSine",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_tick_based_step_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.TickBasedStep",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_time_based_ramp",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.TimeBasedRamp",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_time_based_sine",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.TimeBasedSine",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_time_based_step_3",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.TimeBasedStep",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_uniform_noise",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.UniformNoise",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_uniform_noise_xorshift64star",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.UniformNoiseXorshift64star",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_up_sample1",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.UpSample1",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_up_sample2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Elementary.RealSignals.UpSample2",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_clocked_with_discrete_controller",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ClockedWithDiscreteController",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_clocked_with_discrete_textbook_controller",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ClockedWithDiscreteTextbookController",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_clocked_with_discretized_continuous_controller",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ClockedWithDiscretizedContinuousController",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_clocked_with_ad_da_effects",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ClockedWith_AD_DA_Effects",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_continuous_2",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.SimpleControlledDrive.Continuous",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_exactly_clocked_with_discrete_controller",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ExactlyClockedWithDiscreteController",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_controlled_mixing_unit",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.ControlledMixingUnit",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_engine_throttle_control",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.EngineThrottleControl",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_critical_damping",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsMixingUnit.CriticalDamping",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_filter_order",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsMixingUnit.FilterOrder",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_mixing_unit",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsMixingUnit.MixingUnit",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_mixing_unit_with_continuous_control",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsMixingUnit.MixingUnitWithContinuousControl",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_cylinder_air_charge",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsThrottleControl.CylinderAirCharge",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_engine",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsThrottleControl.Engine",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_induction_to_power_delay",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsThrottleControl.InductionToPowerDelay",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_intake_manifold",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsThrottleControl.IntakeManifold",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_speed_control",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsThrottleControl.SpeedControl",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_throttle_body",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsThrottleControl.ThrottleBody",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_clo_torque_generation",
+      "kind": "model",
+      "target": "Modelica.Clocked.Examples.Systems.Utilities.ComponentsThrottleControl.TorqueGeneration",
+      "tags": [
+        "msl",
+        "clocked"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_com_show_transfer_function",
+      "kind": "model",
+      "target": "Modelica.ComplexBlocks.Examples.ShowTransferFunction",
+      "tags": [
+        "msl"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_com_test_conversion_block",
+      "kind": "model",
+      "target": "Modelica.ComplexBlocks.Examples.TestConversionBlock",
+      "tags": [
+        "msl"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_ad_da_conversion",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.AD_DA_conversion",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_amplifier_with_op_amp_detailed",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.AmplifierWithOpAmpDetailed",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cauer_low_pass_analog",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.CauerLowPassAnalog",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cauer_low_pass_opv",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.CauerLowPassOPV",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cauer_low_pass_sc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.CauerLowPassSC",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_characteristic_ideal_diodes",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.CharacteristicIdealDiodes",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_characteristic_thyristors",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.CharacteristicThyristors",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chua_circuit",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.ChuaCircuit",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_compare_transformers",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.CompareTransformers",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_controlled_switch_with_arc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.ControlledSwitchWithArc",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_demonstrate_lightning",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.DemonstrateLightning",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_demo_power_supply",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.DemoPowerSupply",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_demo_power_supply_with_buffer",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.DemoPowerSupplyWithBuffer",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_difference_amplifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.DifferenceAmplifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_generation_of_fmus",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.GenerationOfFMUs",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_heating_mosinverter",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.HeatingMOSInverter",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_heating_npn_norgate",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.HeatingNPN_NORGate",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_heating_pnp_norgate",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.HeatingPNP_NORGate",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_heating_rectifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.HeatingRectifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_ideal_triac_circuit",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.IdealTriacCircuit",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_inverting_amp",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.InvertingAmp",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_nand_gate",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.NandGate",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_overvoltage_protection",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OvervoltageProtection",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_parallel_resonance",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.ParallelResonance",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_rectifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Rectifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_resistor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Resistor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_resonance_circuits",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.ResonanceCircuits",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_series_resonance",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.SeriesResonance",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_show_saturating_inductor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.ShowSaturatingInductor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_show_variable_resistor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.ShowVariableResistor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_simple_triac_circuit",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.SimpleTriacCircuit",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_switch_with_arc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.SwitchWithArc",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_behaviour_test",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.ThyristorBehaviourTest",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_compare_line_trunks",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Lines.CompareLineTrunks",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_compare_lossless_lines",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Lines.CompareLosslessLines",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_lightning_lossless_transmission_line",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Lines.LightningLosslessTransmissionLine",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_lightning_segmented_transmission_line",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Lines.LightningSegmentedTransmissionLine",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smooth_step",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Lines.SmoothStep",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_adder",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.Adder",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_comparator",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.Comparator",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_control_circuit",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.ControlCircuit",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_differential_amplifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.DifferentialAmplifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_differentiator",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.Differentiator",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_high_pass",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.HighPass",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_integrator",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.Integrator",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_inverting_amplifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.InvertingAmplifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_inverting_schmitt_trigger",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.InvertingSchmittTrigger",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_lcoscillator",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.LCOscillator",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_low_pass",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.LowPass",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_measure_rise_time",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.MeasureRiseTime",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_multivibrator",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.Multivibrator",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_non_inverting_amplifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.NonInvertingAmplifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_schmitt_trigger",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.SchmittTrigger",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_signal_generator",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.SignalGenerator",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_subtracter",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.Subtracter",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_voltage_follower",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.VoltageFollower",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_add",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.Add",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_buffer",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.Buffer",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_der",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.Der",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_derivative",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.Derivative",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_differential_amplifier_data",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.DifferentialAmplifierData",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_feedback",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.Feedback",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_first_order",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.FirstOrder",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_gain",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.Gain",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_integrator_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.Integrator",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_partial_op_amp",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.PartialOpAmp",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_pi",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.OpAmps.OpAmpCircuits.PI",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_conductor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.Conductor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_direct_capacitor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.DirectCapacitor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_direct_inductor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.DirectInductor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_inverse_capacitor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.InverseCapacitor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_inverse_inductor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.InverseInductor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_nand",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.Nand",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_nonlinear_resistor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.NonlinearResistor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_real_switch",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.RealSwitch",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_resistor_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.Resistor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_switched_capacitor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.SwitchedCapacitor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_transistor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Analog.Examples.Utilities.Transistor",
+      "tags": [
+        "msl",
+        "electrical",
+        "analog"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_battery_discharge_charge",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.BatteryDischargeCharge",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cccvcharging",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.CCCVcharging",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cccv_cell",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.CCCV_Cell",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cccv_cell_rc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.CCCV_CellRC",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cccv_stack",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.CCCV_Stack",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_cccv_stack_rc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.CCCV_StackRC",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_show_impedance",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.ShowImpedance",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_super_cap_discharge_charge",
+      "kind": "model",
+      "target": "Modelica.Electrical.Batteries.Examples.SuperCapDischargeCharge",
+      "tags": [
+        "msl",
+        "electrical",
+        "batteries"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_current_controlled_dcpm",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.CurrentControlledDCPM",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_position_controlled_dcpm",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.PositionControlledDCPM",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_speed_controlled_dcpm",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.SpeedControlledDCPM",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcdc_inverter",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.DcdcInverter",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_drive_data_dcpm",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.DriveDataDCPM",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_ideal_dc_dc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.IdealDcDc",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_limited_pi",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.LimitedPI",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_partial_controlled_dcpm",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.PartialControlledDCPM",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_switching_dc_dc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.SwitchingDcDc",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcee_start",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCEE_Start",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcpm_cooling",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_Cooling",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcpm_current_controlled",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_CurrentControlled",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcpm_drive",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_Drive",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcpm_quasi_static",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_QuasiStatic",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcpm_start",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_Start",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcpm_temperature",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_Temperature",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcpm_with_losses",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_withLosses",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcse_single_phase",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCSE_SinglePhase",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dcse_start",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DCSE_Start",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dc_compare_characteristics",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.DCMachines.DC_CompareCharacteristics",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_conveyor",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_Conveyor",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_dcbraking",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_DCBraking",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_dol",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_DOL",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_initialize",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_Initialize",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_inverter",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_Inverter",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_inverter_drive",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_InverterDrive",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_steinmetz",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_Steinmetz",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_transformer",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_Transformer",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_with_losses",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_withLosses",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_yd",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_YD",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_ydarc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMC_YDarc",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_ims_start",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMS_Start",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smee_dol",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMEE_DOL",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smee_generator",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMEE_Generator",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smee_load_dump",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMEE_LoadDump",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smee_rectifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMEE_Rectifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smpm_braking",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_Braking",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smpm_current_source",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_CurrentSource",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smpm_inverter",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_Inverter",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smpm_no_load",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_NoLoad",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smpm_resistive_braking",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_ResistiveBraking",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smpm_voltage_source",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMPM_VoltageSource",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smr_dol",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMR_DOL",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_smr_inverter",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.SynchronousMachines.SMR_Inverter",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_asymmetrical_load",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.Transformers.AsymmetricalLoad",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_imc_transformer_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.Transformers.IMC_Transformer",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_rectifier12pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.Transformers.Rectifier12pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_rectifier6pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.Transformers.Rectifier6pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_transformer_testbench",
+      "kind": "model",
+      "target": "Modelica.Electrical.Machines.Examples.Transformers.TransformerTestbench",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_polyphase_rectifier",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.PolyphaseRectifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_rectifier_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.Rectifier",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_test_sensors",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.TestSensors",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_transformer_yd",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.TransformerYD",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_transformer_yy",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.TransformerYY",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_analysator_ac",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.Utilities.AnalysatorAC",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_analysator_dc",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.Utilities.AnalysatorDC",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_polyphase_rectifier_data",
+      "kind": "model",
+      "target": "Modelica.Electrical.Polyphase.Examples.Utilities.PolyphaseRectifierData",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dimmer_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACAC.Dimmer_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dimmer_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACAC.Dimmer_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_soft_starter",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACAC.SoftStarter",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_dimmer",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACAC.ExampleTemplates.Dimmer",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor1pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.ExampleTemplates.Thyristor1Pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2m_pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.ExampleTemplates.ThyristorBridge2mPulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.ExampleTemplates.ThyristorBridge2Pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2m_pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.ExampleTemplates.ThyristorCenterTap2mPulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.ExampleTemplates.ThyristorCenterTap2Pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tapm_pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.ExampleTemplates.ThyristorCenterTapmPulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor1pulse_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.Rectifier1Pulse.Thyristor1Pulse_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor1pulse_r_characteristic",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.Rectifier1Pulse.Thyristor1Pulse_R_Characteristic",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_diode_bridge2m_pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.DiodeBridge2mPulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_half_controlled_bridge2m_pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.HalfControlledBridge2mPulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2m_pulse_dc_drive",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.ThyristorBridge2mPulse_DC_Drive",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2m_pulse_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.ThyristorBridge2mPulse_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2m_pulse_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.ThyristorBridge2mPulse_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2m_pulse_rlv",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.ThyristorBridge2mPulse_RLV",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2m_pulse_rlv_characteristic",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.ThyristorBridge2mPulse_RLV_Characteristic",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_diode_bridge2pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2Pulse.DiodeBridge2Pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_half_controlled_bridge2pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2Pulse.HalfControlledBridge2Pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2pulse_dc_drive",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2Pulse.ThyristorBridge2Pulse_DC_Drive",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2pulse_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2Pulse.ThyristorBridge2Pulse_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2pulse_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2Pulse.ThyristorBridge2Pulse_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2pulse_rlv",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2Pulse.ThyristorBridge2Pulse_RLV",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_bridge2pulse_rlv_characteristic",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2Pulse.ThyristorBridge2Pulse_RLV_Characteristic",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_diode_center_tap2m_pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2mPulse.DiodeCenterTap2mPulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2m_pulse_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2mPulse.ThyristorCenterTap2mPulse_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2m_pulse_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2mPulse.ThyristorCenterTap2mPulse_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2m_pulse_rlv",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2mPulse.ThyristorCenterTap2mPulse_RLV",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2m_pulse_rlv_characteristic",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2mPulse.ThyristorCenterTap2mPulse_RLV_Characteristic",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_diode_center_tap2pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2Pulse.DiodeCenterTap2Pulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2pulse_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2Pulse.ThyristorCenterTap2Pulse_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2pulse_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2Pulse.ThyristorCenterTap2Pulse_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2pulse_rlv",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2Pulse.ThyristorCenterTap2Pulse_RLV",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tap2pulse_rlv_characteristic",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2Pulse.ThyristorCenterTap2Pulse_RLV_Characteristic",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_diode_center_tapm_pulse",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTapmPulse.DiodeCenterTapmPulse",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tapm_pulse_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTapmPulse.ThyristorCenterTapmPulse_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tapm_pulse_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTapmPulse.ThyristorCenterTapmPulse_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tapm_pulse_rlv",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTapmPulse.ThyristorCenterTapmPulse_RLV",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_thyristor_center_tapm_pulse_rlv_characteristic",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTapmPulse.ThyristorCenterTapmPulse_RLV_Characteristic",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_single_phase_two_level",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCAC.ExampleTemplates.SinglePhaseTwoLevel",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_polyphase_two_level_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCAC.PolyphaseTwoLevel.PolyphaseTwoLevel_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_polyphase_two_level_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCAC.PolyphaseTwoLevel.PolyphaseTwoLevel_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_three_phase_two_level_pwm",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCAC.PolyphaseTwoLevel.ThreePhaseTwoLevel_PWM",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_single_phase_two_level_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCAC.SinglePhaseTwoLevel.SinglePhaseTwoLevel_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_single_phase_two_level_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCAC.SinglePhaseTwoLevel.SinglePhaseTwoLevel_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chopper_buck_boost_duty_cycle",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ChopperBuckBoost.ChopperBuckBoost_DutyCycle",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chopper_step_down_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ChopperStepDown.ChopperStepDown_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chopper_step_down_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ChopperStepDown.ChopperStepDown_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chopper_step_up_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ChopperStepUp.ChopperStepUp_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chopper_buck_boost",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ExampleTemplates.ChopperBuckBoost",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chopper_step_down",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ExampleTemplates.ChopperStepDown",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_chopper_step_up",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ExampleTemplates.ChopperStepUp",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_hbridge",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.ExampleTemplates.HBridge",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_hbridge_dc_drive",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.HBridge.HBridge_DC_Drive",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_hbridge_r",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.HBridge.HBridge_R",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_hbridge_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.HBridge.HBridge_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_hbridge_triangle_pwm_rl",
+      "kind": "model",
+      "target": "Modelica.Electrical.PowerConverters.Examples.DCDC.HBridge.HBridge_TrianglePWM_RL",
+      "tags": [
+        "msl",
+        "electrical",
+        "power_converters"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_transformer_testbench_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.Machines.Examples.TransformerTestbench",
+      "tags": [
+        "msl",
+        "electrical",
+        "machines"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_balancing_delta",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.Polyphase.Examples.BalancingDelta",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_balancing_star",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.Polyphase.Examples.BalancingStar",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_test_sensors_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.Polyphase.Examples.TestSensors",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_unsymmetrical_load",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.Polyphase.Examples.UnsymmetricalLoad",
+      "tags": [
+        "msl",
+        "electrical",
+        "polyphase"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_multiple_resonance",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.SinglePhase.Examples.MultipleResonance",
+      "tags": [
+        "msl",
+        "electrical"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_parallel_resonance_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.SinglePhase.Examples.ParallelResonance",
+      "tags": [
+        "msl",
+        "electrical"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_rectifier_3",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.SinglePhase.Examples.Rectifier",
+      "tags": [
+        "msl",
+        "electrical"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_series_bode",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.SinglePhase.Examples.SeriesBode",
+      "tags": [
+        "msl",
+        "electrical"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_series_resonance_2",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.SinglePhase.Examples.SeriesResonance",
+      "tags": [
+        "msl",
+        "electrical"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_ele_transformer",
+      "kind": "model",
+      "target": "Modelica.Electrical.QuasiStatic.SinglePhase.Examples.Transformer",
+      "tags": [
+        "msl",
+        "electrical"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_ast_batch_plant",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.AST_BatchPlant",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_branching_dynamic_pipes",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.BranchingDynamicPipes",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_controlled_tank_system",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.ControlledTankSystem",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_drum_boiler",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.DrumBoiler",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_explanatory",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.Explanatory",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_heat_exchanger",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.HeatExchanger",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_heating_system",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.HeatingSystem",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_incompressible_fluid_network",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.IncompressibleFluidNetwork",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_inverse_parameterization",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.InverseParameterization",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_non_circular_pipes",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.NonCircularPipes",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_pumping_system",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.PumpingSystem",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_tanks",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.Tanks",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_flu_trace_substances",
+      "kind": "model",
+      "target": "Modelica.Fluid.Examples.TraceSubstances",
+      "tags": [
+        "msl",
+        "fluid"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_quadratic_core_airgap",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.BasicExamples.QuadraticCoreAirgap",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_saturated_inductor",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.BasicExamples.SaturatedInductor",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_toroidal_core_airgap",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.BasicExamples.ToroidalCoreAirgap",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_toroidal_core_quadratic_cross_section",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.BasicExamples.ToroidalCoreQuadraticCrossSection",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_hysteresis_model_comparison",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Hysteresis.HysteresisModelComparison",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_inductor_with_hysteresis",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Hysteresis.InductorWithHysteresis",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_single_phase_transformer_with_hysteresis1",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Hysteresis.SinglePhaseTransformerWithHysteresis1",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_single_phase_transformer_with_hysteresis2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Hysteresis.SinglePhaseTransformerWithHysteresis2",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_three_phase_transformer_with_rectifier",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Hysteresis.ThreePhaseTransformerWithRectifier",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_transformer1phase_with_hysteresis",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Hysteresis.Components.Transformer1PhaseWithHysteresis",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_transformer3phase_yy_with_hysteresis",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Hysteresis.Components.Transformer3PhaseYyWithHysteresis",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_armature_stroke",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.MovingCoilActuator.ArmatureStroke",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_force_current_behaviour",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.MovingCoilActuator.ForceCurrentBehaviour",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_force_stroke_behaviour",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.MovingCoilActuator.ForceStrokeBehaviour",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_constant_actuator",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.MovingCoilActuator.Components.ConstantActuator",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_permeance_actuator",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.MovingCoilActuator.Components.PermeanceActuator",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_comparison_pull_in_stroke",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.SolenoidActuator.ComparisonPullInStroke",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_comparison_quasi_static",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.SolenoidActuator.ComparisonQuasiStatic",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_advanced_solenoid",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.SolenoidActuator.Components.AdvancedSolenoid",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_simple_solenoid",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.SolenoidActuator.Components.SimpleSolenoid",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_coil_design",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Utilities.CoilDesign",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_translatory_armature_and_stopper",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FluxTubes.Examples.Utilities.TranslatoryArmatureAndStopper",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_conveyor",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Conveyor",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_dol",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_DOL",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_initialize",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Initialize",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_inverter",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Inverter",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_steinmetz",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Steinmetz",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_transformer",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Transformer",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_with_losses",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_withLosses",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_yd",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_YD",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_ims_start",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMS_Start",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_dol_common_leakage",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.ComparisonPolyphase.IMC_DOL_CommonLeakage",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_dol_polyphase",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.ComparisonPolyphase.IMC_DOL_Polyphase",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_ims_start_polyphase",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.InductionMachines.ComparisonPolyphase.IMS_Start_Polyphase",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smee_dol",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMEE_DOL",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smee_generator",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMEE_Generator",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smee_load_dump",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMEE_LoadDump",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smee_rectifier",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMEE_Rectifier",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_braking",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_Braking",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_current_source",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_CurrentSource",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_inverter",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_Inverter",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_voltage_source",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_VoltageSource",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smr_inverter",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMR_Inverter",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smee_generator_polyphase",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.ComparisonPolyphase.SMEE_Generator_Polyphase",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_inverter_polyphase",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.ComparisonPolyphase.SMPM_Inverter_Polyphase",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smr_inverter_polyphase",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.ComparisonPolyphase.SMR_Inverter_Polyphase",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_eddy_current_losses",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.Components.EddyCurrentLosses",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_polyphase_inductance",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.Components.PolyphaseInductance",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_single_phase_inductance",
+      "kind": "model",
+      "target": "Modelica.Magnetic.FundamentalWave.Examples.Components.SinglePhaseInductance",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_linear_inductor",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.LinearInductor",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_non_linear_inductor",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.NonLinearInductor",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_quadratic_core_airgap_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.BasicExamples.QuadraticCoreAirgap",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_toroidal_core_airgap_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.BasicExamples.ToroidalCoreAirgap",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_toroidal_core_quadratic_cross_section_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.BasicExamples.ToroidalCoreQuadraticCrossSection",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_cuboid_sections",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.FixedShapes.CuboidSections",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_cylinder_sections",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.FixedShapes.CylinderSections",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_cylinder_leakage",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.Leakage.CylinderLeakage",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_general_leakage",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FluxTubes.Examples.Leakage.GeneralLeakage",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_characteristics",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Characteristics",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_conveyor_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Conveyor",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_dol_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_DOL",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_initialize_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Initialize",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_inverter_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Inverter",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_transformer_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_Transformer",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_with_losses_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_withLosses",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_imc_yd_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMC_YD",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_ims_characteristics",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMS_Characteristics",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_ims_start_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.InductionMachines.IMS_Start",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smee_generator_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMEE_Generator",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_current_source_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_CurrentSource",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_field_weakening",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_FieldWeakening",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_mains",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_Mains",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_mtpa",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_MTPA",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smpm_open_circuit",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMPM_OpenCircuit",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_smr_current_source",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.BasicMachines.SynchronousMachines.SMR_CurrentSource",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_eddy_current_losses_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.Components.EddyCurrentLosses",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_polyphase_inductance_2",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.Components.PolyphaseInductance",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_field_weakening_controller",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.ExampleUtilities.FieldWeakeningController",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mag_space_phasor_limiter",
+      "kind": "model",
+      "target": "Modelica.Magnetic.QuasiStatic.FundamentalWave.Examples.ExampleUtilities.SpacePhasorLimiter",
+      "tags": [
+        "msl",
+        "magnetic"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_prismatic_constraint",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Constraints.PrismaticConstraint",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_revolute_constraint",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Constraints.RevoluteConstraint",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spherical_constraint",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Constraints.SphericalConstraint",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_universal_constraint",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Constraints.UniversalConstraint",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_double_pendulum",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.DoublePendulum",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_double_pendulum_init_tip",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.DoublePendulumInitTip",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_force_and_torque",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.ForceAndTorque",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_free_body",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.FreeBody",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_heat_losses",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.HeatLosses",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_init_spring_constant",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.InitSpringConstant",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_line_force_with_two_masses",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.LineForceWithTwoMasses",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_pendulum",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.Pendulum",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_pendulum_with_spring_damper",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.PendulumWithSpringDamper",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_point_gravity",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.PointGravity",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_point_gravity_with_point_masses",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.PointGravityWithPointMasses",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_point_gravity_with_point_masses2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.PointGravityWithPointMasses2",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_rolling_wheel",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.RollingWheel",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_rolling_wheel_set_driving",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.RollingWheelSetDriving",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_rolling_wheel_set_pulling",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.RollingWheelSetPulling",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_damper_system",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.SpringDamperSystem",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_mass_system",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.SpringMassSystem",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_with_mass",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.SpringWithMass",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_surfaces",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.Surfaces",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_three_springs",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.ThreeSprings",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_user_defined_gravity_field",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.UserDefinedGravityField",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_sine_surface",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.Utilities.sineSurface",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_theoretical_normal_gravity_wgs84",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.Utilities.theoreticalNormalGravityWGS84",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine1a",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Engine1a",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine1b",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Engine1b",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine1b_analytic",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Engine1b_analytic",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine_v6",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.EngineV6",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine_v6_analytic",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.EngineV6_analytic",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_fourbar1",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Fourbar1",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_fourbar2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Fourbar2",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_fourbar_analytic",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Fourbar_analytic",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_planar_fourbar",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.PlanarFourbar",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_planar_loops_analytic",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.PlanarLoops_analytic",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_cylinder",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.Cylinder",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_cylinder_base",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.CylinderBase",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_cylinder_analytic_cad",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.Cylinder_analytic_CAD",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine1base",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.Engine1Base",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine1b_base",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.Engine1bBase",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_engine_v6_analytic_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.EngineV6_analytic",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_gas_force2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.GasForce2",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_actuated_drive",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Rotational3DEffects.ActuatedDrive",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_bevel_gear1d",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Rotational3DEffects.BevelGear1D",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_gear_constraint",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Rotational3DEffects.GearConstraint",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_gyroscopic_effects",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Rotational3DEffects.GyroscopicEffects",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_moving_actuated_drive",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Rotational3DEffects.MovingActuatedDrive",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_full_robot",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.FullRobot",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_one_axis",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.OneAxis",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_axis_control_bus",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisControlBus",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_axis_type1",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisType1",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_axis_type2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisType2",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_control_bus",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.ControlBus",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_controller",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.Controller",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_gear_type1",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.GearType1",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_gear_type2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.GearType2",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_mechanical_structure",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.MechanicalStructure",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_motor",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.Motor",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_path_planning1",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.PathPlanning1",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_path_planning6",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.PathPlanning6",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_path_to_axis_control_bus",
+      "kind": "model",
+      "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.PathToAxisControlBus",
+      "tags": [
+        "msl",
+        "mechanics",
+        "multibody"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_backlash",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.Backlash",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_compare_braking_torque",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.CompareBrakingTorque",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_coupled_clutches",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.CoupledClutches",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_eddy_current_brake",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.EddyCurrentBrake",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_elastic_bearing",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.ElasticBearing",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_first",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.First",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_first_grounded",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.FirstGrounded",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_friction",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.Friction",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_generation_of_fmus",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.GenerationOfFMUs",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_heat_losses_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.HeatLosses",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_lossy_gear_demo1",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.LossyGearDemo1",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_lossy_gear_demo2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.LossyGearDemo2",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_lossy_gear_demo3",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.LossyGearDemo3",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_one_way_clutch",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.OneWayClutch",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_one_way_clutch_disengaged",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.OneWayClutchDisengaged",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_rolling_wheel_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.RollingWheel",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_simple_gear_shift",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.SimpleGearShift",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_direct_inertia",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.Utilities.DirectInertia",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_inverse_inertia",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.Utilities.InverseInertia",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.Utilities.Spring",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_damper",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.Utilities.SpringDamper",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_damper_no_relative_states",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Rotational.Examples.Utilities.SpringDamperNoRelativeStates",
+      "tags": [
+        "msl",
+        "mechanics",
+        "rotational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_accelerate",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Accelerate",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_brake",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Brake",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_compare_braking_force",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.CompareBrakingForce",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_damper",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Damper",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_eddy_current_brake_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.EddyCurrentBrake",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_elasto_gap",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.ElastoGap",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_friction_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Friction",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_generation_of_fmus_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.GenerationOfFMUs",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_heat_losses_3",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.HeatLosses",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_initial_conditions",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.InitialConditions",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_oscillator",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Oscillator",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_pre_load",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.PreLoad",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_sensors",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Sensors",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_sign_convention",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.SignConvention",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_vehicle",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Vehicle",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_why_arrows",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.WhyArrows",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_direct_mass",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Utilities.DirectMass",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_generate_stribeck_friction_table",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Utilities.GenerateStribeckFrictionTable",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_inverse_mass",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Utilities.InverseMass",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Utilities.Spring",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_damper_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Utilities.SpringDamper",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_mec_spring_damper_no_relative_states_2",
+      "kind": "model",
+      "target": "Modelica.Mechanics.Translational.Examples.Utilities.SpringDamperNoRelativeStates",
+      "tags": [
+        "msl",
+        "mechanics",
+        "translational"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_indirect_cooling",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.IndirectCooling",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_one_mass",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.OneMass",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_parallel_cooling",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.ParallelCooling",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_parallel_pump_drop_out",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.ParallelPumpDropOut",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_pump_and_valve",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.PumpAndValve",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_pump_drop_out",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.PumpDropOut",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_simple_cooling",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.SimpleCooling",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_test_cylinder",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.TestCylinder",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_test_open_tank",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.TestOpenTank",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_two_mass",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.TwoMass",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_two_tanks",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.TwoTanks",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_water_pump",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.WaterPump",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_double_ramp",
+      "kind": "model",
+      "target": "Modelica.Thermal.FluidHeatFlow.Examples.Utilities.DoubleRamp",
+      "tags": [
+        "msl",
+        "thermal",
+        "fluid_heat"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_controlled_temperature",
+      "kind": "model",
+      "target": "Modelica.Thermal.HeatTransfer.Examples.ControlledTemperature",
+      "tags": [
+        "msl",
+        "thermal"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_generation_of_fmus",
+      "kind": "model",
+      "target": "Modelica.Thermal.HeatTransfer.Examples.GenerationOfFMUs",
+      "tags": [
+        "msl",
+        "thermal"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_motor",
+      "kind": "model",
+      "target": "Modelica.Thermal.HeatTransfer.Examples.Motor",
+      "tags": [
+        "msl",
+        "thermal"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_two_masses",
+      "kind": "model",
+      "target": "Modelica.Thermal.HeatTransfer.Examples.TwoMasses",
+      "tags": [
+        "msl",
+        "thermal"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_conduction",
+      "kind": "model",
+      "target": "Modelica.Thermal.HeatTransfer.Examples.Utilities.Conduction",
+      "tags": [
+        "msl",
+        "thermal"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_direct_capacity",
+      "kind": "model",
+      "target": "Modelica.Thermal.HeatTransfer.Examples.Utilities.DirectCapacity",
+      "tags": [
+        "msl",
+        "thermal"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "msl_the_inverse_capacity",
+      "kind": "model",
+      "target": "Modelica.Thermal.HeatTransfer.Examples.Utilities.InverseCapacity",
+      "tags": [
+        "msl",
+        "thermal"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    }
+  ]
+}

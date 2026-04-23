@@ -77,6 +77,9 @@ pub fn record_cache_event(scope: &str, stage: &str, event: CacheEvent) {
 }
 
 pub fn snapshot() -> HashMap<String, u64> {
-    perf_map().read().map(|g| g.clone()).unwrap_or_default()
+    match perf_map().read() {
+        Ok(g) => g.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
 }
 

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CacheScope {
     GlobalStd,
     UserExt,
@@ -79,6 +79,33 @@ pub fn classify_model_scope(lib_path: &Path) -> CacheScope {
         if starts_with_normalized(lib_path, root.as_path()) {
             return CacheScope::UserExt;
         }
+    }
+    CacheScope::Project
+}
+
+/// Path-based scope from [`classify_model_scope`], then qualified-name heuristics when still `Project`
+/// (`Modelica.*` -> [`CacheScope::GlobalStd`], `ModelicaTest.*` -> [`CacheScope::UserExt`]).
+/// Keeps flatten-disk keys aligned with Salsa query keys.
+pub fn classify_model_scope_with_heuristics(
+    lib_path: Option<&Path>,
+    model_name: Option<&str>,
+) -> CacheScope {
+    let by_path = match lib_path {
+        None => CacheScope::Project,
+        Some(p) if p.as_os_str().is_empty() => CacheScope::Project,
+        Some(p) => classify_model_scope(p),
+    };
+    if !matches!(by_path, CacheScope::Project) {
+        return by_path;
+    }
+    let Some(name) = model_name.filter(|s| !s.is_empty()) else {
+        return CacheScope::Project;
+    };
+    if name.starts_with("Modelica.") {
+        return CacheScope::GlobalStd;
+    }
+    if name.starts_with("ModelicaTest.") {
+        return CacheScope::UserExt;
     }
     CacheScope::Project
 }

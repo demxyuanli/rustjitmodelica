@@ -7,6 +7,7 @@ use crate::jit::codegen_cache::CodegenCacheKey;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use xxhash_rust::xxh64::Xxh64;
 
 const SCHEMA_VER: u32 = 1;
@@ -92,6 +93,16 @@ pub fn try_store(cache_root: &Path, key: &str, bundle: &CompiledSimBundle) -> Re
     .map_err(|e| e.to_string())
 }
 
+static LAST_SIM_BUNDLE_PRUNE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn prune_throttle_ms() -> u64 {
+    std::env::var("RUSTMODLICA_SIM_BUNDLE_PRUNE_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v >= 1_000)
+        .unwrap_or(60_000)
+}
+
 fn sim_bundle_ttl_days() -> i64 {
     std::env::var("RUSTMODLICA_SIM_BUNDLE_TTL_DAYS")
         .ok()
@@ -109,6 +120,16 @@ fn sim_bundle_lru_max() -> i64 {
 }
 
 fn prune(cache_root: &Path) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let last = LAST_SIM_BUNDLE_PRUNE_MS.load(Ordering::Relaxed);
+    if now_ms.saturating_sub(last) < prune_throttle_ms() {
+        return;
+    }
+    LAST_SIM_BUNDLE_PRUNE_MS.store(now_ms, Ordering::Relaxed);
+
     let Some(cfg) = cache_sqlite::sqlite_config_for_scope(CacheScope::Project, Some(cache_root)) else {
         return;
     };
@@ -119,7 +140,7 @@ fn prune(cache_root: &Path) {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let min_keep_created_ms = now_ms - ttl_days * 24 * 60 * 60 * 1000;
-    let mut conn = match rusqlite::Connection::open(&cfg.path) {
+    let mut conn = match cache_sqlite::conn_for_prune(&cfg.path) {
         Ok(c) => c,
         Err(_) => return,
     };

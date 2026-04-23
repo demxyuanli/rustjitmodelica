@@ -195,7 +195,18 @@ fn build_repro_command(
     cmd
 }
 
-fn parse_validate_success(stdout: &str, stderr: &str) -> bool {
+pub(crate) fn parse_validate_success(stdout: &str, stderr: &str) -> bool {
+    for line in stdout.lines().rev() {
+        let t = line.trim();
+        if t.len() < 12 || !t.starts_with('{') {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+            if let Some(b) = v.get("success").and_then(|x| x.as_bool()) {
+                return b;
+            }
+        }
+    }
     let s = format!("{stdout}\n{stderr}");
     s.contains("\"success\"") && s.contains("true")
 }
@@ -229,6 +240,14 @@ fn build_manifest(spec: &RunSpec, scenarios: &[ScenarioResolved]) -> RunManifest
         force_flatten_full_cache: spec.force_flatten_full_cache,
         worker_per_scenario: spec.worker_per_scenario,
         child_env: spec.child_env.clone(),
+        std_cache_root: spec
+            .std_cache_root
+            .as_ref()
+            .map(|p| p.display().to_string()),
+        user_cache_root: spec
+            .user_cache_root
+            .as_ref()
+            .map(|p| p.display().to_string()),
     }
 }
 
@@ -302,9 +321,10 @@ fn apply_env_to_command(
 }
 
 pub fn default_perf_scenarios(hot_runs: usize) -> Vec<Scenario> {
+    let hot = hot_runs.max(1);
     vec![
         Scenario {
-            id: "cold_empty_nsCOLD".to_string(),
+            id: "stdlib_bake".to_string(),
             runs: 1,
             cache_dir_policy: CacheDirPolicy::PurgeAndCreate,
             cache_dir: None,
@@ -320,9 +340,9 @@ pub fn default_perf_scenarios(hot_runs: usize) -> Vec<Scenario> {
             },
         },
         Scenario {
-            id: "cold_qcache0".to_string(),
+            id: "userlib_bake".to_string(),
             runs: 1,
-            cache_dir_policy: CacheDirPolicy::CreateIfMissing,
+            cache_dir_policy: CacheDirPolicy::PreserveBetweenScenarios,
             cache_dir: None,
             env: crate::jit_validate::EnvOverlay {
                 set: BTreeMap::from([
@@ -336,9 +356,9 @@ pub fn default_perf_scenarios(hot_runs: usize) -> Vec<Scenario> {
             },
         },
         Scenario {
-            id: "hot_nsA".to_string(),
-            runs: hot_runs.max(1),
-            cache_dir_policy: CacheDirPolicy::CreateIfMissing,
+            id: "devloop_multi_model".to_string(),
+            runs: hot,
+            cache_dir_policy: CacheDirPolicy::PreserveBetweenScenarios,
             cache_dir: None,
             env: crate::jit_validate::EnvOverlay {
                 set: BTreeMap::from([
@@ -353,9 +373,26 @@ pub fn default_perf_scenarios(hot_runs: usize) -> Vec<Scenario> {
             },
         },
         Scenario {
-            id: "legacy_salsa0".to_string(),
+            id: "devloop_edit_leaf".to_string(),
+            runs: hot,
+            cache_dir_policy: CacheDirPolicy::PreserveBetweenScenarios,
+            cache_dir: None,
+            env: crate::jit_validate::EnvOverlay {
+                set: BTreeMap::from([
+                    ("RUSTMODLICA_QUERY_CACHE_NAMESPACE".to_string(), "EDIT".to_string()),
+                    ("RUSTMODLICA_CACHE_SQLITE".to_string(), "1".to_string()),
+                    ("RUSTMODLICA_FLATTEN_FULL_CACHE".to_string(), "1".to_string()),
+                ]),
+                unset: vec![
+                    "RUSTMODLICA_QUERY_CACHE".to_string(),
+                    "RUSTMODLICA_SALSA".to_string(),
+                ],
+            },
+        },
+        Scenario {
+            id: "devloop_edit_dep_only".to_string(),
             runs: 1,
-            cache_dir_policy: CacheDirPolicy::CreateIfMissing,
+            cache_dir_policy: CacheDirPolicy::PreserveBetweenScenarios,
             cache_dir: None,
             env: crate::jit_validate::EnvOverlay {
                 set: BTreeMap::from([
@@ -490,6 +527,18 @@ impl ValidatePerfRunner {
                     env_unset.dedup();
                     for (k, v) in &spec.child_env.set {
                         env_set.insert(k.clone(), v.clone());
+                    }
+                    if let Some(ref p) = spec.std_cache_root {
+                        env_set.insert(
+                            "RUSTMODLICA_STD_CACHE_ROOT".to_string(),
+                            p.display().to_string(),
+                        );
+                    }
+                    if let Some(ref p) = spec.user_cache_root {
+                        env_set.insert(
+                            "RUSTMODLICA_USER_CACHE_ROOT".to_string(),
+                            p.display().to_string(),
+                        );
                     }
                     env_set.insert(
                         "RUSTMODLICA_PERF_SALSA_STATS".to_string(),

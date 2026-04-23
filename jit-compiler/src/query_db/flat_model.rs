@@ -34,11 +34,16 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
             if let Ok(cache) = bincode::deserialize::<FlatModelQCacheV1>(&bytes) {
                 if cache.schema == FLAT_MODEL_Q_SCHEMA_V1
                     && cache.key == key
-                    && cache_deps_match_for_stage(&scope, "flat_model_q", &cache.deps)
+                    && cache_deps_match_for_stage(
+                        &scope,
+                        "flat_model_q",
+                        model_name.as_str(),
+                        &cache.deps,
+                    )
                 {
                     crate::query_db::perf::record_cache_event(
                         scope.prefix(),
-                        "flat_model_q",
+                        "flat_full",
                         crate::query_db::perf::CacheEvent::Hit,
                     );
                     super::dep_record_deps(&cache.deps);
@@ -51,21 +56,24 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
                 }
             }
         }
-        if let Some(dir) = crate::flatten::flatten_cache::flatten_cache_dir() {
             if let Some(bytes) = super::sqlite_get_with_scope_chain(
-                dir.as_path(),
-                scope.clone(),
+                scope,
                 key.as_str(),
                 "flat_model_q_v1",
             ) {
                 if let Ok(cache) = bincode::deserialize::<FlatModelQCacheV1>(&bytes) {
                     if cache.schema == FLAT_MODEL_Q_SCHEMA_V1
                         && cache.key == key
-                        && cache_deps_match_for_stage(&scope, "flat_model_q", &cache.deps)
+                        && cache_deps_match_for_stage(
+                        &scope,
+                        "flat_model_q",
+                        model_name.as_str(),
+                        &cache.deps,
+                    )
                     {
                         crate::query_db::perf::record_cache_event(
                             scope.prefix(),
-                            "flat_model_q",
+                            "flat_full",
                             crate::query_db::perf::CacheEvent::Hit,
                         );
                         let _ = crate::flatten::cache_shm::shm_put(key.as_str(), &bytes);
@@ -79,7 +87,6 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
                     }
                 }
             }
-        }
     }
 
     // Compose: use eq_expanded output as the full flat model payload for now.
@@ -248,7 +255,7 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
     let deps = deps_scope.end();
     crate::query_db::perf::record_cache_event(
         scope.prefix(),
-        "flat_model_q",
+        "flat_full",
         crate::query_db::perf::CacheEvent::Miss,
     );
     let cache_flat =
@@ -262,14 +269,13 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
     };
     if let Ok(bytes) = bincode::serialize(&cache) {
         let _ = crate::flatten::cache_shm::shm_put(key.as_str(), &bytes);
-        if let Some(dir) = crate::flatten::flatten_cache::flatten_cache_dir() {
-            if let Some(cfg) =
-                crate::flatten::cache_sqlite::sqlite_config_for_scope(scope.clone(), Some(dir.as_path()))
+        if let Some(cfg) =
+                crate::flatten::cache_sqlite::sqlite_write_config_for_scope(scope)
             {
                 let deps_json = serde_json::to_string(&deps).ok();
                 crate::query_db::perf::record_cache_event(
                     scope.prefix(),
-                    "flat_model_q",
+                    "flat_full",
                     crate::query_db::perf::CacheEvent::Write,
                 );
                 let _ = crate::flatten::cache_sqlite::sqlite_put(
@@ -280,7 +286,6 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
                     &bytes,
                     deps_json.as_deref(),
                 );
-            }
         }
     }
     super::salsa_session::record_last_flat_model_q_deps(deps.clone());

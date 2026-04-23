@@ -5,6 +5,10 @@ export interface JointPaperHandle {
   zoomIn: (opts?: { duration?: number }) => void;
   zoomOut: (opts?: { duration?: number }) => void;
   fitView: (opts?: { padding?: number; duration?: number }) => void;
+  /** Scale 1:1 and reset pan origin. */
+  resetZoom100: () => void;
+  /** Fit viewport to the union bbox of element ids (diagram mode). */
+  zoomToElementIds: (elementIds: string[]) => void;
   getScale: () => number;
   getTranslate: () => { tx: number; ty: number };
   paper: dia.Paper | null;
@@ -88,10 +92,12 @@ export interface CreatePaperOptions {
   readOnly?: boolean;
   onScale?: (scale: number) => void;
   onTranslate?: (tx: number, ty: number) => void;
+  /** When false, blank pointer-drag does not pan (used for shift+marquee selection). */
+  allowBlankPan?: (evt: dia.Event) => boolean;
 }
 
 export function createPaper(opts: CreatePaperOptions): dia.Paper {
-  const { el, graph, gridSize = 10, readOnly = false } = opts;
+  const { el, graph, gridSize = 10, readOnly = false, allowBlankPan } = opts;
   const colors = resolveDiagramColors();
 
   const rect = el.getBoundingClientRect();
@@ -191,7 +197,7 @@ export function createPaper(opts: CreatePaperOptions): dia.Paper {
     return origRemove();
   };
 
-  setupPanAndZoom(paper, opts.onScale, opts.onTranslate, readOnly);
+  setupPanAndZoom(paper, opts.onScale, opts.onTranslate, readOnly, allowBlankPan);
   return paper;
 }
 
@@ -199,7 +205,8 @@ function setupPanAndZoom(
   paper: dia.Paper,
   onScale?: (scale: number) => void,
   onTranslate?: (tx: number, ty: number) => void,
-  allowPanFromElement = false
+  allowPanFromElement = false,
+  allowBlankPan?: (evt: dia.Event) => boolean,
 ) {
   let isPanning = false;
   let panStart = { x: 0, y: 0 };
@@ -212,7 +219,10 @@ function setupPanAndZoom(
     translateStart = { tx: t.tx, ty: t.ty };
   };
 
-  paper.on("blank:pointerdown", (evt: dia.Event) => startPanFromEvt(evt));
+  paper.on("blank:pointerdown", (evt: dia.Event) => {
+    if (allowBlankPan && !allowBlankPan(evt)) return;
+    startPanFromEvt(evt);
+  });
   if (allowPanFromElement) {
     paper.on("element:pointerdown", (_elementView: dia.ElementView, evt: dia.Event) => {
       startPanFromEvt(evt);
@@ -337,6 +347,31 @@ export function createPaperHandle(paper: dia.Paper | null): JointPaperHandle {
         });
       } catch (_) {
         // no content yet
+      }
+    },
+    resetZoom100() {
+      if (!paper) return;
+      paper.scale(1, 1);
+      paper.translate(0, 0);
+    },
+    zoomToElementIds(ids: string[]) {
+      if (!paper) return;
+      const gr = paper.model as dia.Graph;
+      const elems = ids
+        .map((id) => gr.getCell(id))
+        .filter((c): c is dia.Element => Boolean(c && c.isElement()));
+      if (!elems.length) return;
+      const bbox = gr.getCellsBBox(elems);
+      if (!bbox || bbox.width <= 0 || bbox.height <= 0) return;
+      try {
+        paper.scaleContentToFit({
+          padding: 24,
+          maxScale: 2,
+          minScale: MIN_SCALE,
+          fittingBBox: bbox,
+        });
+      } catch {
+        /* ignore */
       }
     },
     getScale() {
