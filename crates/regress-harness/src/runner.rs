@@ -20,31 +20,32 @@ const TAIL_MAX: usize = 4096;
 const LOCK_PATTERNS: [&str; 3] = ["os error 5", "failed to remove file", "blocking waiting for file lock"];
 
 fn discover_rustmodlica_exe(repo_root: &Path) -> Option<PathBuf> {
-    // Prefer JIT regression build, then workspace builds. Pick newest by mtime.
-    let candidates = [
-        repo_root.join("jit-compiler/target_regression/release/rustmodlica.exe"),
-        repo_root.join("jit-compiler/target_regression/debug/rustmodlica.exe"),
-        repo_root.join("target/release/rustmodlica.exe"),
-        repo_root.join("target/debug/rustmodlica.exe"),
+    // Prefer JIT regression build, then workspace build. Do not use mtime across trees:
+    // a freshly built workspace `target/release` would beat an older
+    // `jit-compiler/target_regression` binary and can pick an incompatible or stale
+    // artifact. First existing candidate wins.
+    let name = if cfg!(windows) {
+        "rustmodlica.exe"
+    } else {
+        "rustmodlica"
+    };
+    let rel_dirs = [
+        "jit-compiler/target_regression/release",
+        "jit-compiler/target_regression/debug",
+        "jit-compiler/target/release",
+        "jit-compiler/target/debug",
+        "target/release",
+        "target/debug",
     ];
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for p in candidates {
+    for d in rel_dirs {
+        let p = repo_root.join(d).join(name);
         if let Ok(md) = std::fs::metadata(&p) {
-            if !md.is_file() {
-                continue;
-            }
-            let mt = md.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            match best {
-                None => best = Some((mt, p)),
-                Some((best_mt, _)) => {
-                    if mt >= best_mt {
-                        best = Some((mt, p));
-                    }
-                }
+            if md.is_file() {
+                return Some(p);
             }
         }
     }
-    best.map(|(_, p)| p)
+    None
 }
 
 fn resolve_rustmodlica_exe(repo_root: &Path, defaults: &Defaults) -> Result<PathBuf, String> {
@@ -282,13 +283,21 @@ fn run_model(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<Case
     args.push(case.target.clone());
 
     let (code, stdout, stderr, repro_bundle, detail_hint) = if defaults.cargo_run_models {
-        run_rustmodlica_cargo_run_with_retry(ctx, &work, &args, timeout, &case.id)
+        run_rustmodlica_cargo_run_with_retry(
+            ctx,
+            &work,
+            &args,
+            timeout,
+            &case.id,
+            &case.env,
+        )
     } else {
         let exe = resolve_rustmodlica_exe(ctx.repo_root, defaults)?;
         if !exe.exists() {
             return Err(format!("rustmodlica exe not found: {}", exe.display()));
         }
-        let (code, stdout, stderr) = run_command(&exe, &args, &work, defaults, timeout)?;
+        let (code, stdout, stderr) =
+            run_command_with_env(&exe, &args, &work, defaults, &case.env, timeout)?;
         (code, stdout, stderr, None, None)
     };
 
@@ -403,6 +412,7 @@ fn run_rustmodlica_cargo_run_with_retry(
     run_args: &[String],
     timeout: Duration,
     case_id: &str,
+    case_env: &std::collections::HashMap<String, String>,
 ) -> (i32, String, String, Option<String>, Option<String>) {
     let defaults = ctx.defaults;
     let cargo_path = PathBuf::from(&defaults.cargo_exe);
@@ -433,7 +443,7 @@ fn run_rustmodlica_cargo_run_with_retry(
         args.push("--".to_string());
         args.extend(run_args.iter().cloned());
 
-        match run_command(&cargo_path, &args, work, defaults, timeout) {
+        match run_command_with_env(&cargo_path, &args, work, defaults, case_env, timeout) {
             Ok((code, stdout, stderr)) => {
                 let text = format!("{stdout}\n{stderr}");
                 locked = code != 0 && is_release_binary_locked(&text);
@@ -541,13 +551,20 @@ fn run_mos(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<CaseRe
             args.push("--target-dir".to_string());
             args.push(primary.to_string_lossy().to_string());
             args.extend(defaults.cargo_run_args.clone());
+            args.push("--release".to_string());
             args.push("--".to_string());
             args.push(format!("--script={}", case.target));
 
             let cargo_path = PathBuf::from(cargo);
 
-            let (code, stdout, stderr) =
-                run_command(&cargo_path, &args, &work, defaults, timeout)?;
+            let (code, stdout, stderr) = run_command_with_env(
+                &cargo_path,
+                &args,
+                &work,
+                defaults,
+                &case.env,
+                timeout,
+            )?;
             let expect_ok = matches_expect(code, &case.expect);
             Ok(CaseResult {
                 case_id: case.id.clone(),
@@ -742,23 +759,6 @@ fn run_command_with_env(
     let stderr = rx_err.recv().unwrap_or_default();
     let code = status.code().unwrap_or(-1);
     Ok((code, stdout, stderr))
-}
-
-fn run_command(
-    program: &Path,
-    args: &[String],
-    cwd: &Path,
-    defaults: &Defaults,
-    timeout: Duration,
-) -> Result<(i32, String, String), String> {
-    run_command_with_env(
-        program,
-        args,
-        cwd,
-        defaults,
-        &std::collections::HashMap::new(),
-        timeout,
-    )
 }
 
 fn resolve_path(repo_root: &Path, p: &str) -> PathBuf {

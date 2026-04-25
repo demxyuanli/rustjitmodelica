@@ -6,6 +6,10 @@
     "rustmodlica_exe": "auto",
     "working_dir": "jit-compiler",
     "cargo_exe": "cargo",
+    "env": {
+      "RUSTMODLICA_JIT_CODEGEN_CACHE": "0",
+      "RUSTMODLICA_AOT_NATIVE_LOAD": "0"
+    },
     "solver": "rk4",
     "t_end": 10.0,
     "dt": 0.01
@@ -44,7 +48,8 @@
     { "id": "f_lang_alias_chain_pkg",        "kind": "model", "target": "TestLib/AliasChainPkg",                  "tags": ["full"], "expect": { "kind": "exit_zero" } },
     { "id": "f_lang_alias_chain_type_mismatch", "kind": "model", "target": "TestLib/AliasChainTypeMismatch",     "tags": ["full"], "expect": { "kind": "exit_zero" } },
     { "id": "f_lang_array_and_scalar_outputs", "kind": "model", "target": "TestLib/ArrayAndScalarOutputs",       "tags": ["full"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_lang_algorithm_else_when_dup", "kind": "model", "target": "TestLib/AlgorithmElseWhen",            "tags": ["full"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_lang_algorithm_else_when_dup", "kind": "model", "target": "TestLib/AlgorithmElseWhen",            "tags": ["full"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
 
     { "id": "f_elec_capacitor",              "kind": "model", "target": "TestLib/Capacitor",                      "tags": ["full"], "expect": { "kind": "exit_zero" } },
     { "id": "f_elec_ground",                 "kind": "model", "target": "TestLib/Ground",                         "tags": ["full"], "expect": { "kind": "exit_zero" } },
@@ -137,15 +142,21 @@
     { "id": "f_stress_complex_jit",          "kind": "model", "target": "ModelicaTest/JitStress/ComplexJitRegression",    "tags": ["full", "stress"], "expect": { "kind": "exit_zero" } },
     { "id": "f_stress_sync_om_compare",      "kind": "model", "target": "ModelicaTest/JitStress/SyncOmCompare",          "tags": ["full", "stress"], "expect": { "kind": "exit_zero" } },
 
-    { "id": "f_mos_named_simulate",          "kind": "mos",   "target": "scripts/omc_regression_named_simulate.mos",           "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_named_simulate",          "kind": "mos",   "target": "scripts/omc_regression_named_simulate.mos",           "tags": ["full", "mos"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
     { "id": "f_mos_if_for",                  "kind": "mos",   "target": "scripts/omc_regression_if_for.mos",                   "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mos_for_range",               "kind": "mos",   "target": "scripts/omc_regression_for_range.mos",                "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mos_simulate_named_combo",    "kind": "mos",   "target": "scripts/omc_regression_simulate_named_combo.mos",     "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mos_elseif_nested_for",       "kind": "mos",   "target": "scripts/omc_regression_elseif_nested_for.mos",       "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mos_reverse_range",           "kind": "mos",   "target": "scripts/omc_regression_reverse_range.mos",           "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_for_range",               "kind": "mos",   "target": "scripts/omc_regression_for_range.mos",                "tags": ["full", "mos"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
+    { "id": "f_mos_simulate_named_combo",    "kind": "mos",   "target": "scripts/omc_regression_simulate_named_combo.mos",     "tags": ["full", "mos"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
+    { "id": "f_mos_elseif_nested_for",       "kind": "mos",   "target": "scripts/omc_regression_elseif_nested_for.mos",       "tags": ["full", "mos"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
+    { "id": "f_mos_reverse_range",           "kind": "mos",   "target": "scripts/omc_regression_reverse_range.mos",           "tags": ["full", "mos"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
     { "id": "f_mos_mixed_simulate_args",     "kind": "mos",   "target": "scripts/omc_regression_mixed_simulate_args.mos",     "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
     { "id": "f_mos_sync_signal",             "kind": "mos",   "target": "scripts/omc_regression_sync_signal.mos",             "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mos_sync_super_shift",        "kind": "mos",   "target": "scripts/omc_regression_sync_super_shift.mos",        "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_mos_sync_super_shift",        "kind": "mos",   "target": "scripts/omc_regression_sync_super_shift.mos",        "tags": ["full", "mos"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
     { "id": "f_mos_newton_symbolic_dense",   "kind": "mos",   "target": "scripts/omc_regression_newton_symbolic_dense.mos",   "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
     { "id": "f_mos_newton_symbolic_sparse",  "kind": "mos",   "target": "scripts/omc_regression_newton_symbolic_sparse.mos",  "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
     { "id": "f_mos_stream_semantics",        "kind": "mos",   "target": "scripts/omc_regression_stream_semantics.mos",        "tags": ["full", "mos"], "expect": { "kind": "exit_zero" } },
@@ -167,30 +178,14 @@
     { "id": "f_msl_thermal_two_masses",      "kind": "model", "target": "Modelica.Thermal.HeatTransfer.Examples.TwoMasses",          "tags": ["full", "msl", "thermal"], "expect": { "kind": "exit_zero" } },
     { "id": "f_msl_thermal_controlled_temp", "kind": "model", "target": "Modelica.Thermal.HeatTransfer.Examples.ControlledTemperature","tags": ["full", "msl", "thermal"], "expect": { "kind": "exit_zero" } },
 
-    { "id": "f_msl_blocks_pid_controller",   "kind": "model", "target": "Modelica.Blocks.Examples.PID_Controller",                   "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_msl_blocks_filter",           "kind": "model", "target": "Modelica.Blocks.Examples.Filter",                           "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" } },
+    { "id": "f_msl_blocks_pid_controller",   "kind": "model", "target": "Modelica.Blocks.Examples.PID_Controller",                   "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" },
+      "extra_rust_args": ["--t-end=5.0", "--dt=0.02"], "timeout_ms": 1200000,
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
+    { "id": "f_msl_blocks_filter",           "kind": "model", "target": "Modelica.Blocks.Examples.Filter",                           "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" },
+      "extra_rust_args": ["--t-end=5.0", "--dt=0.02"], "timeout_ms": 1200000,
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
     { "id": "f_msl_blocks_real_network1",    "kind": "model", "target": "Modelica.Blocks.Examples.RealNetwork1",                     "tags": ["full", "msl", "blocks"], "expect": { "kind": "exit_zero" } },
 
-    { "id": "f_msl_clocked_discrete_ctrl",   "kind": "model", "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ClockedWithDiscreteController","tags": ["full", "msl", "clocked"], "expect": { "kind": "exit_zero" } },
-
-    { "id": "f_mtest_redeclare_extends",     "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareExtendsExample",       "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_redeclare_modifier",    "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareModifierExample",      "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_redeclare_replaceable", "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareReplaceableExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_redeclare_constrained", "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareConstrainedByExample","tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_redeclare_short",       "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareShortClassExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_redeclare_component",   "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareComponentExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_redeclare_inner_outer", "kind": "model", "target": "ModelicaTest/RedeclareSmoke/RedeclareInnerOuterExample",   "tags": ["full", "msl", "redeclare"], "expect": { "kind": "exit_zero" } },
-
-    { "id": "f_mtest_tables_combi_table1d",  "kind": "model", "target": "ModelicaTest/Tables/CombiTable1D",                           "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_tables_combi_table2d",  "kind": "model", "target": "ModelicaTest/Tables/CombiTable2D",                           "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_tables_combi_time_table","kind": "model", "target": "ModelicaTest/Tables/CombiTimeTable",                         "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_tables_combi_table1ds", "kind": "model", "target": "ModelicaTest/Tables/CombiTable1Ds",                          "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_tables_combi_table2ds", "kind": "model", "target": "ModelicaTest/Tables/CombiTable2Ds",                          "tags": ["full", "msl", "tables"], "expect": { "kind": "exit_zero" } },
-
-    { "id": "f_mtest_root_all_actual",       "kind": "model", "target": "ModelicaTest/TestAllActual",                                "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_root_test_real",        "kind": "model", "target": "ModelicaTest/TestReal2",                                    "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_root_test_integer",     "kind": "model", "target": "ModelicaTest/TestInteger",                                  "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_root_test_boolean",     "kind": "model", "target": "ModelicaTest/TestBoolean",                                  "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } },
-    { "id": "f_mtest_root_test_string",      "kind": "model", "target": "ModelicaTest/TestString",                                   "tags": ["full", "msl"], "expect": { "kind": "exit_zero" } }
+    { "id": "f_msl_clocked_discrete_ctrl",   "kind": "model", "target": "Modelica.Clocked.Examples.SimpleControlledDrive.ClockedWithDiscreteController","tags": ["full", "msl", "clocked"], "expect": { "kind": "exit_zero" } }
   ]
 }

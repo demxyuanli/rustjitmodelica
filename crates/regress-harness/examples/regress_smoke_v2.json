@@ -36,7 +36,8 @@
 
     { "id": "s_evt_bouncing_ball",     "kind": "model", "target": "TestLib/BouncingBall",    "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
     { "id": "s_evt_when",              "kind": "model", "target": "TestLib/WhenTest",         "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
-    { "id": "s_evt_discrete",          "kind": "model", "target": "TestLib/DiscreteTest",     "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
+    { "id": "s_evt_discrete",          "kind": "model", "target": "TestLib/DiscreteTest",     "tags": ["smoke"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
     { "id": "s_evt_no_event",          "kind": "model", "target": "TestLib/NoEventTest",      "tags": ["smoke"], "expect": { "kind": "exit_zero" } },
 
     { "id": "s_func_simple_def",       "kind": "model", "target": "TestLib/SimpleFunctionDef","tags": ["smoke"], "expect": { "kind": "exit_zero" } },

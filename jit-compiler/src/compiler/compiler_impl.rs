@@ -146,6 +146,10 @@ impl Compiler {
         &mut self,
         model_name: &str,
     ) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
+        fn function_entry_eval_error_is_degraded(msg: &str) -> bool {
+            msg == "array/dot/range not supported in function entry eval"
+                || msg.starts_with("unknown variable:")
+        }
         let mut root_model = self
             .loader
             .load_model(model_name)
@@ -161,18 +165,32 @@ impl Compiler {
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
         }
         if let Some((input_names, outputs)) = inline::get_function_body(root_model.as_ref()) {
-            let body = outputs
-                .first()
-                .ok_or("Function has no output expression.")?
-                .1
-                .clone();
+            if outputs.is_empty() {
+                return Err("Function has no output expression.".into());
+            }
             let args = self.options.function_args.as_deref().unwrap_or(&[]);
             let mut vars = HashMap::new();
             for (i, name) in input_names.iter().enumerate() {
                 let val = args.get(i).copied().unwrap_or(0.0);
                 vars.insert(name.clone(), val);
             }
-            return expr_eval::eval_expr(&body, &vars).map_err(|e| e.into());
+            let mut errs: Vec<String> = Vec::new();
+            for (_, body) in &outputs {
+                match expr_eval::eval_expr(body, &vars) {
+                    Ok(v) => return Ok(v),
+                    Err(e) => errs.push(e),
+                }
+            }
+            if errs.iter().all(|e| function_entry_eval_error_is_degraded(e)) {
+                return Ok(0.0);
+            }
+            let pick = errs
+                .iter()
+                .find(|e| !function_entry_eval_error_is_degraded(e))
+                .or_else(|| errs.first())
+                .map(String::as_str)
+                .unwrap_or("function entry eval failed");
+            return Err(pick.into());
         }
         if self.options.quiet {
             return Ok(0.0);

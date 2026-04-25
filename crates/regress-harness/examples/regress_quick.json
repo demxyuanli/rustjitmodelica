@@ -31,7 +31,8 @@
     { "id": "q_lang_init_alg",           "kind": "model", "target": "TestLib/InitAlg",            "tags": ["quick"], "expect": { "kind": "exit_zero" } },
 
     { "id": "q_evt_reinit",              "kind": "model", "target": "TestLib/ReinitTest",          "tags": ["quick"], "expect": { "kind": "exit_zero" } },
-    { "id": "q_evt_reinit_in_when",      "kind": "model", "target": "TestLib/ReinitInWhenTest",    "tags": ["quick"], "expect": { "kind": "exit_zero" } },
+    { "id": "q_evt_reinit_in_when",      "kind": "model", "target": "TestLib/ReinitInWhenTest",    "tags": ["quick"], "expect": { "kind": "exit_zero" },
+      "env": { "RUSTMODLICA_JIT_CODEGEN_CACHE": "0", "RUSTMODLICA_AOT_NATIVE_LOAD": "0" } },
     { "id": "q_evt_pre_edge",            "kind": "model", "target": "TestLib/PreEdgeChange",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
     { "id": "q_evt_no_event_in_when",    "kind": "model", "target": "TestLib/NoEventInWhen",       "tags": ["quick"], "expect": { "kind": "exit_zero" } },
     { "id": "q_evt_no_event_in_alg",     "kind": "model", "target": "TestLib/NoEventInAlg",        "tags": ["quick"], "expect": { "kind": "exit_zero" } },
