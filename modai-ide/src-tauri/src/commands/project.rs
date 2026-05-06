@@ -374,32 +374,44 @@ pub fn search_in_project(
 }
 
 #[tauri::command]
-pub fn get_diagram_data(
+pub async fn get_diagram_data(
     project_dir: String,
     relative_path: String,
 ) -> Result<diagram::DiagramModel, String> {
-    diagram::get_diagram_data(&project_dir, &relative_path)
+    tokio::task::spawn_blocking(move || {
+        diagram::get_diagram_data(&project_dir, &relative_path)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 #[tauri::command]
-pub fn get_diagram_data_from_source(
+pub async fn get_diagram_data_from_source(
     source: String,
     project_dir: Option<String>,
     relative_path: Option<String>,
 ) -> Result<diagram::DiagramModel, String> {
-    diagram::get_diagram_data_from_source(
-        &source,
-        project_dir.as_deref(),
-        relative_path.as_deref(),
-    )
+    tokio::task::spawn_blocking(move || {
+        diagram::get_diagram_data_from_source(
+            &source,
+            project_dir.as_deref(),
+            relative_path.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 #[tauri::command]
-pub fn get_graphical_document(
+pub async fn get_graphical_document(
     project_dir: String,
     relative_path: String,
 ) -> Result<diagram::GraphicalDocumentModel, String> {
-    diagram::get_graphical_document(&project_dir, &relative_path)
+    tokio::task::spawn_blocking(move || {
+        diagram::get_graphical_document(&project_dir, &relative_path)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 #[tauri::command]
@@ -414,7 +426,7 @@ pub async fn get_graphical_document_from_source(
 pub type ApplyDiagramEditsResult = diagram::ApplyDiagramEditsOutput;
 
 #[tauri::command]
-pub fn apply_diagram_edits(
+pub async fn apply_diagram_edits(
     source: String,
     components: Vec<diagram::ComponentInstance>,
     connections: Vec<diagram::Connection>,
@@ -424,16 +436,20 @@ pub fn apply_diagram_edits(
     project_dir: Option<String>,
     relative_path: Option<String>,
 ) -> Result<ApplyDiagramEditsResult, String> {
-    diagram::apply_diagram_edits(
-        &source,
-        &components,
-        &connections,
-        layout.as_ref(),
-        diagram_annotation.as_ref(),
-        icon_annotation.as_ref(),
-        project_dir.as_deref(),
-        relative_path.as_deref(),
-    )
+    tokio::task::spawn_blocking(move || {
+        diagram::apply_diagram_edits(
+            &source,
+            &components,
+            &connections,
+            layout.as_ref(),
+            diagram_annotation.as_ref(),
+            icon_annotation.as_ref(),
+            project_dir.as_deref(),
+            relative_path.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 #[tauri::command]

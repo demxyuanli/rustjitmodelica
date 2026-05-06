@@ -126,15 +126,50 @@ pub struct CaseRunTrace {
     pub logs: Vec<CaseLogTrace>,
 }
 
+fn strip_warmup_lines(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with("[warmup]"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn has_non_warmup_model_not_found(text: &str) -> bool {
+    strip_warmup_lines(text)
+        .to_lowercase()
+        .contains("model not found")
+}
+
+fn extract_warmup_failed_models(text: &str) -> Vec<String> {
+    const PREFIX: &str = "[warmup] failed ";
+    text.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with(PREFIX) {
+                return None;
+            }
+            let rest = &trimmed[PREFIX.len()..];
+            let model = rest.split(':').next().map(str::trim).unwrap_or_default();
+            if model.is_empty() {
+                None
+            } else {
+                Some(model.to_string())
+            }
+        })
+        .collect()
+}
+
 pub fn classify_failure(stdout: &str, stderr: &str, exit_code: i32) -> String {
-    let text = format!("{stdout}\n{stderr}").to_lowercase();
-    if text.contains("model not found") {
+    let text = format!("{stdout}\n{stderr}");
+    let lowered = text.to_lowercase();
+    if has_non_warmup_model_not_found(&text) {
         "model_not_found".to_string()
-    } else if text.contains("newton") {
+    } else if lowered.contains("codetoolarge") || lowered.contains("code too large") {
+        "jit_codegen_too_large".to_string()
+    } else if lowered.contains("newton") {
         "newton_nonconverged".to_string()
-    } else if text.contains("parse") {
+    } else if lowered.contains("parse") {
         "parse_error".to_string()
-    } else if text.contains("timeout") {
+    } else if lowered.contains("timeout") {
         "timeout".to_string()
     } else if exit_code == -1 {
         "process_error".to_string()
@@ -240,6 +275,8 @@ pub fn run_case_with_trace(ctx: &RunContext, case: &CaseDef) -> CaseRunTrace {
             stderr_len: e.len(),
             omc_compare: None,
             input_hash: Some(input_hash),
+            warmup_failed_count: 0,
+            warmup_failed_models: Vec::new(),
             artifacts: Artifacts::default(),
         },
     };
@@ -306,7 +343,7 @@ fn run_model(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<Case
         None
     } else {
         let text = format!("{stdout}\n{stderr}");
-        if text.to_lowercase().contains("model not found") {
+        if has_non_warmup_model_not_found(&text) {
             Some("model_not_found".to_string())
         } else if is_release_binary_locked(&text) {
             Some("release_binary_locked".to_string())
@@ -331,6 +368,8 @@ fn run_model(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<Case
     } else {
         CaseStatus::Fail
     };
+    let warmup_failed_models = extract_warmup_failed_models(&stderr);
+    let warmup_failed_count = warmup_failed_models.len() as u32;
 
     if expect_ok && code == 0 {
         if let Some(omc) = &case.omc_compare {
@@ -358,6 +397,8 @@ fn run_model(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<Case
         stderr_len: stderr.len(),
         omc_compare: omc_res,
         input_hash: None,
+        warmup_failed_count,
+        warmup_failed_models,
         artifacts: Artifacts {
             rust_csv: Some(csv_str),
             working_dir: Some(work.to_string_lossy().to_string()),
@@ -566,6 +607,8 @@ fn run_mos(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<CaseRe
                 timeout,
             )?;
             let expect_ok = matches_expect(code, &case.expect);
+            let warmup_failed_models = extract_warmup_failed_models(&stderr);
+            let warmup_failed_count = warmup_failed_models.len() as u32;
             Ok(CaseResult {
                 case_id: case.id.clone(),
                 tags: case.tags.clone(),
@@ -589,6 +632,8 @@ fn run_mos(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<CaseRe
                 stderr_len: stderr.len(),
                 omc_compare: None,
                 input_hash: None,
+                warmup_failed_count,
+                warmup_failed_models,
                 artifacts: Artifacts {
                     rust_csv: None,
                     working_dir: Some(work.to_string_lossy().to_string()),
@@ -612,6 +657,8 @@ fn run_custom(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<Cas
     let (code, stdout, stderr) =
         run_command_with_env(&exe, &case.args, &work, defaults, &case.env, timeout)?;
     let expect_ok = matches_expect(code, &case.expect);
+    let warmup_failed_models = extract_warmup_failed_models(&stderr);
+    let warmup_failed_count = warmup_failed_models.len() as u32;
     Ok(CaseResult {
         case_id: case.id.clone(),
         tags: case.tags.clone(),
@@ -635,6 +682,8 @@ fn run_custom(ctx: &RunContext, case: &CaseDef, timeout: Duration) -> Result<Cas
         stderr_len: stderr.len(),
         omc_compare: None,
         input_hash: None,
+        warmup_failed_count,
+        warmup_failed_models,
         artifacts: Artifacts {
             rust_csv: None,
             working_dir: Some(work.to_string_lossy().to_string()),

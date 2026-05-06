@@ -1,4 +1,25 @@
+static ICON_CACHE: once_cell::sync::Lazy<std::sync::Mutex<HashMap<String, Option<IconDiagramAnnotation>>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
 fn try_load_type_icon(
+    type_name: &str,
+    project_dir: Option<&str>,
+) -> Option<IconDiagramAnnotation> {
+    if let Ok(cache) = ICON_CACHE.lock() {
+        if let Some(cached) = cache.get(type_name) {
+            return cached.clone();
+        }
+    }
+
+    let result = try_load_type_icon_uncached(type_name, project_dir);
+
+    if let Ok(mut cache) = ICON_CACHE.lock() {
+        cache.insert(type_name.to_string(), result.clone());
+    }
+    result
+}
+
+fn try_load_type_icon_uncached(
     type_name: &str,
     project_dir: Option<&str>,
 ) -> Option<IconDiagramAnnotation> {

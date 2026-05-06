@@ -20,6 +20,11 @@ impl SubstituteCache {
             order: Vec::with_capacity(max_size.min(4096)),
         }
     }
+
+    pub fn clear(&mut self) {
+        self.cache.clear();
+        self.order.clear();
+    }
 }
 
 pub(super) fn expand_range_indices(

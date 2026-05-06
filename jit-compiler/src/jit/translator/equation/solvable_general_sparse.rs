@@ -172,7 +172,9 @@ pub(super) fn compile_solvable_block_general_sparse_n(
         builder.ins().store(MemFlags::new(), col_val, addr, 0);
     }
 
-    let eps_val = builder.ins().f64const(1e-6);
+    let eps_base = builder.ins().f64const(1e-6);
+    let eps_floor = builder.ins().f64const(1e-8);
+    let one = builder.ins().f64const(1.0);
     let header_block = builder.create_block();
     let body_block = builder.create_block();
     let exit_block = builder.create_block();
@@ -252,14 +254,18 @@ pub(super) fn compile_solvable_block_general_sparse_n(
 
     for (entry_idx, (row, col)) in pattern.entries.iter().enumerate() {
         let x_col = builder.ins().stack_load(cl_types::F64, slots[*col], 0);
-        let x_col_perturbed = builder.ins().fadd(x_col, eps_val);
+        let x_col_abs = builder.ins().fabs(x_col);
+        let x_col_scale = builder.ins().fmax(one, x_col_abs);
+        let eps_scaled = builder.ins().fmul(eps_base, x_col_scale);
+        let eps_col = builder.ins().fmax(eps_floor, eps_scaled);
+        let x_col_perturbed = builder.ins().fadd(x_col, eps_col);
         builder.ins().stack_store(x_col_perturbed, slots[*col], 0);
         let jac = if let Some(d_expr) = symbolic_plan.get(*row, *col) {
             compile_expression(d_expr, ctx, builder)?
         } else {
             let rp = compile_expression(&residuals[*row], ctx, builder)?;
             let dr = builder.ins().fsub(rp, r_vals[*row]);
-            builder.ins().fdiv(dr, eps_val)
+            builder.ins().fdiv(dr, eps_col)
         };
         builder
             .ins()

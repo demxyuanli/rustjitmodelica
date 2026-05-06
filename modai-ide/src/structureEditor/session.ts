@@ -54,6 +54,12 @@ export class StructureGraphSession {
   private structureGridSize = 10;
   private structureClipboard: StructureClipboardPayload | null = null;
 
+  /** Cached canvas nodes/links (before selection/sim overlay) to avoid 5x recomputation per drag. */
+  private _canvasCache: { nodes: DiagramNode[]; links: DiagramLink[] } | null = null;
+  private _canvasCacheVersion = -1;
+  /** RAF id for deferred position-change processing (undo clone + emit). */
+  private _pendingPositionRaf = 0;
+
   subscribe = (fn: () => void) => {
     this.subs.add(fn);
     return () => this.subs.delete(fn);
@@ -66,6 +72,11 @@ export class StructureGraphSession {
 
   getRevision() {
     return this.rev;
+  }
+
+  /** Bumps on document topology/layout/semantic edits, not on selection or sim-only overlay. */
+  getDocumentContentVersion() {
+    return this.docContentVersion;
   }
 
   getDocument() {
@@ -210,9 +221,27 @@ export class StructureGraphSession {
 
   getNodesLinksForCanvas(onDbl?: (typeName: string, libraryId?: string) => void) {
     if (!this.doc) return { nodes: [] as DiagramNode[], links: [] as DiagramLink[] };
+    if (this._canvasCache && this._canvasCacheVersion === this.docContentVersion) {
+      const sel = new Set(this.selection);
+      const sim = this.sim;
+      return {
+        nodes: this._canvasCache.nodes.map((n) => ({
+          ...n,
+          data: {
+            ...n.data,
+            onDoubleClick: onDbl,
+            ...(sim?.[n.id] ? { simValues: sim[n.id] } : {}),
+          },
+          selected: sel.has(n.id),
+        })),
+        links: this._canvasCache.links,
+      };
+    }
     const dm = documentToDiagram(this.doc);
     const raw = diagramToNodes(dm, onDbl);
     const flow = attachFlowRoles(raw.nodes, raw.links);
+    this._canvasCache = { nodes: flow, links: raw.links };
+    this._canvasCacheVersion = this.docContentVersion;
     const sel = new Set(this.selection);
     const sim = this.sim;
     return {
@@ -245,8 +274,26 @@ export class StructureGraphSession {
     const layout = { ...(this.doc.graphical.layout ?? {}), [id]: next };
     this.doc = { ...this.doc, graphical: { ...this.doc.graphical, layout } };
     this.bumpDocContentVersion();
-    const { nodes, links } = this.getNodesLinksForCanvas(() => {});
-    this.afterTopo(nodes, links);
+    // Defer heavy undo clone + React emit to next animation frame so the
+    // pointer event handler returns immediately and the UI stays responsive.
+    if (!this._pendingPositionRaf) {
+      this._pendingPositionRaf = requestAnimationFrame(() => {
+        this._pendingPositionRaf = 0;
+        if (!this.doc) return;
+        const now = Date.now();
+        const snap = cloneDoc(this.doc);
+        const top = this.undoStack[this.undoStack.length - 1];
+        if (top && this.undoStack.length >= 2 && now - top.ts < MERGE_MS) {
+          top.doc = snap;
+          top.ts = now;
+        } else {
+          this.undoStack.push({ doc: snap, ts: now });
+          if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
+          this.redoStack = [];
+        }
+        this.emit();
+      });
+    }
   }
 
   applyConnect(src: string, sp: string, tgt: string, tp: string) {

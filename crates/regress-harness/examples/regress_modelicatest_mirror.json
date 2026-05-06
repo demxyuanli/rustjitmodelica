@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "defaults": {
+    "repo_root": ".",
+    "rustmodlica_exe": "auto",
+    "working_dir": "jit-compiler",
+    "solver": "rk4",
+    "t_end": 10.0,
+    "dt": 0.01
+  },
+  "execution": {
+    "workers": 4,
+    "fail_fast": false
+  },
+  "incremental": {
+    "strategy": "none"
+  },
+  "tiers": {
+    "mtest_mirror": {
+      "include_tags": [
+        "mtest_mirror"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "f_mtest_redeclare_extends",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareExtendsExample",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "redeclare"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_redeclare_modifier",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareModifierExample",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "redeclare"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_redeclare_replaceable",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareReplaceableExample",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "redeclare"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_redeclare_constrained",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareConstrainedByExample",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "redeclare"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_redeclare_short",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareShortClassExample",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "redeclare"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_redeclare_component",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareComponentExample",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "redeclare"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_redeclare_inner_outer",
+      "kind": "model",
+      "target": "ModelicaTest/RedeclareSmoke/RedeclareInnerOuterExample",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "redeclare"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_tables_combi_table1d",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1D",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "tables"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_tables_combi_table2d",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2D",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "tables"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_tables_combi_time_table",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTimeTable",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "tables"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_tables_combi_table1ds",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable1Ds",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "tables"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_tables_combi_table2ds",
+      "kind": "model",
+      "target": "ModelicaTest/Tables/CombiTable2Ds",
+      "tags": [
+        "mtest_mirror",
+        "msl",
+        "tables"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_root_all_actual",
+      "kind": "model",
+      "target": "ModelicaTest/TestAllActual",
+      "tags": [
+        "mtest_mirror",
+        "msl"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_root_test_real",
+      "kind": "model",
+      "target": "ModelicaTest/TestReal2",
+      "tags": [
+        "mtest_mirror",
+        "msl"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_root_test_integer",
+      "kind": "model",
+      "target": "ModelicaTest/TestInteger",
+      "tags": [
+        "mtest_mirror",
+        "msl"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_root_test_boolean",
+      "kind": "model",
+      "target": "ModelicaTest/TestBoolean",
+      "tags": [
+        "mtest_mirror",
+        "msl"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    },
+    {
+      "id": "f_mtest_root_test_string",
+      "kind": "model",
+      "target": "ModelicaTest/TestString",
+      "tags": [
+        "mtest_mirror",
+        "msl"
+      ],
+      "expect": {
+        "kind": "exit_zero"
+      }
+    }
+  ]
+}

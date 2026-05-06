@@ -1,4 +1,4 @@
-use crate::ast::{Equation, Expression};
+use crate::ast::{AlgorithmStatement, Equation, Expression};
 use crate::string_intern::resolve_id;
 use std::collections::HashSet;
 
@@ -89,6 +89,93 @@ pub(crate) fn collect_vars_eq(eq: &Equation, vars: &mut HashSet<String>) {
         }
         _ => {}
     }
+}
+
+pub(crate) fn collect_vars_alg(stmt: &AlgorithmStatement, vars: &mut HashSet<String>) {
+    match stmt {
+        AlgorithmStatement::Assignment(lhs, rhs) => {
+            collect_vars_expr(lhs, vars);
+            collect_vars_expr(rhs, vars);
+        }
+        AlgorithmStatement::MultiAssign(lhss, rhs) => {
+            for e in lhss {
+                collect_vars_expr(e, vars);
+            }
+            collect_vars_expr(rhs, vars);
+        }
+        AlgorithmStatement::CallStmt(expr) => {
+            collect_vars_expr(expr, vars);
+        }
+        AlgorithmStatement::If(cond, then_stmts, elseif_list, else_stmts) => {
+            collect_vars_expr(cond, vars);
+            for s in then_stmts {
+                collect_vars_alg(s, vars);
+            }
+            for (ec, es) in elseif_list {
+                collect_vars_expr(ec, vars);
+                for s in es {
+                    collect_vars_alg(s, vars);
+                }
+            }
+            if let Some(stmts) = else_stmts {
+                for s in stmts {
+                    collect_vars_alg(s, vars);
+                }
+            }
+        }
+        AlgorithmStatement::For(_, range, body) => {
+            collect_vars_expr(range, vars);
+            for s in body {
+                collect_vars_alg(s, vars);
+            }
+        }
+        AlgorithmStatement::While(cond, body) => {
+            collect_vars_expr(cond, vars);
+            for s in body {
+                collect_vars_alg(s, vars);
+            }
+        }
+        AlgorithmStatement::When(cond, body, elsewhen_list) => {
+            collect_vars_expr(cond, vars);
+            for s in body {
+                collect_vars_alg(s, vars);
+            }
+            for (ec, es) in elsewhen_list {
+                collect_vars_expr(ec, vars);
+                for s in es {
+                    collect_vars_alg(s, vars);
+                }
+            }
+        }
+        AlgorithmStatement::Reinit(var_name, expr) => {
+            vars.insert(var_name.clone());
+            collect_vars_expr(expr, vars);
+        }
+        AlgorithmStatement::Assert(cond, msg) => {
+            collect_vars_expr(cond, vars);
+            collect_vars_expr(msg, vars);
+        }
+        AlgorithmStatement::Terminate(msg) => {
+            collect_vars_expr(msg, vars);
+        }
+        AlgorithmStatement::Return(Some(expr)) => {
+            collect_vars_expr(expr, vars);
+        }
+        AlgorithmStatement::NoOp
+        | AlgorithmStatement::Break
+        | AlgorithmStatement::Return(None) => {}
+    }
+}
+
+pub fn extract_unknowns_from_algorithm(
+    stmt: &AlgorithmStatement,
+    knowns: &HashSet<String>,
+) -> Vec<String> {
+    let mut vars = HashSet::new();
+    collect_vars_alg(stmt, &mut vars);
+    vars.into_iter()
+        .filter(|v| !knowns.contains(v))
+        .collect()
 }
 
 pub(crate) fn collect_vars_expr(expr: &Expression, vars: &mut HashSet<String>) {

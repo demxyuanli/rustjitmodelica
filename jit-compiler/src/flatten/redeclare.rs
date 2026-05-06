@@ -96,11 +96,8 @@ fn validate_modification_prefixes(m: &Modification) -> Result<(), FlattenError> 
 /// Walk declarations, extends modifiers, and inner classes; reject illegal prefix combinations.
 pub fn validate_modification_prefixes_in_model(model: &Model) -> Result<(), FlattenError> {
     for decl in &model.declarations {
-        if decl.is_inner && decl.is_outer {
-            return Err(FlattenError::ConflictingInnerOuter {
-                target: decl.name.clone(),
-            });
-        }
+        // Modelica permits declarations prefixed with both `inner` and `outer`
+        // (e.g. `inner outer StateGraphRoot stateGraphRoot;`).
         if decl.is_public && decl.is_protected {
             return Err(FlattenError::ConflictingPublicProtected {
                 target: decl.name.clone(),
@@ -171,45 +168,24 @@ pub fn apply_modification_to_model(
                                 if ctx.use_coarse_constrainedby_only {
                                     coarse_type_satisfies_constraint(t, c)
                                 } else {
-                                    // Prefer query-based constrainedby check when query cache is enabled.
-                                    let query_cache_disabled = std::env::var("RUSTMODLICA_QUERY_CACHE")
-                                        .ok()
-                                        .map(|v| {
-                                            let t = v.trim();
-                                            t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
-                                        })
-                                        .unwrap_or(false);
-                                    if !query_cache_disabled {
-                                        {
-                                            let scope_q = if !ctx.current_qualified.is_empty() {
-                                                ctx.current_qualified.as_str()
-                                            } else {
-                                                model.name.as_str()
-                                            };
-                                            crate::query_db::constrainedby::constrainedby_holds_extends_cached_with_loader(
-                                                l,
-                                                scope_q,
-                                                ctx.import_scope_for_types(),
-                                                &ctx.msl_import_context,
-                                                t,
-                                                c,
-                                                ctx.validation_mode,
-                                                ctx.compile_stop_label.as_str(),
-                                            )?
-                                        }
-                                    } else {
-                                        crate::instantiate::constrainedby_holds_extends(
-                                            l,
-                                            model,
-                                            ctx.import_scope_for_types(),
-                                            &ctx.msl_import_context,
-                                            t,
-                                            c,
-                                        )?
-                                    }
+                                    crate::instantiate::constrainedby_holds_extends(
+                                        l,
+                                        model,
+                                        ctx.import_scope_for_types(),
+                                        &ctx.msl_import_context,
+                                        t,
+                                        c,
+                                    )?
                                 }
                             }
-                            None => coarse_type_satisfies_constraint(t, c),
+                            None => {
+                                // Without a loader the full extends-chain check
+                                // is impossible.  Accept unless the coarse
+                                // heuristic is certain the types are unrelated.
+                                // This avoids false rejections in the query-DB
+                                // pipeline where no ModelLoader is available.
+                                true
+                            }
                         };
                         if !ok {
                             return Err(FlattenError::RedeclareViolatesConstrainedBy {

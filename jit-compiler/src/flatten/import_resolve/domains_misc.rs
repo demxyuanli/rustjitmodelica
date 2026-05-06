@@ -380,6 +380,24 @@ pub(super) fn resolve_blocks_utilities_domain(name: &str, ctx: &ResolveContext) 
     }
 
 pub(super) fn resolve_global_shortcuts(model: &Model, name: &str) -> Option<String> {
+        if name == "PortFlowDirection" {
+            return Some("Modelica.Fluid.Types.PortFlowDirection".to_string());
+        }
+        if name == "CompositeStepStatePort_out" {
+            return Some("Modelica.StateGraph.Interfaces.CompositeStepStatePort_out".to_string());
+        }
+        if name == "CompositeStepStatePort_in" {
+            return Some("Modelica.StateGraph.Interfaces.CompositeStepStatePort_in".to_string());
+        }
+        if name == "Modelica.Fluid.Interfaces.CompositeStepState" {
+            return Some("Modelica.StateGraph.Interfaces.CompositeStepState".to_string());
+        }
+        if name == "Modelica.Fluid.Interfaces.CompositeStepStatePort_out" {
+            return Some("Modelica.StateGraph.Interfaces.CompositeStepStatePort_out".to_string());
+        }
+        if name == "Modelica.Fluid.Interfaces.CompositeStepStatePort_in" {
+            return Some("Modelica.StateGraph.Interfaces.CompositeStepStatePort_in".to_string());
+        }
         if name == "Modelica.Fluid.Pipes.BaseClasses.PartialValve" {
             return Some("Modelica.Fluid.Valves.BaseClasses.PartialValve".to_string());
         }
@@ -664,6 +682,12 @@ pub(super) fn resolve_global_namespace_aliases(name: &str) -> Option<String> {
             || name == "Interfaces.FluidPort_b"
         {
             return Some(format!("Modelica.Fluid.{}", name));
+        }
+        if name == "Interfaces.FluidPorts_a" || name == "Interfaces.FluidPorts_b" {
+            return Some(format!("Modelica.Fluid.{}", name));
+        }
+        if name == "Interfaces.FlowPort_a" || name == "Interfaces.FlowPort_b" {
+            return Some(format!("Modelica.Thermal.FluidHeatFlow.{}", name));
         }
         if name == "Interfaces.HeatPort"
             || name == "Interfaces.HeatPort_a"

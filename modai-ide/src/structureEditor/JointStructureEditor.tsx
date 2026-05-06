@@ -63,28 +63,36 @@ function vertKey(v?: { x: number; y: number }[]) {
   return JSON.stringify(v.map((p) => ({ x: rq(p.x), y: rq(p.y) })));
 }
 
+/** Stable signature for remount vs in-place update; avoid JSON.stringify on hot path. */
 function cellSignature(node: DiagramNode): string {
-  return JSON.stringify({
-    id: node.id,
-    x: rq(node.position.x),
-    y: rq(node.position.y),
-    typeName: node.data?.typeName,
-    libraryId: node.data?.libraryId,
-    portHandles: node.data?.portHandles,
-    connectorKind: node.data?.connectorKind,
-    isInput: node.data?.isInput,
-    isOutput: node.data?.isOutput,
-    isSourceNode: node.data?.isSourceNode,
-    isSinkNode: node.data?.isSinkNode,
-    rotation: node.data?.rotation,
-    params: node.data?.params,
-    hasError: node.data?.hasError,
-    errorMessage: node.data?.errorMessage,
-    replaceable: node.data?.replaceable,
-    constrainedbyType: node.data?.constrainedbyType,
-    condition: node.data?.condition,
-    visible: node.data?.visible,
-  });
+  const d = node.data;
+  const ph = d?.portHandles?.join("\x1e") ?? "";
+  const pr =
+    d?.params
+      ?.map((p) => `${p.name ?? ""}\x1f${p.value ?? ""}`)
+      .join("\x1e") ?? "";
+  const parts = [
+    node.id,
+    rq(node.position.x),
+    rq(node.position.y),
+    d?.typeName ?? "",
+    d?.libraryId ?? "",
+    ph,
+    d?.connectorKind ?? "",
+    d?.isInput ? "1" : "0",
+    d?.isOutput ? "1" : "0",
+    d?.isSourceNode ? "1" : "0",
+    d?.isSinkNode ? "1" : "0",
+    String(d?.rotation ?? ""),
+    pr,
+    d?.hasError ? "1" : "0",
+    d?.errorMessage ?? "",
+    d?.replaceable ? "1" : "0",
+    d?.constrainedbyType ?? "",
+    d?.condition ?? "",
+    d?.visible === false ? "0" : "1",
+  ];
+  return parts.join("\x1d");
 }
 
 type Colors = ReturnType<typeof resolveDiagramColors>;
@@ -169,6 +177,7 @@ function reconcileGraph(g: dia.Graph, nodes: DiagramNode[], links: DiagramLink[]
       /* ignore */
     }
   }
+  g.startBatch("modai-reconcile");
   try {
   const wantN = new Set(nodes.map((n) => n.id));
   const wantL = new Set(links.map((l) => l.id));
@@ -223,12 +232,19 @@ function reconcileGraph(g: dia.Graph, nodes: DiagramNode[], links: DiagramLink[]
     }
   }
   } finally {
+    g.stopBatch("modai-reconcile");
     if (perfOk) {
       try {
         performance.mark("modai-reconcile-end");
         performance.measure("modai-reconcile", "modai-reconcile-start", "modai-reconcile-end");
         const e = performance.getEntriesByName("modai-reconcile").pop();
-        if (e && "duration" in e && e.duration > 16) {
+        // ~32ms ~= one missed frame at 30Hz; structural sync can legitimately exceed 16ms.
+        if (
+          import.meta.env.DEV &&
+          e &&
+          "duration" in e &&
+          e.duration > 32
+        ) {
           console.warn(`[modai] reconcileGraph slow: ${e.duration.toFixed(1)}ms`);
         }
       } catch {
@@ -310,6 +326,8 @@ export function JointStructureEditor({
   bundleRef.current = bundle;
 
   const applyingSessionGraphRef = useRef(false);
+  /** `docContentVersion|grid` — only full reconcile when document content or grid step for routing changes. */
+  const lastReconciledKeyRef = useRef<string | null>(null);
 
   const errKey = useMemo(
     () => bundle.nodes.map((n) => `${n.id}:${n.data?.hasError ? 1 : 0}`).join("|"),
@@ -449,6 +467,7 @@ export function JointStructureEditor({
     paper.freeze();
     try {
       reconcileGraph(graph, init.nodes, init.links, gridStepRef.current);
+      lastReconciledKeyRef.current = `${sessionRef.current.getDocumentContentVersion()}|${gridStepRef.current}`;
       paintAllRef.current();
     } finally {
       paper.unfreeze();
@@ -680,7 +699,12 @@ export function JointStructureEditor({
     if (p) p.freeze();
     try {
       const { nodes, links } = bundleRef.current;
-      reconcileGraph(gr, nodes, links, gridStepRef.current);
+      const s = sessionRef.current;
+      const rKey = `${s.getDocumentContentVersion()}|${gridStepRef.current}`;
+      if (lastReconciledKeyRef.current !== rKey) {
+        lastReconciledKeyRef.current = rKey;
+        reconcileGraph(gr, nodes, links, gridStepRef.current);
+      }
       paintAllRef.current();
     } finally {
       if (p) p.unfreeze();
@@ -688,7 +712,7 @@ export function JointStructureEditor({
         applyingSessionGraphRef.current = false;
       }, 0);
     }
-  }, [revision]);
+  }, [revision, structureGridSize]);
 
   useEffect(() => {
     const gr = graphRef.current;

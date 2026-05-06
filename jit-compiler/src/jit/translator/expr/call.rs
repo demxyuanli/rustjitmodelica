@@ -365,6 +365,46 @@ pub(super) fn compile_call(
         return Ok(builder.ins().f64const(0.0));
     }
 
+    if name_matches(func_name, "distribution") {
+        if args.is_empty() {
+            return Ok(builder.ins().f64const(0.0));
+        }
+        jit_builtin_fallback_warn_once(func_name, "distribution-passthrough");
+        return compile_rec(&args[0], ctx, builder);
+    }
+    // Named-argument encoding from the parser: named("fieldName", valueExpr).
+    // Scalar semantics use valueExpr only (see flatten/param_expr_eval.rs,
+    // compiler/inline/record_access.rs).
+    if name_matches(func_name, "named") {
+        return match args.len() {
+            0 => Ok(builder.ins().f64const(0.0)),
+            1 => compile_rec(&args[0], ctx, builder),
+            2 => {
+                if matches!(&args[0], Expression::StringLiteral(_)) {
+                    compile_rec(&args[1], ctx, builder)
+                } else if matches!(&args[1], Expression::StringLiteral(_)) {
+                    compile_rec(&args[0], ctx, builder)
+                } else {
+                    compile_rec(&args[1], ctx, builder)
+                }
+            }
+            _ => {
+                if let Some(last) = args.last() {
+                    compile_rec(last, ctx, builder)
+                } else {
+                    Ok(builder.ins().f64const(0.0))
+                }
+            }
+        };
+    }
+    // Modelica fill(e, n1, n2, ...): scalar equation lowering uses element e only.
+    if name_matches(func_name, "fill") {
+        if let Some(first) = args.first() {
+            return compile_rec(first, ctx, builder);
+        }
+        return Ok(builder.ins().f64const(0.0));
+    }
+
     let is_external_modelica = ctx
         .external_modelica_names
         .map(|s| s.contains(func_name))

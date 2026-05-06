@@ -245,10 +245,11 @@ function setupPanAndZoom(
     const dy = evt.clientY - panStart.y;
     latestTx = translateStart.tx + dx;
     latestTy = translateStart.ty + dy;
-    paper.translate(latestTx, latestTy);
+    // Batch translate to RAF instead of calling paper.translate() per pixel
     if (translateRaf == null) {
       translateRaf = requestAnimationFrame(() => {
         translateRaf = null;
+        paper.translate(latestTx, latestTy);
         onTranslate?.(latestTx, latestTy);
       });
     }
@@ -301,24 +302,35 @@ function setupPanAndZoom(
     return origRemovePan();
   };
 
+  let zoomRaf: number | null = null;
+  let pendingScale = 0;
+  let pendingCx = 0;
+  let pendingCy = 0;
   svgEl.addEventListener("wheel", (evt: WheelEvent) => {
     evt.preventDefault();
     const delta = evt.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-    const currentScale = paper.scale().sx;
+    const currentScale = pendingScale || paper.scale().sx;
     const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, currentScale + delta));
     if (newScale === currentScale) return;
-
-    const localPoint = paper.clientToLocalPoint({ x: evt.clientX, y: evt.clientY });
-    paper.scale(newScale, newScale);
-    const newLocal = paper.clientToLocalPoint({ x: evt.clientX, y: evt.clientY });
-    const t = paper.translate();
-    const adjustedTx = t.tx + (newLocal.x - localPoint.x) * newScale;
-    const adjustedTy = t.ty + (newLocal.y - localPoint.y) * newScale;
-    paper.translate(adjustedTx, adjustedTy);
-    requestAnimationFrame(() => {
-      onScale?.(newScale);
-      onTranslate?.(adjustedTx, adjustedTy);
-    });
+    pendingScale = newScale;
+    pendingCx = evt.clientX;
+    pendingCy = evt.clientY;
+    if (zoomRaf == null) {
+      zoomRaf = requestAnimationFrame(() => {
+        zoomRaf = null;
+        const ns = pendingScale;
+        pendingScale = 0;
+        const localPoint = paper.clientToLocalPoint({ x: pendingCx, y: pendingCy });
+        paper.scale(ns, ns);
+        const newLocal = paper.clientToLocalPoint({ x: pendingCx, y: pendingCy });
+        const t = paper.translate();
+        const adjustedTx = t.tx + (newLocal.x - localPoint.x) * ns;
+        const adjustedTy = t.ty + (newLocal.y - localPoint.y) * ns;
+        paper.translate(adjustedTx, adjustedTy);
+        onScale?.(ns);
+        onTranslate?.(adjustedTx, adjustedTy);
+      });
+    }
   }, { passive: false });
 }
 

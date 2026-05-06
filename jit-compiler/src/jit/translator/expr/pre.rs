@@ -9,10 +9,10 @@ use crate::jit::context::TranslationContext;
 use crate::jit::types::ArrayType;
 use super::builtin::try_compile_builtin_placeholder_constant;
 use super::helpers::{
-    abi_params_short, import_call_abi_tag, jit_builtin_fallback_warn_once, jit_dot_trace_enabled,
-    jit_import_debug_enabled, jit_import_strict_enabled, jit_strict_placeholders_enabled,
-    jit_var_fallback_trace_val, lookup_or_insert_import, modelica_constants_dot_member,
-    modelica_constants_flat_variable, pre_scalar_name_bound,
+    abi_params_short, import_call_abi_tag, jit_builtin_fallback_warn_once, jit_dot_fallback_zero_enabled,
+    jit_dot_trace_enabled, jit_import_debug_enabled, jit_import_strict_enabled,
+    jit_strict_placeholders_enabled, jit_var_fallback_trace_val, lookup_or_insert_import,
+    modelica_constants_dot_member, modelica_constants_flat_variable, pre_scalar_name_bound,
 };
 use super::matrix::fold_dot_symmetric_transformation_matrix;
 use crate::jit::jit_policy::{
@@ -450,6 +450,9 @@ pub(super) fn compile_pre_expression(
                     "[jit-dot-trace] pre() Dot residual member={} inner={:?} full_expr={:?}",
                     member, inner, expr
                 );
+            }
+            if jit_dot_fallback_zero_enabled() {
+                return Ok(builder.ins().f64const(0.0));
             }
             Err("Array access (nested) and Dot should have been flattened before JIT compilation".to_string())
         }

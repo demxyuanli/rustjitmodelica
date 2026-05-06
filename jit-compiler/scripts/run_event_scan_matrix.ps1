@@ -5,7 +5,9 @@ param(
     [string[]]$CountValues = @("0.0004", "0.0005", "0.0006", "0.0008"),
     [string[]]$TailVelocityValues = @("0.02", "0.03", "0.04", "0.05"),
     [string[]]$LibPaths = @(),
-    [int]$TopN = 3
+    [int]$TopN = 3,
+    # Match run_regression.ps1 / DIR: same rustmodlica binary as full regression (default cargo target is jit-compiler/target).
+    [string]$CargoTargetDir = ""
 )
 
 Set-StrictMode -Version Latest
@@ -23,6 +25,11 @@ if (-not (Test-Path -LiteralPath $outPath)) {
     New-Item -ItemType Directory -Path $outPath | Out-Null
 }
 
+$oldJitCodegenCache = [string]$env:RUSTMODLICA_JIT_CODEGEN_CACHE
+$oldAotNativeLoad = [string]$env:RUSTMODLICA_AOT_NATIVE_LOAD
+$env:RUSTMODLICA_JIT_CODEGEN_CACHE = "0"
+$env:RUSTMODLICA_AOT_NATIVE_LOAD = "0"
+
 $featuresRaw = [string]$env:RUSTMODLICA_CARGO_FEATURES
 if ([string]::IsNullOrWhiteSpace($featuresRaw)) { $featuresRaw = "sundials" }
 $features = @()
@@ -34,6 +41,16 @@ $argFeatures = @()
 if ($features.Count -gt 0) {
     $argFeatures += "--features"
     $argFeatures += ($features -join ",")
+}
+
+$cargoTargetDirArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($CargoTargetDir)) {
+    $td = if ([System.IO.Path]::IsPathRooted($CargoTargetDir.Trim())) {
+        $CargoTargetDir.Trim()
+    } else {
+        Join-Path $repoRoot $CargoTargetDir.Trim().TrimStart("\", "/")
+    }
+    $cargoTargetDirArgs = @("--target-dir", $td)
 }
 
 $csvPath = Join-Path $outPath "deadband_matrix_stability.csv"
@@ -53,9 +70,11 @@ foreach ($m in $Models) {
             foreach ($lp in $LibPaths) {
                 $argLib += "--lib-path=$lp"
             }
+            $stderrA = Join-Path $outPath ("event_{0}_{1}_{2}_a.stderr.log" -f $safe, $c, $tv)
+            $stderrB = Join-Path $outPath ("event_{0}_{1}_{2}_b.stderr.log" -f $safe, $c, $tv)
             $scanArgsA = @(
                 "run", "-p", "rustmodlica", "--manifest-path", $manifest
-            ) + $argFeatures + @(
+            ) + $cargoTargetDirArgs + $argFeatures + @(
                 "--release", "--",
                 "event-scan",
                 "--model=$m",
@@ -68,11 +87,11 @@ foreach ($m in $Models) {
 
             $oldEap = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
-            $null = & cargo @scanArgsA 2>&1
+            $null = & cargo @scanArgsA 2> $stderrA
             $e1 = $LASTEXITCODE
             $scanArgsB = @(
                 "run", "-p", "rustmodlica", "--manifest-path", $manifest
-            ) + $argFeatures + @(
+            ) + $cargoTargetDirArgs + $argFeatures + @(
                 "--release", "--",
                 "event-scan",
                 "--model=$m",
@@ -82,13 +101,14 @@ foreach ($m in $Models) {
                 "--aggregate-report=full",
                 "--output-file=$b"
             ) + $argLib
-            $null = & cargo @scanArgsB 2>&1
+            $null = & cargo @scanArgsB 2> $stderrB
             $e2 = $LASTEXITCODE
             $ErrorActionPreference = $oldEap
 
             if ($e1 -ne 0 -or $e2 -ne 0 -or -not (Test-Path -LiteralPath $a) -or -not (Test-Path -LiteralPath $b)) {
-                "$m,$c,$tv,,,error,process_failed" | Add-Content -LiteralPath $csvPath -Encoding UTF8
-                $configErrors.Add("$m c=$c tv=$tv reason=process_failed") | Out-Null
+                $reason = "process_failed(exit_a=$e1,exit_b=$e2,stderr_a=$stderrA,stderr_b=$stderrB)"
+                "$m,$c,$tv,,,error,$reason" | Add-Content -LiteralPath $csvPath -Encoding UTF8
+                $configErrors.Add("$m c=$c tv=$tv reason=$reason") | Out-Null
                 continue
             }
 
@@ -130,6 +150,17 @@ foreach ($m in $Models) {
             "$m,$c,$tv,$ha,$hb,$st," | Add-Content -LiteralPath $csvPath -Encoding UTF8
         }
     }
+}
+
+if ([string]::IsNullOrWhiteSpace($oldJitCodegenCache)) {
+    Remove-Item Env:RUSTMODLICA_JIT_CODEGEN_CACHE -ErrorAction SilentlyContinue
+} else {
+    $env:RUSTMODLICA_JIT_CODEGEN_CACHE = $oldJitCodegenCache
+}
+if ([string]::IsNullOrWhiteSpace($oldAotNativeLoad)) {
+    Remove-Item Env:RUSTMODLICA_AOT_NATIVE_LOAD -ErrorAction SilentlyContinue
+} else {
+    $env:RUSTMODLICA_AOT_NATIVE_LOAD = $oldAotNativeLoad
 }
 
 $rows = Import-Csv -LiteralPath $csvPath

@@ -109,8 +109,46 @@ pub fn is_primitive(type_name: &str) -> bool {
 /// Connector compatibility matrix: same physical domain can connect.
 /// Rules grouped by domain (Blocks, Electrical, Rotational, HeatTransfer, Fluid, MultiBody).
 pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
-    let t1 = t1.trim();
-    let t2 = t2.trim();
+    let normalize_connector_type_name = |raw: &str| -> String {
+        let t = raw.trim();
+        match t {
+            "HeatPort_a" | "Interfaces.HeatPort_a" | "HeatTransfer.Interfaces.HeatPort_a" => {
+                "Modelica.Thermal.HeatTransfer.Interfaces.HeatPort_a".to_string()
+            }
+            "HeatPort_b" | "Interfaces.HeatPort_b" | "HeatTransfer.Interfaces.HeatPort_b" => {
+                "Modelica.Thermal.HeatTransfer.Interfaces.HeatPort_b".to_string()
+            }
+            "HeatPorts_a" | "Interfaces.HeatPorts_a" => {
+                "Modelica.Thermal.HeatTransfer.Interfaces.HeatPorts_a".to_string()
+            }
+            "HeatPorts_b" | "Interfaces.HeatPorts_b" => {
+                "Modelica.Thermal.HeatTransfer.Interfaces.HeatPorts_b".to_string()
+            }
+            "FlowPort_a" | "Interfaces.FlowPort_a" => {
+                "Modelica.Thermal.FluidHeatFlow.Interfaces.FlowPort_a".to_string()
+            }
+            "FlowPort_b" | "Interfaces.FlowPort_b" => {
+                "Modelica.Thermal.FluidHeatFlow.Interfaces.FlowPort_b".to_string()
+            }
+            "FluidPort_a" | "Interfaces.FluidPort_a" => {
+                "Modelica.Fluid.Interfaces.FluidPort_a".to_string()
+            }
+            "FluidPort_b" | "Interfaces.FluidPort_b" => {
+                "Modelica.Fluid.Interfaces.FluidPort_b".to_string()
+            }
+            "FluidPorts_a" | "Interfaces.FluidPorts_a" => {
+                "Modelica.Fluid.Interfaces.FluidPorts_a".to_string()
+            }
+            "FluidPorts_b" | "Interfaces.FluidPorts_b" => {
+                "Modelica.Fluid.Interfaces.FluidPorts_b".to_string()
+            }
+            _ => t.to_string(),
+        }
+    };
+    let t1n = normalize_connector_type_name(t1);
+    let t2n = normalize_connector_type_name(t2);
+    let t1 = t1n.as_str();
+    let t2 = t2n.as_str();
     let t1 = if t1 == "AxisControlBus" {
         "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.Utilities.AxisControlBus"
     } else if t1 == "ControlBus" {
@@ -145,6 +183,8 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
         s.contains('.')
             && (short.ends_with("Pin")
                 || short.ends_with("Port")
+                || short.ends_with("Port_a")
+                || short.ends_with("Port_b")
                 || short.ends_with("Plug")
                 || short.ends_with("Frame")
                 || short.ends_with("Frame_a")
@@ -188,6 +228,12 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if is_real_like(t1) && is_real_like(t2) {
         return true;
     }
+    // Clocked logical helper blocks can transiently expose scalar ports as plain
+    // `Real` on one side and `Boolean` on the other before full connector alias
+    // typing converges. Treat this pair as connect-compatible.
+    if (t1 == "Real" && t2 == "Boolean") || (t1 == "Boolean" && t2 == "Real") {
+        return true;
+    }
     let a = |s: &str, suffix: &str| s.ends_with(suffix);
     let both = |s1: &str, s2: &str, x: &str, y: &str| (a(s1, x) && a(s2, y)) || (a(s1, y) && a(s2, x));
     if both(t1, t2, "ClockInput", "ClockOutput") {
@@ -216,6 +262,13 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     }
     if (t1_short == "ComplexInput" && t2_short == "ComplexOutput")
         || (t1_short == "ComplexOutput" && t2_short == "ComplexInput")
+    {
+        return true;
+    }
+    if (t1_short == "Complex" && t2_short == "ComplexInput")
+        || (t1_short == "ComplexInput" && t2_short == "Complex")
+        || (t1_short == "Complex" && t2_short == "ComplexOutput")
+        || (t1_short == "ComplexOutput" && t2_short == "Complex")
     {
         return true;
     }
@@ -256,6 +309,10 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if both(t1, t2, "HeatPort_a", "HeatPort_b") {
         return true;
     }
+    // --- Thermal.FluidHeatFlow: FlowPort_a, FlowPort_b ---
+    if both(t1, t2, "FlowPort_a", "FlowPort_b") {
+        return true;
+    }
     // --- Thermal: HeatPort_b <-> HeatPorts_a (array heat port compatibility) ---
     if both(t1, t2, "HeatPort_b", "HeatPorts_a") {
         return true;
@@ -266,6 +323,14 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
 
     // --- Fluid: FluidPort_a, FluidPort_b (Modelica.Fluid.Interfaces) ---
     if both(t1, t2, "FluidPort_a", "FluidPort_b") {
+        return true;
+    }
+    if both(t1, t2, "FluidPort_a", "FluidPorts_b")
+        || both(t1, t2, "FluidPort_b", "FluidPorts_a")
+        || both(t1, t2, "FluidPorts_a", "FluidPorts_b")
+        || both(t1, t2, "FluidPort_a", "FluidPorts_a")
+        || both(t1, t2, "FluidPort_b", "FluidPorts_b")
+    {
         return true;
     }
     if both(t1, t2, "VesselFluidPorts_a", "FluidPort_b")
@@ -325,7 +390,8 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
         return true;
     }
 
-    // --- StateGraph: paired directional connectors (Step_out/Step_in, etc.) ---
+    // --- StateGraph: paired directional connectors ---
+    // Same-type pairs (Step_out↔Step_in, Transition_out↔Transition_in)
     if both(t1, t2, "Step_out", "Step_in") {
         return true;
     }
@@ -338,22 +404,60 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if both(t1, t2, "Transition_out", "Transition_in") {
         return true;
     }
-    if t1.contains("Modelica.StateGraph.Interfaces")
-        && t2.contains("Modelica.StateGraph.Interfaces")
+    // Cross-type pairs: Step ↔ Transition, Step/Transition ↔ Alternative/Parallel
+    if both(t1, t2, "Step_out", "Transition_in") {
+        return true;
+    }
+    // Alternative/Parallel split steps expose `Step_out_forAlternative` (MSL 4.x naming).
+    if (a(t1, "Step_out_forAlternative") && a(t2, "Transition_in"))
+        || (a(t2, "Step_out_forAlternative") && a(t1, "Transition_in"))
     {
-        let base_out = t1_short.strip_suffix("_out");
-        let base_in = t2_short.strip_suffix("_in");
-        if let (Some(bo), Some(bi)) = (base_out, base_in) {
-            if !bo.is_empty() && bo == bi {
-                return true;
-            }
-        }
-        let base_out2 = t2_short.strip_suffix("_out");
-        let base_in2 = t1_short.strip_suffix("_in");
-        if let (Some(bo), Some(bi)) = (base_out2, base_in2) {
-            if !bo.is_empty() && bo == bi {
-                return true;
-            }
+        return true;
+    }
+    if (a(t1, "Step_out_forParallel") && a(t2, "Transition_in"))
+        || (a(t2, "Step_out_forParallel") && a(t1, "Transition_in"))
+    {
+        return true;
+    }
+    if both(t1, t2, "Transition_out", "Step_in") {
+        return true;
+    }
+    if both(t1, t2, "Step_out", "Alternative_in")
+        || both(t1, t2, "Alternative_out", "Step_in")
+        || both(t1, t2, "Step_out", "Parallel_in")
+        || both(t1, t2, "Parallel_out", "Step_in")
+    {
+        return true;
+    }
+    if both(t1, t2, "Transition_out", "Alternative_in")
+        || both(t1, t2, "Alternative_out", "Transition_in")
+        || both(t1, t2, "Transition_out", "Parallel_in")
+        || both(t1, t2, "Parallel_out", "Transition_in")
+    {
+        return true;
+    }
+    // CompositeStep resume/suspend connectors
+    if both(t1, t2, "CompositeStep_resume", "Transition_in")
+        || both(t1, t2, "Transition_out", "CompositeStep_resume")
+        || both(t1, t2, "CompositeStep_suspend", "Transition_in")
+        || both(t1, t2, "Transition_out", "CompositeStep_suspend")
+    {
+        return true;
+    }
+    if both(
+        t1,
+        t2,
+        "CompositeStepStatePort_out",
+        "CompositeStepStatePort_in",
+    ) {
+        return true;
+    }
+    if t1.contains("Modelica.StateGraph") && t2.contains("Modelica.StateGraph") {
+        let has_suffix = |s: &str| {
+            s.ends_with("_out") || s.ends_with("_in") || s.ends_with("_resume") || s.ends_with("_suspend")
+        };
+        if has_suffix(t1_short) && has_suffix(t2_short) {
+            return true;
         }
     }
 
@@ -396,6 +500,15 @@ pub fn merge_models(child: &mut Model, base: &Model) {
     }
     for eq in &base.equations {
         child.equations.push(eq.clone());
+    }
+    for stmt in &base.algorithms {
+        child.algorithms.push(stmt.clone());
+    }
+    for eq in &base.initial_equations {
+        child.initial_equations.push(eq.clone());
+    }
+    for stmt in &base.initial_algorithms {
+        child.initial_algorithms.push(stmt.clone());
     }
     for inner in &base.inner_classes {
         if !child.inner_class_index.contains_key(&inner.name) {

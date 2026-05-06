@@ -495,8 +495,6 @@ impl Jit {
                     compile_algorithm_stmt(stmt, &mut t_ctx, &mut builder)?;
                 }
             }
-            when_count = *t_ctx.when_idx;
-            crossings_count = *t_ctx.crossings_idx;
 
             for (idx, eq) in alg_equations.iter().enumerate() {
                 if !covered_alg_equations.contains(&idx) {
@@ -508,6 +506,9 @@ impl Jit {
                     compile_equation(eq, &mut t_ctx, &mut builder)?;
                 }
             }
+
+            when_count = *t_ctx.when_idx;
+            crossings_count = *t_ctx.crossings_idx;
 
             builder.ins().jump(epilogue_block, &[]);
             builder.switch_to_block(epilogue_block);

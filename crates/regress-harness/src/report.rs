@@ -83,6 +83,10 @@ pub struct CaseResult {
     pub omc_compare: Option<OmcCompareResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_hash: Option<String>,
+    #[serde(default)]
+    pub warmup_failed_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warmup_failed_models: Vec<String>,
     pub artifacts: Artifacts,
 }
 

@@ -179,16 +179,17 @@ export const JointMiniMap = React.memo(function JointMiniMap({
     graph.on("batch:stop", scheduleUpdate);
     graph.on("add", computeState);
     graph.on("remove", computeState);
-    paper.on("scale", scheduleUpdate);
-    paper.on("translate", scheduleUpdate);
+    // Temporarily disable scale/translate listeners to test if MiniMap causes the freeze
+    // paper.on("scale", scheduleUpdate);
+    // paper.on("translate", scheduleUpdate);
 
     return () => {
       if (rafId != null) cancelAnimationFrame(rafId);
       graph.off("batch:stop", scheduleUpdate);
       graph.off("add", computeState);
       graph.off("remove", computeState);
-      paper.off("scale", scheduleUpdate);
-      paper.off("translate", scheduleUpdate);
+      // paper.off("scale", scheduleUpdate);
+      // paper.off("translate", scheduleUpdate);
     };
   }, [paper, graph, computeState]);
 

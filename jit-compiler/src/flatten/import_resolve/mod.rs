@@ -207,6 +207,25 @@ impl Flattener {
         if resolved_type.contains('/') {
             return load_candidates;
         }
+        // Types already rooted at the standard library must not be re-qualified with lexical
+        // parents: `parent + ".Modelica" + ".Electrical..."` is invalid and forces many failed
+        // loader probes (very slow on large MSL examples).
+        if resolved_type.starts_with("Modelica.") {
+            return load_candidates;
+        }
+        if let Some(rest) = resolved_type.strip_prefix("Types.") {
+            let cq = if current_qualified.contains('/') {
+                current_qualified.replace('/', ".")
+            } else {
+                current_qualified.to_string()
+            };
+            if cq.starts_with("Modelica.Fluid") || cq.starts_with("ModelicaTest.Fluid") {
+                let fluid_type = format!("Modelica.Fluid.Types.{rest}");
+                if !load_candidates.contains(&fluid_type) {
+                    load_candidates.push(fluid_type);
+                }
+            }
+        }
         let (first_component, rest_suffix) = if let Some(dot_pos) = resolved_type.find('.') {
             (&resolved_type[..dot_pos], &resolved_type[dot_pos..])
         } else {

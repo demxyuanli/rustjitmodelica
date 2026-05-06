@@ -113,6 +113,13 @@ pub fn list_scopes() -> Vec<ScopeSpec> {
             },
         },
         ScopeSpec {
+            name: "modelicatest_mirror",
+            desc: "Redeclare/Tables/Root models that require a full upstream ModelicaTest tree (tier mtest_mirror).",
+            source: ScopeSource::StaticConfig {
+                path: "crates/regress-harness/examples/regress_modelicatest_mirror.json",
+            },
+        },
+        ScopeSpec {
             name: "solver_cross",
             desc: "Multi-solver cross-validation (6 models x 3 solvers).",
             source: ScopeSource::StaticConfig {

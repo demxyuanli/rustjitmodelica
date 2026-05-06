@@ -91,8 +91,9 @@ impl ParamPassOptimizer {
 
         let mut stalled = 0usize;
         let mut pass = 0usize;
+        let mut sub_cache = SubstituteCache::new(4096);
         while pass < max_fast_passes {
-            let mut sub_cache = SubstituteCache::new(4096);
+            sub_cache.clear();
             let mut changed_params: Vec<String> = Vec::new();
             for decl in &model.declarations {
                 if !decl.is_parameter {

@@ -21,7 +21,7 @@ pub use initial::{
 };
 #[allow(unused_imports)]
 pub(crate) use variable_collection::collect_vars_expr;
-pub use variable_collection::{contains_var, extract_unknowns};
+pub use variable_collection::{contains_var, extract_unknowns, extract_unknowns_from_algorithm};
 pub use solvable_sparsity::{
     build_solvable_block_sparse_pattern, SolvableBlockSparsePattern, SolvableBlockSparseStats,
 };

@@ -108,6 +108,40 @@ pub(crate) fn early_compat(name: &str) -> EarlyCompat {
             "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.LimitedPI"
                 .to_string(),
         ]),
+        _ if name == "DcdcInverter" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.DcdcInverter"
+                .to_string(),
+        ]),
+        _ if name == "IdealDcDc" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.IdealDcDc"
+                .to_string(),
+        ]),
+        _ if name == "DriveDataDCPM" => EarlyCompat::Soft(vec![
+            "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.DriveDataDCPM"
+                .to_string(),
+        ]),
+        _ if name == "Modelica.Fluid.Interfaces.CompositeStepState" => EarlyCompat::Soft(vec![
+            "Modelica.StateGraph.Interfaces.CompositeStepState".to_string(),
+        ]),
+        _ if name == "CompositeStepStatePort_out" => EarlyCompat::Soft(vec![
+            "Modelica.StateGraph.Interfaces.CompositeStepStatePort_out".to_string(),
+        ]),
+        _ if name == "CompositeStepStatePort_in" => EarlyCompat::Soft(vec![
+            "Modelica.StateGraph.Interfaces.CompositeStepStatePort_in".to_string(),
+        ]),
+        _ if name == "Modelica.Fluid.Interfaces.CompositeStepStatePort_out" => {
+            EarlyCompat::Soft(vec![
+                "Modelica.StateGraph.Interfaces.CompositeStepStatePort_out".to_string(),
+            ])
+        },
+        _ if name == "Modelica.Fluid.Interfaces.CompositeStepStatePort_in" => {
+            EarlyCompat::Soft(vec![
+                "Modelica.StateGraph.Interfaces.CompositeStepStatePort_in".to_string(),
+            ])
+        },
+        _ if name == "PortFlowDirection" => EarlyCompat::Soft(vec![
+            "Modelica.Fluid.Types.PortFlowDirection".to_string(),
+        ]),
         _ if name == "Magnetic"
             || (name.starts_with("Magnetic.") && !name.starts_with("Modelica.")) =>
         {

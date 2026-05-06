@@ -1,13 +1,17 @@
 use super::Flattener;
 use crate::ast::{ExtendsClause, Model};
 use crate::flatten::redeclare::apply_redeclare_extends_blocks;
-use crate::flatten::utils::merge_models;
+use crate::flatten::utils::{is_primitive, merge_models};
 use crate::flatten::{apply_modification_to_model, FlattenError, ModifyContext};
 use std::sync::Arc;
 
 impl Flattener {
     /// Iterative flatten_inheritance to avoid stack overflow on deep extends chains.
-    /// Frame: (parent_arc_or_none, current_model_arc, qualified_name, extends_clauses, next_index).
+    ///
+    /// Models are stored in a `Vec<Arc<Model>>` addressed by index so that
+    /// `merge_models` always mutates through `Arc::make_mut` on a slot whose
+    /// strong-count is 1, avoiding copy-on-write that would silently discard
+    /// the merge result.
     pub(crate) fn flatten_inheritance(
         &mut self,
         arc: &mut Arc<Model>,
@@ -16,17 +20,29 @@ impl Flattener {
         let model = Arc::make_mut(arc);
         apply_redeclare_extends_blocks(model);
         let extends = std::mem::take(&mut model.extends);
-        type Frame = (Option<Arc<Model>>, Arc<Model>, String, Vec<ExtendsClause>, usize);
-        let mut stack: Vec<Frame> = vec![(None, Arc::clone(arc), current_qualified.to_string(), extends, 0)];
+        if extends.is_empty() {
+            return Ok(());
+        }
 
-        while let Some((parent, current, qual, ext, idx)) = stack.pop() {
+        let mut models: Vec<Arc<Model>> = Vec::new();
+        models.push(Arc::clone(arc)); // index 0 = root
+
+        // Frame: (parent_index, current_index, qualified_name, extends_clauses, next_index)
+        type Frame = (Option<usize>, usize, String, Vec<ExtendsClause>, usize);
+        let mut stack: Vec<Frame> =
+            vec![(None, 0, current_qualified.to_string(), extends, 0)];
+
+        while let Some((parent_idx, current_idx, qual, ext, idx)) = stack.pop() {
             if idx >= ext.len() {
-                if let Some(mut p) = parent {
-                    merge_models(Arc::make_mut(&mut p), current.as_ref());
+                if let Some(pidx) = parent_idx {
+                    let current_snapshot = models[current_idx].clone();
+                    let parent = Arc::make_mut(&mut models[pidx]);
+                    merge_models(parent, current_snapshot.as_ref());
                 }
                 continue;
             }
             let clause = &ext[idx];
+            let current = models[current_idx].clone();
             let raw_extends = clause.model_name.trim();
             let (mut base_name, base_from_inner) = if !raw_extends.contains('.') {
                 if let Some(ic) = current.as_ref().find_inner_class(raw_extends) {
@@ -49,7 +65,7 @@ impl Flattener {
                 (bn, None)
             };
             if base_name.ends_with("ExternalObject") {
-                stack.push((parent, current, qual, ext, idx + 1));
+                stack.push((parent_idx, current_idx, qual, ext, idx + 1));
                 continue;
             }
             let mut base_model = if let Some(m) = base_from_inner {
@@ -98,10 +114,38 @@ impl Flattener {
                 )?;
             }
             apply_redeclare_extends_blocks(Arc::make_mut(&mut base_model));
+
+            if let Some((base_pkg, _)) = base_name.rsplit_once('.') {
+                self.qualify_short_types(Arc::make_mut(&mut base_model), base_pkg);
+            }
+
             let base_extends = std::mem::take(&mut Arc::make_mut(&mut base_model).extends);
-            stack.push((parent, Arc::clone(&current), qual, ext, idx + 1));
-            stack.push((Some(current), base_model, base_name, base_extends, 0));
+            let new_idx = models.len();
+            models.push(base_model);
+            stack.push((parent_idx, current_idx, qual, ext, idx + 1));
+            stack.push((Some(current_idx), new_idx, base_name, base_extends, 0));
         }
+
+        *arc = models.swap_remove(0);
         Ok(())
+    }
+
+    fn qualify_short_types(&mut self, model: &mut Model, base_pkg: &str) {
+        let inner_names: std::collections::HashSet<String> =
+            model.inner_classes.iter().map(|ic| ic.name.clone()).collect();
+        for decl in &mut model.declarations {
+            if !decl.type_name.contains('.') && !is_primitive(&decl.type_name) {
+                if inner_names.contains(&decl.type_name) {
+                    continue;
+                }
+                let fqn = format!("{}.{}", base_pkg, decl.type_name);
+                if self.loader.load_model_silent(&fqn, true).is_ok() {
+                    decl.type_name = fqn;
+                }
+            }
+        }
+        for ic in &mut model.inner_classes {
+            self.qualify_short_types(ic, base_pkg);
+        }
     }
 }

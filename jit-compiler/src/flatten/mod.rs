@@ -99,6 +99,8 @@ pub struct Flattener {
     pub compile_stop_label: String,
     /// Runtime guard can force-disable eq_expand parallel path for a compile.
     pub force_disable_eq_parallel: bool,
+    /// After `flatten_inheritance` for a loaded class FQN; reused before per-instance modifications.
+    inheritance_flat_template_cache: HashMap<String, Arc<Model>>,
 }
 
 impl Flattener {
@@ -306,6 +308,7 @@ impl Flattener {
             warnings_level: "all".to_string(),
             compile_stop_label: "full".to_string(),
             force_disable_eq_parallel: false,
+            inheritance_flat_template_cache: HashMap::new(),
         }
     }
 
@@ -623,11 +626,31 @@ impl Flattener {
         root: &Model,
         flat: &mut FlattenedModel,
     ) {
+        let t = std::time::Instant::now();
         self.expand_equations(root, "", flat);
+        crate::query_db::perf_record_us(
+            "eq_expand_equations_us",
+            t.elapsed().as_micros() as u64,
+        );
+        let t = std::time::Instant::now();
         self.expand_algorithms(root, "", flat);
+        crate::query_db::perf_record_us(
+            "eq_expand_algorithms_us",
+            t.elapsed().as_micros() as u64,
+        );
+        let t = std::time::Instant::now();
         self.expand_initial_equations(root, "", flat);
+        crate::query_db::perf_record_us(
+            "eq_expand_initial_equations_us",
+            t.elapsed().as_micros() as u64,
+        );
         if matches!(self.validation_mode, ValidationMode::Full) {
+            let t = std::time::Instant::now();
             self.expand_initial_algorithms(root, "", flat);
+            crate::query_db::perf_record_us(
+                "eq_expand_initial_algorithms_us",
+                t.elapsed().as_micros() as u64,
+            );
         }
     }
 

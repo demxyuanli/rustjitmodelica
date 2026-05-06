@@ -176,6 +176,7 @@ fn run_cmd_impl(
             _ => None,
         })
         .collect();
+    let total_jobs = run_jobs.len();
     for case in &run_jobs {
         event_seq += 1;
         append_event_dual(
@@ -225,7 +226,7 @@ fn run_cmd_impl(
         let mut passed = 0usize;
         let mut failed = 0usize;
         let mut skipped_cnt = 0usize;
-        for case in &run_jobs {
+        for (job_idx, case) in run_jobs.iter().enumerate() {
             event_seq += 1;
             append_event_dual(
                 &events_path,
@@ -274,8 +275,12 @@ fn run_cmd_impl(
             let r = traced.result;
             if progress {
                 eprintln!(
-                    "[regress-harness] done case_id={} status={:?} duration_ms={}",
-                    r.case_id, r.status, r.duration_ms
+                    "[regress-harness] done {}/{} case_id={} status={:?} duration_ms={}",
+                    job_idx + 1,
+                    total_jobs,
+                    r.case_id,
+                    r.status,
+                    r.duration_ms
                 );
             }
             if let Some(bar) = &pb {
@@ -342,16 +347,23 @@ fn run_cmd_impl(
         }
         v
     } else {
+        let progress_done = std::sync::Arc::new(AtomicUsize::new(0));
         let traces: Vec<regress_harness::runner::CaseRunTrace> = pool.install(|| {
             let pbar = pb.clone();
+            let progress_done = std::sync::Arc::clone(&progress_done);
             run_jobs
                 .par_iter()
                 .map(|case| {
                     let traced = regress_harness::runner::run_case_with_trace(&ctx, case);
                     if progress {
+                        let n = progress_done.fetch_add(1, Ordering::Relaxed) + 1;
                         eprintln!(
-                            "[regress-harness] done case_id={} status={:?} duration_ms={}",
-                            traced.result.case_id, traced.result.status, traced.result.duration_ms
+                            "[regress-harness] done {}/{} case_id={} status={:?} duration_ms={}",
+                            n,
+                            total_jobs,
+                            traced.result.case_id,
+                            traced.result.status,
+                            traced.result.duration_ms
                         );
                     }
                     if let Some(bar) = &pbar {

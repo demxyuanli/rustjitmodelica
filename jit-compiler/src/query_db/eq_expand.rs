@@ -412,6 +412,7 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         }));
     };
 
+    let eq_expand_prep_t0 = std::time::Instant::now();
     let mut flattener = Flattener::new();
     flattener.coarse_constrainedby_only = coarse;
     flattener.validation_mode = validation_mode;
@@ -496,6 +497,10 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         path_to_inst: HashMap::new(),
     };
 
+    crate::query_db::perf::record_us(
+        "eq_expand_prep_us",
+        eq_expand_prep_t0.elapsed().as_micros() as u64,
+    );
     flattener.eq_expand_root_preinherited(root.as_ref(), &mut flat);
     let eq_elapsed_us = wall.elapsed().as_micros() as u64;
     if eq_parallel_requested

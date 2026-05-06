@@ -46,18 +46,7 @@ impl ModelLoader {
             crate::ast::ClassItem::Function(f) => crate::ast::Model::from(f),
         }
     }
-    fn clone_model_without_inner_classes(m: &Model) -> Model {
-        let leaf_aliases: Vec<Model> = m
-            .inner_classes
-            .iter()
-            .filter(|ic| {
-                ic.extends.len() == 1
-                    && ic.declarations.is_empty()
-                    && ic.equations.is_empty()
-                    && ic.inner_classes.is_empty()
-            })
-            .cloned()
-            .collect();
+    fn clone_model_shallow(m: &Model) -> Model {
         Model {
             name: m.name.clone(),
             is_connector: m.is_connector,
@@ -72,14 +61,8 @@ impl ModelLoader {
             initial_equations: m.initial_equations.clone(),
             initial_algorithms: m.initial_algorithms.clone(),
             annotation: m.annotation.clone(),
-            inner_class_index: {
-                let mut idx = std::collections::HashMap::new();
-                for (i, ic) in leaf_aliases.iter().enumerate() {
-                    idx.insert(ic.name.clone(), i);
-                }
-                idx
-            },
-            inner_classes: leaf_aliases,
+            inner_class_index: m.inner_class_index.clone(),
+            inner_classes: m.inner_classes.clone(),
             is_operator_record: m.is_operator_record,
             type_aliases: m.type_aliases.clone(),
             imports: m.imports.clone(),
@@ -632,7 +615,7 @@ impl ModelLoader {
             if self.loaded_models.contains_key(&full_name) {
                 continue;
             }
-            let arc = Arc::new(Self::clone_model_without_inner_classes(inner));
+            let arc = Arc::new(Self::clone_model_shallow(inner));
             self.loaded_models
                 .insert(full_name.clone(), Arc::clone(&arc));
             let path = self

@@ -164,6 +164,7 @@ export function DiagramView({
   // Track the last source string we ourselves emitted via syncToSource so we
   // can skip the heavy reload round-trip when the parent feeds it back to us.
   const lastSelfEmittedSourceRef = useRef<string | null>(null);
+  const sourceLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stepDebug = useStepDebug();
   const simOverlay = useDiagramSimulation(stepDebug);
@@ -211,82 +212,91 @@ export function DiagramView({
     if (lastSelfEmittedSourceRef.current !== null && source === lastSelfEmittedSourceRef.current) {
       return;
     }
-    let cancelled = false;
-    const gen = ++loadGraphGenerationRef.current;
-    setLoading(true);
-    setError(null);
-    setLoadTimedOut(false);
-    setConflictPending(null);
-    setLoadingMessage(t("diagramLoading"));
-    const slowHintTimer = window.setTimeout(() => {
-      if (!cancelled && gen === loadGraphGenerationRef.current) {
-        setLoadingMessage(t("diagramLoadingSlowHint"));
-      }
-    }, 2000);
-    getGraphicalDocumentFromSource<IconDiagramAnnotation, ComponentData, ConnectionData>(
-      source,
-      projectDir,
-      relativeFilePath,
-      {
-        timeoutMs: GRAPHICAL_DOCUMENT_LOAD_TIMEOUT_MS,
-        onTimeout: () => {
-          cancelled = true;
-        },
-      },
-    )
-      .then((data) => {
-        if (cancelled || gen !== loadGraphGenerationRef.current) return;
-        const { nodes: curNodes, links: curLinks } = session.getNodesLinksForCanvas(handleDoubleClickRef.current);
-        const current = nodesToDiagram(curNodes, curLinks);
-        const hasCurrentState = current.components.length > 0 || current.connections.length > 0;
-        const sameComponents =
-          current.components.length === data.components.length &&
-          current.components.every(
-            (c, i) =>
-              data.components[i] &&
-              c.name === data.components[i].name &&
-              c.typeName === data.components[i].typeName,
-          );
-        const sameConnections =
-          current.connections.length === data.connections.length &&
-          current.connections.every(
-            (c, i) =>
-              data.connections[i] && c.from === data.connections[i].from && c.to === data.connections[i].to,
-          );
-        const inSync = sameComponents && sameConnections;
-        if (!hasCurrentState || inSync) {
-          session.loadFromServer(data, true);
-          setSelectedGraphicPath(null);
-          setConflictPending(null);
-          const nlLoaded = diagramToNodes(documentToDiagram(data), handleDoubleClickRef.current);
-          lastAppliedRef.current = buildDiagramSyncKey(nlLoaded.nodes, nlLoaded.links, data.graphical);
-        } else {
-          setConflictPending(data);
+    // Debounce: wait 300ms before firing the backend parse so rapid typing
+    // doesn't trigger a heavy reload per keystroke.
+    if (sourceLoadTimerRef.current) {
+      clearTimeout(sourceLoadTimerRef.current);
+      sourceLoadTimerRef.current = null;
+    }
+    const timer = window.setTimeout(() => {
+      let cancelled = false;
+      const gen = ++loadGraphGenerationRef.current;
+      setLoading(true);
+      setError(null);
+      setLoadTimedOut(false);
+      setConflictPending(null);
+      setLoadingMessage(t("diagramLoading"));
+      const slowHintTimer = window.setTimeout(() => {
+        if (!cancelled && gen === loadGraphGenerationRef.current) {
+          setLoadingMessage(t("diagramLoadingSlowHint"));
         }
-      })
-      .catch((err) => {
-        if (gen !== loadGraphGenerationRef.current) return;
-        if (isDiagramLoadTimeout(err)) {
-          setLoadTimedOut(true);
+      }, 2000);
+      getGraphicalDocumentFromSource<IconDiagramAnnotation, ComponentData, ConnectionData>(
+        source,
+        projectDir,
+        relativeFilePath,
+        {
+          timeoutMs: GRAPHICAL_DOCUMENT_LOAD_TIMEOUT_MS,
+          onTimeout: () => {
+            cancelled = true;
+          },
+        },
+      )
+        .then((data) => {
+          if (cancelled || gen !== loadGraphGenerationRef.current) return;
+          const { nodes: curNodes, links: curLinks } = session.getNodesLinksForCanvas(handleDoubleClickRef.current);
+          const current = nodesToDiagram(curNodes, curLinks);
+          const hasCurrentState = current.components.length > 0 || current.connections.length > 0;
+          const sameComponents =
+            current.components.length === data.components.length &&
+            current.components.every(
+              (c, i) =>
+                data.components[i] &&
+                c.name === data.components[i].name &&
+                c.typeName === data.components[i].typeName,
+            );
+          const sameConnections =
+            current.connections.length === data.connections.length &&
+            current.connections.every(
+              (c, i) =>
+                data.connections[i] && c.from === data.connections[i].from && c.to === data.connections[i].to,
+            );
+          const inSync = sameComponents && sameConnections;
+          if (!hasCurrentState || inSync) {
+            session.loadFromServer(data, true);
+            setSelectedGraphicPath(null);
+            setConflictPending(null);
+            const nlLoaded = diagramToNodes(documentToDiagram(data), handleDoubleClickRef.current);
+            lastAppliedRef.current = buildDiagramSyncKey(nlLoaded.nodes, nlLoaded.links, data.graphical);
+          } else {
+            setConflictPending(data);
+          }
+        })
+        .catch((err) => {
+          if (gen !== loadGraphGenerationRef.current) return;
+          if (isDiagramLoadTimeout(err)) {
+            setLoadTimedOut(true);
+            setError(String(err));
+            setConflictPending(null);
+            session.clearDocument();
+            return;
+          }
+          if (cancelled) return;
           setError(String(err));
           setConflictPending(null);
           session.clearDocument();
-          return;
-        }
-        if (cancelled) return;
-        setError(String(err));
-        setConflictPending(null);
-        session.clearDocument();
-      })
-      .finally(() => {
-        clearTimeout(slowHintTimer);
-        if (gen === loadGraphGenerationRef.current) {
-          setLoading(false);
-        }
-      });
+        })
+        .finally(() => {
+          clearTimeout(slowHintTimer);
+          if (gen === loadGraphGenerationRef.current) {
+            setLoading(false);
+          }
+        });
+    }, 300);
+    sourceLoadTimerRef.current = timer;
     return () => {
-      cancelled = true;
-      clearTimeout(slowHintTimer);
+      clearTimeout(timer);
+      sourceLoadTimerRef.current = null;
     };
   }, [source, session]);
 

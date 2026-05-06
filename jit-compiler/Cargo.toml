@@ -2,6 +2,8 @@
 name = "rustmodlica"
 version = "0.9.0"
 edition = "2021"
+# Multiple [[bin]] targets: make `cargo run` from `jit-compiler/` select the simulator (MOS / regress-harness child processes).
+default-run = "rustmodlica"
 
 [lib]
 name = "rustmodlica"

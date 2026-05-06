@@ -17,7 +17,7 @@ use regress_harness::tiers::Filter;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 mod commands;

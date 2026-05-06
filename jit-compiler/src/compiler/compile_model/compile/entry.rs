@@ -556,7 +556,42 @@ pub(crate) fn compile(
         perf_report.parse_us = *qperf.get("parse_us").unwrap_or(&0);
         perf_report.inheritance_us = *qperf.get("inheritance_us").unwrap_or(&0);
         perf_report.decl_expand_us = *qperf.get("decl_expand_us").unwrap_or(&0);
+        perf_report.decl_expand_param_pass_us =
+            *qperf.get("decl_expand_param_pass_us").unwrap_or(&0);
+        perf_report.decl_expand_array_dim_us =
+            *qperf.get("decl_expand_array_dim_us").unwrap_or(&0);
+        perf_report.decl_expand_decl_loop_us =
+            *qperf.get("decl_expand_decl_loop_us").unwrap_or(&0);
+        perf_report.decl_expand_try_load_sub_model_us =
+            *qperf.get("decl_expand_try_load_sub_model_us").unwrap_or(&0);
+        perf_report.decl_expand_flatten_inheritance_us =
+            *qperf.get("decl_expand_flatten_inheritance_us").unwrap_or(&0);
+        perf_report.decl_expand_apply_modification_us =
+            *qperf.get("decl_expand_apply_modification_us").unwrap_or(&0);
+        perf_report.decl_expand_param_substitute_fold_us =
+            *qperf.get("decl_expand_param_substitute_fold_us").unwrap_or(&0);
         perf_report.eq_expand_us = *qperf.get("eq_expand_us").unwrap_or(&0);
+        perf_report.eq_expand_prep_us = *qperf.get("eq_expand_prep_us").unwrap_or(&0);
+        perf_report.eq_expand_equations_us = *qperf.get("eq_expand_equations_us").unwrap_or(&0);
+        perf_report.eq_expand_algorithms_us = *qperf.get("eq_expand_algorithms_us").unwrap_or(&0);
+        perf_report.eq_expand_initial_equations_us =
+            *qperf.get("eq_expand_initial_equations_us").unwrap_or(&0);
+        perf_report.eq_expand_initial_algorithms_us =
+            *qperf.get("eq_expand_initial_algorithms_us").unwrap_or(&0);
+        perf_report.inherit_flat_template_cache_hit =
+            *qperf.get("inherit_flat_template_cache_hit").unwrap_or(&0);
+        perf_report.inherit_flat_template_cache_miss =
+            *qperf.get("inherit_flat_template_cache_miss").unwrap_or(&0);
+        let inherit_flat_template_cache_total = perf_report
+            .inherit_flat_template_cache_hit
+            .saturating_add(perf_report.inherit_flat_template_cache_miss);
+        perf_report.inherit_flat_template_cache_hit_ratio =
+            if inherit_flat_template_cache_total == 0 {
+                0.0
+            } else {
+                perf_report.inherit_flat_template_cache_hit as f64
+                    / inherit_flat_template_cache_total as f64
+            };
         perf_report.resolve_connections_us = *qperf.get("resolve_connections_us").unwrap_or(&0);
         perf_report.clock_infer_us = *qperf.get("clock_infer_us").unwrap_or(&0);
         perf_report.constrainedby_us = *qperf.get("constrainedby_us").unwrap_or(&0);
@@ -682,6 +717,33 @@ pub(crate) fn compile(
             eprintln!(
                 "[perf] query.eq_expand_ms={} eq_expand_us={}",
                 perf_report.eq_expand_ms, perf_report.eq_expand_us
+            );
+            eprintln!(
+                "[perf] query.decl_expand_breakdown_us param_pass={} array_dim={} decl_loop={}",
+                perf_report.decl_expand_param_pass_us,
+                perf_report.decl_expand_array_dim_us,
+                perf_report.decl_expand_decl_loop_us
+            );
+            eprintln!(
+                "[perf] query.decl_expand_decl_loop_segments_us try_load_sub_model={} flatten_inheritance={} apply_modification={} param_substitute_fold={}",
+                perf_report.decl_expand_try_load_sub_model_us,
+                perf_report.decl_expand_flatten_inheritance_us,
+                perf_report.decl_expand_apply_modification_us,
+                perf_report.decl_expand_param_substitute_fold_us
+            );
+            eprintln!(
+                "[perf] query.eq_expand_breakdown_us prep={} equations={} algorithms={} initial_eq={} initial_alg={}",
+                perf_report.eq_expand_prep_us,
+                perf_report.eq_expand_equations_us,
+                perf_report.eq_expand_algorithms_us,
+                perf_report.eq_expand_initial_equations_us,
+                perf_report.eq_expand_initial_algorithms_us
+            );
+            eprintln!(
+                "[perf] query.inherit_flat_template_cache hit={} miss={} hit_ratio={:.4}",
+                perf_report.inherit_flat_template_cache_hit,
+                perf_report.inherit_flat_template_cache_miss,
+                perf_report.inherit_flat_template_cache_hit_ratio
             );
             eprintln!(
                 "[perf] query.resolve_connections_ms={} resolve_connections_us={}",

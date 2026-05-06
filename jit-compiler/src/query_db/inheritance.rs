@@ -1,6 +1,6 @@
 use crate::ast::{ExtendsClause, Model};
 use crate::flatten::apply_redeclare_extends_blocks;
-use crate::flatten::utils::merge_models;
+use crate::flatten::utils::{is_primitive, merge_models};
 use crate::flatten::{apply_modification_to_model, FlattenError, ModifyContext};
 use crate::query_db::QueryDb;
 use std::sync::Arc;
@@ -15,17 +15,28 @@ pub(super) fn flatten_inheritance_pure(
     let model = Arc::make_mut(arc);
     apply_redeclare_extends_blocks(model);
     let extends = std::mem::take(&mut model.extends);
-    type Frame = (Option<Arc<Model>>, Arc<Model>, String, Vec<ExtendsClause>, usize);
-    let mut stack: Vec<Frame> = vec![(None, Arc::clone(arc), current_qualified.to_string(), extends, 0)];
+    if extends.is_empty() {
+        return Ok(());
+    }
 
-    while let Some((parent, current, qual, ext, idx)) = stack.pop() {
+    let mut models: Vec<Arc<Model>> = Vec::new();
+    models.push(Arc::clone(arc)); // index 0 = root
+
+    type Frame = (Option<usize>, usize, String, Vec<ExtendsClause>, usize);
+    let mut stack: Vec<Frame> =
+        vec![(None, 0, current_qualified.to_string(), extends, 0)];
+
+    while let Some((parent_idx, current_idx, qual, ext, idx)) = stack.pop() {
         if idx >= ext.len() {
-            if let Some(mut p) = parent {
-                merge_models(Arc::make_mut(&mut p), current.as_ref());
+            if let Some(pidx) = parent_idx {
+                let current_snapshot = models[current_idx].clone();
+                let parent = Arc::make_mut(&mut models[pidx]);
+                merge_models(parent, current_snapshot.as_ref());
             }
             continue;
         }
         let clause = &ext[idx];
+        let current = models[current_idx].clone();
         let raw_extends = clause.model_name.trim();
         let (mut base_name, base_from_inner) = if !raw_extends.contains('.') {
             if let Some(ic) = current.as_ref().find_inner_class(raw_extends) {
@@ -48,14 +59,13 @@ pub(super) fn flatten_inheritance_pure(
             (bn, None)
         };
         if base_name.ends_with("ExternalObject") {
-            stack.push((parent, current, qual, ext, idx + 1));
+            stack.push((parent_idx, current_idx, qual, ext, idx + 1));
             continue;
         }
 
         let mut base_model = if let Some(m) = base_from_inner {
             m
         } else {
-            // Load base model through salsa queries.
             let st = db.source_text(base_name.clone());
             if !st.path.is_empty() && seen_paths.insert(st.path.to_string()) {
                 let h = super::semantic_hash_text(st.text.as_str());
@@ -72,7 +82,6 @@ pub(super) fn flatten_inheritance_pure(
                 && loaded.as_ref().imports.is_empty()
                 && loaded.as_ref().type_aliases.is_empty()
             {
-                // Fallback: try progressively qualifying upward (matches legacy loader heuristic in a limited form).
                 let orig = crate::flatten::Flattener::resolve_import_prefix(current.as_ref(), &clause.model_name, &qual);
                 let bare = if orig.contains('.') {
                     orig.split('.').next().unwrap_or(&orig).to_string()
@@ -112,9 +121,15 @@ pub(super) fn flatten_inheritance_pure(
             }
         };
 
+        // Use coarse_constrainedby_only=true because no ModelLoader is available
+        // in the query path. The full constrainedby check with extends-chain
+        // traversal requires a loader; without one apply_modification_to_model
+        // would use the coarse string check anyway but with the original
+        // (potentially too strict) setting. Force coarse here to avoid false
+        // negatives from the string heuristic rejecting valid redeclarations.
         let mod_ctx = ModifyContext::for_extends_scope(
             &qual,
-            db.coarse_constrainedby_only(),
+            true,
             crate::flatten::ValidationMode::parse(db.validation_mode().as_str()),
             db.compile_stop().as_ref().as_str(),
         );
@@ -127,10 +142,43 @@ pub(super) fn flatten_inheritance_pure(
             )?;
         }
         apply_redeclare_extends_blocks(Arc::make_mut(&mut base_model));
+
+        if let Some((base_pkg, _)) = base_name.rsplit_once('.') {
+            qualify_short_types_query(db, Arc::make_mut(&mut base_model), base_pkg);
+        }
+
         let base_extends = std::mem::take(&mut Arc::make_mut(&mut base_model).extends);
-        stack.push((parent, Arc::clone(&current), qual, ext, idx + 1));
-        stack.push((Some(current), base_model, base_name, base_extends, 0));
+        let new_idx = models.len();
+        models.push(base_model);
+        stack.push((parent_idx, current_idx, qual, ext, idx + 1));
+        stack.push((Some(current_idx), new_idx, base_name, base_extends, 0));
     }
+
+    *arc = models.swap_remove(0);
     Ok(())
+}
+
+fn qualify_short_types_query(db: &dyn QueryDb, model: &mut Model, base_pkg: &str) {
+    let inner_names: std::collections::HashSet<String> =
+        model.inner_classes.iter().map(|ic| ic.name.clone()).collect();
+    for decl in &mut model.declarations {
+        if !decl.type_name.contains('.') && !is_primitive(&decl.type_name) {
+            if inner_names.contains(&decl.type_name) {
+                continue;
+            }
+            let fqn = format!("{}.{}", base_pkg, decl.type_name);
+            let ast = db.model_ast(fqn.clone());
+            if !ast.model.declarations.is_empty()
+                || !ast.model.equations.is_empty()
+                || !ast.model.extends.is_empty()
+                || !ast.model.inner_classes.is_empty()
+            {
+                decl.type_name = fqn;
+            }
+        }
+    }
+    for ic in &mut model.inner_classes {
+        qualify_short_types_query(db, ic, base_pkg);
+    }
 }
 

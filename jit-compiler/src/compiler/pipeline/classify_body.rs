@@ -298,6 +298,15 @@ pub(crate) fn classify_variables(
     for eq in &flat_model.equations {
         referenced_in_equations.extend(extract_unknowns(eq, &empty_knowns));
     }
+    for stmt in &flat_model.algorithms {
+        referenced_in_equations.extend(extract_unknowns_from_algorithm(stmt, &empty_knowns));
+    }
+    for eq in &flat_model.initial_equations {
+        referenced_in_equations.extend(extract_unknowns(eq, &empty_knowns));
+    }
+    for stmt in &flat_model.initial_algorithms {
+        referenced_in_equations.extend(extract_unknowns_from_algorithm(stmt, &empty_knowns));
+    }
 
     let mut param_set: HashSet<String> = param_vars.iter().cloned().collect();
     for var in referenced_in_equations {

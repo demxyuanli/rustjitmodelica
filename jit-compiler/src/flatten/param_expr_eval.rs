@@ -7,6 +7,22 @@ use std::collections::{HashMap, HashSet};
 
 const MAX_DEPTH: usize = 512;
 
+/// MSL `Modelica.Electrical.Polyphase.Functions.numberOfSymmetricBaseSystems` (same algorithm in QS.Polyphase.Functions).
+fn number_of_symmetric_base_systems_i64(m: i64) -> i64 {
+    if m <= 0 {
+        return 0;
+    }
+    if m % 2 == 0 {
+        if m == 2 {
+            1
+        } else {
+            2 * number_of_symmetric_base_systems_i64(m / 2)
+        }
+    } else {
+        1
+    }
+}
+
 fn lookup_array_size_dimension(
     array_sizes: &HashMap<String, usize>,
     path: &str,
@@ -190,6 +206,15 @@ fn eval_pe_inner(
             }
             if func == "size" || func_tail == "size" {
                 return eval_size_call(args, bindings, array_sizes, visiting, depth);
+            }
+            if func_tail == "numberofsymmetricbasesystems" && args.len() == 1 {
+                let mv = eval_pe_inner(&args[0], bindings, array_sizes, visiting, depth + 1)?;
+                if !mv.is_finite() {
+                    return None;
+                }
+                let m = mv.round() as i64;
+                let n = number_of_symmetric_base_systems_i64(m);
+                return Some(n as f64);
             }
             match func_tail {
                 "sin" if args.len() == 1 => {

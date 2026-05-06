@@ -403,18 +403,26 @@ pub fn list_mo_tree(project_dir: String) -> Result<MoTreeEntry, String> {
 }
 
 #[tauri::command]
-pub fn extract_equations_from_source(
+pub async fn extract_equations_from_source(
     source: String,
 ) -> Result<diagram::ModelEquationsAndVars, String> {
-    diagram::extract_equations_from_source(&source)
+    tokio::task::spawn_blocking(move || {
+        diagram::extract_equations_from_source(&source)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 #[tauri::command]
-pub fn apply_equation_edits(
+pub async fn apply_equation_edits(
     source: String,
     variables: Vec<diagram::VariableDecl>,
     equations: Vec<diagram::EquationEntry>,
 ) -> Result<serde_json::Value, String> {
-    let new_source = diagram::apply_equation_edits(&source, &variables, &equations)?;
-    Ok(serde_json::json!({ "newSource": new_source }))
+    tokio::task::spawn_blocking(move || {
+        let new_source = diagram::apply_equation_edits(&source, &variables, &equations)?;
+        Ok(serde_json::json!({ "newSource": new_source }))
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }

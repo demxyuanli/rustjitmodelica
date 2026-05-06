@@ -57,6 +57,7 @@ impl crate::flatten::Flattener {
                     current_model_name,
                     msl_import_context,
                 } => {
+                    crate::query_db::perf_record_add("decl_expand_process_tasks", 1);
                     let decl_parallel_enabled = env::flatten_decl_parallel_enabled();
                     let decl_parallel_min_items = env::flatten_decl_parallel_min_items();
                     let current_qualified = current_model_name.as_deref().unwrap_or("");
@@ -70,6 +71,7 @@ impl crate::flatten::Flattener {
                         }
                     }
 
+                    let decl_expand_param_pass_t0 = std::time::Instant::now();
                     // Parameter propagation is a hot path in validate mode; use a fast optimizer
                     // first, then fall back to the legacy fixed-point loop if not converged.
                     let mut param_opt = param_pass::ParamPassOptimizer::default();
@@ -115,7 +117,12 @@ impl crate::flatten::Flattener {
                             }
                         }
                     }
+                    crate::query_db::perf_record_us(
+                        "decl_expand_param_pass_us",
+                        decl_expand_param_pass_t0.elapsed().as_micros() as u64,
+                    );
 
+                    let decl_expand_array_dim_t0 = std::time::Instant::now();
                     // Array dimension inference is another validate hot path; use a fast optimizer
                     // then fall back to the legacy fixed-point loop if needed.
                     let mut arr_opt = array_dim::ArrayDimensionOptimizer::default();
@@ -170,7 +177,12 @@ impl crate::flatten::Flattener {
                             }
                         }
                     }
+                    crate::query_db::perf_record_us(
+                        "decl_expand_array_dim_us",
+                        decl_expand_array_dim_t0.elapsed().as_micros() as u64,
+                    );
 
+                    let decl_expand_decl_loop_t0 = std::time::Instant::now();
                     for decl in &model.declarations {
                         if let Some(ref cond_expr) = decl.condition {
                             let cond_sub = self.substitute(cond_expr, &context);
@@ -426,11 +438,16 @@ impl crate::flatten::Flattener {
                                     load_candidates
                                 );
                             }
+                            let decl_expand_try_load_sub_model_t0 = std::time::Instant::now();
                             let (loaded_type, last_err) = self.try_load_sub_model(
                                 model.as_ref(),
                                 &resolved_type,
                                 scope_for_candidates,
                                 &load_candidates,
+                            );
+                            crate::query_db::perf_record_us(
+                                "decl_expand_try_load_sub_model_us",
+                                decl_expand_try_load_sub_model_t0.elapsed().as_micros() as u64,
                             );
 
                             let mut sub_model = match loaded_type {
@@ -554,10 +571,19 @@ impl crate::flatten::Flattener {
                                         && (resolved_type.eq_ignore_ascii_case("distribution")
                                             || resolved_type.contains("PartialDistribution")
                                             || resolved_type.contains(".Distributions.Interfaces.")
-                                            || resolved_type.ends_with(".Distribution"))
+                                            || resolved_type.ends_with(".Distribution")
+                                            || resolved_type == "Types.Dynamics"
+                                            || resolved_type.ends_with(".Types.Dynamics"))
                                     {
+                                        let fallback_type_name = if resolved_type == "Types.Dynamics"
+                                            || resolved_type.ends_with(".Types.Dynamics")
+                                        {
+                                            "Integer"
+                                        } else {
+                                            "Real"
+                                        };
                                         flat.declarations.push(Declaration {
-                                            type_name: "Real".to_string(),
+                                            type_name: fallback_type_name.to_string(),
                                             name: full_path.clone(),
                                             replaceable: decl.replaceable,
                                             constrainedby_type: decl.constrainedby_type.clone(),
@@ -584,7 +610,39 @@ impl crate::flatten::Flattener {
                                         });
                                         flat.register_inst_path(
                                             full_path.clone(),
-                                            "Real".to_string(),
+                                            fallback_type_name.to_string(),
+                                            if is_array { Some(i as usize) } else { None },
+                                        );
+                                        continue;
+                                    }
+                                    if resolved_type == "Types.Dynamics"
+                                        || resolved_type.ends_with(".Types.Dynamics")
+                                    {
+                                        flat.declarations.push(Declaration {
+                                            type_name: "Integer".to_string(),
+                                            name: full_path.clone(),
+                                            replaceable: decl.replaceable,
+                                            constrainedby_type: decl.constrainedby_type.clone(),
+                                            is_parameter: decl.is_parameter,
+                                            is_flow: decl.is_flow,
+                                            is_stream: decl.is_stream,
+                                            is_discrete: true,
+                                            is_input: decl.is_input,
+                                            is_output: decl.is_output,
+                                            is_inner: decl.is_inner,
+                                            is_outer: decl.is_outer,
+                                            is_public: decl.is_public,
+                                            is_protected: decl.is_protected,
+                                            start_value: Some(Expression::Number(0.0)),
+                                            array_size: None,
+                                            modifications: Vec::new(),
+                                            is_rest: decl.is_rest,
+                                            annotation: None,
+                                            condition: None,
+                                        });
+                                        flat.register_inst_path(
+                                            full_path.clone(),
+                                            "Integer".to_string(),
                                             if is_array { Some(i as usize) } else { None },
                                         );
                                         continue;
@@ -647,7 +705,30 @@ impl crate::flatten::Flattener {
                                 }
                             }
 
-                            self.flatten_inheritance(&mut sub_model, &resolved_type)?;
+                            if let Some(cached) =
+                                self.inheritance_flat_template_cache.get(resolved_type.as_str())
+                            {
+                                crate::query_db::perf_record_add(
+                                    "inherit_flat_template_cache_hit",
+                                    1,
+                                );
+                                sub_model = Arc::clone(cached);
+                            } else {
+                                crate::query_db::perf_record_add(
+                                    "inherit_flat_template_cache_miss",
+                                    1,
+                                );
+                                let decl_expand_flatten_inheritance_t0 = std::time::Instant::now();
+                                self.flatten_inheritance(&mut sub_model, &resolved_type)?;
+                                crate::query_db::perf_record_us(
+                                    "decl_expand_flatten_inheritance_us",
+                                    decl_expand_flatten_inheritance_t0.elapsed().as_micros() as u64,
+                                );
+                                self.inheritance_flat_template_cache.insert(
+                                    resolved_type.clone(),
+                                    Arc::clone(&sub_model),
+                                );
+                            }
                             let mod_ctx = ModifyContext::for_declaration_expand(
                                 current_qualified,
                                 &msl_import_context,
@@ -655,6 +736,7 @@ impl crate::flatten::Flattener {
                                 self.validation_mode,
                                 self.compile_stop_label.as_str(),
                             );
+                            let decl_expand_apply_modification_t0 = std::time::Instant::now();
                             for modification in &decl.modifications {
                                 apply_modification_to_model(
                                     Arc::make_mut(&mut sub_model),
@@ -663,6 +745,39 @@ impl crate::flatten::Flattener {
                                     Some(&mut self.loader),
                                 )?;
                             }
+                            crate::query_db::perf_record_us(
+                                "decl_expand_apply_modification_us",
+                                decl_expand_apply_modification_t0.elapsed().as_micros() as u64,
+                            );
+
+                            // Bindings like `PlugToPins_n plugToPins_n(final m=m)` store the RHS in the
+                            // child parameter `start_value` as a bare `m` that refers to the enclosing
+                            // component. Substitute in the parent's `context` so nested array sizes
+                            // (e.g. polyphase `pin[m]`) can be evaluated before the child Process task.
+                            // When the substituted expression is const-foldable (e.g. `mSystems` from
+                            // `numberOfSymmetricBaseSystems(m)`), replace with `Expression::Number`.
+                            let decl_expand_param_substitute_fold_t0 = std::time::Instant::now();
+                            for d in Arc::make_mut(&mut sub_model).declarations.iter_mut() {
+                                if d.is_parameter {
+                                    if let Some(v) = &d.start_value {
+                                        let subbed = self.substitute(v, &context);
+                                        let folded =
+                                            match eval_const_expr_with_param_exprs(
+                                                &subbed,
+                                                &context,
+                                                &local_array_sizes,
+                                            ) {
+                                                Some(n) if n.is_finite() => Expression::Number(n),
+                                                _ => subbed,
+                                            };
+                                        d.start_value = Some(folded);
+                                    }
+                                }
+                            }
+                            crate::query_db::perf_record_us(
+                                "decl_expand_param_substitute_fold_us",
+                                decl_expand_param_substitute_fold_t0.elapsed().as_micros() as u64,
+                            );
 
                             flat.instances.insert(full_path.clone(), resolved_type.clone());
                             flat.register_inst_path(
@@ -685,6 +800,10 @@ impl crate::flatten::Flattener {
                             });
                         }
                     }
+                    crate::query_db::perf_record_us(
+                        "decl_expand_decl_loop_us",
+                        decl_expand_decl_loop_t0.elapsed().as_micros() as u64,
+                    );
                 }
             }
         }

@@ -49,6 +49,19 @@ fn event_trace_enabled() -> bool {
     })
 }
 
+fn newton_t0_fail_open_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("RUSTMODLICA_NEWTON_T0_FAIL_OPEN")
+            .ok()
+            .map(|v| {
+                let t = v.trim();
+                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+    })
+}
+
 pub(crate) fn perf_reset_counters() {
     PERF_EVENT_ITER_TOTAL.store(0, Ordering::Relaxed);
     PERF_CLOCK_DISPATCH_TOTAL.store(0, Ordering::Relaxed);
@@ -120,6 +133,18 @@ pub(crate) fn run_event_iteration_at_time(
     w: &mut dyn std::io::Write,
     mut event_queue: Option<&mut EventQueue>,
 ) -> Result<EventIterationOutcome, String> {
+    debug_assert!(
+        when_states.len() >= when_count * 2,
+        "when_states buffer too small: len={} need={}",
+        when_states.len(),
+        when_count * 2
+    );
+    debug_assert!(
+        pre_discrete_vals.len() == discrete_vals.len(),
+        "pre_discrete size mismatch: pre={} cur={}",
+        pre_discrete_vals.len(),
+        discrete_vals.len()
+    );
     // Pure algebraic, signal-free models can safely skip derivative evaluation.
     // This avoids invoking generated derivative code paths that assume ODE state
     // storage exists even when the model has zero states.
@@ -254,6 +279,29 @@ pub(crate) fn run_event_iteration_at_time(
                             "[fallback:newton-init] accepting t=0 Newton non-convergence (residual={:.6e}), continuing with current values",
                             *diag_residual
                         );
+                        break;
+                    }
+                    if !states.is_empty()
+                        && *diag_call_index == 0
+                        && newton_t0_fail_open_enabled()
+                    {
+                        fallback_counter::inc_newton_init_accept();
+                        eprintln!(
+                            "[fallback:newton-init] fail-open at t=0 (eval_calls=0, residual={:.6e}); continuing with sanitized buffers",
+                            *diag_residual
+                        );
+                        for x in states
+                            .iter_mut()
+                            .chain(discrete_vals.iter_mut())
+                            .chain(derivs.iter_mut())
+                            .chain(outputs.iter_mut())
+                            .chain(when_states.iter_mut())
+                            .chain(crossings.iter_mut())
+                        {
+                            if !x.is_finite() {
+                                *x = 0.0;
+                            }
+                        }
                         break;
                     }
                 }

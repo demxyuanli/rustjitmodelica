@@ -65,6 +65,46 @@ pub fn fail_if_assert_storm(stage: &str, time: f64) -> Result<(), String> {
     Ok(())
 }
 
+fn sanitize_newton_eval_buffers(
+    states: &mut [f64],
+    discrete_vals: &mut [f64],
+    derivs: &mut [f64],
+    outputs: &mut [f64],
+    when_states: &mut [f64],
+    crossings: &mut [f64],
+) {
+    for x in states.iter_mut().chain(discrete_vals.iter_mut()).chain(derivs.iter_mut()) {
+        if !x.is_finite() {
+            *x = 0.0;
+        }
+    }
+    for x in outputs
+        .iter_mut()
+        .chain(when_states.iter_mut())
+        .chain(crossings.iter_mut())
+    {
+        if !x.is_finite() {
+            *x = 0.0;
+        }
+    }
+}
+
+fn copy_output_starts_finite(output_start_vals: &[f64], outputs: &mut [f64]) {
+    for (i, v) in output_start_vals.iter().enumerate() {
+        if i < outputs.len() {
+            outputs[i] = if v.is_finite() { *v } else { 0.0 };
+        }
+    }
+}
+
+fn newton_eval_accepted(rs: i32, diag_residual: f64) -> bool {
+    (rs == 0 && diag_residual.is_finite()) || allow_zero_residual_newton(rs, diag_residual)
+}
+
+fn relaxed_newton_diag_ok(diag_residual: f64, tol: f64) -> bool {
+    diag_residual.is_finite() && diag_residual.abs() <= tol
+}
+
 pub fn print_newton_diag(
     phase: &str,
     eval_calls: u32,
@@ -117,15 +157,13 @@ pub fn recover_newton_at_t0(
     derivs.fill(0.0);
     when_states.fill(0.0);
     crossings.fill(0.0);
-    for (i, v) in output_start_vals.iter().enumerate() {
-        if i < outputs.len() {
-            outputs[i] = *v;
-        }
-    }
+    copy_output_starts_finite(output_start_vals, outputs);
+    sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
     let mut homotopy_ok = true;
     let mut halve_count = 0_u32;
     while lam < 1.0 {
         *homotopy_lambda = lam;
+        sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
         native::suppress_assert_begin();
         let rs = unsafe {
             (calc_derivs)(
@@ -146,7 +184,7 @@ pub fn recover_newton_at_t0(
         )
         };
         native::suppress_assert_end();
-        if rs == 0 || allow_zero_residual_newton(rs, *diag_residual) {
+        if newton_eval_accepted(rs, *diag_residual) {
             lam += lambda_step;
             halve_count = 0;
         } else {
@@ -161,15 +199,13 @@ pub fn recover_newton_at_t0(
             derivs.fill(0.0);
             when_states.fill(0.0);
             crossings.fill(0.0);
-            for (i, v) in output_start_vals.iter().enumerate() {
-                if i < outputs.len() {
-                    outputs[i] = *v;
-                }
-            }
+            copy_output_starts_finite(output_start_vals, outputs);
+            sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
         }
     }
     if homotopy_ok {
         *homotopy_lambda = 1.0;
+        sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
         native::suppress_assert_begin();
         let rs = unsafe {
             (calc_derivs)(
@@ -190,7 +226,7 @@ pub fn recover_newton_at_t0(
         )
         };
         native::suppress_assert_end();
-        if rs == 0 || allow_zero_residual_newton(rs, *diag_residual) {
+        if newton_eval_accepted(rs, *diag_residual) {
             eprintln!("[homotopy] continuation succeeded at t=0");
             recovered = true;
         }
@@ -208,13 +244,14 @@ pub fn recover_newton_at_t0(
             crossings.fill(0.0);
             for (i, v) in output_start_vals.iter().enumerate() {
                 if i < outputs.len() {
-                    let sv = *v;
+                    let sv = if v.is_finite() { *v } else { 0.0 };
                     outputs[i] = if sv == 0.0 { perturb } else { sv };
                 }
             }
             for out in outputs.iter_mut().skip(output_start_vals.len()) {
                 *out = perturb;
             }
+            sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
             native::suppress_assert_begin();
             let rs = unsafe {
                 (calc_derivs)(
@@ -235,7 +272,7 @@ pub fn recover_newton_at_t0(
             )
             };
             native::suppress_assert_end();
-            if rs == 0 || allow_zero_residual_newton(rs, *diag_residual) {
+            if newton_eval_accepted(rs, *diag_residual) {
                 eprintln!(
                     "[newton-homotopy] retry {} (perturb={}) succeeded at t=0",
                     retry_round, perturb
@@ -243,7 +280,7 @@ pub fn recover_newton_at_t0(
                 recovered = true;
                 break;
             }
-            if rs == 2 && diag_residual.abs() <= 1e-6 {
+            if rs == 2 && relaxed_newton_diag_ok(*diag_residual, 1e-6) {
                 eprintln!(
                     "[newton-homotopy] retry {} (perturb={}) accepted at t=0 (relaxed tol, residual={:.6e})",
                     retry_round, perturb, diag_residual
@@ -266,7 +303,7 @@ pub fn recover_newton_at_t0(
             let mut rng_state = seed;
             for (i, v) in output_start_vals.iter().enumerate() {
                 if i < outputs.len() {
-                    let sv = *v;
+                    let sv = if v.is_finite() { *v } else { 0.0 };
                     if sv == 0.0 {
                         rng_state = rng_state
                             .wrapping_mul(6364136223846793005)
@@ -279,6 +316,7 @@ pub fn recover_newton_at_t0(
                     }
                 }
             }
+            sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
             native::suppress_assert_begin();
             let rs = unsafe {
                 (calc_derivs)(
@@ -299,12 +337,12 @@ pub fn recover_newton_at_t0(
             )
             };
             native::suppress_assert_end();
-            if rs == 0 || allow_zero_residual_newton(rs, *diag_residual) {
+            if newton_eval_accepted(rs, *diag_residual) {
                 eprintln!("[newton-multistart] seed {} succeeded at t=0", seed);
                 recovered = true;
                 break;
             }
-            if rs == 2 && diag_residual.abs() <= 1e-4 {
+            if rs == 2 && relaxed_newton_diag_ok(*diag_residual, 1e-4) {
                 eprintln!(
                     "[newton-multistart] seed {} accepted (relaxed, residual={:.6e})",
                     seed, diag_residual
@@ -352,16 +390,13 @@ pub fn recover_newton_at_t0(
             derivs.fill(0.0);
             when_states.fill(0.0);
             crossings.fill(0.0);
-            for (oi, v) in output_start_vals.iter().enumerate() {
-                if oi < outputs.len() {
-                    outputs[oi] = *v;
-                }
-            }
+            copy_output_starts_finite(output_start_vals, outputs);
             for (_, indices) in &geo_candidates {
                 outputs[indices[0]] = bv[0];
                 outputs[indices[1]] = bv[1];
                 outputs[indices[2]] = bv[2];
             }
+            sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
             native::suppress_assert_begin();
             let rs = unsafe {
                 (calc_derivs)(
@@ -382,11 +417,11 @@ pub fn recover_newton_at_t0(
             )
             };
             native::suppress_assert_end();
-            if rs == 0 || allow_zero_residual_newton(rs, *diag_residual) {
+            if newton_eval_accepted(rs, *diag_residual) {
                 eprintln!("[newton-geo-seed] basis {:?} succeeded at t=0", bv);
                 return true;
             }
-            if rs == 2 && diag_residual.abs() <= 1e-4 {
+            if rs == 2 && relaxed_newton_diag_ok(*diag_residual, 1e-4) {
                 eprintln!(
                     "[newton-geo-seed] basis {:?} accepted (relaxed, residual={:.6e})",
                     bv, diag_residual
@@ -410,11 +445,12 @@ pub fn recover_newton_at_t0(
                 outputs[oi] = geo;
                 applied_geo = true;
             } else if let Some(&sv) = output_start_vals.get(oi) {
-                outputs[oi] = sv;
+                outputs[oi] = if sv.is_finite() { sv } else { 0.0 };
             }
         }
     }
     if applied_geo {
+        sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
         native::suppress_assert_begin();
         let rs = unsafe {
             (calc_derivs)(
@@ -435,11 +471,11 @@ pub fn recover_newton_at_t0(
         )
         };
         native::suppress_assert_end();
-        if rs == 0 || allow_zero_residual_newton(rs, *diag_residual) {
+        if newton_eval_accepted(rs, *diag_residual) {
             eprintln!("[newton-geo-fix] geometric defaults succeeded at t=0");
             return true;
         }
-        if rs == 2 && diag_residual.abs() <= 1e-3 {
+        if rs == 2 && relaxed_newton_diag_ok(*diag_residual, 1e-3) {
             eprintln!(
                 "[newton-geo-fix] accepted (relaxed, residual={:.6e})",
                 diag_residual
@@ -454,13 +490,10 @@ pub fn recover_newton_at_t0(
     derivs.fill(0.0);
     when_states.fill(0.0);
     crossings.fill(0.0);
-    for (oi, v) in output_start_vals.iter().enumerate() {
-        if oi < outputs.len() {
-            outputs[oi] = *v;
-        }
-    }
+    copy_output_starts_finite(output_start_vals, outputs);
     let projected = project_geometric_vectors_in_place(output_vars, outputs);
     if projected {
+        sanitize_newton_eval_buffers(states, discrete_vals, derivs, outputs, when_states, crossings);
         native::suppress_assert_begin();
         let rs = unsafe {
             (calc_derivs)(
@@ -481,11 +514,11 @@ pub fn recover_newton_at_t0(
         )
         };
         native::suppress_assert_end();
-        if rs == 0 || allow_zero_residual_newton(rs, *diag_residual) {
+        if newton_eval_accepted(rs, *diag_residual) {
             eprintln!("[newton-geo-project] unit-vector projection succeeded at t=0");
             return true;
         }
-        if rs == 2 && diag_residual.abs() <= 1e-3 {
+        if rs == 2 && relaxed_newton_diag_ok(*diag_residual, 1e-3) {
             eprintln!(
                 "[newton-geo-project] accepted (relaxed, residual={:.6e})",
                 diag_residual

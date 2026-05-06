@@ -86,7 +86,8 @@ pub const STAGE_EPOCHS: &[StageEpoch] = &[
     StageEpoch { stage: CacheStage::Parse, epoch: 1 },
     StageEpoch { stage: CacheStage::ModelAst, epoch: 1 },
     StageEpoch { stage: CacheStage::Inheritance, epoch: 1 },
-    StageEpoch { stage: CacheStage::DeclExpand, epoch: 1 },
+    // Bumped 2026-04: decl_expand child param substitution + const-fold affects flattened declaration layout.
+    StageEpoch { stage: CacheStage::DeclExpand, epoch: 3 },
     StageEpoch { stage: CacheStage::EqExpand, epoch: 1 },
     StageEpoch { stage: CacheStage::ConstrainedBy, epoch: 1 },
     StageEpoch { stage: CacheStage::FlatModelQ, epoch: 1 },

@@ -219,6 +219,24 @@ pub(super) fn resolve_electrical_domain(
             return Some(format!("Modelica.Electrical.Analog.{}", name));
         }
         if in_machines {
+            if name == "DriveDataDCPM" {
+                return Some(
+                    "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.DriveDataDCPM"
+                        .to_string(),
+                );
+            }
+            if name == "DcdcInverter" {
+                return Some(
+                    "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.DcdcInverter"
+                        .to_string(),
+                );
+            }
+            if name == "IdealDcDc" {
+                return Some(
+                    "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.IdealDcDc"
+                        .to_string(),
+                );
+            }
             if name == "ControlledDCDrives" {
                 return Some("Modelica.Electrical.Machines.Examples.ControlledDCDrives".to_string());
             }

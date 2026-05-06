@@ -91,6 +91,32 @@ fn load_in_scope(
     Ok(db.inheritance_flattened(resolved).0)
 }
 
+fn load_ast_in_scope(
+    db: &dyn QueryDb,
+    scope_model: &Model,
+    import_scope: &str,
+    msl_context: &str,
+    raw: &str,
+) -> Option<Arc<Model>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let short = raw.rsplit('.').next().unwrap_or(raw);
+    if let Some(idx) = scope_model.inner_class_index.get(short) {
+        return Some(Arc::new(scope_model.inner_classes[*idx].clone()));
+    }
+    let resolved =
+        crate::flatten::Flattener::resolve_import_scoped_type(scope_model, raw, import_scope, msl_context);
+    if resolved != raw {
+        if let Some(idx) = scope_model.inner_class_index.get(resolved.as_str()) {
+            return Some(Arc::new(scope_model.inner_classes[*idx].clone()));
+        }
+    }
+    let ast = db.model_ast(resolved);
+    Some(Arc::clone(&ast.model))
+}
+
 fn constrainedby_holds_extends_impl(
     db: &dyn QueryDb,
     input: &ConstrainedByInput,
@@ -103,13 +129,26 @@ fn constrainedby_holds_extends_impl(
         input.msl_context.as_str(),
         input.constraint_raw.as_str(),
     )?;
-    let start = load_in_scope(
+    let start_ast = load_ast_in_scope(
         db,
         scope_model.as_ref(),
         input.import_scope.as_str(),
         input.msl_context.as_str(),
         input.new_type_raw.as_str(),
-    )?;
+    );
+    let start = match start_ast {
+        Some(m) => m,
+        None => {
+            return load_in_scope(
+                db,
+                scope_model.as_ref(),
+                input.import_scope.as_str(),
+                input.msl_context.as_str(),
+                input.new_type_raw.as_str(),
+            )
+            .map(|m| m.name == target.name);
+        }
+    };
     if start.name == target.name {
         return Ok(true);
     }
@@ -128,11 +167,14 @@ fn constrainedby_holds_extends_impl(
                 input.import_scope.as_str(),
                 input.msl_context.as_str(),
             );
-            let child = db.inheritance_flattened(resolved).0;
-            if child.name == target.name {
+            if resolved == target.name {
                 return Ok(true);
             }
-            q.push_back(child);
+            let child_ast = db.model_ast(resolved);
+            if child_ast.model.name == target.name {
+                return Ok(true);
+            }
+            q.push_back(Arc::clone(&child_ast.model));
         }
     }
     Ok(false)

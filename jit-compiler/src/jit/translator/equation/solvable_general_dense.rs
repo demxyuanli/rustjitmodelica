@@ -41,8 +41,9 @@ pub(super) fn compile_solvable_block_general_dense_n(
     ));
     let zero = builder.ins().f64const(0.0);
     builder.ins().stack_store(zero, iter_slot, 0);
-    let eps = 1e-6_f64;
-    let eps_val = builder.ins().f64const(eps);
+    let eps_base = builder.ins().f64const(1e-6);
+    let eps_floor = builder.ins().f64const(1e-8);
+    let one = builder.ins().f64const(1.0);
     let pre_loop_block = builder.create_block();
     let header_block = builder.create_block();
     let body_block = builder.create_block();
@@ -125,7 +126,13 @@ pub(super) fn compile_solvable_block_general_dense_n(
     builder.switch_to_block(perturb_block);
     for j in 0..n {
         let xj = builder.ins().stack_load(cl_types::F64, slots[j], 0);
-        let xjp = builder.ins().fadd(xj, eps_val);
+        // Scale finite-difference epsilon by variable magnitude to avoid Jacobian
+        // underflow on large/small state values.
+        let xj_abs = builder.ins().fabs(xj);
+        let xj_scale = builder.ins().fmax(one, xj_abs);
+        let eps_scaled = builder.ins().fmul(eps_base, xj_scale);
+        let eps_j = builder.ins().fmax(eps_floor, eps_scaled);
+        let xjp = builder.ins().fadd(xj, eps_j);
         builder.ins().stack_store(xjp, slots[j], 0);
         for i in 0..n {
             let jac_ij = if let Some(d_expr) = symbolic_plan.get(i, j) {
@@ -134,7 +141,7 @@ pub(super) fn compile_solvable_block_general_dense_n(
                 let rp = compile_expression(&residuals[i], ctx, builder)?;
                 let r_orig = r_vals[i];
                 let dr = builder.ins().fsub(rp, r_orig);
-                builder.ins().fdiv(dr, eps_val)
+                builder.ins().fdiv(dr, eps_j)
             };
             let off = (i * n + j) * 8;
             let off_val = builder.ins().iconst(ptr_type, off as i64);

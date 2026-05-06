@@ -156,6 +156,39 @@ pub struct CompilePerfReport {
     pub decl_expand_us: u64,
     pub eq_expand_ms: u64,
     pub eq_expand_us: u64,
+    /// Breakdown inside `expand_declarations_with_mode` (sums across recursive Process tasks).
+    #[serde(default)]
+    pub decl_expand_param_pass_us: u64,
+    #[serde(default)]
+    pub decl_expand_array_dim_us: u64,
+    #[serde(default)]
+    pub decl_expand_decl_loop_us: u64,
+    #[serde(default)]
+    pub decl_expand_try_load_sub_model_us: u64,
+    #[serde(default)]
+    pub decl_expand_flatten_inheritance_us: u64,
+    #[serde(default)]
+    pub decl_expand_apply_modification_us: u64,
+    #[serde(default)]
+    pub decl_expand_param_substitute_fold_us: u64,
+    #[serde(default)]
+    pub eq_expand_prep_us: u64,
+    #[serde(default)]
+    pub eq_expand_equations_us: u64,
+    #[serde(default)]
+    pub eq_expand_algorithms_us: u64,
+    #[serde(default)]
+    pub eq_expand_initial_equations_us: u64,
+    #[serde(default)]
+    pub eq_expand_initial_algorithms_us: u64,
+    /// Decl-expand inheritance-template cache counters (per compile).
+    #[serde(default)]
+    pub inherit_flat_template_cache_hit: u64,
+    #[serde(default)]
+    pub inherit_flat_template_cache_miss: u64,
+    /// `hit / (hit + miss)` in range [0,1]; 0 when denominator is zero.
+    #[serde(default)]
+    pub inherit_flat_template_cache_hit_ratio: f64,
     pub resolve_connections_ms: u64,
     pub resolve_connections_us: u64,
     pub clock_infer_ms: u64,

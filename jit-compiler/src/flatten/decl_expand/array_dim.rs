@@ -30,6 +30,7 @@ impl ArrayDimensionOptimizer {
             E::Der(inner) => 1 + Self::compute_expr_complexity(inner),
             E::ArrayAccess(a, i) => 2 + Self::compute_expr_complexity(a) + Self::compute_expr_complexity(i),
             E::ArrayLiteral(items) => 2 + items.iter().map(Self::compute_expr_complexity).sum::<u32>(),
+            E::Dot(inner, _) => 1 + Self::compute_expr_complexity(inner),
             _ => 10,
         }
     }

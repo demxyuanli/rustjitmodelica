@@ -532,8 +532,8 @@ pub(crate) fn run_event_scan(args: &[String]) -> Result<(), RunError> {
                             }),
                             Err(e) => {
                                 model_error = Some(format!(
-                                    "solver '{}' failed for model '{}': {}",
-                                    solver_name, model_name, e
+                                    "solver '{}' failed for model '{}' at count_deadband={} tail_velocity_deadband={}: {}",
+                                    solver_name, model_name, c, tv, e
                                 ));
                                 break;
                             }

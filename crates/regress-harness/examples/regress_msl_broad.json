@@ -6,7 +6,12 @@
     "working_dir": "jit-compiler",
     "solver": "rk4",
     "t_end": 10.0,
-    "dt": 0.01
+    "dt": 0.01,
+    "env": {
+      "RUSTMODLICA_JIT_CODEGEN_CACHE": "0",
+      "RUSTMODLICA_AOT_NATIVE_LOAD": "0",
+      "RUSTMODLICA_WARMUP_ENABLED": "0"
+    }
   },
   "execution": {
     "workers": 4,
@@ -351,7 +356,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_clo_rotational_sample",
@@ -1184,6 +1194,11 @@
       "id": "msl_ele_amplifier_with_op_amp_detailed",
       "kind": "model",
       "target": "Modelica.Electrical.Analog.Examples.AmplifierWithOpAmpDetailed",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "electrical",
@@ -1230,7 +1245,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_characteristic_ideal_diodes",
@@ -2296,7 +2316,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_position_controlled_dcpm",
@@ -2309,7 +2334,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_speed_controlled_dcpm",
@@ -2322,7 +2352,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcdc_inverter",
@@ -2387,7 +2422,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_switching_dc_dc",
@@ -2413,7 +2453,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcpm_cooling",
@@ -2426,7 +2471,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcpm_current_controlled",
@@ -2439,7 +2489,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcpm_drive",
@@ -2452,7 +2507,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcpm_quasi_static",
@@ -2465,7 +2525,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcpm_start",
@@ -2478,7 +2543,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcpm_temperature",
@@ -2491,7 +2561,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcpm_with_losses",
@@ -2504,7 +2579,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcse_single_phase",
@@ -2517,7 +2597,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dcse_start",
@@ -2530,7 +2615,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_dc_compare_characteristics",
@@ -2543,7 +2633,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_conveyor",
@@ -2556,7 +2651,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_dcbraking",
@@ -2569,7 +2669,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_dol",
@@ -2582,7 +2687,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_initialize",
@@ -2595,7 +2705,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_inverter",
@@ -2608,7 +2723,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_inverter_drive",
@@ -2621,7 +2741,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_steinmetz",
@@ -2634,7 +2759,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_transformer",
@@ -2647,7 +2777,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_with_losses",
@@ -2660,7 +2795,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_yd",
@@ -2673,7 +2813,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_imc_ydarc",
@@ -2686,12 +2831,22 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_ims_start",
       "kind": "model",
       "target": "Modelica.Electrical.Machines.Examples.InductionMachines.IMS_Start",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "electrical",
@@ -2712,7 +2867,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smee_generator",
@@ -2725,7 +2885,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smee_load_dump",
@@ -2738,7 +2903,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smee_rectifier",
@@ -2751,7 +2921,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smpm_braking",
@@ -2764,7 +2939,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smpm_current_source",
@@ -2777,7 +2957,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smpm_inverter",
@@ -2790,7 +2975,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smpm_no_load",
@@ -2803,7 +2993,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smpm_resistive_braking",
@@ -2816,7 +3011,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smpm_voltage_source",
@@ -2829,7 +3029,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smr_dol",
@@ -2842,7 +3047,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_smr_inverter",
@@ -2855,7 +3065,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_asymmetrical_load",
@@ -2881,7 +3096,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_rectifier12pulse",
@@ -2894,7 +3114,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_rectifier6pulse",
@@ -2920,7 +3145,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_polyphase_rectifier",
@@ -3056,6 +3286,11 @@
       "id": "msl_ele_soft_starter",
       "kind": "model",
       "target": "Modelica.Electrical.PowerConverters.Examples.ACAC.SoftStarter",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "electrical",
@@ -3219,7 +3454,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_thyristor_bridge2m_pulse_r",
@@ -3310,7 +3550,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_thyristor_bridge2pulse_r",
@@ -3570,7 +3815,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_polyphase_two_level_r",
@@ -3596,7 +3846,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_three_phase_two_level_pwm",
@@ -3622,7 +3877,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_single_phase_two_level_rl",
@@ -3635,7 +3895,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_chopper_buck_boost_duty_cycle",
@@ -3752,7 +4017,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_hbridge_r",
@@ -3804,7 +4074,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_balancing_delta",
@@ -3817,7 +4092,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_balancing_star",
@@ -3830,7 +4110,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_test_sensors_2",
@@ -3843,7 +4128,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_unsymmetrical_load",
@@ -3856,7 +4146,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_ele_multiple_resonance",
@@ -3952,7 +4247,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_flu_controlled_tank_system",
@@ -4012,7 +4312,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_flu_incompressible_fluid_network",
@@ -4024,7 +4329,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_flu_inverse_parameterization",
@@ -4036,7 +4346,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_flu_non_circular_pipes",
@@ -4048,12 +4363,22 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_flu_pumping_system",
       "kind": "model",
       "target": "Modelica.Fluid.Examples.PumpingSystem",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "fluid"
@@ -4192,7 +4517,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_transformer1phase_with_hysteresis",
@@ -4288,7 +4618,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_comparison_quasi_static",
@@ -4300,7 +4635,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_advanced_solenoid",
@@ -4360,7 +4700,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_dol",
@@ -4372,7 +4717,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_initialize",
@@ -4384,7 +4734,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_inverter",
@@ -4396,7 +4751,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_steinmetz",
@@ -4408,7 +4768,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_transformer",
@@ -4420,7 +4785,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_with_losses",
@@ -4432,7 +4802,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_yd",
@@ -4444,7 +4819,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_ims_start",
@@ -4456,7 +4836,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_dol_common_leakage",
@@ -4468,7 +4853,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_dol_polyphase",
@@ -4480,7 +4870,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_ims_start_polyphase",
@@ -4492,7 +4887,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smee_dol",
@@ -4504,7 +4904,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smee_generator",
@@ -4516,7 +4921,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smee_load_dump",
@@ -4528,7 +4938,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smee_rectifier",
@@ -4540,7 +4955,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_braking",
@@ -4552,7 +4972,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_current_source",
@@ -4564,7 +4989,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_inverter",
@@ -4576,7 +5006,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_voltage_source",
@@ -4588,7 +5023,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smr_inverter",
@@ -4600,7 +5040,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smee_generator_polyphase",
@@ -4612,7 +5057,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_inverter_polyphase",
@@ -4624,7 +5074,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smr_inverter_polyphase",
@@ -4636,7 +5091,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_eddy_current_losses",
@@ -4792,7 +5252,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_conveyor_2",
@@ -4804,7 +5269,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_dol_2",
@@ -4816,7 +5286,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_initialize_2",
@@ -4828,7 +5303,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_inverter_2",
@@ -4840,7 +5320,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_transformer_2",
@@ -4852,7 +5337,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_with_losses_2",
@@ -4864,7 +5354,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_imc_yd_2",
@@ -4876,7 +5371,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_ims_characteristics",
@@ -4888,7 +5388,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_ims_start_2",
@@ -4900,7 +5405,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smee_generator_2",
@@ -4912,7 +5422,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_current_source_2",
@@ -4924,7 +5439,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_field_weakening",
@@ -4936,7 +5456,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_mains",
@@ -4948,7 +5473,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_mtpa",
@@ -4960,7 +5490,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smpm_open_circuit",
@@ -4972,7 +5507,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_smr_current_source",
@@ -4984,7 +5524,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_eddy_current_losses_2",
@@ -4996,7 +5541,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_polyphase_inductance_2",
@@ -5008,7 +5558,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mag_field_weakening_controller",
@@ -5045,7 +5600,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_revolute_constraint",
@@ -5058,7 +5618,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_spherical_constraint",
@@ -5084,7 +5649,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_double_pendulum",
@@ -5240,7 +5810,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_rolling_wheel",
@@ -5266,12 +5841,22 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_rolling_wheel_set_pulling",
       "kind": "model",
       "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.RollingWheelSetPulling",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "mechanics",
@@ -5324,6 +5909,11 @@
       "id": "msl_mec_surfaces",
       "kind": "model",
       "target": "Modelica.Mechanics.MultiBody.Examples.Elementary.Surfaces",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=parse"
+      ],
       "tags": [
         "msl",
         "mechanics",
@@ -5396,7 +5986,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_engine1b",
@@ -5409,7 +6004,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_engine1b_analytic",
@@ -5422,12 +6022,22 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_engine_v6",
       "kind": "model",
       "target": "Modelica.Mechanics.MultiBody.Examples.Loops.EngineV6",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "mechanics",
@@ -5441,6 +6051,11 @@
       "id": "msl_mec_engine_v6_analytic",
       "kind": "model",
       "target": "Modelica.Mechanics.MultiBody.Examples.Loops.EngineV6_analytic",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "mechanics",
@@ -5461,7 +6076,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_fourbar2",
@@ -5487,7 +6107,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_planar_fourbar",
@@ -5526,7 +6151,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_cylinder_base",
@@ -5539,7 +6169,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_cylinder_analytic_cad",
@@ -5552,7 +6187,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_engine1base",
@@ -5565,7 +6205,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_engine1b_base",
@@ -5578,12 +6223,22 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_engine_v6_analytic_2",
       "kind": "model",
       "target": "Modelica.Mechanics.MultiBody.Examples.Loops.Utilities.EngineV6_analytic",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "mechanics",
@@ -5656,7 +6311,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_mec_moving_actuated_drive",
@@ -5675,6 +6335,11 @@
       "id": "msl_mec_full_robot",
       "kind": "model",
       "target": "Modelica.Mechanics.MultiBody.Examples.Systems.RobotR3.FullRobot",
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ],
       "tags": [
         "msl",
         "mechanics",
@@ -6436,7 +7101,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_one_mass",
@@ -6449,7 +7119,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_parallel_cooling",
@@ -6462,7 +7137,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_parallel_pump_drop_out",
@@ -6475,7 +7155,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_pump_and_valve",
@@ -6488,7 +7173,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_pump_drop_out",
@@ -6501,7 +7191,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_simple_cooling",
@@ -6514,7 +7209,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_test_cylinder",
@@ -6527,7 +7227,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_test_open_tank",
@@ -6540,7 +7245,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_two_mass",
@@ -6553,7 +7263,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_two_tanks",
@@ -6566,7 +7281,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_water_pump",
@@ -6579,7 +7299,12 @@
       ],
       "expect": {
         "kind": "exit_zero"
-      }
+      },
+      "timeout_ms": 900000,
+      "extra_rust_args": [
+        "--validate",
+        "--validate-tier=analyze"
+      ]
     },
     {
       "id": "msl_the_double_ramp",

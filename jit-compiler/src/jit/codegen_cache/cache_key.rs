@@ -30,7 +30,8 @@ pub const CODEGEN_CACHE_VERSION: u32 = 5;
 
 /// Bump when JIT `calc_derivs` ABI, raw blob layout, or reloc contract changes without a crate
 /// version or IR epoch bump (dev builds otherwise keep the same `CARGO_PKG_VERSION`).
-pub const CODEGEN_JIT_ABI_REVISION: u32 = 2;
+/// Rev 3: when_count/crossings_count now captured after all equation compilation (fix buffer truncation).
+pub const CODEGEN_JIT_ABI_REVISION: u32 = 3;
 
 /// Cranelift version for cache invalidation (keep aligned with workspace `cranelift-jit`).
 const CRANELIFT_VERSION: &str = "0.128.4";

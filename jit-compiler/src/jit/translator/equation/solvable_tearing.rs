@@ -307,7 +307,13 @@ pub(super) fn compile_single_unknown_or_tearing_solvable_block(
     let j_val = if let Some(d_expr) = symbolic_derivative.as_ref() {
         compile_expression(d_expr, ctx, builder)?
     } else {
-        let epsilon = builder.ins().f64const(1e-6);
+        let eps_base = builder.ins().f64const(1e-6);
+        let eps_floor = builder.ins().f64const(1e-8);
+        let one = builder.ins().f64const(1.0);
+        let x_abs = builder.ins().fabs(x);
+        let x_scale = builder.ins().fmax(one, x_abs);
+        let eps_scaled = builder.ins().fmul(eps_base, x_scale);
+        let epsilon = builder.ins().fmax(eps_floor, eps_scaled);
         let x_p = builder.ins().fadd(x, epsilon);
         builder.ins().stack_store(x_p, t_slot, 0);
         compile_inner_simple_assignments(inner_eqs, ctx, builder)?;
