@@ -5,6 +5,7 @@ mod decl_parse;
 mod entry;
 mod equation;
 mod eq_parse;
+mod fuzz_tests;
 mod expression;
 mod helpers;
 mod model_parse;

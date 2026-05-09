@@ -1,0 +1,14 @@
+# Minimal MSL smoke test model list
+# Each line: Modelica model name → validated with --validate
+# Requires Modelica Standard Library at ../Modelica/
+
+# Basic models
+Modelica.Blocks.Examples.PID_Controller
+Modelica.Blocks.Sources.Sine
+Modelica.Blocks.Math.Add
+Modelica.Electrical.Analog.Examples.CauerLowPassAnalog
+Modelica.Mechanics.Translational.Examples.SignConvention
+Modelica.Thermal.HeatTransfer.Examples.TwoMasses
+
+# If ModelicaTest available:
+# ModelicaTest.Fluid.Dissipation
