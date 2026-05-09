@@ -39,6 +39,14 @@ pub struct Jit {
     pub(super) active_model_name: Option<String>,
 }
 
+/// A standalone compiled block with its owning JIT instance.
+/// The JIT must be kept alive as long as the function pointer is used.
+pub struct StandaloneBlock {
+    #[allow(dead_code)]
+    jit: Box<Jit>,
+    pub func: CalcDerivsFunc,
+}
+
 impl Jit {
     pub fn new() -> Self {
         Self::new_with_extra_symbols(None)
@@ -929,6 +937,150 @@ impl Jit {
         }
 
         Ok(())
+    }
+
+    /// Compile a single solvable block into a standalone JIT module for hot-swapping.
+    /// Returns a struct holding both the function pointer and the owning JIT instance.
+    /// The caller manages the function pointer table and atomic replacement.
+    pub fn compile_standalone_block(
+        unknowns: &[String],
+        tearing_var: &Option<String>,
+        inner_eqs: &[crate::ast::Equation],
+        residuals: &[crate::ast::Expression],
+        array_info: &HashMap<String, crate::jit::types::ArrayInfo>,
+        enumerations: &HashMap<String, Vec<String>>,
+    ) -> Result<StandaloneBlock, String> {
+        if unknowns.is_empty() {
+            return Err("compile_standalone_block: empty unknowns".to_string());
+        }
+
+        let n_states = unknowns.len();
+        let mut standalone = Jit::new();
+        let sig = crate::jit::translator::equation::block_compile::make_block_signature(
+            &standalone.module,
+        );
+        let func_id = standalone
+            .module
+            .declare_function("__block_hotswap", Linkage::Export, &sig)
+            .map_err(|e| e.to_string())?;
+
+        standalone.ctx.func.signature = sig.clone();
+        standalone.ctx.func.name =
+            cranelift::codegen::ir::UserFuncName::user(0, func_id.as_u32());
+
+        // Build the block function
+        let mut bc = cranelift::frontend::FunctionBuilderContext::new();
+        let mut builder =
+            cranelift::frontend::FunctionBuilder::new(&mut standalone.ctx.func, &mut bc);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+
+        let states_ptr = builder.block_params(entry)[1];
+        let discrete_ptr = builder.block_params(entry)[2];
+        let derivs_ptr = builder.block_params(entry)[3];
+        let params_ptr = builder.block_params(entry)[4];
+        let outputs_ptr = builder.block_params(entry)[5];
+        let when_states_ptr = builder.block_params(entry)[6];
+        let crossings_ptr = builder.block_params(entry)[7];
+        let pre_states_ptr = builder.block_params(entry)[8];
+        let pre_discrete_ptr = builder.block_params(entry)[9];
+        let diag_res = builder.block_params(entry)[11];
+        let diag_x = builder.block_params(entry)[12];
+        let homotopy = builder.block_params(entry)[13];
+
+        let state_vars: Vec<String> = (0..n_states).map(|i| format!("s{}", i)).collect();
+        let mut var_map: HashMap<String, Value> = HashMap::new();
+        let empty_slots: HashMap<String, cranelift::codegen::ir::StackSlot> = HashMap::new();
+        let mut when_idx = 0usize;
+        let mut crossings_idx = 0usize;
+        let state_var_index: HashMap<String, usize> = state_vars.iter().enumerate().map(|(i, s)| (s.clone(), i)).collect();
+        let empty_conn_deg: HashMap<String, usize> = HashMap::new();
+        let empty_scs: HashMap<String, Vec<String>> = HashMap::new();
+        let empty_sfm: HashMap<String, String> = HashMap::new();
+
+        let mut sub_ctx = TranslationContext {
+            module: &mut standalone.module,
+            var_map: &mut var_map,
+            stack_slots: &empty_slots,
+            array_info,
+            states_ptr,
+            discrete_ptr,
+            params_ptr,
+            outputs_ptr,
+            derivs_ptr,
+            pre_states_ptr,
+            pre_discrete_ptr,
+            when_states_ptr,
+            crossings_ptr,
+            when_idx: &mut when_idx,
+            crossings_idx: &mut crossings_idx,
+            state_vars: &state_vars,
+            discrete_vars: &[],
+            output_vars: &[],
+            state_var_index: &state_var_index,
+            discrete_var_index: &HashMap::new(),
+            param_var_index: &HashMap::new(),
+            output_var_index: &HashMap::new(),
+            diag_residual_ptr: Some(diag_res),
+            diag_x_ptr: Some(diag_x),
+            homotopy_lambda_ptr: homotopy,
+            declared_imports: None,
+            string_literal_cache: None,
+            string_literal_data_ctx: None,
+            string_data_counter: None,
+            external_modelica_names: None,
+            function_return_block: None,
+            connector_connection_degree: &empty_conn_deg,
+            stream_connection_set: &empty_scs,
+            stream_flow_map: &empty_sfm,
+            enumerations,
+            varid_state_index: HashMap::new(),
+            varid_discrete_index: HashMap::new(),
+            varid_param_index: HashMap::new(),
+            varid_output_index: HashMap::new(),
+            loop_break_stack: Vec::new(),
+            suppress_zero_crossings: false,
+            delay_call_counter: 0,
+            block_funcs: Vec::new(),
+            block_index_counter: 0,
+            deferred_blocks: Vec::new(),
+        };
+
+        // Compile block body
+        if tearing_var.is_some() || residuals.len() == 1 {
+            super::translator::equation::solvable_tearing::compile_single_unknown_or_tearing_solvable_block(
+                unknowns,
+                tearing_var,
+                inner_eqs,
+                residuals,
+                &mut sub_ctx,
+                &mut builder,
+            )?;
+        } else {
+            super::translator::equation::solvable::compile_solvable_block_general_n(
+                unknowns,
+                residuals,
+                &mut sub_ctx,
+                &mut builder,
+            )?;
+        }
+
+        let success_code = builder.ins().iconst(cl_types::I32, 0);
+        builder.ins().return_(&[success_code]);
+        builder.seal_all_blocks();
+        builder.finalize();
+
+        standalone.module.define_function(func_id, &mut standalone.ctx)
+            .map_err(|e| format!("{:?}", e))?;
+        standalone.module.clear_context(&mut standalone.ctx);
+        standalone.module.finalize_definitions()
+            .map_err(|e| e.to_string())?;
+
+        let code = standalone.module.get_finalized_function(func_id);
+        let func: CalcDerivsFunc = unsafe { std::mem::transmute(code) };
+        Ok(StandaloneBlock { jit: Box::new(standalone), func })
     }
 
     pub fn compile_user_function_stub(
