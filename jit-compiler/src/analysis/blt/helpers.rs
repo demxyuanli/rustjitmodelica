@@ -268,3 +268,83 @@ pub(super) fn eval_const_expr(expr: &Expression) -> Option<f64> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::expression_utils::{make_binary as mb, make_num as mn};
+    use crate::ast::Expression;
+    use std::collections::HashSet;
+
+    fn make_var(name: &str) -> Expression {
+        Expression::Variable(crate::string_intern::intern(name))
+    }
+
+    fn make_der_var(name: &str) -> Expression {
+        Expression::Variable(crate::string_intern::intern(&format!("der_{}", name)))
+    }
+
+    fn default_options() -> AnalysisOptions {
+        AnalysisOptions {
+            index_reduction_method: "pantelides".to_string(),
+            tearing_method: "first".to_string(),
+            quiet: true,
+        }
+    }
+
+    #[test]
+    fn test_solve_residual_linear_bare_var_sub() {
+        // var - 3 = 0  →  var = 3
+        let expr = mb(make_var("z"), Operator::Sub, mn(3.0));
+        let result = solve_residual_linear(&expr, "z");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_solve_residual_linear_var_plus_rest() {
+        // z + 5 = 0  →  z = -5
+        let expr = mb(make_var("z"), Operator::Add, mn(5.0));
+        let result = solve_residual_linear(&expr, "z");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_solve_residual_linear_rest_minus_var() {
+        // 10 - z = 0  →  z = 10
+        let expr = mb(mn(10.0), Operator::Sub, make_var("z"));
+        let result = solve_residual_linear(&expr, "z");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_index_reduction_already_index_one() {
+        // der_x = -x  (already proper ODE, index-1)
+        let equations = vec![
+            Equation::Simple(make_der_var("x"), mb(mn(0.0), Operator::Sub, make_var("x"))),
+        ];
+        let assigned_var = vec![Some(0)];
+        let assigned_eq = vec![Some(0)];
+        let unknown_list = vec!["der_x".to_string(), "x".to_string()];
+        let state_vars = vec!["x".to_string()];
+
+        let result = try_index_reduction(
+            &equations,
+            &assigned_var,
+            &assigned_eq,
+            &unknown_list,
+            &state_vars,
+            &default_options(),
+        );
+        assert!(result.is_none(), "Expected no index reduction for index-1 system");
+    }
+
+    #[test]
+    fn test_build_der_map_basic() {
+        let equations = vec![
+            Equation::Simple(make_der_var("x"), make_var("y")),
+        ];
+        let der_map = build_der_map(&equations);
+        assert_eq!(der_map.len(), 1);
+        assert!(der_map.contains_key("der_x"));
+    }
+}
