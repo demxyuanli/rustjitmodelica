@@ -121,7 +121,7 @@ fn expand_small_for_loops(equations: &[crate::ast::Equation]) -> Vec<crate::ast:
     let max_expand = std::env::var("RUSTMODLICA_VECTORIZE_FOR_EXPAND_MAX")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
-        .unwrap_or(256);
+        .unwrap_or(1024);
     let mut out = Vec::with_capacity(equations.len());
     for eq in equations {
         match eq {
