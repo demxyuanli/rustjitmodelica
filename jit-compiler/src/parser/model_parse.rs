@@ -68,25 +68,31 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
     let mut is_expandable = false;
     let mut is_partial = false;
     let mut is_operator_record = false;
+    let prefix_text = prefix_pair.as_str();
+    // class_prefixes inner pairs don't separate anonymous literals (pest produces 0 inners).
+    // Detect prefixes from the full text string.
     for p in prefix_pair.into_inner() {
+        let trimmed = p.as_str().trim();
         if p.as_rule() == Rule::function_prefix {
             is_function = true;
         } else if p.as_rule() == Rule::operator_function_prefix {
             is_function = true;
             is_operator_function = true;
-        } else if p.as_str().trim() == "operator" {
+        } else if trimmed == "operator" {
             is_operator_record = true;
-        } else if p.as_str().trim() == "connector" {
+        } else if trimmed == "connector" {
             is_connector = true;
-        } else if p.as_str().trim() == "record" {
+        } else if trimmed == "record" {
             is_record = true;
-        } else if p.as_str().trim() == "block" {
+        } else if trimmed == "block" {
             is_block = true;
-        } else if p.as_str().trim() == "expandable" {
-            is_expandable = true;
-        } else if p.as_str().trim() == "partial" {
-            is_partial = true;
         }
+    }
+    if prefix_text.contains("expandable") {
+        is_expandable = true;
+    }
+    if prefix_text.contains("partial") {
+        is_partial = true;
     }
 
     let name = inner.next().unwrap().as_str().to_string();
@@ -205,5 +211,40 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             external_info: None,
             redeclare_extends,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pest::Parser;
+
+    #[test]
+    fn test_parse_partial_model() {
+        let input = "partial model Foo Real x; end Foo;";
+        let mut pairs = crate::parser::ModelicaParser::parse(Rule::model_definition, input)
+            .expect("parse failed");
+        let item = parse_model(pairs.next().unwrap()).expect("parse_model failed");
+        match item {
+            ClassItem::Model(m) => {
+                assert!(m.is_partial, "Expected is_partial=true for 'partial model Foo'");
+                assert_eq!(m.name, "Foo");
+            }
+            _ => panic!("Expected Model"),
+        }
+    }
+
+    #[test]
+    fn test_parse_non_partial_model() {
+        let input = "model Foo Real x; end Foo;";
+        let mut pairs = crate::parser::ModelicaParser::parse(Rule::model_definition, input)
+            .expect("parse failed");
+        let item = parse_model(pairs.next().unwrap()).expect("parse_model failed");
+        match item {
+            ClassItem::Model(m) => {
+                assert!(!m.is_partial, "Expected is_partial=false for non-partial model");
+            }
+            _ => panic!("Expected Model"),
+        }
     }
 }
