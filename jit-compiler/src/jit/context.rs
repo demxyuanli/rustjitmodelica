@@ -72,6 +72,14 @@ pub struct TranslationContext<'a> {
     /// when RUSTMODLICA_BLOCK_COMPILE=1.
     pub block_funcs: Vec<(cranelift_module::FuncId, cranelift::prelude::Signature)>,
     pub block_index_counter: usize,
+    /// Deferred solvable blocks for block-compile: (func_id, unknowns, tearing_var, equations, residuals).
+    pub deferred_blocks: Vec<(
+        cranelift_module::FuncId,
+        Vec<String>,
+        Option<String>,
+        Vec<crate::ast::Equation>,
+        Vec<crate::ast::Expression>,
+    )>,
     /// Count of `connect` endpoints per flattened connector path (for `cardinality`).
     pub connector_connection_degree: &'a HashMap<String, usize>,
     pub stream_connection_set: &'a HashMap<String, Vec<String>>,
@@ -218,6 +226,7 @@ impl<'a> TranslationContext<'a> {
             delay_call_counter: 0,
             block_funcs: Vec::new(),
             block_index_counter: 0,
+            deferred_blocks: Vec::new(),
             connector_connection_degree,
             stream_connection_set,
             stream_flow_map,
@@ -241,6 +250,76 @@ impl<'a> TranslationContext<'a> {
         for (name, &idx) in self.output_var_index.iter() {
             let id = interner.intern(name);
             self.varid_output_index.insert(id, idx);
+        }
+    }
+
+    /// Create a sub-context for compiling a solvable block function.
+    /// The block function shares the same calc_derivs signature, so its
+    /// entry block params map 1:1 to the main function's pointer Values.
+    /// Takes the 14 block params from the block function's entry block.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sub_context_for_block(
+        &mut self,
+        time_val: Value,
+        states_ptr: Value,
+        discrete_ptr: Value,
+        derivs_ptr: Value,
+        params_ptr: Value,
+        outputs_ptr: Value,
+        when_states_ptr: Value,
+        crossings_ptr: Value,
+        pre_states_ptr: Value,
+        pre_discrete_ptr: Value,
+        t_end_val: Value,
+        diag_res_val: Value,
+        diag_x_val: Value,
+        homotopy_val: Value,
+    ) -> TranslationContext<'_> {
+        TranslationContext {
+            module: self.module,
+            var_map: self.var_map,
+            stack_slots: self.stack_slots,
+            array_info: self.array_info,
+            states_ptr,
+            discrete_ptr,
+            params_ptr,
+            outputs_ptr,
+            derivs_ptr,
+            pre_states_ptr,
+            pre_discrete_ptr,
+            when_states_ptr,
+            crossings_ptr,
+            when_idx: self.when_idx,
+            crossings_idx: self.crossings_idx,
+            state_vars: self.state_vars,
+            discrete_vars: self.discrete_vars,
+            output_vars: self.output_vars,
+            state_var_index: self.state_var_index,
+            discrete_var_index: self.discrete_var_index,
+            param_var_index: self.param_var_index,
+            output_var_index: self.output_var_index,
+            diag_residual_ptr: Some(diag_res_val),
+            diag_x_ptr: Some(diag_x_val),
+            homotopy_lambda_ptr: homotopy_val,
+            declared_imports: None,
+            string_literal_cache: None,
+            string_literal_data_ctx: None,
+            string_data_counter: None,
+            external_modelica_names: self.external_modelica_names,
+            function_return_block: None,
+            connector_connection_degree: self.connector_connection_degree,
+            stream_connection_set: self.stream_connection_set,
+            stream_flow_map: self.stream_flow_map,
+            varid_state_index: self.varid_state_index.clone(),
+            varid_discrete_index: self.varid_discrete_index.clone(),
+            varid_param_index: self.varid_param_index.clone(),
+            varid_output_index: self.varid_output_index.clone(),
+            loop_break_stack: Vec::new(),
+            suppress_zero_crossings: false,
+            delay_call_counter: 0,
+            block_funcs: Vec::new(),
+            block_index_counter: 0,
+            deferred_blocks: Vec::new(),
         }
     }
 

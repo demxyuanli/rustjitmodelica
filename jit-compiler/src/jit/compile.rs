@@ -535,6 +535,27 @@ impl Jit {
             builder.ins().return_(&[success_code]);
             builder.seal_all_blocks();
             builder.finalize();
+
+            // Compile deferred solvable blocks into their own functions.
+            if !t_ctx.deferred_blocks.is_empty() {
+                let deferred = std::mem::take(&mut t_ctx.deferred_blocks);
+                self.compile_deferred_blocks(
+                    &deferred,
+                    &stack_slots,
+                    &var_map,
+                    array_info,
+                    state_vars,
+                    discrete_vars,
+                    output_vars,
+                    &state_var_index,
+                    &discrete_var_index,
+                    &param_var_index,
+                    &output_var_index,
+                    connector_connection_degree,
+                    stream_connection_set,
+                    stream_flow_map,
+                )?;
+            }
         }
 
         self.module
@@ -751,6 +772,147 @@ impl Jit {
 
     pub fn func_cache_stats(&self) -> (usize, usize) {
         (self.func_cache.len(), self.func_cache.values().map(|(_, w, c)| w + c).sum())
+    }
+
+    /// Compile deferred solvable blocks into their own Cranelift functions.
+    /// Called after the main calc_derivs function is finalized but before
+    /// finalize_definitions(), so all functions are in the same module.
+    ///
+    /// When RUSTMODLICA_BLOCK_COMPILE=1, this enables per-block recompilation
+    /// and hot-swapping in future tier-up / deopt cycles.
+    pub fn compile_deferred_blocks(
+        &mut self,
+        deferred: &[(
+            FuncId,
+            Vec<String>,           // unknowns
+            Option<String>,        // tearing_var
+            Vec<crate::ast::Equation>,  // inner equations
+            Vec<crate::ast::Expression>, // residuals
+        )],
+        stack_slots: &std::collections::HashMap<String, cranelift::codegen::ir::StackSlot>,
+        var_map: &std::collections::HashMap<String, Value>,
+        array_info: &std::collections::HashMap<String, crate::jit::types::ArrayInfo>,
+        state_vars: &[String],
+        discrete_vars: &[String],
+        output_vars: &[String],
+        state_var_index: &std::collections::HashMap<String, usize>,
+        discrete_var_index: &std::collections::HashMap<String, usize>,
+        param_var_index: &std::collections::HashMap<String, usize>,
+        output_var_index: &std::collections::HashMap<String, usize>,
+        connector_connection_degree: &std::collections::HashMap<String, usize>,
+        stream_connection_set: &std::collections::HashMap<String, Vec<String>>,
+        stream_flow_map: &std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
+        if deferred.is_empty() {
+            return Ok(());
+        }
+
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        for (func_id, unknowns, tearing_var, inner_eqs, residuals) in deferred {
+            // Build the block function signature
+            let sig = crate::jit::translator::equation::block_compile::make_block_signature(
+                &self.module,
+            );
+
+            // Clear context and start a fresh function
+            self.module.clear_context(&mut self.ctx);
+            let mut bc = cranelift::frontend::FunctionBuilderContext::new();
+            let mut builder = cranelift::frontend::FunctionBuilder::new(
+                &mut self.ctx.func,
+                &mut bc,
+            );
+
+            let entry = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+
+            let time_val = builder.block_params(entry)[0];
+            let states_ptr = builder.block_params(entry)[1];
+            let discrete_ptr = builder.block_params(entry)[2];
+            let derivs_ptr = builder.block_params(entry)[3];
+            let params_ptr = builder.block_params(entry)[4];
+            let outputs_ptr = builder.block_params(entry)[5];
+            let when_states_ptr = builder.block_params(entry)[6];
+            let crossings_ptr = builder.block_params(entry)[7];
+            let pre_states_ptr = builder.block_params(entry)[8];
+            let pre_discrete_ptr = builder.block_params(entry)[9];
+            let _t_end = builder.block_params(entry)[10];
+            let diag_res = builder.block_params(entry)[11];
+            let diag_x = builder.block_params(entry)[12];
+            let homotopy = builder.block_params(entry)[13];
+
+            // Create sub-context for block body compilation
+            let mut when_idx = 0usize;
+            let mut crossings_idx = 0usize;
+            let mut sub_var_map: HashMap<String, Value> = HashMap::new();
+            let mut sub_ctx = TranslationContext {
+                module: &mut self.module,
+                var_map: &mut sub_var_map,
+                stack_slots,
+                array_info,
+                states_ptr,
+                discrete_ptr,
+                params_ptr,
+                outputs_ptr,
+                derivs_ptr,
+                pre_states_ptr,
+                pre_discrete_ptr,
+                when_states_ptr,
+                crossings_ptr,
+                when_idx: &mut when_idx,
+                crossings_idx: &mut crossings_idx,
+                state_vars,
+                discrete_vars,
+                output_vars,
+                state_var_index,
+                discrete_var_index,
+                param_var_index,
+                output_var_index,
+                diag_residual_ptr: Some(diag_res),
+                diag_x_ptr: Some(diag_x),
+                homotopy_lambda_ptr: homotopy,
+                declared_imports: None,
+                string_literal_cache: None,
+                string_literal_data_ctx: None,
+                string_data_counter: None,
+                external_modelica_names: None,
+                function_return_block: None,
+                connector_connection_degree,
+                stream_connection_set,
+                stream_flow_map,
+                varid_state_index: HashMap::new(),
+                varid_discrete_index: HashMap::new(),
+                varid_param_index: HashMap::new(),
+                varid_output_index: HashMap::new(),
+                loop_break_stack: Vec::new(),
+                suppress_zero_crossings: false,
+                delay_call_counter: 0,
+                block_funcs: Vec::new(),
+                block_index_counter: 0,
+                deferred_blocks: Vec::new(),
+            };
+
+            // Compile the solvable block body into this function
+            super::translator::equation::solvable::compile_solvable_block_general_n(
+                &unknowns[..],
+                &residuals[..],
+                &mut sub_ctx,
+                &mut builder,
+            )?;
+
+            // Emit success return
+            let success_code = builder.ins().iconst(cl_types::I32, 0);
+            builder.ins().return_(&[success_code]);
+            builder.seal_all_blocks();
+            builder.finalize();
+
+            self.module
+                .define_function(*func_id, &mut self.ctx)
+                .map_err(|e| format!("{:?}", e))?;
+        }
+
+        Ok(())
     }
 
     pub fn compile_user_function_stub(

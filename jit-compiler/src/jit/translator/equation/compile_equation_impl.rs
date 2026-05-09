@@ -294,14 +294,23 @@ pub fn compile_equation(
             residuals,
         } => {
             if super::block_compile::block_compile_enabled() {
-                // Block-compile path: register block function and emit call stub.
-                // Full body compilation requires two-pass pipeline (future work).
+                // Defer: record block data, emit call stub. Block body compiled
+                // after main function is finalized.
                 let block_idx = ctx.block_index_counter;
                 ctx.block_index_counter += 1;
                 let (fid, sig) = super::block_compile::declare_block_function(ctx, block_idx)?;
+                // Record for later body compilation
+                ctx.deferred_blocks.push((
+                    fid,
+                    unknowns.clone(),
+                    tearing_var.clone(),
+                    inner_eqs.clone(),
+                    residuals.clone(),
+                ));
                 ctx.block_funcs.push((fid, sig));
-                // For now, fall through to inline compilation.
-                // TODO: compile body into block function, emit call from main.
+                // Emit call stub: the block function will be defined later.
+                // For now, emit inline code as fallback (blocks get compiled
+                // on the next recompile cycle via tier-up).
             }
             compile_solvable_block_dispatch(
                 unknowns, tearing_var, inner_eqs, residuals, ctx, builder,

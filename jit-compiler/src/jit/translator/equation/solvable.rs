@@ -115,7 +115,7 @@ pub(super) fn build_symbolic_jacobian_plan(
     SymbolicJacobianPlan { n, entries }
 }
 
-pub(super) fn compile_solvable_block_general_n(
+pub(crate) fn compile_solvable_block_general_n(
     unknowns: &[String],
     residuals: &[Expression],
     ctx: &mut TranslationContext,

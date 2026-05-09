@@ -6,7 +6,7 @@ mod linearized;
 mod solvable_assert;
 mod solvable_general_dense;
 mod solvable_general_sparse;
-mod solvable;
+pub(crate) mod solvable;
 mod solvable_tearing;
 
 pub(crate) use solvable_general_sparse::solvable_block_uses_sparse_jacobian_path;
