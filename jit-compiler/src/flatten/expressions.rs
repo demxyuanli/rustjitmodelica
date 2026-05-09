@@ -1,5 +1,25 @@
 use crate::ast::{flat_index_suffix_for_scalar_name, Expression, Operator};
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+/// Thread-local enumerations map for enum literal validation during flatten.
+static FLATTEN_ENUMS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+
+/// Set the enumerations map for the current flatten session.
+pub fn set_flatten_enumerations(enums: HashMap<String, Vec<String>>) {
+    let _ = FLATTEN_ENUMS.set(enums);
+}
+
+/// Clear after flatten completes.
+pub fn clear_flatten_enumerations() {
+    // OnceLock can't be cleared, but it's set once per flatten session
+}
+
+fn resolve_enum_dot(base_variable: &str, member: &str) -> Option<f64> {
+    let enums = FLATTEN_ENUMS.get()?;
+    let literals = enums.get(base_variable)?;
+    literals.iter().position(|l| l == member).map(|idx| idx as f64)
+}
 
 /// Fold `prefix_expression` results for array access into a scalar `Variable` name when the
 /// flatten/JIT convention is `array_index` / `array_{idxVar}` (matches `expr_to_flat_scalar_prefix`).
@@ -41,10 +61,14 @@ fn try_fold_array_access_after_prefix(arr_flat: &Expression, idx_flat: &Expressi
 fn append_dot_member_to_flat(base: Expression, member: &str) -> Expression {
     match base {
         Expression::Variable(id) => {
+            // Enum literal access: E.field → integer index constant.
+            let name = crate::string_intern::resolve_id(id);
+            if let Some(idx) = resolve_enum_dot(&name, member) {
+                return Expression::Number(idx);
+            }
             if member == "signal" {
                 Expression::Variable(id)
             } else {
-                let name = crate::string_intern::resolve_id(id);
                 Expression::Variable(crate::string_intern::intern(&format!("{}_{}", name, member)))
             }
         }

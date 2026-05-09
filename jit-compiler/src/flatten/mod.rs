@@ -335,6 +335,18 @@ impl Flattener {
         let root_path = root_name.replace('/', ".");
         let mode_start = std::time::Instant::now();
 
+        // Set up enumerations for enum literal validation during flatten.
+        {
+            let mut enums = root.enumerations.clone();
+            // Also collect from inner classes
+            for inner in &root.inner_classes {
+                for (k, v) in &inner.enumerations {
+                    enums.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+            crate::flatten::expressions::set_flatten_enumerations(enums);
+        }
+
         // Emit mode diagnostic for performance analysis
         if std::env::var("RUSTMODLICA_PERF_TRACE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -482,6 +494,17 @@ impl Flattener {
     ) -> Result<FlattenedModel, FlattenError> {
         let root_path = root_name.replace('/', ".");
         redeclare::validate_modification_prefixes_in_model(root.as_ref())?;
+
+        // Set up enumerations for enum literal validation during flatten.
+        {
+            let mut enums = root.enumerations.clone();
+            for inner in &root.inner_classes {
+                for (k, v) in &inner.enumerations {
+                    enums.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+            crate::flatten::expressions::set_flatten_enumerations(enums);
+        }
 
         match self.validation_mode {
             ValidationMode::SuperFast => {
