@@ -213,7 +213,7 @@ impl EquationInterpreter {
         diff_eq_count: usize,
         state_count: usize,
     ) -> bool {
-        alg_eq_count + diff_eq_count <= 10 && state_count <= 5
+        alg_eq_count + diff_eq_count <= 20 && state_count <= 10
     }
 }
 
