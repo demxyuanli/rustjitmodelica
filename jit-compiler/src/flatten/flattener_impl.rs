@@ -126,7 +126,7 @@ impl Flattener {
             .ok()
             .and_then(|v| v.trim().parse::<usize>().ok())
             .filter(|v| *v > 0)
-            .unwrap_or(128)
+            .unwrap_or(64)
     }
 
     fn flatten_eq_parallel_micro_batch_size(&self) -> usize {
