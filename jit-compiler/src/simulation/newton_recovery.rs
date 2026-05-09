@@ -130,6 +130,113 @@ pub fn print_newton_diag(
     );
 }
 
+/// KINSOL-based algebraic initialization: solve F(states)=0 at t=0 using KINSOL Newton+linesearch.
+/// Returns true if KINSOL converged successfully.
+#[cfg(feature = "sundials")]
+fn try_kinsol_init(
+    calc_derivs: CalcDerivsFunc,
+    time: f64,
+    t_end: f64,
+    params: &[f64],
+    pre_states: &[f64],
+    pre_discrete_vals: &[f64],
+    states: &mut [f64],
+    discrete_vals: &mut [f64],
+    derivs: &mut [f64],
+    outputs: &mut [f64],
+    when_states: &mut [f64],
+    crossings: &mut [f64],
+    diag_res_ptr: *mut f64,
+    diag_x_ptr: *mut f64,
+    homotopy_lambda_ptr: *const f64,
+    n: usize,
+) -> bool {
+    use crate::simulation::sundials::kinsol_solve_square_spgmr;
+
+    #[repr(C)]
+    struct KinInitCtx {
+        calc_derivs: CalcDerivsFunc,
+        time: f64,
+        t_end: f64,
+        params: *const f64,
+        pre_states: *const f64,
+        pre_discrete: *const f64,
+        outputs: *mut f64,
+        when_states: *mut f64,
+        crossings: *mut f64,
+        diag_res_ptr: *mut f64,
+        diag_x_ptr: *mut f64,
+        homotopy_lambda_ptr: *const f64,
+        discrete: *mut f64,
+        work_deriv: *mut f64,
+    }
+
+    unsafe extern "C" fn kin_residual(
+        u: *const sundials_sys::sunrealtype,
+        fu: *mut sundials_sys::sunrealtype,
+        nn: usize,
+        user_data: *mut libc::c_void,
+    ) -> i32 {
+        let ctx = &*(user_data as *const KinInitCtx);
+        // Copy trial states to work buffer
+        std::ptr::copy_nonoverlapping(u, ctx.discrete.offset(0) as *mut f64, nn);
+        // Evaluate calc_derivs — residual is derivs (we want them ≈ 0)
+        let status = (ctx.calc_derivs)(
+            ctx.time,
+            ctx.discrete.offset(0) as *mut f64, // states = u
+            ctx.discrete.add(nn), // discrete after states
+            fu, // derivs = residual output
+            ctx.params,
+            ctx.outputs,
+            ctx.when_states,
+            ctx.crossings,
+            ctx.pre_states,
+            ctx.pre_discrete,
+            ctx.t_end,
+            ctx.diag_res_ptr,
+            ctx.diag_x_ptr,
+            ctx.homotopy_lambda_ptr,
+        );
+        status
+    }
+
+    // Build context: store discrete_vals and derivs adjacent for the callback
+    let mut work_buf: Vec<f64> = Vec::with_capacity(n + discrete_vals.len());
+    work_buf.extend_from_slice(states);
+    work_buf.extend_from_slice(discrete_vals);
+
+    let ctx = KinInitCtx {
+        calc_derivs,
+        time,
+        t_end,
+        params: params.as_ptr(),
+        pre_states: pre_states.as_ptr(),
+        pre_discrete: pre_discrete_vals.as_ptr(),
+        outputs: outputs.as_mut_ptr(),
+        when_states: when_states.as_mut_ptr(),
+        crossings: crossings.as_mut_ptr(),
+        diag_res_ptr,
+        diag_x_ptr,
+        homotopy_lambda_ptr,
+        discrete: work_buf.as_mut_ptr(),
+        work_deriv: derivs.as_mut_ptr(),
+    };
+
+    match kinsol_solve_square_spgmr(
+        n,
+        states,
+        kin_residual,
+        &ctx as *const KinInitCtx as *mut libc::c_void,
+    ) {
+        Ok(()) => {
+            // Copy converged discrete values back
+            discrete_vals.copy_from_slice(&work_buf[n..n + discrete_vals.len()]);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn recover_newton_at_t0(
     calc_derivs: CalcDerivsFunc,
@@ -153,6 +260,21 @@ pub fn recover_newton_at_t0(
     homotopy_lambda_ptr: *const f64,
 ) -> bool {
     let mut recovered = false;
+
+    // Phase 0: KINSOL algebraic initialization (SUNDIALS Newton+linesearch, converges faster for stiff systems).
+    #[cfg(feature = "sundials")]
+    {
+        let n = states.len();
+        if try_kinsol_init(
+            calc_derivs, time, t_end, params,
+            pre_states, pre_discrete_vals,
+            states, discrete_vals, derivs, outputs,
+            when_states, crossings,
+            diag_res_ptr, diag_x_ptr, homotopy_lambda_ptr, n,
+        ) {
+            return true;
+        }
+    }
 
     // Phase 1: True homotopy continuation (finer steps help large MultiBody DAEs at t=0).
     let mut lambda_step = 0.05_f64;

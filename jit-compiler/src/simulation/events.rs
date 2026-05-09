@@ -103,6 +103,107 @@ impl SyncEventQueue {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// KINSOL-based algebraic refinement for pure-algebraic event systems.
+#[cfg(feature = "sundials")]
+fn try_kinsol_alg_refine(
+    calc_derivs: CalcDerivsFunc,
+    time: f64,
+    t_end: f64,
+    params: &[f64],
+    pre_states: &[f64],
+    pre_discrete_vals: &[f64],
+    states: &mut [f64],
+    discrete_vals: &mut [f64],
+    derivs: &mut [f64],
+    outputs: &mut [f64],
+    when_states: &mut [f64],
+    crossings: &mut [f64],
+    diag_res_ptr: *mut f64,
+    diag_x_ptr: *mut f64,
+    homotopy_lambda_ptr: *const f64,
+    n_outputs: usize,
+) -> bool {
+    use crate::simulation::sundials::kinsol_solve_square_spgmr;
+    use sundials_sys::sunrealtype;
+
+    #[repr(C)]
+    struct KinAlgCtx {
+        calc_derivs: CalcDerivsFunc,
+        time: f64,
+        t_end: f64,
+        params: *const f64,
+        pre_states: *const f64,
+        pre_discrete: *const f64,
+        states: *mut f64,
+        discrete: *mut f64,
+        derivs: *mut f64,
+        when_states: *mut f64,
+        crossings: *mut f64,
+        diag_res_ptr: *mut f64,
+        diag_x_ptr: *mut f64,
+        homotopy_lambda_ptr: *const f64,
+    }
+
+    unsafe extern "C" fn kin_residual(
+        u: *const sunrealtype,
+        fu: *mut sunrealtype,
+        n: usize,
+        user_data: *mut libc::c_void,
+    ) -> i32 {
+        let ctx = &*(user_data as *const KinAlgCtx);
+        // Copy trial outputs in
+        std::ptr::copy_nonoverlapping(u, ctx.states, n);
+        let status = (ctx.calc_derivs)(
+            ctx.time,
+            ctx.states,
+            ctx.discrete,
+            fu, // derivs = residual (want near 0 at steady state)
+            ctx.params,
+            u as *mut f64, // outputs = trial values
+            ctx.when_states,
+            ctx.crossings,
+            ctx.pre_states,
+            ctx.pre_discrete,
+            ctx.t_end,
+            ctx.diag_res_ptr,
+            ctx.diag_x_ptr,
+            ctx.homotopy_lambda_ptr,
+        );
+        status
+    }
+
+    let ctx = KinAlgCtx {
+        calc_derivs,
+        time,
+        t_end,
+        params: params.as_ptr(),
+        pre_states: pre_states.as_ptr(),
+        pre_discrete: pre_discrete_vals.as_ptr(),
+        states: states.as_mut_ptr(),
+        discrete: discrete_vals.as_mut_ptr(),
+        derivs: derivs.as_mut_ptr(),
+        when_states: when_states.as_mut_ptr(),
+        crossings: crossings.as_mut_ptr(),
+        diag_res_ptr,
+        diag_x_ptr,
+        homotopy_lambda_ptr,
+    };
+
+    let mut trial_outputs = outputs.to_vec();
+    match kinsol_solve_square_spgmr(
+        n_outputs,
+        &mut trial_outputs,
+        kin_residual,
+        &ctx as *const KinAlgCtx as *mut libc::c_void,
+    ) {
+        Ok(()) => {
+            outputs.copy_from_slice(&trial_outputs);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 pub(crate) fn run_event_iteration_at_time(
     time: f64,
     t_end: f64,
@@ -355,6 +456,21 @@ pub(crate) fn run_event_iteration_at_time(
             }
         }
         fail_if_assert_storm("event-iteration", time)?;
+
+        // KINSOL algebraic refinement: replace fixed-point iteration for pure algebraic systems.
+        #[cfg(feature = "sundials")]
+        if do_alg_iter && alg_iter == 0 && states.is_empty() {
+            if try_kinsol_alg_refine(
+                calc_derivs, time, t_end,
+                params, pre_states, pre_discrete_vals,
+                states, discrete_vals, derivs, outputs,
+                when_states, crossings,
+                diag_res_ptr, diag_x_ptr, homotopy_lambda_ptr,
+                outputs.len(),
+            ) {
+                break; // KINSOL converged, skip fixed-point loop
+            }
+        }
 
         if do_alg_iter && alg_iter < ALG_FIXED_POINT_MAX {
             let max_diff = if alg_iter == 0 {
