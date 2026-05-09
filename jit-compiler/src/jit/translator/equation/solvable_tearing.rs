@@ -192,7 +192,7 @@ fn emit_line_search_update(
     Ok(())
 }
 
-pub(super) fn compile_single_unknown_or_tearing_solvable_block(
+pub(crate) fn compile_single_unknown_or_tearing_solvable_block(
     unknowns: &[String],
     tearing_var: &Option<String>,
     inner_eqs: &[Equation],

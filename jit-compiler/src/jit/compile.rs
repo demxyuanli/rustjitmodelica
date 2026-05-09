@@ -897,13 +897,25 @@ impl Jit {
                 deferred_blocks: Vec::new(),
             };
 
-            // Compile the solvable block body into this function
-            super::translator::equation::solvable::compile_solvable_block_general_n(
-                &unknowns[..],
-                &residuals[..],
-                &mut sub_ctx,
-                &mut builder,
-            )?;
+            // Compile the solvable block body into this function.
+            // Dispatch based on whether this is a tearing block.
+            if tearing_var.is_some() || residuals.len() == 1 {
+                super::translator::equation::solvable_tearing::compile_single_unknown_or_tearing_solvable_block(
+                    &unknowns[..],
+                    tearing_var,
+                    &inner_eqs[..],
+                    &residuals[..],
+                    &mut sub_ctx,
+                    &mut builder,
+                )?;
+            } else {
+                super::translator::equation::solvable::compile_solvable_block_general_n(
+                    &unknowns[..],
+                    &residuals[..],
+                    &mut sub_ctx,
+                    &mut builder,
+                )?;
+            }
 
             // Emit success return
             let success_code = builder.ins().iconst(cl_types::I32, 0);
