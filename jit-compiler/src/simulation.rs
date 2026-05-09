@@ -14,6 +14,7 @@ use std::io::{self, Write};
 
 pub mod checkpoint;
 mod events;
+pub mod pgo;
 mod jacobian;
 mod newton_recovery;
 mod sim_io;
