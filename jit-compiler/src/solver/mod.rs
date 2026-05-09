@@ -1,3 +1,4 @@
+pub mod qss;
 pub mod radau;
 
 use crate::jit::CalcDerivsFunc;
