@@ -3,6 +3,7 @@ use super::*;
 mod drive_loop;
 
 use drive_loop::drive_print_loop;
+use linsol::SundialsLinSolKind;
 
 #[derive(Clone, Copy)]
 pub(crate) enum SundialsKind {
@@ -145,6 +146,8 @@ pub(crate) fn run_sundials_common(
         crossings_len: crossings_count,
         scratch_when_states: scratch_when_states.as_mut_ptr(),
         scratch_crossings: scratch_crossings.as_mut_ptr(),
+        jacobian_dense: ptr::null_mut(),
+        jacobian_color_groups: ptr::null(),
     };
     let ud_ptr = Box::into_raw(Box::new(ud));
 
@@ -221,6 +224,38 @@ pub(crate) fn run_sundials_common(
                     SUNContext_Free(&mut ctx);
                     drop(Box::from_raw(ud_ptr));
                     return Err(format!("CVodeSetLinearSolver failed: {}", lr));
+                }
+                if sundials_jac_enabled() {
+                    if linsol_kind == SundialsLinSolKind::Dense {
+                        let jr = CVodeSetJacFn(mem, Some(cv_jac));
+                        if jr != sundials_sys::CV_SUCCESS as i32 {
+                            eprintln!(
+                                "[sundials] CVodeSetJacFn failed: {} — continuing without Jacobian",
+                                jr
+                            );
+                        }
+                    } else if linsol_kind == SundialsLinSolKind::Spgmr {
+                        let jr = CVodeSetJacTimes(mem, Some(cv_jtimes_setup), Some(cv_jtimes));
+                        if jr != sundials_sys::CV_SUCCESS as i32 {
+                            eprintln!(
+                                "[sundials] CVodeSetJacTimes failed: {} — continuing without J*v product",
+                                jr
+                            );
+                        }
+                    }
+                    #[cfg(feature = "sundials-klu")]
+                    {
+                        if linsol_kind == SundialsLinSolKind::Klu {
+                            (*ud_ptr).jacobian_dense = ls_pack.jacobian_dense as *mut c_void;
+                            let jr = CVodeSetJacFn(mem, Some(cv_jac_klu));
+                            if jr != sundials_sys::CV_SUCCESS as i32 {
+                                eprintln!(
+                                    "[sundials] CVodeSetJacFn(klu) failed: {} — continuing without Jacobian",
+                                    jr
+                                );
+                            }
+                        }
+                    }
                 }
                 if crossings_count > 0 {
                     let rr = CVodeRootInit(mem, crossings_count as i32, Some(cv_root));
@@ -404,6 +439,38 @@ pub(crate) fn run_sundials_common(
                     SUNContext_Free(&mut ctx);
                     drop(Box::from_raw(ud_ptr));
                     return Err(format!("IDASetLinearSolver failed: {}", lr));
+                }
+                if sundials_jac_enabled() {
+                    if linsol_kind == SundialsLinSolKind::Dense {
+                        let jr = IDASetJacFn(mem, Some(ida_jac));
+                        if jr != sundials_sys::IDA_SUCCESS as i32 {
+                            eprintln!(
+                                "[sundials] IDASetJacFn failed: {} — continuing without Jacobian",
+                                jr
+                            );
+                        }
+                    } else if linsol_kind == SundialsLinSolKind::Spgmr {
+                        let jr = IDASetJacTimes(mem, Some(ida_jtimes_setup), Some(ida_jtimes));
+                        if jr != sundials_sys::IDA_SUCCESS as i32 {
+                            eprintln!(
+                                "[sundials] IDASetJacTimes failed: {} — continuing without J*v product",
+                                jr
+                            );
+                        }
+                    }
+                    #[cfg(feature = "sundials-klu")]
+                    {
+                        if linsol_kind == SundialsLinSolKind::Klu {
+                            (*ud_ptr).jacobian_dense = ls_pack.jacobian_dense as *mut c_void;
+                            let jr = IDASetJacFn(mem, Some(ida_jac_klu));
+                            if jr != sundials_sys::IDA_SUCCESS as i32 {
+                                eprintln!(
+                                    "[sundials] IDASetJacFn(klu) failed: {} — continuing without Jacobian",
+                                    jr
+                                );
+                            }
+                        }
+                    }
                 }
                 if crossings_count > 0 {
                     let rr = IDARootInit(mem, crossings_count as i32, Some(ida_root));

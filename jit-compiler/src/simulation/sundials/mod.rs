@@ -89,6 +89,9 @@ struct RawSundialsUserData {
     scratch_crossings: *mut f64,
     /// Dense Jacobian template for KLU (populate first, then copy to sparse CSR).
     jacobian_dense: *mut c_void,
+    /// Jacobian coloring groups pointer (Box<Vec<Vec<usize>>> cast to raw).
+    /// NULL means no coloring available (fall back to per-column evaluation).
+    jacobian_color_groups: *const Vec<Vec<usize>>,
 }
 
 unsafe extern "C" fn cv_rhs(
@@ -258,7 +261,8 @@ fn sundials_jac_enabled() -> bool {
 }
 
 /// Numerical Jacobian callback for CVODE (dense solver).
-/// Fills the dense SUNMatrix with finite-difference Jacobian: J[:,j] = (f(y+delta*e_j) - f(y)) / delta.
+/// Fills the dense SUNMatrix with finite-difference Jacobian.
+/// Uses structural coloring when available to reduce function evaluations.
 unsafe extern "C" fn cv_jac(
     t: sunrealtype,
     y: N_Vector,
@@ -284,37 +288,79 @@ unsafe extern "C" fn cv_jac(
     }
 
     let eps = 1e-6_f64;
+    let color_groups_ptr: *const Vec<Vec<usize>> = ud.jacobian_color_groups;
 
-    for j in 0..n {
-        // Copy y into tmp1 and perturb component j
-        std::ptr::copy_nonoverlapping(y_ptr, t1_ptr, n);
-        let yj = *y_ptr.add(j);
-        let delta = eps.max(eps * yj.abs());
-        *t1_ptr.add(j) = yj + delta;
+    if !color_groups_ptr.is_null() {
+        let groups = &*color_groups_ptr;
+        for group in groups {
+            // Copy y, then perturb all columns in this color group simultaneously
+            std::ptr::copy_nonoverlapping(y_ptr, t1_ptr, n);
+            let mut deltas: Vec<f64> = Vec::with_capacity(group.len());
+            for &j in group {
+                let yj = *y_ptr.add(j);
+                let delta = eps.max(eps * yj.abs());
+                *t1_ptr.add(j) = yj + delta;
+                deltas.push(delta);
+            }
 
-        let status = (ud.calc_derivs)(
-            t as f64,
-            t1_ptr,
-            ud.discrete,
-            t2_ptr, // deriv output
-            ud.params,
-            ud.outputs,
-            ud.scratch_when_states,
-            ud.scratch_crossings,
-            ud.pre_states,
-            ud.pre_discrete,
-            ud.t_end,
-            ud.diag_residual,
-            ud.diag_x,
-            ud.homotopy_lambda_ptr,
-        );
-        if status != 0 {
-            return status;
+            let status = (ud.calc_derivs)(
+                t as f64,
+                t1_ptr,
+                ud.discrete,
+                t2_ptr,
+                ud.params,
+                ud.outputs,
+                ud.scratch_when_states,
+                ud.scratch_crossings,
+                ud.pre_states,
+                ud.pre_discrete,
+                ud.t_end,
+                ud.diag_residual,
+                ud.diag_x,
+                ud.homotopy_lambda_ptr,
+            );
+            if status != 0 {
+                return status;
+            }
+
+            // Fill each column in the group
+            for (&j, &delta) in group.iter().zip(deltas.iter()) {
+                for i in 0..n {
+                    *jac_data.add(j * n + i) = (*t2_ptr.add(i) - *fy_ptr.add(i)) / delta;
+                }
+            }
         }
+    } else {
+        // Fallback: per-column evaluation (no coloring available)
+        for j in 0..n {
+            std::ptr::copy_nonoverlapping(y_ptr, t1_ptr, n);
+            let yj = *y_ptr.add(j);
+            let delta = eps.max(eps * yj.abs());
+            *t1_ptr.add(j) = yj + delta;
 
-        // Fill column j (column-major: element (i,j) at offset j*n + i)
-        for i in 0..n {
-            *jac_data.add(j * n + i) = (*t2_ptr.add(i) - *fy_ptr.add(i)) / delta;
+            let status = (ud.calc_derivs)(
+                t as f64,
+                t1_ptr,
+                ud.discrete,
+                t2_ptr,
+                ud.params,
+                ud.outputs,
+                ud.scratch_when_states,
+                ud.scratch_crossings,
+                ud.pre_states,
+                ud.pre_discrete,
+                ud.t_end,
+                ud.diag_residual,
+                ud.diag_x,
+                ud.homotopy_lambda_ptr,
+            );
+            if status != 0 {
+                return status;
+            }
+
+            for i in 0..n {
+                *jac_data.add(j * n + i) = (*t2_ptr.add(i) - *fy_ptr.add(i)) / delta;
+            }
         }
     }
 
@@ -323,6 +369,7 @@ unsafe extern "C" fn cv_jac(
 
 /// Numerical Jacobian callback for IDA (dense solver).
 /// Fills J = -df/dy + c_j * I with finite differences.
+/// Uses structural coloring when available.
 unsafe extern "C" fn ida_jac(
     t: sunrealtype,
     c_j: sunrealtype,
@@ -373,13 +420,9 @@ unsafe extern "C" fn ida_jac(
     let eps = 1e-6_f64;
     let cj = c_j as f64;
 
-    for j in 0..n {
-        std::ptr::copy_nonoverlapping(y_ptr, t1_ptr, n);
-        let yj = *y_ptr.add(j);
-        let delta = eps.max(eps * yj.abs());
-        *t1_ptr.add(j) = yj + delta;
-
-        let status = (ud.calc_derivs)(
+    let color_groups_ptr: *const Vec<Vec<usize>> = ud.jacobian_color_groups;
+    let evaluate_per_group = |t1_ptr: *mut f64, t2_ptr: *mut f64| -> i32 {
+        (ud.calc_derivs)(
             t as f64,
             t1_ptr,
             ud.discrete,
@@ -394,19 +437,58 @@ unsafe extern "C" fn ida_jac(
             ud.diag_residual,
             ud.diag_x,
             ud.homotopy_lambda_ptr,
-        );
-        if status != 0 {
-            return status;
-        }
+        )
+    };
 
-        // J = -df/dy + c_j * I
-        for i in 0..n {
-            let df = (*t2_ptr.add(i) - *ud.work_deriv.add(i)) / delta;
-            let mut val = -df;
-            if i == j {
-                val += cj;
+    if !color_groups_ptr.is_null() {
+        let groups = &*color_groups_ptr;
+        for group in groups {
+            std::ptr::copy_nonoverlapping(y_ptr, t1_ptr, n);
+            let mut deltas: Vec<f64> = Vec::with_capacity(group.len());
+            for &j in group {
+                let yj = *y_ptr.add(j);
+                let delta = eps.max(eps * yj.abs());
+                *t1_ptr.add(j) = yj + delta;
+                deltas.push(delta);
             }
-            *jac_data.add(j * n + i) = val;
+
+            let status = evaluate_per_group(t1_ptr, t2_ptr);
+            if status != 0 {
+                return status;
+            }
+
+            for (&j, &delta) in group.iter().zip(deltas.iter()) {
+                for i in 0..n {
+                    let df = (*t2_ptr.add(i) - *ud.work_deriv.add(i)) / delta;
+                    let mut val = -df;
+                    if i == j {
+                        val += cj;
+                    }
+                    *jac_data.add(j * n + i) = val;
+                }
+            }
+        }
+    } else {
+        // Per-column fallback
+        for j in 0..n {
+            std::ptr::copy_nonoverlapping(y_ptr, t1_ptr, n);
+            let yj = *y_ptr.add(j);
+            let delta = eps.max(eps * yj.abs());
+            *t1_ptr.add(j) = yj + delta;
+
+            let status = evaluate_per_group(t1_ptr, t2_ptr);
+            if status != 0 {
+                return status;
+            }
+
+            for i in 0..n {
+                let df = (*t2_ptr.add(i) - *ud.work_deriv.add(i)) / delta;
+                let mut val = -df;
+                if i == j {
+                    val += cj;
+                }
+                *jac_data.add(j * n + i) = val;
+            }
         }
     }
 

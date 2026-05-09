@@ -1,5 +1,6 @@
 pub(crate) mod blt;
 pub mod derivative;
+pub mod jacobian_coloring;
 mod expression_utils;
 mod initial;
 pub mod provenance;
