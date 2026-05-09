@@ -121,14 +121,25 @@ pub fn emit_block_call(
     Ok(builder.inst_results(call_inst)[0])
 }
 
-/// Registry of compiled blocks for potential recompilation.
+/// Deferred block data preserved for hot-swap recompilation.
+pub struct DeferredBlockData {
+    pub func_id: FuncId,
+    pub unknowns: Vec<String>,
+    pub tearing_var: Option<String>,
+    pub equations: Vec<crate::ast::Equation>,
+    pub residuals: Vec<crate::ast::Expression>,
+}
+
+/// Registry of compiled blocks for potential recompilation and hot-swapping.
 pub struct BlockRegistry {
     pub blocks: Vec<CompiledBlock>,
+    /// Preserved block data for recompilation (hot-swap, tier-up).
+    pub deferred: Vec<DeferredBlockData>,
 }
 
 impl BlockRegistry {
     pub fn new() -> Self {
-        Self { blocks: Vec::new() }
+        Self { blocks: Vec::new(), deferred: Vec::new() }
     }
 
     pub fn register(&mut self, func_id: FuncId, block_index: usize) {
@@ -136,6 +147,29 @@ impl BlockRegistry {
             func_id,
             block_index,
         });
+    }
+
+    /// Store deferred block data for potential recompilation.
+    pub fn defer_block(
+        &mut self,
+        func_id: FuncId,
+        unknowns: Vec<String>,
+        tearing_var: Option<String>,
+        equations: Vec<crate::ast::Equation>,
+        residuals: Vec<crate::ast::Expression>,
+    ) {
+        self.deferred.push(DeferredBlockData {
+            func_id,
+            unknowns,
+            tearing_var,
+            equations,
+            residuals,
+        });
+    }
+
+    /// Get deferred blocks that can be recompiled.
+    pub fn recompilable_blocks(&self) -> &[DeferredBlockData] {
+        &self.deferred
     }
 }
 
