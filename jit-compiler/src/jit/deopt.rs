@@ -7,6 +7,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
+
+static EMPTY_ENUMS: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(HashMap::new);
 
 use super::types::CalcDerivsFunc;
 use crate::ast::{AlgorithmStatement, Equation};
@@ -404,6 +407,7 @@ pub fn dual_compile(
         stream_connection_set,
         stream_flow_map,
         connector_connection_degree,
+        &*EMPTY_ENUMS,
     )
     .map_err(|e| DualCompileError::SpeculativeCompile {
         cranelift_phase: "compile_speculative",
@@ -454,6 +458,7 @@ pub fn dual_compile(
         stream_connection_set,
         stream_flow_map,
         connector_connection_degree,
+        &*EMPTY_ENUMS,
     )
     .map_err(|e| DualCompileError::GenericCompile {
         cranelift_phase: "compile_generic",

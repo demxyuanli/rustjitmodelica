@@ -133,6 +133,7 @@ impl Jit {
         stream_connection_set: &HashMap<String, Vec<String>>,
         stream_flow_map: &HashMap<String, String>,
         connector_connection_degree: &HashMap<String, usize>,
+        enumerations: &HashMap<String, Vec<String>>,
     ) -> Result<(CalcDerivsFunc, usize, usize), String> {
         let cache_key = compute_jit_compile_cache_key(
             state_vars,
@@ -418,6 +419,7 @@ impl Jit {
                 stream_connection_set,
                 stream_flow_map,
             );
+            t_ctx.enumerations = enumerations;
 
             if let Some(guard_fn_ref) = speculation_guard_fn_ref {
                 if speculation_guard_ids.len() == 1 {
@@ -557,6 +559,7 @@ impl Jit {
                     connector_connection_degree,
                     stream_connection_set,
                     stream_flow_map,
+                    enumerations,
                 )?;
             }
         }
@@ -805,6 +808,7 @@ impl Jit {
         connector_connection_degree: &std::collections::HashMap<String, usize>,
         stream_connection_set: &std::collections::HashMap<String, Vec<String>>,
         stream_flow_map: &std::collections::HashMap<String, String>,
+        enumerations: &std::collections::HashMap<String, Vec<String>>,
     ) -> Result<(), String> {
         if deferred.is_empty() {
             return Ok(());
@@ -884,7 +888,7 @@ impl Jit {
                 connector_connection_degree,
                 stream_connection_set,
                 stream_flow_map,
-                enumerations: &*EMPTY_ENUMS,
+                enumerations,
                 varid_state_index: HashMap::new(),
                 varid_discrete_index: HashMap::new(),
                 varid_param_index: HashMap::new(),

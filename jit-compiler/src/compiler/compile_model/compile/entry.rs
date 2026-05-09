@@ -120,7 +120,7 @@ pub(crate) fn compile(
         perf_report.hotspot_threshold = env_u64("RUSTMODLICA_HOTSPOT_THRESHOLD", 1000);
         perf_report.simd_step_enabled = env_flag("RUSTMODLICA_SIMD_STEP", false);
         perf_report.type_specialization_enabled = env_flag("RUSTMODLICA_JIT_TYPE_SPECIALIZATION", false);
-        perf_report.stack_scratch_enabled = env_flag("RUSTMODLICA_JIT_STACK_SCRATCH", false);
+        perf_report.stack_scratch_enabled = env_flag("RUSTMODLICA_JIT_STACK_SCRATCH", true);
         perf_report.runtime_boundary_epoch = env_u64("RUSTMODLICA_RUNTIME_BOUNDARY_EPOCH", 1);
         perf_report.external_resolve_cache_status = "not_run".to_string();
         perf_report.analysis_summary_cache_status = "not_run".to_string();
@@ -2454,6 +2454,7 @@ pub(crate) fn compile(
                 &flat_model.stream_connection_set,
                 &flat_model.stream_flow_map,
                 &connector_connection_degree,
+                &root_model.enumerations,
             )
         };
         let jit_elapsed = jit_t0.elapsed();
