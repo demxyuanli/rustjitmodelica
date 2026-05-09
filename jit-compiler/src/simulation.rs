@@ -191,9 +191,11 @@ pub fn run_simulation(
     // independently of the solver step method).
     let use_adaptive = solver == "rk45" && when_count == 0;
     let use_implicit = solver == "implicit";
+    let use_radau = solver == "radau";
     let mut rk4_solver = RungeKutta4Solver::new(states.len());
     let mut rk45_solver = AdaptiveRK45Solver::new(states.len(), atol, rtol);
     let mut backward_euler_solver = BackwardEulerSolver::new(states.len());
+    let mut radau_solver = crate::solver::radau::RadauSolver::new(states.len(), atol, rtol);
     // Scratch warm-start helps large output vectors (e.g. EngineV6) where Newton metadata may be empty.
     let use_scratch_outputs_for_solver =
         !newton_tearing_var_names.is_empty() || output_vars.len() >= 4096;
@@ -595,6 +597,8 @@ pub fn run_simulation(
                 r
             } else if use_implicit {
                 backward_euler_solver.step(&mut system, time, dt, &mut states)
+            } else if use_radau {
+                radau_solver.step(&mut system, time, dt, &mut states)
             } else {
                 rk4_solver.step(&mut system, time, dt, &mut states)
             };
@@ -797,6 +801,8 @@ pub fn run_simulation(
                     r
                 } else if use_implicit {
                     backward_euler_solver.step(&mut system, time, dt_event, &mut states)
+                } else if use_radau {
+                    radau_solver.step(&mut system, time, dt_event, &mut states)
                 } else {
                     rk4_solver.step(&mut system, time, dt_event, &mut states)
                 };
