@@ -237,6 +237,10 @@ pub(super) fn try_index_reduction(
                 return Some(new_eqs);
             }
         }
+        eprintln!(
+            "[index-reduction] constraint equation {} could not be reduced (nonlinear or unsupported form)",
+            eq_idx
+        );
     }
     None
 }
