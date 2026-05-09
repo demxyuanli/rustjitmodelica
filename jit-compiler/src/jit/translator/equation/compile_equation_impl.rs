@@ -294,12 +294,9 @@ pub fn compile_equation(
             residuals,
         } => {
             if super::block_compile::block_compile_enabled() {
-                // Defer: record block data, emit call stub. Block body compiled
-                // after main function is finalized.
                 let block_idx = ctx.block_index_counter;
                 ctx.block_index_counter += 1;
                 let (fid, sig) = super::block_compile::declare_block_function(ctx, block_idx)?;
-                // Record for later body compilation
                 ctx.deferred_blocks.push((
                     fid,
                     unknowns.clone(),
@@ -308,9 +305,64 @@ pub fn compile_equation(
                     residuals.clone(),
                 ));
                 ctx.block_funcs.push((fid, sig));
-                // Emit call stub: the block function will be defined later.
-                // For now, emit inline code as fallback (blocks get compiled
-                // on the next recompile cycle via tier-up).
+
+                // Emit call to block function instead of inline code.
+                // Time is tracked in var_map (stored as "time" by the main compiler).
+                let time_val = ctx.var_map.get("time").copied().unwrap_or_else(|| {
+                    builder.ins().f64const(0.0)
+                });
+                let t_end_val = ctx.var_map.get("t_end").copied().unwrap_or_else(|| {
+                    builder.ins().f64const(0.0)
+                });
+                let call_args = super::block_compile::BlockCallArgs {
+                    time: time_val,
+                    states_ptr: ctx.states_ptr,
+                    discrete_ptr: ctx.discrete_ptr,
+                    derivs_ptr: ctx.derivs_ptr,
+                    params_ptr: ctx.params_ptr,
+                    outputs_ptr: ctx.outputs_ptr,
+                    when_states_ptr: ctx.when_states_ptr,
+                    crossings_ptr: ctx.crossings_ptr,
+                    pre_states_ptr: ctx.pre_states_ptr,
+                    pre_discrete_ptr: ctx.pre_discrete_ptr,
+                    t_end: t_end_val,
+                    diag_residual_ptr: ctx.diag_residual_ptr.unwrap_or_else(|| {
+                        builder.ins().iconst(
+                            ctx.module.target_config().pointer_type(),
+                            0,
+                        )
+                    }),
+                    diag_x_ptr: ctx.diag_x_ptr.unwrap_or_else(|| {
+                        builder.ins().iconst(
+                            ctx.module.target_config().pointer_type(),
+                            0,
+                        )
+                    }),
+                    homotopy_lambda_ptr: ctx.homotopy_lambda_ptr,
+                };
+                match super::block_compile::emit_block_call(ctx, builder, fid, &call_args) {
+                    Ok(status) => {
+                        // Block call succeeded. Check status for Newton failure.
+                        let zero = builder.ins().iconst(cl_types::I32, 0);
+                        let is_err = builder.ins().icmp(
+                            cranelift::codegen::ir::condcodes::IntCC::NotEqual,
+                            status,
+                            zero,
+                        );
+                        let after_block = builder.create_block();
+                        let handle_err = builder.create_block();
+                        builder.ins().brif(is_err, handle_err, &[], after_block, &[]);
+                        builder.switch_to_block(handle_err);
+                        builder.ins().return_(&[status]);
+                        builder.switch_to_block(after_block);
+                        builder.seal_block(handle_err);
+                        builder.seal_block(after_block);
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        // Fall through to inline compilation
+                    }
+                }
             }
             compile_solvable_block_dispatch(
                 unknowns, tearing_var, inner_eqs, residuals, ctx, builder,
