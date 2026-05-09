@@ -9,7 +9,6 @@ use crate::ast::Equation;
 
 /// Block type for partitioning (IR1-3): explicit single eq, torn nonlinear system, or mixed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[allow(dead_code)]
 pub enum BlockType {
     /// Single equation (explicit or linear)
     Single,
@@ -21,7 +20,6 @@ pub enum BlockType {
 
 /// One strongly connected component / block after BLT (IR1-3).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[allow(dead_code)]
 pub struct BlockInfo {
     pub block_type: BlockType,
     pub equation_count: usize,
@@ -83,8 +81,7 @@ impl DaeVariableSets {
         self.parameters.len()
     }
 
-    #[allow(dead_code)]
-    pub fn all_variable_count(&self) -> usize {
+        pub fn all_variable_count(&self) -> usize {
         self.states.len()
             + self.derivatives.len()
             + self.algebraic.len()
@@ -93,20 +90,16 @@ impl DaeVariableSets {
             + self.parameters.len()
     }
 
-    #[allow(dead_code)]
-    pub fn state_set(&self) -> HashSet<&str> {
+        pub fn state_set(&self) -> HashSet<&str> {
         self.states.iter().map(String::as_str).collect()
     }
-    #[allow(dead_code)]
-    pub fn derivative_set(&self) -> HashSet<&str> {
+        pub fn derivative_set(&self) -> HashSet<&str> {
         self.derivatives.iter().map(String::as_str).collect()
     }
-    #[allow(dead_code)]
-    pub fn algebraic_set(&self) -> HashSet<&str> {
+        pub fn algebraic_set(&self) -> HashSet<&str> {
         self.algebraic.iter().map(String::as_str).collect()
     }
-    #[allow(dead_code)]
-    pub fn input_set(&self) -> HashSet<&str> {
+        pub fn input_set(&self) -> HashSet<&str> {
         self.inputs.iter().map(String::as_str).collect()
     }
 }
@@ -121,7 +114,6 @@ pub struct ClockPartition {
 /// Explicit DAE system: variable sets + equation counts + blocks (IR1-1, IR1-3).
 /// Residual form: 0 = F(x, x', z, u, t).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[allow(dead_code)]
 pub struct DaeSystem {
     pub variables: DaeVariableSets,
     pub differential_equation_count: usize,
@@ -141,7 +133,6 @@ pub struct DaeSystem {
 
 /// Initial equation system: same structure as DaeSystem but for initial equations only.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-#[allow(dead_code)]
 pub struct InitialDae {
     pub equation_count: usize,
     pub variable_count: usize,
@@ -156,33 +147,22 @@ pub struct SimulationDae {
 }
 
 /// IDA `ID` vector aligned with integrated state order (`state_vars`): 1.0 = differential, 0.0 = algebraic.
-/// Current JIT states are differential-only; algebraic unknowns live in outputs, so entries are typically 1.0.
-pub fn ida_component_id_for_states(simulation_dae: &SimulationDae, state_count: usize) -> Vec<f64> {
-    let mut id = vec![1.0_f64; state_count];
-    let alg = simulation_dae.dae.variables.algebraic_set();
-    for (i, name) in simulation_dae.dae.variables.states.iter().enumerate() {
-        if i < state_count && alg.contains(name.as_str()) {
-            id[i] = 0.0;
-        }
-    }
-    id
+/// All states are treated as differential; algebraic constraints are handled through the residual function.
+pub fn ida_component_id_for_states(_simulation_dae: &SimulationDae, state_count: usize) -> Vec<f64> {
+    vec![1.0_f64; state_count]
 }
 
 impl SimulationDae {
-    #[allow(dead_code)]
-    pub fn state_count(&self) -> usize {
+        pub fn state_count(&self) -> usize {
         self.dae.variables.state_count()
     }
-    #[allow(dead_code)]
-    pub fn algebraic_count(&self) -> usize {
+        pub fn algebraic_count(&self) -> usize {
         self.dae.variables.algebraic_count()
     }
-    #[allow(dead_code)]
-    pub fn total_equations(&self) -> usize {
+        pub fn total_equations(&self) -> usize {
         self.dae.total_equation_count
     }
-    #[allow(dead_code)]
-    pub fn initial_equation_count(&self) -> usize {
+        pub fn initial_equation_count(&self) -> usize {
         self.initial.equation_count
     }
 }

@@ -2,7 +2,13 @@ use crate::jit::{native, CalcDerivsFunc};
 
 pub use crate::newton_policy::{allow_algebraic_newton_fallback, allow_zero_residual_newton};
 
-const ASSERT_STORM_LIMIT: u64 = 256;
+fn assert_storm_limit() -> u64 {
+    std::env::var("RUSTMODLICA_ASSERT_STORM_LIMIT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(256)
+}
 
 // With feature `sundials`, `crate::simulation::kinsol_solve_square_spgmr` can solve isolated F(u)=0 systems.
 
@@ -56,7 +62,7 @@ pub fn project_geometric_vectors_in_place(output_vars: &[String], outputs: &mut 
 
 pub fn fail_if_assert_storm(stage: &str, time: f64) -> Result<(), String> {
     let hits = native::assert_hit_count();
-    if hits > ASSERT_STORM_LIMIT {
+    if hits > assert_storm_limit() {
         return Err(format!(
             "Aborting due to assertion storm at stage={} time={:.6} assert_hits={}",
             stage, time, hits
