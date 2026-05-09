@@ -438,6 +438,28 @@ pub(super) fn split_linear(expr: &Expression, var: &str) -> Option<(Expression, 
     }
 }
 
+fn is_var(expr: &Expression, var: &str) -> bool {
+    matches!(expr, Expression::Variable(id) if resolve_id(*id) == var)
+}
+
+/// Extract coefficient from `coeff * var` or `var * coeff` pattern.
+/// Returns the coefficient expression (the non-var operand), or None if the pattern doesn't match.
+fn extract_var_coeff(mul_expr: &Expression, var: &str) -> Option<Expression> {
+    if let Expression::BinaryOp(mul_l, Operator::Mul, mul_r) = mul_expr {
+        if let Expression::Variable(id) = mul_r.as_ref() {
+            if resolve_id(*id) == var && !contains_var(mul_l, var) {
+                return Some((**mul_l).clone());
+            }
+        }
+        if let Expression::Variable(id) = mul_l.as_ref() {
+            if resolve_id(*id) == var && !contains_var(mul_r, var) {
+                return Some((**mul_r).clone());
+            }
+        }
+    }
+    None
+}
+
 pub(super) fn solve_residual_linear(expr: &Expression, var: &str) -> Option<Expression> {
     if !contains_var(expr, var) {
         return None;
@@ -455,44 +477,40 @@ pub(super) fn solve_residual_linear(expr: &Expression, var: &str) -> Option<Expr
     if let Expression::BinaryOp(lhs, op, rhs) = expr {
         let (rest, coeff) = match (op, lhs.as_ref(), rhs.as_ref()) {
             (Operator::Sub, rest, Expression::BinaryOp(mul_l, Operator::Mul, mul_r)) => {
-                let coeff = if let Expression::Variable(id) = mul_r.as_ref() {
-                    if resolve_id(*id) == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
-                        mul_l.clone()
-                    } else if let Expression::Variable(id2) = mul_l.as_ref() {
-                        if resolve_id(*id2) == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
-                            mul_r.clone()
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
-                } else {
+                let mul_expr = Expression::BinaryOp(mul_l.clone(), Operator::Mul, mul_r.clone());
+                let coeff = extract_var_coeff(&mul_expr, var)?;
+                if contains_var(rest, var) {
                     return None;
-                };
+                }
                 (rest.clone(), coeff)
             }
             (Operator::Sub, Expression::BinaryOp(mul_l, Operator::Mul, mul_r), rest) => {
-                let coeff = if let Expression::Variable(id) = mul_r.as_ref() {
-                    if resolve_id(*id) == var && !contains_var(rest, var) && !contains_var(mul_l, var) {
-                        mul_l.clone()
-                    } else if let Expression::Variable(id2) = mul_l.as_ref() {
-                        if resolve_id(*id2) == var && !contains_var(rest, var) && !contains_var(mul_r, var) {
-                            mul_r.clone()
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
-                } else {
+                let mul_expr = Expression::BinaryOp(mul_l.clone(), Operator::Mul, mul_r.clone());
+                let coeff = extract_var_coeff(&mul_expr, var)?;
+                if contains_var(rest, var) {
                     return None;
-                };
+                }
                 (rest.clone(), coeff)
+            }
+            // var + rest = 0  -->  var = -rest
+            (Operator::Add, var_expr, rest) if is_var(var_expr, var) && !contains_var(rest, var) => {
+                (make_binary(make_num(0.0), Operator::Sub, rest.clone()), make_num(1.0))
+            }
+            // rest + var = 0  -->  var = -rest
+            (Operator::Add, rest, var_expr) if is_var(var_expr, var) && !contains_var(rest, var) => {
+                (make_binary(make_num(0.0), Operator::Sub, rest.clone()), make_num(1.0))
+            }
+            // var - rest = 0  -->  var = rest
+            (Operator::Sub, var_expr, rest) if is_var(var_expr, var) && !contains_var(rest, var) => {
+                (rest.clone(), make_num(1.0))
+            }
+            // rest - var = 0  -->  var = rest
+            (Operator::Sub, rest, var_expr) if is_var(var_expr, var) && !contains_var(rest, var) => {
+                (rest.clone(), make_num(1.0))
             }
             _ => return None,
         };
-        Some(make_binary(rest, Operator::Div, *coeff))
+        Some(make_binary(rest, Operator::Div, coeff))
     } else {
         None
     }
