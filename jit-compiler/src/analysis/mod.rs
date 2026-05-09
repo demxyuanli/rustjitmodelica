@@ -1,4 +1,4 @@
-mod blt;
+pub(crate) mod blt;
 pub mod derivative;
 mod expression_utils;
 mod initial;

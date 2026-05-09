@@ -115,9 +115,112 @@ fn try_extract_fma(expr: &crate::ast::Expression) -> Option<(VectorOp, Vec<Strin
     }
 }
 
+/// Pre-expand simple for-loops with const bounds and small range into subscript-indexed
+/// equations so the existing vectorizer can cluster them.
+fn expand_small_for_loops(equations: &[crate::ast::Equation]) -> Vec<crate::ast::Equation> {
+    let max_expand = std::env::var("RUSTMODLICA_VECTORIZE_FOR_EXPAND_MAX")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(256);
+    let mut out = Vec::with_capacity(equations.len());
+    for eq in equations {
+        match eq {
+            crate::ast::Equation::For(loop_var, start_expr, end_expr, body) => {
+                // Only expand if bounds are constant and range is manageable
+                let start_val = match crate::analysis::blt::helpers::eval_const_expr(start_expr) {
+                    Some(v) => v as i64,
+                    None => {
+                        out.push(eq.clone());
+                        continue;
+                    }
+                };
+                let end_val = match crate::analysis::blt::helpers::eval_const_expr(end_expr) {
+                    Some(v) => v as i64,
+                    None => {
+                        out.push(eq.clone());
+                        continue;
+                    }
+                };
+                let count = end_val - start_val + 1;
+                if count <= 0 || count as usize > max_expand {
+                    out.push(eq.clone());
+                    continue;
+                }
+                // Expand: substitute loop var with each index value
+                for i in start_val..=end_val {
+                    let idx_name = format!("{}_{}", loop_var, i);
+                    for body_eq in body {
+                        out.push(substitute_loop_index(body_eq, loop_var, &idx_name));
+                    }
+                }
+            }
+            _ => out.push(eq.clone()),
+        }
+    }
+    out
+}
+
+/// Substitute loop variable with a specific index in an equation body.
+/// Replaces `x[i]` → `x_3` etc. for each iteration.
+fn substitute_loop_index(
+    eq: &crate::ast::Equation,
+    loop_var: &str,
+    suffix: &str, // e.g. "i_3"
+) -> crate::ast::Equation {
+    // Extract the numeric part from suffix like "i_3" → 3
+    let index_num: f64 = suffix.rsplit_once('_')
+        .and_then(|(_, n)| n.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    fn subst_expr(e: &crate::ast::Expression, loop_var: &str, index_num: f64) -> crate::ast::Expression {
+        match e {
+            crate::ast::Expression::ArrayAccess(arr, idx) => {
+                let is_loop_idx = matches!(
+                    idx.as_ref(),
+                    crate::ast::Expression::Variable(id)
+                        if crate::string_intern::resolve_id(*id) == loop_var
+                );
+                if is_loop_idx {
+                    if let crate::ast::Expression::Variable(arr_id) = arr.as_ref() {
+                        let base = crate::string_intern::resolve_id(*arr_id);
+                        return crate::ast::Expression::Variable(
+                            crate::string_intern::intern(
+                                &format!("{}_{}", base, index_num as i64)
+                            )
+                        );
+                    }
+                }
+                e.clone()
+            }
+            crate::ast::Expression::BinaryOp(l, op, r) => {
+                crate::ast::Expression::BinaryOp(
+                    Box::new(subst_expr(l, loop_var, index_num)),
+                    *op,
+                    Box::new(subst_expr(r, loop_var, index_num)),
+                )
+            }
+            _ => e.clone(),
+        }
+    }
+    match eq {
+        crate::ast::Equation::Simple(lhs, rhs) => {
+            crate::ast::Equation::Simple(
+                subst_expr(lhs, loop_var, index_num),
+                subst_expr(rhs, loop_var, index_num),
+            )
+        }
+        _ => eq.clone(),
+    }
+}
+
 /// Scan equations, grouping consecutive subscript-indexed equations with
-/// matching structure into [`VectorGroup`]s. Minimum group size is 4.
+/// matching structure into [`VectorGroup`]s. Minimum group size is 2.
+/// For-loops with const bounds and ≤256 iterations are pre-expanded for
+/// better vectorization coverage.
 pub(crate) fn cluster_equations(equations: &[crate::ast::Equation]) -> Vec<CompileUnit> {
+    // Pre-expand small for-loops for better vectorization coverage
+    let expanded = expand_small_for_loops(equations);
+    let equations = &expanded;
     if equations.is_empty() {
         return vec![];
     }

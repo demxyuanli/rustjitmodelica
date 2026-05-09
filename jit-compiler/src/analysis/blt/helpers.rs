@@ -245,7 +245,7 @@ pub(super) fn try_index_reduction(
     None
 }
 
-pub(super) fn eval_const_expr(expr: &Expression) -> Option<f64> {
+pub(crate) fn eval_const_expr(expr: &Expression) -> Option<f64> {
     match expr {
         Expression::Number(n) => Some(*n),
         Expression::BinaryOp(lhs, Operator::Add, rhs) => {
