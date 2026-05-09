@@ -6,8 +6,58 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### 审计缺口关闭 (2026-05-09 ~ 2026-05-10)
+
+- **DAE指标约简**: Pantelides默认开启 (`--index-reduction-method=pantelides`)，线性求解器扩展 + 诊断
+- **Stream语义**: 修正误导警告，确认JIT端已实现MSL 3.1完整公式
+- **Expandable connector**: AST + parser + flatten动态成员注入 + 测试
+- **Partial模型校验**: AST + parser + flatten拒绝实例化（修复pest prefix检测bug）
+- **SIMD向量化**: 聚类阈值4→2，for循环预展开(≤1024)，Cranelift自动向量化默认开启，跳转表启用
+- **FMI导出**: ZIP打包 + C编译自动检测 + 单步导出
+- **macOS Mach-O**: 代码缓存重定位支持(x86_64 + ARM64)
+- **检查点/重启**: simulation/checkpoint.rs JSON序列化 + 调度器
+- **运行时PGO**: simulation/pgo.rs 热方程检测 + 档案持久化
+- **解释器**: 限制放宽至20方程/10状态
+- **Jacobian着色**: 距离-1图着色，cv_jac+ida_jac集成
+- **KINSOL**: 代数初始化 Phase 0 + 事件代数细化
+- **IDA**: 代数分量支持(全部按微分处理)
+- **断言风暴**: RUSTMODLICA_ASSERT_STORM_LIMIT可配置
+- **枚举**: parser→flatten→JIT完整校验管线
+- **encapsulated/pure/impure**: AST + parser关键字捕获
+- **可解块独立编译**: RUSTMODLICA_BLOCK_COMPILE=1启用，声明+记录+批量编译+call替换+tearing，热替换StandaloneBlock基础设施
+
+### 新求解器 (2026-05-10)
+
+- **Radau IIA(3)**: 2级L-稳定隐式RK(3阶)，简化Newton+LU，自适应步长，`--solver=radau`
+- **QSS1**: 一阶量化状态系统，事件驱动多速率，`--solver=qss`
+
+### 测试 (2026-05-09 ~ 2026-05-10)
+
+- Parser模糊测试: 31个property/fuzz测试覆盖边界/畸形输入
+- 性能回归基线: perf_baseline.ps1 + 历史对比
+- MSL冒烟列表: msl_smoke_models.txt (7个代表性模型)
+- QSS + Radau + 块编译端到端验证通过
+- 审计报告更新: 19缺口全部关闭/~92%规范覆盖
+
+### Validation (full regression + DIR)
+
+- **2026-04-25/26**: `run_regression.ps1` full (DIR embedded, `target_regression`, quarantine **not** retried) then `run_modelica_dir_regression.ps1` full with **`-RetryQuarantined`**. Main regression log: `build_regression_logs/run_regression_20260425_235632.ndjson`; latest DIR aggregate: `build_modelica_dir_regress/summary.txt` and `build_modelica_dir_regress/dir_metrics.json`.
+
 ### Compiler
 
+- **Query-db flatten breakdown (`--perf-json` / `RUSTMODLICA_PERF_TRACE=1`)**: `expand_declarations_with_mode` records **`decl_expand_param_pass_us`**, **`decl_expand_array_dim_us`**, **`decl_expand_decl_loop_us`** (summed across recursive `Process` tasks); **`eq_expand_prep_us`** plus **`eq_expand_*_us`** segments inside **`eq_expand_root_preinherited`** (`flatten/mod.rs`). **`CompilePerfReport`** carries the same keys for regression diffs.
+- **Decl-expand inheritance template cache (`flatten/mod.rs`, `decl_expand/flattener_impl.rs`)**: **`Flattener.inheritance_flat_template_cache`** stores **`flatten_inheritance`** results keyed by resolved class FQN; repeated instances (e.g. many identical connectors) reuse an **`Arc`** clone before per-instance **`apply_modification_to_model`**. Counters **`inherit_flat_template_cache_hit`** / **`inherit_flat_template_cache_miss`** in **`query_db::perf`** (cold vs repeated loads).
+- **Perf JSON inheritance-template counters** (`compiler/mod.rs`, `compile_model/compile/entry.rs`): `CompilePerfReport` now exports **`inherit_flat_template_cache_hit`**, **`inherit_flat_template_cache_miss`**, and **`inherit_flat_template_cache_hit_ratio`**; `RUSTMODLICA_PERF_TRACE=1` prints `[perf] query.inherit_flat_template_cache ...`.
+- **Decl-loop segment timing (Stage C)** (`decl_expand/flattener_impl.rs`, `compile_model/compile/entry.rs`): added microsecond split inside `decl_expand_decl_loop` for **`try_load_sub_model`**, **`flatten_inheritance`**, **`apply_modification_to_model`**, and **parameter `substitute+fold`**; exported in perf JSON and trace as `query.decl_expand_decl_loop_segments_us`.
+- **Param-pass allocator churn (`decl_expand/param_pass.rs`, `substitute/cache.rs`)**: reuse one **`SubstituteCache`** across fast passes with **`clear()`** between iterations.
+- **Nested instance parameter bindings** (`flatten/decl_expand/flattener_impl.rs`): after `apply_modification_to_model` on a loaded sub-model, substitute each parameter `start_value` in the **enclosing** declaration `context` so `final m=m` resolves before the child `Process` task. Improves const array-dimension evaluation for MSL polyphase helpers (e.g. `PlugToPins_*` / connector `pin[m]`) and reduces JIT `Dot(ArrayAccess(...))` flatten gaps.
+- **Child parameter const-fold** (`flattener_impl.rs`): when the substituted `start_value` is a compile-time scalar (`eval_const_expr_with_param_exprs`), store `Expression::Number` so modifiers like `final m=mSystems` become numeric before nested array expansion.
+- **MSL `numberOfSymmetricBaseSystems`** (`flatten/param_expr_eval.rs`): constant-fold the Polyphase helper (same recursive algorithm as MSL) so models like `QuasiStatic.Polyphase.Basic.MultiStar` can size `PlugToPins_n(final m=mSystems)` without leaving unevaluated array dimensions.
+- **Decl-expand cache epoch** (`cache/ir_epoch.rs`): bump `DeclExpand` stage epoch to **3** so existing flatten disk/SHM rows are invalidated after declaration-expansion / import-resolve tweaks.
+- **Sub-model load candidates** (`flatten/import_resolve/mod.rs`): for types already rooted at `Modelica.*`, skip lexical parent qualification in `build_load_candidates` (avoids invalid `...Utilities.Modelica.Electrical...` probes and catastrophic flatten time on large MSL examples such as `ControlledDCDrives.*`).
+- **Fluid vs StateGraph connector aliases** (`flatten/import_resolve/domains_misc.rs`, `loader_compat.rs`): map `CompositeStepStatePort_in` and `Modelica.Fluid.Interfaces.CompositeStepStatePort_in` to `Modelica.StateGraph.Interfaces.CompositeStepStatePort_in` (fixes `NormalOperation` / `TankController` `FLATTEN_UNKNOWN_TYPE`).
+- **Array dimension fast-pass complexity** (`flatten/decl_expand/array_dim.rs`): score `Expression::Dot` as `1 + complexity(inner)` instead of the generic high cap so simple member accesses (e.g. `plug_p.m`) are not marked uncalculable without trying `eval_const_expr_with_param_exprs`.
+- **StateGraph / Complex connector heuristics** (`flatten/utils.rs`): treat `Step_out_forAlternative` / `Step_out_forParallel` with `Transition_in` as compatible; allow `Complex` with `ComplexInput` / `ComplexOutput` for `ComplexMath.Bode`-style connects.
 - **Function root entry eval (F3-1)** (`compiler_impl.rs` `run_function_once`): tries **each** output expression in declaration order for scalar `eval_expr` (so a later `output Real s := ...` still yields a value when an earlier output is array/comprehension-only). If **all** outputs fail only with **array/dot/range** or **unknown variable** (cross-output references at entry), returns **0.0** instead of aborting full compile—aligns non-`validate_only` behavior with TestLib multi-output functions.
 
 ### `regress-harness` + ModelicaTest mirror
@@ -29,8 +79,13 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Refined directory regression (MSL+Modelica)
 
-- **`run_modelica_dir_regression.ps1`**: optional **N-shard parallel analyze gate** via **`AnalyzeParallelWorkers`** and **`AnalyzeShardNoProgressTimeoutSec`**, reusing the shard watchdog. **`Invoke-RustmodlicaWithTimeout`** assigns child **`rustmodlica.exe`** to a **Win32 Job Object** when possible (**`PerProcessMemoryLimitMb`**, kill-on-close, optional OOM from RSS vs limit). Local **`dir_quarantine.json`** (default under **`build_modelica_dir_regress/local/`**, gitignored) skips repeat-offender models unless **`-RetryQuarantined`**. **Analyze** checkpoint: **`ResumeAnalyzeCheckpoint`**, per-run **`models_hash`**, and **`AnalyzeCheckpointEvery`**; **`dir_metrics.json`**, enhanced **`summary.txt`**, and **ETA / Top-N** slow-model heartbeats.
-- **`run_regression.ps1`**: **preflight** extends smoke (Filter analyze tier, subprocess **`--version`**, free-RAM check vs workers x memory cap); forwards new DIR parameters; **`-RecordBaseline`** **regression_summary.json** merges **phase wall seconds** and **dir** metrics when **`dir_metrics.json`** is present. After a pull, re-run a **release** build and, when using T3, **`run_regression.ps1 -RecordBaseline baseline/full_regression_v1`** to refresh the rollup.
+- **`run_modelica_dir_regression.ps1`**: default **`-PerModelTimeoutSec`** raised from **300** to **720** so cold **Full** flatten + JIT on large MSL examples (e.g. **SpeedControlledDCPM**, ~9–10min wall) stays under the watchdog; override lower for fast subsets.
+- **`run_regression.ps1`**: **`DirPerModelTimeoutSec`** default **720** (was **300**) to match DIR watchdog alignment above.
+- **`jit-compiler/scripts/compare_salsa_flatten_speed_dcpm.ps1`**: cold **`flat_full`** ( **`RUSTMODLICA_CACHE_SQLITE=0`** + **`RUSTMODLICA_CACHE_SHM=0`** ) compares **`RUSTMODLICA_SALSA=1`** vs **`0`** on **`--validate-tier=flatten`** for **SpeedControlledDCPM**; writes **`build_modelica_dir_regress/salsa_flatten_compare/summary.json`**. Sample run (same machine): **`flatten_inline_ms`** ~**607k** (SALSA=1, query `decl_expand`/`eq_expand` visible in **`compile_perf`**) vs ~**858k** (SALSA=0, legacy; query counters often zero—use **`flatten_inline_ms`**).
+- **`run_modelica_dir_regression.ps1`**: when **not** using **`-UsePrivateCache`** and **`RUSTMODLICA_FLATTEN_CACHE_DIR` is unset**, default it to **`<OutDir>/shared_flatten_cache`** so **repeat runs of the same model** (and any other compile sharing the same **flat_full** key) can **`FLAT_HIT`** after the first cold write; different qualified names still use **separate** keys (e.g. **CurrentControlledDCPM** does not warm **SpeedControlledDCPM**).
+- **`run_modelica_dir_regression.ps1`**: when **`RUSTMODLICA_SALSA` is unset** on the process and the run is **not** **`AnalyzeOnly`**, default **`RUSTMODLICA_SALSA=1`** for simulation children so **query-based flatten** matches `--validate` defaults and reduces cold **Full** flatten wall time on large MSL examples (e.g. **ControlledDCDrives**). Set **`RUSTMODLICA_SALSA=0`** before invoking the script to force **legacy** flatten for every case.
+- **`run_modelica_dir_regression.ps1`**: optional **N-shard parallel analyze gate** via **`AnalyzeParallelWorkers`** and **`AnalyzeShardNoProgressTimeoutSec`**, reusing the shard watchdog. **`Invoke-RustmodlicaWithTimeout`** assigns child **`rustmodlica.exe`** to a **Win32 Job Object** when possible (**`PerProcessMemoryLimitMb`**, kill-on-close, optional OOM from RSS vs limit). Local **`dir_quarantine.json`** (default under **`build_modelica_dir_regress/local/`**, gitignored) skips repeat-offender models unless **`-RetryQuarantined`**. **Analyze** checkpoint: **`ResumeAnalyzeCheckpoint`**, per-run **`models_hash`**, and **`AnalyzeCheckpointEvery`**; **`dir_metrics.json`**, enhanced **`summary.txt`**, and **ETA / Top-N** slow-model heartbeats. TwoStage analyze gate: **`AnalyzeValidationMode`** (default **`quick`**, maps to **`--validation-mode=quick`**) to align with **`--validate-tier=analyze`**; override with **`full`** for stricter flatten cost. Default **`AnalyzeFirstTimeoutSec`** is **180** for heavy MSL batches.
+- **`run_regression.ps1`**: **preflight** extends smoke (Filter analyze tier, subprocess **`--version`**, free-RAM check vs workers x memory cap); forwards new DIR parameters (**`DirAnalyzeValidationMode`**, **`DirAnalyzeFirstTimeoutSec`** default **180s** for heavy TwoStage analyze); **`-RecordBaseline`** **regression_summary.json** merges **phase wall seconds** and **dir** metrics when **`dir_metrics.json`** is present. After a pull, re-run a **release** build and, when using T3, **`run_regression.ps1 -RecordBaseline baseline/full_regression_v1`** to refresh the rollup.
 
 ### Tooling
 
