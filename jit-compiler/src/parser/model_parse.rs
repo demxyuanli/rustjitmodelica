@@ -176,6 +176,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             is_operator_function: false,
             is_record,
             is_block,
+            is_expandable: false,
             extends,
             declarations,
             equations,

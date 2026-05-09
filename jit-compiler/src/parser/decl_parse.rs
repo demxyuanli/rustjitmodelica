@@ -508,6 +508,7 @@ pub fn parse_declaration_section(
                         is_operator_function,
                         is_record,
                         is_block,
+                        is_expandable: false,
                         extends: vec![ExtendsClause {
                             model_name: base.trim_start_matches('.').to_string(),
                             modifications: Vec::new(),

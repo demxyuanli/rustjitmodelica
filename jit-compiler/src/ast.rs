@@ -13,7 +13,6 @@ pub enum ClassItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct Function {
     pub name: String,
     pub is_operator_function: bool,
@@ -26,7 +25,6 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct ExternalDecl {
     pub language: Option<String>,
     pub c_name: Option<String>,
@@ -41,6 +39,7 @@ impl From<Function> for Model {
             is_operator_function: f.is_operator_function,
             is_record: false,
             is_block: false,
+            is_expandable: false,
             extends: f.extends,
             declarations: f.declarations,
             equations: vec![],
@@ -60,7 +59,6 @@ impl From<Function> for Model {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct Model {
     pub name: String,
     pub is_connector: bool,
@@ -68,6 +66,7 @@ pub struct Model {
     pub is_operator_function: bool,
     pub is_record: bool,
     pub is_block: bool,
+    pub is_expandable: bool,
     pub extends: Vec<ExtendsClause>,
     pub declarations: Vec<Declaration>,
     pub equations: Vec<Equation>,
@@ -79,8 +78,7 @@ pub struct Model {
     /// F1-3: nested classes inside package/model (e.g. package P model A ... end A; end P).
     pub inner_classes: Vec<Model>,
     /// O(1) lookup index: inner class name -> position in `inner_classes`.
-    #[allow(dead_code)]
-    pub inner_class_index: HashMap<String, usize>,
+        pub inner_class_index: HashMap<String, usize>,
     /// F1-4: operator record (parse-only; MSL compatibility).
     pub is_operator_record: bool,
     /// F1-4: type alias (e.g. type MyReal = Real;) parse-only; name -> base_type.
@@ -178,8 +176,7 @@ pub struct Modification {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Declaration {
-    #[allow(dead_code)]
-    pub type_name: String,
+        pub type_name: String,
     pub name: String,
     /// MSL-5: replaceable component (parse-only; allows redeclare in modifier).
     pub replaceable: bool,
@@ -201,11 +198,9 @@ pub struct Declaration {
     pub array_size: Option<Expression>,
     pub modifications: Vec<Modification>,
     /// FUNC-5: when true, parameter is variadic (parsed from "..." in function).
-    #[allow(dead_code)]
-    pub is_rest: bool,
+        pub is_rest: bool,
     /// Parsed annotation; ignored in backend (F1-5).
-    #[allow(dead_code)]
-    pub annotation: Option<String>,
+        pub annotation: Option<String>,
     /// MSL: conditional component (e.g. "Real x if use_X"); flatten prunes or keeps.
     pub condition: Option<Expression>,
 }
