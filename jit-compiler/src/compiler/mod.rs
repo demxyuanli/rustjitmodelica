@@ -495,7 +495,7 @@ impl Default for CompilerOptions {
     fn default() -> Self {
         CompilerOptions {
             backend_dae_info: false,
-            index_reduction_method: "none".to_string(),
+            index_reduction_method: "pantelides".to_string(),
             tearing_method: "first".to_string(),
             generate_dynamic_jacobian: "none".to_string(),
             t_end: 10.0,
