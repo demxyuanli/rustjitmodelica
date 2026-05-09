@@ -500,6 +500,7 @@ pub fn parse_declaration_section(
                     let is_record = prefixes.contains("record");
                     let is_block = prefixes.contains("block");
                     let is_connector = prefixes.contains("connector");
+                    let is_expandable = is_connector && prefixes.contains("expandable");
                     let is_operator_record = prefixes.contains("operator") && prefixes.contains("record");
                     inner_classes.push(Model {
                         name: alias,
@@ -508,7 +509,7 @@ pub fn parse_declaration_section(
                         is_operator_function,
                         is_record,
                         is_block,
-                        is_expandable: false,
+                        is_expandable,
                         extends: vec![ExtendsClause {
                             model_name: base.trim_start_matches('.').to_string(),
                             modifications: Vec::new(),

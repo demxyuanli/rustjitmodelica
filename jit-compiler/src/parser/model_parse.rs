@@ -65,6 +65,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
     let mut is_operator_function = false;
     let mut is_record = false;
     let mut is_block = false;
+    let mut is_expandable = false;
     let mut is_operator_record = false;
     for p in prefix_pair.into_inner() {
         if p.as_rule() == Rule::function_prefix {
@@ -80,6 +81,8 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             is_record = true;
         } else if p.as_str().trim() == "block" {
             is_block = true;
+        } else if p.as_str().trim() == "expandable" {
+            is_expandable = true;
         }
     }
 
@@ -176,7 +179,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             is_operator_function: false,
             is_record,
             is_block,
-            is_expandable: false,
+            is_expandable,
             extends,
             declarations,
             equations,
