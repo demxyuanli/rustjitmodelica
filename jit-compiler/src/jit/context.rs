@@ -5,6 +5,9 @@ use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+static EMPTY_ENUMS: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(HashMap::new);
 
 pub struct TranslationContext<'a> {
     pub module: &'a mut JITModule,
@@ -84,6 +87,8 @@ pub struct TranslationContext<'a> {
     pub connector_connection_degree: &'a HashMap<String, usize>,
     pub stream_connection_set: &'a HashMap<String, Vec<String>>,
     pub stream_flow_map: &'a HashMap<String, String>,
+    /// Enumeration definitions: type name → literal names (for compile-time constant folding).
+    pub enumerations: &'a std::collections::HashMap<String, Vec<String>>,
 }
 
 impl<'a> TranslationContext<'a> {
@@ -230,6 +235,7 @@ impl<'a> TranslationContext<'a> {
             connector_connection_degree,
             stream_connection_set,
             stream_flow_map,
+            enumerations: &*EMPTY_ENUMS,
         }
     }
 
@@ -310,6 +316,7 @@ impl<'a> TranslationContext<'a> {
             connector_connection_degree: self.connector_connection_degree,
             stream_connection_set: self.stream_connection_set,
             stream_flow_map: self.stream_flow_map,
+            enumerations: &*EMPTY_ENUMS,
             varid_state_index: self.varid_state_index.clone(),
             varid_discrete_index: self.varid_discrete_index.clone(),
             varid_param_index: self.varid_param_index.clone(),

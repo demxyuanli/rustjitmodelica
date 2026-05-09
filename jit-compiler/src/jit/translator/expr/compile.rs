@@ -79,15 +79,8 @@ pub(super) fn compile_expression_rec(
                 Operator::Sub => Ok(builder.ins().fsub(l, r)),
                 Operator::Mul => Ok(builder.ins().fmul(l, r)),
                 Operator::Div => {
-                    let eps = builder.ins().f64const(1e-12);
-                    let r_abs = builder.ins().fabs(r);
-                    let is_small = builder.ins().fcmp(FloatCC::LessThan, r_abs, eps);
-                    let pos_eps = builder.ins().f64const(1e-12);
-                    let neg_eps = builder.ins().f64const(-1e-12);
-                    let zero = builder.ins().f64const(0.0);
-                    let sign_non_neg = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, r, zero);
-                    let eps_signed = builder.ins().select(sign_non_neg, pos_eps, neg_eps);
-                    let r_safe = builder.ins().select(is_small, eps_signed, r);
+                    let min_den = builder.ins().f64const(1e-12);
+                    let r_safe = builder.ins().fmax(r, min_den);
                     Ok(builder.ins().fdiv(l, r_safe))
                 }
                 Operator::Less
@@ -225,6 +218,15 @@ pub(super) fn compile_expression_rec(
             if let Some(path) = crate::ast::expr_to_connector_path(expr) {
                 if dot_flat_path_yields_zero(&path) {
                     return Ok(builder.ins().f64const(0.0));
+                }
+            }
+            // Enumeration literal access: E.field → integer index.
+            if let Expression::Variable(type_id) = inner.as_ref() {
+                let type_name = crate::string_intern::resolve_id(*type_id);
+                if let Some(literals) = ctx.enumerations.get(&type_name) {
+                    if let Some(idx) = literals.iter().position(|l| l == member) {
+                        return Ok(builder.ins().f64const(idx as f64));
+                    }
                 }
             }
             if jit_dot_trace_enabled() {

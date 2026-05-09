@@ -5,6 +5,9 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::mem;
+use std::sync::LazyLock;
+
+static EMPTY_ENUMS: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(HashMap::new);
 
 use super::analysis::{collect_modified, collect_modified_equations};
 use super::clock_lowering::{compile_guarded_partition, emit_sample_trigger, jit_executable_allocation_len};
@@ -881,6 +884,7 @@ impl Jit {
                 connector_connection_degree,
                 stream_connection_set,
                 stream_flow_map,
+                enumerations: &*EMPTY_ENUMS,
                 varid_state_index: HashMap::new(),
                 varid_discrete_index: HashMap::new(),
                 varid_param_index: HashMap::new(),
