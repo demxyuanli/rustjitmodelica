@@ -287,6 +287,7 @@ fn model_ast(db: &dyn QueryDb, model_name: String) -> Arc<ModelAst> {
             is_encapsulated: false,
             is_pure: false,
             is_impure: false,
+            enumerations: std::collections::HashMap::new(),
             extends: vec![],
             declarations: vec![],
             equations: vec![],

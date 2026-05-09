@@ -205,6 +205,7 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             is_encapsulated,
             is_pure,
             is_impure,
+            enumerations: std::collections::HashMap::new(),
             extends,
             declarations,
             equations,

@@ -44,6 +44,7 @@ impl From<Function> for Model {
             is_encapsulated: false,
             is_pure: false,
             is_impure: false,
+            enumerations: std::collections::HashMap::new(),
             extends: f.extends,
             declarations: f.declarations,
             equations: vec![],
@@ -91,6 +92,8 @@ pub struct Model {
     pub is_operator_record: bool,
     /// F1-4: type alias (e.g. type MyReal = Real;) parse-only; name -> base_type.
     pub type_aliases: Vec<(String, String)>,
+    /// Enumeration definitions: type name → literal names.
+    pub enumerations: std::collections::HashMap<String, Vec<String>>,
     /// MSL: import clauses inside class/package. (alias, qualified) where alias may be empty.
     pub imports: Vec<(String, String)>,
     /// F3-4: when is_function, external decl if present.

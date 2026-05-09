@@ -33,6 +33,8 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                 let mut is_encapsulated = false;
                 let mut is_pure = false;
                 let mut is_impure = false;
+                let mut enum_literals: Vec<String> = Vec::new();
+                let mut enum_type_name = String::new();
                 for p in item_pair.into_inner() {
                     match p.as_rule() {
                         Rule::class_prefixes => {
@@ -75,6 +77,17 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                             if base.is_empty() {
                                 base = "Integer".to_string();
                             }
+                            // Capture enumeration literal names
+                            for lit in p.into_inner() {
+                                if lit.as_rule() == Rule::enumeration_literal_item {
+                                    let name = lit.into_inner().next()
+                                        .map(|n| n.as_str().trim().to_string())
+                                        .unwrap_or_default();
+                                    if !name.is_empty() {
+                                        enum_literals.push(name);
+                                    }
+                                }
+                            }
                         }
                         Rule::component_ref => {
                             if base.is_empty() {
@@ -92,6 +105,7 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                         _ => {}
                     }
                 }
+                let alias_copy = alias.clone();
                 let mut m = match make_alias_model(alias, base) {
                     ClassItem::Model(m) => m,
                     other => { items.push(other); continue; }
@@ -104,6 +118,9 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                 m.is_encapsulated = is_encapsulated;
                 m.is_pure = is_pure;
                 m.is_impure = is_impure;
+                if !enum_literals.is_empty() {
+                    m.enumerations.insert(alias_copy, enum_literals);
+                }
                 ClassItem::Model(m)
             }
             Rule::connector_alias_definition => {

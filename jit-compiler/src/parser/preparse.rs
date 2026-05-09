@@ -57,6 +57,7 @@ pub fn make_alias_model(alias: String, base: String) -> ClassItem {
         is_encapsulated: false,
         is_pure: false,
         is_impure: false,
+        enumerations: std::collections::HashMap::new(),
         extends: Vec::new(),
         declarations: Vec::new(),
         equations: Vec::new(),

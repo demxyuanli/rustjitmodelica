@@ -59,6 +59,7 @@ impl ModelLoader {
             is_encapsulated: false,
             is_pure: false,
             is_impure: false,
+            enumerations: std::collections::HashMap::new(),
             extends: m.extends.clone(),
             declarations: m.declarations.clone(),
             equations: m.equations.clone(),

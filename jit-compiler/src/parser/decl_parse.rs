@@ -369,6 +369,7 @@ pub fn parse_declaration_section(
             Rule::type_definition => {
                 let mut type_id = String::new();
                 let mut base = String::new();
+                let mut enum_lits: Vec<String> = Vec::new();
                 for p in decl_pair.into_inner() {
                     match p.as_rule() {
                         Rule::identifier => {
@@ -394,7 +395,16 @@ pub fn parse_declaration_section(
                                 base = p.as_str().trim().to_string();
                             }
                         }
-                        Rule::enumeration_type => base = "Integer".to_string(),
+                        Rule::enumeration_type => {
+                            base = "Integer".to_string();
+                            for lit in p.into_inner() {
+                                if lit.as_rule() == Rule::enumeration_literal_item {
+                                    if let Some(n) = lit.into_inner().next() {
+                                        enum_lits.push(n.as_str().trim().to_string());
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -518,6 +528,7 @@ pub fn parse_declaration_section(
                         is_encapsulated,
                         is_pure,
                         is_impure,
+                        enumerations: std::collections::HashMap::new(),
                         extends: vec![ExtendsClause {
                             model_name: base.trim_start_matches('.').to_string(),
                             modifications: Vec::new(),
