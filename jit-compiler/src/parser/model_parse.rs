@@ -67,6 +67,9 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
     let mut is_block = false;
     let mut is_expandable = false;
     let mut is_partial = false;
+    let mut is_encapsulated = false;
+    let mut is_pure = false;
+    let mut is_impure = false;
     let mut is_operator_record = false;
     let prefix_text = prefix_pair.as_str();
     // class_prefixes inner pairs don't separate anonymous literals (pest produces 0 inners).
@@ -93,6 +96,15 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
     }
     if prefix_text.contains("partial") {
         is_partial = true;
+    }
+    if prefix_text.contains("encapsulated") {
+        is_encapsulated = true;
+    }
+    // Check pure/impure carefully: "pure" shouldn't match "impure"
+    if prefix_text.contains("impure") {
+        is_impure = true;
+    } else if prefix_text.contains("pure") {
+        is_pure = true;
     }
 
     let name = inner.next().unwrap().as_str().to_string();
@@ -190,6 +202,9 @@ pub fn parse_model(pair: pest::iterators::Pair<Rule>) -> Result<ClassItem, pest:
             is_block,
             is_expandable,
             is_partial,
+            is_encapsulated,
+            is_pure,
+            is_impure,
             extends,
             declarations,
             equations,

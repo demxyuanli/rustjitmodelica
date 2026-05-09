@@ -30,6 +30,9 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                 let mut is_record = false;
                 let mut is_expandable = false;
                 let mut is_partial = false;
+                let mut is_encapsulated = false;
+                let mut is_pure = false;
+                let mut is_impure = false;
                 for p in item_pair.into_inner() {
                     match p.as_rule() {
                         Rule::class_prefixes => {
@@ -48,6 +51,14 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                             }
                             if ptext.contains("partial") {
                                 is_partial = true;
+                            }
+                            if ptext.contains("encapsulated") {
+                                is_encapsulated = true;
+                            }
+                            if ptext.contains("impure") {
+                                is_impure = true;
+                            } else if ptext.contains("pure") {
+                                is_pure = true;
                             }
                         }
                         Rule::identifier => {
@@ -90,6 +101,9 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                 m.is_record = is_record;
                 m.is_expandable = is_expandable;
                 m.is_partial = is_partial;
+                m.is_encapsulated = is_encapsulated;
+                m.is_pure = is_pure;
+                m.is_impure = is_impure;
                 ClassItem::Model(m)
             }
             Rule::connector_alias_definition => {
