@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 mod builtin;
+pub(crate) mod enum_check;
 mod function_body;
 mod record_access;
 mod rewrite;

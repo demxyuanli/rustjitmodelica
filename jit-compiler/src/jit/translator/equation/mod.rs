@@ -1,4 +1,5 @@
 mod assign;
+pub(crate) mod block_compile;
 mod compile_equation_impl;
 mod helpers;
 mod linearized;
