@@ -12,6 +12,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::io::{self, Write};
 
+pub mod checkpoint;
 mod events;
 mod jacobian;
 mod newton_recovery;
@@ -101,6 +102,12 @@ pub fn run_simulation(
     let mut crossings = vec![0.0; crossings_count];
     let mut pre_states = vec![0.0; states.len()];
     let mut pre_discrete_vals = vec![0.0; discrete_vals.len()];
+    // Pre-allocated scratch buffers reused per-step via System borrow (no per-step Vec::new()).
+    let mut step_buf_discrete = Vec::<f64>::new();
+    let mut step_buf_when = Vec::<f64>::new();
+    let mut step_buf_crossings = Vec::<f64>::new();
+    let mut step_buf_outputs = Vec::<f64>::new();
+    let mut step_buf_guess = Vec::<f64>::new();
     let mut homotopy_lambda: f64 = 1.0;
     let homotopy_lambda_ptr: *const f64 = &homotopy_lambda;
 
@@ -178,8 +185,10 @@ pub fn run_simulation(
         }
     }
 
-    // RT1-3: Use adaptive RK45 only when solver is rk45 and no when/zero-crossing.
-    let use_adaptive = solver == "rk45" && when_count == 0 && crossings_count == 0;
+    // Use adaptive RK45 when solver is rk45 and no when-clauses (zero-crossings are
+    // safe because the outer loop handles them via save/restore + linear interpolation
+    // independently of the solver step method).
+    let use_adaptive = solver == "rk45" && when_count == 0;
     let use_implicit = solver == "implicit";
     let mut rk4_solver = RungeKutta4Solver::new(states.len());
     let mut rk45_solver = AdaptiveRK45Solver::new(states.len(), atol, rtol);
@@ -229,7 +238,7 @@ pub fn run_simulation(
     let stack_scratch_enabled = std::env::var("RUSTMODLICA_JIT_STACK_SCRATCH")
         .ok()
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
-        .unwrap_or(false);
+        .unwrap_or(true);
     let mut diag_state = vec![0.0_f64; states.len()];
     let mut scratch_outputs_for_step = vec![0.0_f64; output_vars.len()];
     let mut prev_outputs = vec![0.0; output_vars.len()];
@@ -566,11 +575,11 @@ pub fn run_simulation(
                     None
                 },
                 homotopy_lambda_ptr,
-                buf_discrete: Vec::new(),
-                buf_when: Vec::new(),
-                buf_crossings: Vec::new(),
-                buf_outputs: Vec::new(),
-                buf_guess: Vec::new(),
+                buf_discrete: &mut step_buf_discrete,
+                buf_when: &mut step_buf_when,
+                buf_crossings: &mut step_buf_crossings,
+                buf_outputs: &mut step_buf_outputs,
+                buf_guess: &mut step_buf_guess,
                 eval_count: 0,
                 hotspot_threshold,
                 simd_step_hits: 0,
@@ -768,16 +777,16 @@ pub fn run_simulation(
                         None
                     },
                     homotopy_lambda_ptr,
-                    buf_discrete: Vec::new(),
-                    buf_when: Vec::new(),
-                    buf_crossings: Vec::new(),
-                    buf_outputs: Vec::new(),
-                    buf_guess: Vec::new(),
-                eval_count: 0,
-                hotspot_threshold,
-                simd_step_hits: 0,
-                simd_step_fallbacks: 0,
-                stack_scratch_enabled,
+                    buf_discrete: &mut step_buf_discrete,
+                    buf_when: &mut step_buf_when,
+                    buf_crossings: &mut step_buf_crossings,
+                    buf_outputs: &mut step_buf_outputs,
+                    buf_guess: &mut step_buf_guess,
+                    eval_count: 0,
+                    hotspot_threshold,
+                    simd_step_hits: 0,
+                    simd_step_fallbacks: 0,
+                    stack_scratch_enabled,
                 };
                 let step_res = if use_adaptive {
                     let r = rk45_solver.step(&mut system, time, dt_event, &mut states);
