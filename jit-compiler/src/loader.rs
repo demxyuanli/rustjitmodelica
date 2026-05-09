@@ -55,6 +55,7 @@ impl ModelLoader {
             is_record: m.is_record,
             is_block: m.is_block,
             is_expandable: false,
+            is_partial: false,
             extends: m.extends.clone(),
             declarations: m.declarations.clone(),
             equations: m.equations.clone(),

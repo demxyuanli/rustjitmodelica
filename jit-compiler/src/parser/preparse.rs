@@ -53,6 +53,7 @@ pub fn make_alias_model(alias: String, base: String) -> ClassItem {
         is_record: false,
         is_block: false,
         is_expandable: false,
+        is_partial: false,
         extends: Vec::new(),
         declarations: Vec::new(),
         equations: Vec::new(),

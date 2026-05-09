@@ -491,6 +491,12 @@ impl crate::flatten::Flattener {
 
                             let mut sub_model = match loaded_type {
                                 Some((resolved_candidate, m)) => {
+                                    if m.is_partial {
+                                        return Err(FlattenError::PartialModelInstantiated {
+                                            partial_type: resolved_candidate.clone(),
+                                            instance_path: full_path.clone(),
+                                        });
+                                    }
                                     resolved_type = resolved_candidate;
                                     m
                                 }
@@ -828,6 +834,14 @@ impl crate::flatten::Flattener {
                             // Mark expandable connector instances for dynamic member injection.
                             if sub_model.is_expandable {
                                 flat.expandable_instances.insert(full_path.clone());
+                            }
+
+                            // Reject instantiation of partial models (MLS 4.4.2).
+                            if sub_model.is_partial {
+                                return Err(FlattenError::PartialModelInstantiated {
+                                    partial_type: resolved_type.clone(),
+                                    instance_path: full_path.clone(),
+                                });
                             }
 
                             // Register inner declarations so outer references can resolve.

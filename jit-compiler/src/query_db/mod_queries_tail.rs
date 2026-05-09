@@ -283,6 +283,7 @@ fn model_ast(db: &dyn QueryDb, model_name: String) -> Arc<ModelAst> {
             is_record: false,
             is_block: false,
             is_expandable: false,
+            is_partial: false,
             extends: vec![],
             declarations: vec![],
             equations: vec![],

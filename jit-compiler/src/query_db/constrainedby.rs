@@ -62,6 +62,7 @@ fn load_in_scope(
             is_record: false,
             is_block: false,
             is_expandable: false,
+            is_partial: false,
             extends: vec![],
             declarations: vec![],
             equations: vec![],

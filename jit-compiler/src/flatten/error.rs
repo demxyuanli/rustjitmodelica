@@ -24,6 +24,11 @@ pub enum FlattenError {
     ConflictingPublicProtected { target: String },
     /// Array dimension expression could not be evaluated as a constant and no external override applied.
     UnevaluatedArraySize { flat_base_name: String },
+    /// Attempted to instantiate a partial model (MLS 4.4.2).
+    PartialModelInstantiated {
+        partial_type: String,
+        instance_path: String,
+    },
 }
 
 impl From<LoadError> for FlattenError {
@@ -86,6 +91,11 @@ impl fmt::Display for FlattenError {
                 f,
                 "[FLATTEN_ARRAY_SIZE] Could not evaluate array size for '{}'. Use --array-sizes-json with matching \"array_sizes\" keys, or --array-size-policy=legacy.",
                 flat_base_name
+            ),
+            FlattenError::PartialModelInstantiated { partial_type, instance_path } => write!(
+                f,
+                "[FLATTEN_PARTIAL] Cannot instantiate partial model '{}' as '{}'. Partial models may only be used via extends.",
+                partial_type, instance_path
             ),
         }
     }
