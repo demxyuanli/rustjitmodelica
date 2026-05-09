@@ -293,6 +293,16 @@ pub fn compile_equation(
             equations: inner_eqs,
             residuals,
         } => {
+            if super::block_compile::block_compile_enabled() {
+                // Block-compile path: register block function and emit call stub.
+                // Full body compilation requires two-pass pipeline (future work).
+                let block_idx = ctx.block_index_counter;
+                ctx.block_index_counter += 1;
+                let (fid, sig) = super::block_compile::declare_block_function(ctx, block_idx)?;
+                ctx.block_funcs.push((fid, sig));
+                // For now, fall through to inline compilation.
+                // TODO: compile body into block function, emit call from main.
+            }
             compile_solvable_block_dispatch(
                 unknowns, tearing_var, inner_eqs, residuals, ctx, builder,
             )?;

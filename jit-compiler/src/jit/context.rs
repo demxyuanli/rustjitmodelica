@@ -67,6 +67,11 @@ pub struct TranslationContext<'a> {
     pub function_return_block: Option<Block>,
     pub suppress_zero_crossings: bool,
     pub delay_call_counter: usize,
+    /// Block-compile: registered solvable block function IDs for call emission.
+    /// Maps block_index → (FuncId, FunctionBuilder). Populated during compilation
+    /// when RUSTMODLICA_BLOCK_COMPILE=1.
+    pub block_funcs: Vec<(cranelift_module::FuncId, cranelift::prelude::Signature)>,
+    pub block_index_counter: usize,
     /// Count of `connect` endpoints per flattened connector path (for `cardinality`).
     pub connector_connection_degree: &'a HashMap<String, usize>,
     pub stream_connection_set: &'a HashMap<String, Vec<String>>,
@@ -211,6 +216,8 @@ impl<'a> TranslationContext<'a> {
             function_return_block,
             suppress_zero_crossings: false,
             delay_call_counter: 0,
+            block_funcs: Vec::new(),
+            block_index_counter: 0,
             connector_connection_degree,
             stream_connection_set,
             stream_flow_map,
