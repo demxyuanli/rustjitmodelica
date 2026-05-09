@@ -5,7 +5,7 @@
 use crate::ast::{AlgorithmStatement, Equation, Expression, Model, StringInterner};
 use crate::loader::ModelLoader;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 mod error;
 mod array_size_policy;
@@ -101,6 +101,9 @@ pub struct Flattener {
     pub force_disable_eq_parallel: bool,
     /// After `flatten_inheritance` for a loaded class FQN; reused before per-instance modifications.
     inheritance_flat_template_cache: HashMap<String, Arc<Model>>,
+    /// Tracks `inner` declarations by type+name → instance path, so `outer`
+    /// declarations in child scopes can resolve to the correct inner instance.
+    inner_declarations: HashMap<String, String>,
 }
 
 impl Flattener {
@@ -309,6 +312,7 @@ impl Flattener {
             compile_stop_label: "full".to_string(),
             force_disable_eq_parallel: false,
             inheritance_flat_template_cache: HashMap::new(),
+            inner_declarations: HashMap::new(),
         }
     }
 
@@ -367,6 +371,7 @@ impl Flattener {
                     stream_peer_map: HashMap::new(),
                     stream_connection_set: HashMap::new(),
                     stream_flow_map: HashMap::new(),
+                    expandable_instances: HashSet::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -399,6 +404,7 @@ impl Flattener {
                     stream_peer_map: HashMap::new(),
                     stream_connection_set: HashMap::new(),
                     stream_flow_map: HashMap::new(),
+                    expandable_instances: HashSet::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -431,6 +437,7 @@ impl Flattener {
                     stream_peer_map: HashMap::new(),
                     stream_connection_set: HashMap::new(),
                     stream_flow_map: HashMap::new(),
+                    expandable_instances: HashSet::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -495,6 +502,7 @@ impl Flattener {
                     stream_peer_map: HashMap::new(),
                     stream_connection_set: HashMap::new(),
                     stream_flow_map: HashMap::new(),
+                    expandable_instances: HashSet::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -523,6 +531,7 @@ impl Flattener {
                     stream_peer_map: HashMap::new(),
                     stream_connection_set: HashMap::new(),
                     stream_flow_map: HashMap::new(),
+                    expandable_instances: HashSet::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -552,6 +561,7 @@ impl Flattener {
                     stream_peer_map: HashMap::new(),
                     stream_connection_set: HashMap::new(),
                     stream_flow_map: HashMap::new(),
+                    expandable_instances: HashSet::new(),
                     interner: StringInterner::new(),
                     inst_records: Vec::new(),
                     path_to_inst: HashMap::new(),
@@ -607,6 +617,7 @@ impl Flattener {
             stream_peer_map: HashMap::new(),
             stream_connection_set: HashMap::new(),
             stream_flow_map: HashMap::new(),
+            expandable_instances: HashSet::new(),
             interner: StringInterner::new(),
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),

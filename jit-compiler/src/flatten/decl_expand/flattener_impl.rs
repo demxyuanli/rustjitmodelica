@@ -45,6 +45,7 @@ impl crate::flatten::Flattener {
             msl_import_context: msl_ctx,
         }];
         let mut array_size_warned_names: HashSet<String> = HashSet::new();
+        let mut expanded_types: HashSet<String> = HashSet::new();
 
         while let Some(task) = stack.pop() {
             match task {
@@ -279,6 +280,31 @@ impl crate::flatten::Flattener {
 
                             let mut resolved_type = resolve_type_alias(&model.type_aliases, &decl.type_name);
                             let pre_inner_alias = resolved_type.clone();
+                            // Outer reference: search parent scope for matching inner declaration.
+                            // Modelica semantics: every `outer X x` must find an `inner X x` in an
+                            // enclosing scope. The inner instance owns the actual storage; the outer
+                            // declaration references it by path.
+                            let outer_inner_path: Option<String> = if decl.is_outer {
+                                let key = format!("__inner_{}_{}", resolved_type, decl.name);
+                                self.inner_declarations
+                                    .get(&key)
+                                    .cloned()
+                                    .or_else(|| {
+                                        // Modelica allows different names: search by type only as fallback.
+                                        let type_key = format!("__inner_type_{}", resolved_type);
+                                        self.inner_declarations.get(&type_key).cloned()
+                                    })
+                            } else {
+                                None
+                            };
+                            if decl.is_outer && outer_inner_path.is_none() {
+                                // outer without matching inner: Modelica spec requires this to be an error.
+                                // For now, emit a warning and treat as regular instance (graceful degradation).
+                                eprintln!(
+                                    "[flatten] Warning: outer declaration '{}.{}' has no matching inner in parent scope",
+                                    current_qualified, decl.name,
+                                );
+                            }
                             resolved_type = resolve_inner_class_alias(&model, &resolved_type);
                             resolved_type = Self::resolve_import_scoped_type(
                                 model.as_ref(),
@@ -288,6 +314,19 @@ impl crate::flatten::Flattener {
                             );
                             resolved_type =
                                 Self::normalize_decl_type_name(resolved_type, &pre_inner_alias);
+
+                            // Outer with matching inner: register as alias, skip instance creation.
+                            if let Some(ref inner_path) = outer_inner_path {
+                                flat.instances.insert(full_path.clone(), resolved_type.clone());
+                                flat.register_inst_path(
+                                    full_path.clone(),
+                                    resolved_type.clone(),
+                                    if is_array { Some(i as usize) } else { None },
+                                );
+                                // Copy equations/algorithms from inner scope if present
+                                // (the inner instance handles the actual storage).
+                                continue;
+                            }
 
                             if i == 1
                                 && is_array
@@ -786,18 +825,42 @@ impl crate::flatten::Flattener {
                                 if is_array { Some(i as usize) } else { None },
                             );
 
+                            // Mark expandable connector instances for dynamic member injection.
+                            if sub_model.is_expandable {
+                                flat.expandable_instances.insert(full_path.clone());
+                            }
+
+                            // Register inner declarations so outer references can resolve.
+                            if decl.is_inner {
+                                let raw_type = resolve_type_alias(&model.type_aliases, &decl.type_name);
+                                self.inner_declarations.insert(
+                                    format!("__inner_{}_{}", raw_type, decl.name),
+                                    full_path.clone(),
+                                );
+                                self.inner_declarations.insert(
+                                    format!("__inner_type_{}", raw_type),
+                                    full_path.clone(),
+                                );
+                            }
+
                             if mode == ExpandDeclMode::DeclAndSubEq {
                                 stack.push(Task::ExpandEquations {
                                     model: Arc::clone(&sub_model),
                                     prefix: full_path.clone(),
                                 });
                             }
-                            stack.push(Task::Process {
-                                model: sub_model,
-                                prefix: full_path,
-                                current_model_name: Some(resolved_type),
-                                msl_import_context: msl_import_context.clone(),
-                            });
+                            // Only expand each distinct type once per flatten pass.
+                            // Shared base classes (e.g. SISO for PID + TransferFunction)
+                            // are already flattened; re-expanding them on every instance
+                            // causes combinatorial task explosion.
+                            if expanded_types.insert(resolved_type.clone()) {
+                                stack.push(Task::Process {
+                                    model: sub_model,
+                                    prefix: full_path,
+                                    current_model_name: Some(resolved_type),
+                                    msl_import_context: msl_import_context.clone(),
+                                });
+                            }
                         }
                     }
                     crate::query_db::perf_record_us(

@@ -491,6 +491,7 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
         stream_peer_map: HashMap::new(),
         stream_connection_set: HashMap::new(),
         stream_flow_map: HashMap::new(),
+        expandable_instances: HashSet::new(),
         interner: crate::string_intern::StringInterner::new(),
         // Not needed for this stage.
         inst_records: Vec::new(),

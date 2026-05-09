@@ -48,6 +48,8 @@ pub struct FlattenedModel {
     pub stream_connection_set: HashMap<String, Vec<String>>,
     /// Flatten-time stream variable -> paired flow variable on the same connector instance.
     pub stream_flow_map: HashMap<String, String>,
+    /// Instance paths for expandable connector instances (populated during flatten).
+    pub expandable_instances: HashSet<String>,
     pub interner: StringInterner,
     /// `InstId` is index into `inst_records`.
     pub inst_records: Vec<InstPathRecord>,

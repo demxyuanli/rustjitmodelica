@@ -297,6 +297,22 @@ fn equations_for_connections(
             }
         }
     }
+    // Expandable connector: inject members from non-expandable side
+    for (a_path, b_path) in connections {
+        let a_is_expandable = flat.expandable_instances.contains(a_path.as_str());
+        let b_is_expandable = flat.expandable_instances.contains(b_path.as_str());
+        if a_is_expandable || b_is_expandable {
+            if a_is_expandable && !b_is_expandable {
+                inject_expandable_members(flat, a_path, b_path, &mut potential_eqs);
+            } else if b_is_expandable && !a_is_expandable {
+                inject_expandable_members(flat, b_path, a_path, &mut potential_eqs);
+            } else {
+                // Both expandable: cross-inject
+                inject_expandable_members(flat, a_path, b_path, &mut potential_eqs);
+                inject_expandable_members(flat, b_path, a_path, &mut potential_eqs);
+            }
+        }
+    }
     let mut out = potential_eqs;
     let mut visited = HashSet::new();
     let mut flow_vars_sorted: Vec<String> = flow_vars.iter().cloned().collect();
@@ -664,6 +680,23 @@ pub fn resolve_connections(
     }
     }
 
+    // Expandable connector: inject members from non-expandable side
+    for (a_path, b_path) in &flat.connections {
+        let a_is_expandable = flat.expandable_instances.contains(a_path.as_str());
+        let b_is_expandable = flat.expandable_instances.contains(b_path.as_str());
+        if a_is_expandable || b_is_expandable {
+            if a_is_expandable && !b_is_expandable {
+                inject_expandable_members(flat, a_path, b_path, &mut potential_eqs);
+            } else if b_is_expandable && !a_is_expandable {
+                inject_expandable_members(flat, b_path, a_path, &mut potential_eqs);
+            } else {
+                // Both expandable: cross-inject
+                inject_expandable_members(flat, a_path, b_path, &mut potential_eqs);
+                inject_expandable_members(flat, b_path, a_path, &mut potential_eqs);
+            }
+        }
+    }
+
     flat.equations.extend(potential_eqs);
 
     // Build stream connection-set map (multi-port): each stream variable maps to all peers
@@ -832,4 +865,29 @@ fn find_connector_type(path: &str, flat: &FlattenedModel) -> Option<String> {
     }
 
     None
+}
+
+/// Inject members from a non-expandable source connector into an expandable target.
+/// For each declaration prefixed by `source_path_`, generate an equation equating
+/// the projected name under `expandable_path_` to the source's flattened variable.
+fn inject_expandable_members(
+    flat: &FlattenedModel,
+    expandable_path: &str,
+    source_path: &str,
+    potential_eqs: &mut Vec<Equation>,
+) {
+    let source_prefix = format!("{}_", source_path);
+    let target_prefix = format!("{}_", expandable_path);
+    for decl in &flat.declarations {
+        if let Some(suffix) = decl.name.strip_prefix(&source_prefix) {
+            let target_name = format!("{}{}", target_prefix, suffix);
+            // Only inject if target doesn't already have this member
+            if !flat.declarations.iter().any(|d| d.name == target_name) {
+                potential_eqs.push(Equation::Simple(
+                    Expression::var(&target_name),
+                    Expression::var(&decl.name),
+                ));
+            }
+        }
+    }
 }

@@ -32,6 +32,7 @@ pub struct FlatCacheV1 {
     pub clock_signal_connections: Vec<(String, String)>,
     pub stream_peer_map: HashMap<String, String>,
     pub stream_connection_set: HashMap<String, Vec<String>>,
+    pub expandable_instances: std::collections::HashSet<String>,
     pub deps: Vec<DepHashEntry>,
 }
 
@@ -55,6 +56,7 @@ impl FlatCacheV1 {
             clock_signal_connections: flat.clock_signal_connections.clone(),
             stream_peer_map: flat.stream_peer_map.clone(),
             stream_connection_set: flat.stream_connection_set.clone(),
+            expandable_instances: flat.expandable_instances.clone(),
             deps,
         }
     }
@@ -99,6 +101,7 @@ impl FlatCacheV1 {
             stream_peer_map: self.stream_peer_map,
             stream_connection_set: self.stream_connection_set,
             stream_flow_map: HashMap::new(),
+            expandable_instances: self.expandable_instances,
             interner,
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),

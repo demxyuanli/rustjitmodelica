@@ -128,6 +128,7 @@ mod tests {
             stream_peer_map: HashMap::new(),
             stream_connection_set: HashMap::new(),
             stream_flow_map: HashMap::new(),
+            expandable_instances: HashSet::new(),
             interner: StringInterner::new(),
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),
