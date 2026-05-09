@@ -8,17 +8,17 @@ pub(super) fn warn_stream_semantics_once(kind: &'static str) {
     match kind {
         "inStream" => {
             let _ = INSTREAM_WARNED.get_or_init(|| {
-                eprintln!("[fallback:stream-semantics] inStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
+                eprintln!("[stream] inStream(): using MSL 3.1 flow-weighted mixing formula")
             });
         }
         "actualStream" => {
             let _ = ACTUAL_WARNED.get_or_init(|| {
-                eprintln!("[fallback:stream-semantics] actualStream(): using minimal semantics in JIT (single-arg passthrough for stable one-way flow subset)")
+                eprintln!("[stream] actualStream(): using MSL 3.1 semantics (positive flow -> self, negative -> inStream)")
             });
         }
         "peerMissing" => {
             let _ = PEER_WARNED.get_or_init(|| {
-                eprintln!("[fallback:stream-semantics] stream peer/flow mapping not found, fallback to passthrough for this model path")
+                eprintln!("[stream] stream peer/flow mapping not found, fallback to passthrough for this model path")
             });
         }
         _ => {}

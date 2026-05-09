@@ -183,7 +183,7 @@ pub(super) fn dispatch_named_builtin_policy(
         "instream" => {
             if args.len() != 1 {
                 return Err(format!(
-                    "inStream() minimal JIT semantics expects exactly 1 argument, got {}",
+                    "inStream() expects exactly 1 argument, got {}",
                     args.len()
                 ));
             }
@@ -240,7 +240,7 @@ pub(super) fn dispatch_named_builtin_policy(
         "actualstream" => {
             if args.len() != 1 {
                 return Err(format!(
-                    "actualStream() minimal JIT semantics expects exactly 1 argument, got {}",
+                    "actualStream() expects exactly 1 argument, got {}",
                     args.len()
                 ));
             }
