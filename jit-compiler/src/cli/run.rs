@@ -744,6 +744,12 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                         let paths: Vec<String> =
                             files.iter().map(|p| p.display().to_string()).collect();
                         println!("FMI CS: emitted {}", paths.join(", "));
+                        // Package into .fmu
+                        let fmu_path = path.join(format!("{}.fmu", fmi::resolve_model_identifier(&effective_model, fmi_model_id.as_deref())));
+                        match fmi::package_fmu(path, &fmu_path) {
+                            Ok(()) => println!("FMI CS: packaged {}", fmu_path.display()),
+                            Err(e) => eprintln!("FMI CS: package warning: {}", e),
+                        }
                     }
                     Err(e) => return Err(format!("FMI CS emit failed: {}", e).into()),
                 }
@@ -765,6 +771,12 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                         let paths: Vec<String> =
                             files.iter().map(|p| p.display().to_string()).collect();
                         println!("FMI ME: emitted {}", paths.join(", "));
+                        // Package into .fmu
+                        let fmu_path = path.join(format!("{}.fmu", fmi::resolve_model_identifier(&effective_model, fmi_model_id.as_deref())));
+                        match fmi::package_fmu(path, &fmu_path) {
+                            Ok(()) => println!("FMI ME: packaged {}", fmu_path.display()),
+                            Err(e) => eprintln!("FMI ME: package warning: {}", e),
+                        }
                     }
                     Err(e) => return Err(format!("FMI ME emit failed: {}", e).into()),
                 }
