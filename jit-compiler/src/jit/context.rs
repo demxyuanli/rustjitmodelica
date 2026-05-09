@@ -7,7 +7,7 @@ use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-static EMPTY_ENUMS: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(HashMap::new);
+pub(crate) static EMPTY_ENUMS: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(HashMap::new);
 
 pub struct TranslationContext<'a> {
     pub module: &'a mut JITModule,
