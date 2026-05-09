@@ -17,6 +17,9 @@ use super::coff_reloc::load_coff_object_exec_windows;
 #[cfg(target_os = "linux")]
 use super::elf_reloc::load_elf_object_exec;
 
+#[cfg(target_os = "macos")]
+use super::macho_reloc::load_macho_object_exec_macos;
+
 /// Cached function handle (executable anonymous buffer; not file-backed mmap).
 pub struct CachedFunction {
     #[allow(dead_code)]
@@ -32,7 +35,7 @@ pub struct CachedFunction {
 }
 
 impl CachedFunction {
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     fn from_exec(
         exec: ExecCodeBuffer,
         func: crate::jit::types::CalcDerivsFunc,
@@ -48,7 +51,7 @@ impl CachedFunction {
         }
     }
 
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(crate) fn from_exec_with_import_slots(
         exec: ExecCodeBuffer,
         import_slots: Vec<Box<usize>>,
@@ -277,7 +280,11 @@ impl CodegenCache {
         {
             return self.load_object_artifact_linux(key, entry, raw, runtime_symbols);
         }
-        #[cfg(not(any(windows, target_os = "linux")))]
+        #[cfg(target_os = "macos")]
+        {
+            return self.load_object_artifact_macos(key, entry, raw, runtime_symbols);
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (key, entry, raw, runtime_symbols);
             None
@@ -324,6 +331,32 @@ impl CodegenCache {
 
         eprintln!(
             "[jit-codegen-cache] HIT(object/linux) model={} size={} bytes",
+            key.model_name, entry.object_size
+        );
+        Some(CachedFunction::from_exec_with_import_slots(
+            exec,
+            import_slots,
+            func,
+            entry.when_count,
+            entry.crossings_count,
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn load_object_artifact_macos(
+        &self,
+        key: &CodegenCacheKey,
+        entry: &CodegenCacheEntry,
+        raw: &[u8],
+        runtime_symbols: &HashMap<String, *const u8>,
+    ) -> Option<CachedFunction> {
+        let (exec, func_offset, import_slots) =
+            load_macho_object_exec_macos(raw, runtime_symbols, "jit-disk-object")?;
+        let func_ptr = unsafe { exec.as_ptr().add(func_offset) };
+        let func: crate::jit::types::CalcDerivsFunc = unsafe { std::mem::transmute(func_ptr) };
+
+        eprintln!(
+            "[jit-codegen-cache] HIT(object/macos) model={} size={} bytes",
             key.model_name, entry.object_size
         );
         Some(CachedFunction::from_exec_with_import_slots(

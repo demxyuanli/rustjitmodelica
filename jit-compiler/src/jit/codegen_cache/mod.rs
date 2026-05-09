@@ -21,6 +21,9 @@ mod coff_reloc;
 #[cfg(target_os = "linux")]
 mod elf_reloc;
 
+#[cfg(target_os = "macos")]
+mod macho_reloc;
+
 pub use cache_key::{
     codegen_cache_enabled, codegen_cache_legacy_dir, codegen_cache_read_dirs_for_scope,
     codegen_cache_root, codegen_cache_write_dir_for_scope, flat_model_hash, param_values_by_name,
@@ -95,7 +98,29 @@ pub fn load_aot_code_blob(
     ))
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub fn load_aot_code_blob(
+    raw: &[u8],
+    import_symbols: &[String],
+    runtime_symbols: &std::collections::HashMap<String, *const u8>,
+    when_count: usize,
+    crossings_count: usize,
+) -> Option<CachedFunction> {
+    let merged = merged_symbols_for_native_reloc(runtime_symbols);
+    let (exec, func_offset, import_slots) =
+        macho_reloc::load_macho_object_exec_macos(raw, &merged, "native-reloc")?;
+    let func_ptr = unsafe { exec.as_ptr().add(func_offset) };
+    let func: super::types::CalcDerivsFunc = unsafe { std::mem::transmute(func_ptr) };
+    Some(CachedFunction::from_exec_with_import_slots(
+        exec,
+        import_slots,
+        func,
+        when_count,
+        crossings_count,
+    ))
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn load_aot_code_blob(
     _raw: &[u8],
     _import_symbols: &[String],
