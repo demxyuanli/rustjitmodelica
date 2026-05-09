@@ -18,6 +18,7 @@ use super::jit_policy;
 use super::native::{builtin_jit_symbol_ptrs, register_symbols};
 use super::object_emit::emit_object_cache_artifact;
 use super::translator::expr::compile_expression;
+use super::translator::vectorize;
 use super::translator::{compile_algorithm_stmt, compile_equation};
 use super::types::{ArrayInfo, CalcDerivsFunc};
 use crate::compiler::{ClockPartitionScheduleEntry, ClockPartitionTrigger};
@@ -50,13 +51,15 @@ impl Jit {
     ) -> Self {
         let mut flag_builder = settings::builder();
         let _ = flag_builder.set("opt_level", &jit_opt_level_from_env());
-        if std::env::var("RUSTMODLICA_CRANELIFT_ENABLE_SIMD")
+        // Enable Cranelift auto-vectorization by default; manual SIMD in vectorize.rs
+        // handles the primary path, but Cranelift's auto-vec helps scalar fallbacks.
+        let enable_simd = std::env::var("RUSTMODLICA_CRANELIFT_ENABLE_SIMD")
             .ok()
             .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
-            .unwrap_or(false)
-        {
-            let _ = flag_builder.set("enable_simd", "true");
-        }
+            .unwrap_or(true);
+        let _ = flag_builder.set("enable_simd", if enable_simd { "true" } else { "false" });
+        // Enable jump tables for dense when/if chains (reduces code size).
+        let _ = flag_builder.set("enable_jump_tables", "true");
         let isa_builder = cranelift_native::builder().unwrap();
         let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
         let mut builder =
@@ -464,16 +467,18 @@ impl Jit {
                                 compile_algorithm_stmt(stmt, &mut t_ctx, &mut builder)?;
                             }
                         }
-                        for idx in &entry.alg_equation_indices {
-                            if let Some(eq) = alg_equations.get(*idx) {
-                                compile_equation(eq, &mut t_ctx, &mut builder)?;
-                            }
-                        }
-                        for idx in &entry.diff_equation_indices {
-                            if let Some(eq) = diff_equations.get(*idx) {
-                                compile_equation(eq, &mut t_ctx, &mut builder)?;
-                            }
-                        }
+                        let alg_eqs: Vec<crate::ast::Equation> = entry
+                            .alg_equation_indices
+                            .iter()
+                            .filter_map(|idx| alg_equations.get(*idx).cloned())
+                            .collect();
+                        Self::compile_equation_group(&alg_eqs, &mut t_ctx, &mut builder)?;
+                        let diff_eqs: Vec<crate::ast::Equation> = entry
+                            .diff_equation_indices
+                            .iter()
+                            .filter_map(|idx| diff_equations.get(*idx).cloned())
+                            .collect();
+                        Self::compile_equation_group(&diff_eqs, &mut t_ctx, &mut builder)?;
                     }
                     ClockPartitionTrigger::Sample { start, interval } => {
                         let trigger_val = emit_sample_trigger(start, interval, &mut t_ctx, &mut builder)?;
@@ -496,16 +501,20 @@ impl Jit {
                 }
             }
 
-            for (idx, eq) in alg_equations.iter().enumerate() {
-                if !covered_alg_equations.contains(&idx) {
-                    compile_equation(eq, &mut t_ctx, &mut builder)?;
-                }
-            }
-            for (idx, eq) in diff_equations.iter().enumerate() {
-                if !covered_diff_equations.contains(&idx) {
-                    compile_equation(eq, &mut t_ctx, &mut builder)?;
-                }
-            }
+            let uncovered_alg: Vec<crate::ast::Equation> = alg_equations
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| !covered_alg_equations.contains(idx))
+                .map(|(_, eq)| eq.clone())
+                .collect();
+            Self::compile_equation_group(&uncovered_alg, &mut t_ctx, &mut builder)?;
+            let uncovered_diff: Vec<crate::ast::Equation> = diff_equations
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| !covered_diff_equations.contains(idx))
+                .map(|(_, eq)| eq.clone())
+                .collect();
+            Self::compile_equation_group(&uncovered_diff, &mut t_ctx, &mut builder)?;
 
             when_count = *t_ctx.when_idx;
             crossings_count = *t_ctx.crossings_idx;
@@ -548,6 +557,9 @@ impl Jit {
             .map_err(|e| e.to_string())?;
 
         let code = self.module.get_finalized_function(func_id);
+        // SAFETY: code is a finalized JIT function pointer returned by
+        // Cranelift's get_finalized_function, guaranteed to point to
+        // executable memory containing a valid calc_derivs implementation.
         let func: CalcDerivsFunc = unsafe { mem::transmute(code) };
 
         eprintln!(
@@ -606,6 +618,9 @@ impl Jit {
                     Ok(Err(e)) => {
                         eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_ERROR: {}", e);
                         if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
+                            // SAFETY: func_alloc_len is the allocation length reported by
+                            // Cranelift for this compiled function. The memory at code is
+                            // valid for reads within this length.
                             let code_bytes =
                                 unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
                             if let Err(pe) = cache.put(
@@ -633,6 +648,9 @@ impl Jit {
                     Err(_) => {
                         eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_PANIC");
                         if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
+                            // SAFETY: func_alloc_len is the allocation length reported by
+                            // Cranelift for this compiled function. The memory at code is
+                            // valid for reads within this length.
                             let code_bytes =
                                 unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
                             if let Err(pe) = cache.put(
@@ -662,6 +680,64 @@ impl Jit {
         }
 
         Ok((func, when_count, crossings_count))
+    }
+
+    /// Check whether SIMD vectorization is enabled via environment variable.
+    /// Enabled by default; set `RUSTMODLICA_JIT_SIMD=0` to disable.
+    fn simd_enabled() -> bool {
+        std::env::var("RUSTMODLICA_JIT_SIMD")
+            .ok()
+            .map(|v| !matches!(v.trim(), "0" | "false" | "FALSE" | "off" | "OFF"))
+            .unwrap_or(true)
+    }
+
+    /// Compile a group of equations with optional SIMD vectorization.
+    /// Equations are clustered into vector groups when possible and the
+    /// resulting [`vectorize::CompileUnit`]s are emitted.
+    fn compile_equation_group(
+        equations: &[crate::ast::Equation],
+        ctx: &mut crate::jit::context::TranslationContext<'_>,
+        builder: &mut cranelift::frontend::FunctionBuilder<'_>,
+    ) -> Result<(), String> {
+        if !Self::simd_enabled() || equations.len() < 4 {
+            for eq in equations {
+                compile_equation(eq, ctx, builder)?;
+            }
+            return Ok(());
+        }
+
+        let units = vectorize::cluster_equations(equations);
+        for unit in units {
+            match unit {
+                vectorize::CompileUnit::Scalar(eq) => {
+                    compile_equation(&eq, ctx, builder)?;
+                }
+                vectorize::CompileUnit::Vector(group) => {
+                    if vectorize::emit_vector_loop(&group, ctx, builder).is_err() {
+                        // SIMD emission failed; fallback to scalar for this group
+                        for i in group.lo..=group.hi {
+                            // Find the equation matching this index
+                            let idx_opt = equations.iter().position(|eq| {
+                                matches!(
+                                    eq,
+                                    crate::ast::Equation::Simple(
+                                        crate::ast::Expression::Variable(v),
+                                        _,
+                                    ) if {
+                                        let name = crate::string_intern::resolve_id(*v);
+                                        name == format!("{}_{}", group.dst_base, i)
+                                    }
+                                )
+                            });
+                            if let Some(idx) = idx_opt {
+                                compile_equation(&equations[idx], ctx, builder)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn clear_func_cache(&mut self) {
