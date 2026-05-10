@@ -834,9 +834,7 @@ impl Jit {
                 &mut bc,
             );
 
-            let entry = builder.create_block();
-            builder.append_block_params_for_function_params(entry);
-            builder.switch_to_block(entry);
+            let entry = super::translator::equation::block_compile::setup_block_entry(&mut builder);
 
             let time_val = builder.block_params(entry)[0];
             let states_ptr = builder.block_params(entry)[1];
@@ -973,9 +971,7 @@ impl Jit {
         let mut builder =
             cranelift::frontend::FunctionBuilder::new(&mut standalone.ctx.func, &mut bc);
 
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
+        let entry = super::translator::equation::block_compile::setup_block_entry(&mut builder);
 
         let states_ptr = builder.block_params(entry)[1];
         let discrete_ptr = builder.block_params(entry)[2];
