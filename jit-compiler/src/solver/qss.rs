@@ -13,6 +13,22 @@
 use crate::jit::CalcDerivsFunc;
 use super::{Solver, System};
 
+fn max_internal_steps_default() -> u64 {
+    std::env::var("RUSTMODLICA_QSS_MAX_STEPS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(1_000_000)
+}
+
+fn min_quantum_default() -> f64 {
+    std::env::var("RUSTMODLICA_QSS_MIN_QUANTUM")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(1e-8)
+}
+
 pub struct QssSolver {
     n: usize,
     /// State values at last quantum update.
@@ -40,7 +56,7 @@ impl QssSolver {
             derivs: vec![0.0; n],
             atol,
             rtol,
-            max_internal_steps: 100_000,
+            max_internal_steps: max_internal_steps_default(),
             work_state: vec![0.0; n],
         }
     }
@@ -52,8 +68,10 @@ impl QssSolver {
     }
 
     /// Compute the quantum for state i given current value and derivative.
-    fn quantum(&self, x_i: f64, dx_i: f64) -> f64 {
-        self.atol.max(self.rtol * x_i.abs()).max(1e-12)
+    /// Uses max(atol, rtol*|x_i|, min_quantum) as the threshold.
+    fn quantum(&self, x_i: f64, _dx_i: f64) -> f64 {
+        let min_q = min_quantum_default();
+        self.atol.max(self.rtol * x_i.abs()).max(min_q)
     }
 
     /// Compute time to next quantum crossing: t = dQ / |dx|
