@@ -278,8 +278,6 @@ impl Jit {
             let (diag_res, diag_x) = (Some(diag_residual_ptr), Some(diag_x_ptr));
 
             let mut var_map = HashMap::new();
-            var_map.insert("time".to_string(), time_val);
-            var_map.insert("t_end".to_string(), t_end_val);
 
             for (i, name) in state_vars.iter().enumerate() {
                 let offset = (i * 8) as i32;
@@ -303,6 +301,14 @@ impl Jit {
                 var_map.insert(name.clone(), val);
             }
 
+            // `time` and `t_end` are read-only builtins backed by the function's
+            // block params, not by any state/discrete/param slot. Insert them
+            // LAST so that a variable wrongly classified as a state/param but
+            // named "time"/"t_end" cannot overwrite the actual argument value
+            // (which manifested as every `time` reference reading params[0]).
+            var_map.insert("time".to_string(), time_val);
+            var_map.insert("t_end".to_string(), t_end_val);
+
             let mut stack_slots = HashMap::new();
             let mut modified_vars = HashSet::new();
             for stmt in algorithms {
@@ -310,6 +316,14 @@ impl Jit {
             }
             collect_modified_equations(alg_equations, &mut modified_vars);
             collect_modified_equations(diff_equations, &mut modified_vars);
+
+            // `time` and `t_end` are read-only builtins supplied as block params
+            // and seeded into var_map. They must never get a stack slot: a slot
+            // would shadow the var_map entry in compile_variable_load and make
+            // every `time`/`t_end` reference read the (uninitialized-path) slot
+            // instead of the actual argument.
+            modified_vars.remove("time");
+            modified_vars.remove("t_end");
 
             for var in &modified_vars {
                 let slot =
