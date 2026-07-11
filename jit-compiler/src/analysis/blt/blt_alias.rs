@@ -112,6 +112,16 @@ pub(crate) fn eliminate_aliases(
         }
     }
 
+    // Resolve alias values transitively so each maps directly to free/solved
+    // variables (a -> b+1 -> c+2). Otherwise a back-substituted alias output can
+    // be computed before the alias it depends on, reading a stale value.
+    // Terminates because alias_would_cycle keeps the map acyclic.
+    let resolved: HashMap<String, Expression> = alias_map
+        .iter()
+        .map(|(k, v)| (k.clone(), substitute_aliases_in_expr(v, &alias_map)))
+        .collect();
+    alias_map = resolved;
+
     (current_eqs, alias_map)
 }
 
@@ -137,7 +147,10 @@ fn substitute_aliases_in_eq(eq: &Equation, map: &HashMap<String, Expression>) ->
     }
 }
 
-fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expression>) -> Expression {
+fn substitute_aliases_in_expr<'a>(
+    expr: &'a Expression,
+    map: &'a HashMap<String, Expression>,
+) -> Expression {
     #[derive(Clone)]
     enum Frame<'a> {
         Enter(&'a Expression),
@@ -159,7 +172,7 @@ fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expressio
         BuildBackSample,
     }
 
-    let mut frames: Vec<Frame<'_>> = vec![Frame::Enter(expr)];
+    let mut frames: Vec<Frame<'a>> = vec![Frame::Enter(expr)];
     let mut values: Vec<Expression> = Vec::new();
 
     while let Some(f) = frames.pop() {
@@ -167,7 +180,14 @@ fn substitute_aliases_in_expr(expr: &Expression, map: &HashMap<String, Expressio
             Frame::Enter(e) => match e {
                 Expression::Variable(id) => {
                     let name = resolve_id(*id);
-                    values.push(map.get(&name).cloned().unwrap_or_else(|| e.clone()));
+                    // Recurse into the alias value so multi-level chains
+                    // (a -> b+1, b -> c+1) resolve fully to the free variable.
+                    // Safe from infinite recursion: alias_would_cycle keeps the
+                    // alias map acyclic.
+                    match map.get(&name) {
+                        Some(val) => frames.push(Frame::Enter(val)),
+                        None => values.push(e.clone()),
+                    }
                 }
                 Expression::BinaryOp(lhs, op, rhs) => {
                     frames.push(Frame::BuildBinary(*op));
