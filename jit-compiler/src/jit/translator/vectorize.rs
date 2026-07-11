@@ -326,14 +326,19 @@ pub(crate) fn emit_vector_loop(
     let mem_flags = cranelift::codegen::ir::MemFlags::new();
 
     for chunk in 0..full_chunks {
-        let base = chunk * vec_size * 8;
-        let dst_off = (dst_start + chunk * vec_size) as i32;
-        let src1_off = (src1_start + chunk * vec_size) as i32;
+        let elem = chunk * vec_size;
+        // Per-array BYTE offsets that include each array's start_index. The
+        // storage-class base pointer is shared across all arrays of that type,
+        // so a plain chunk offset aliased every array to storage index 0.
+        // Mirrors the remainder loop's (start + k) * 8 convention.
+        let dst_off = ((dst_start + elem) * 8) as i32;
+        let src1_off = ((src1_start + elem) * 8) as i32;
 
-        let a = builder.ins().load(vec_type, mem_flags, src1_ptr, base as i32);
+        let a = builder.ins().load(vec_type, mem_flags, src1_ptr, src1_off);
         let result = match (&src2_info, &src3_info) {
-            (Some((src2_ptr, _)), None) => {
-                let b = builder.ins().load(vec_type, mem_flags, *src2_ptr, base as i32);
+            (Some((src2_ptr, src2_start)), None) => {
+                let src2_off = ((src2_start + elem) * 8) as i32;
+                let b = builder.ins().load(vec_type, mem_flags, *src2_ptr, src2_off);
                 match group.op {
                     VectorOp::Add => builder.ins().fadd(a, b),
                     VectorOp::Sub => builder.ins().fsub(a, b),
@@ -342,16 +347,17 @@ pub(crate) fn emit_vector_loop(
                     VectorOp::Fma => a, // unreachable for 2-source case
                 }
             }
-            (Some((src2_ptr, _)), Some((src3_ptr, _))) => {
+            (Some((src2_ptr, src2_start)), Some((src3_ptr, src3_start))) => {
                 // FMA: a * b + c
-                let b = builder.ins().load(vec_type, mem_flags, *src2_ptr, base as i32);
-                let c = builder.ins().load(vec_type, mem_flags, *src3_ptr, base as i32);
+                let src2_off = ((src2_start + elem) * 8) as i32;
+                let src3_off = ((src3_start + elem) * 8) as i32;
+                let b = builder.ins().load(vec_type, mem_flags, *src2_ptr, src2_off);
+                let c = builder.ins().load(vec_type, mem_flags, *src3_ptr, src3_off);
                 builder.ins().fma(a, b, c)
             }
             _ => a,
         };
-        builder.ins().store(mem_flags, result, dst_ptr, base as i32);
-        let _ = (dst_off, src1_off);
+        builder.ins().store(mem_flags, result, dst_ptr, dst_off);
     }
 
     // Remainder: emit scalar load/compute/store for each element.

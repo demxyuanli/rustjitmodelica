@@ -79,8 +79,17 @@ pub(super) fn compile_expression_rec(
                 Operator::Sub => Ok(builder.ins().fsub(l, r)),
                 Operator::Mul => Ok(builder.ins().fmul(l, r)),
                 Operator::Div => {
-                    let min_den = builder.ins().f64const(1e-12);
-                    let r_safe = builder.ins().fmax(r, min_den);
+                    // Sign-preserving guard: clamp only the MAGNITUDE of a
+                    // near-zero denominator, keeping its sign. fmax() alone
+                    // wrongly turned every negative denominator into +1e-12.
+                    let eps = builder.ins().f64const(1e-12);
+                    let neg_eps = builder.ins().f64const(-1e-12);
+                    let zero = builder.ins().f64const(0.0);
+                    let abs_r = builder.ins().fabs(r);
+                    let is_small = builder.ins().fcmp(FloatCC::LessThan, abs_r, eps);
+                    let r_nonneg = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, r, zero);
+                    let signed_eps = builder.ins().select(r_nonneg, eps, neg_eps);
+                    let r_safe = builder.ins().select(is_small, signed_eps, r);
                     Ok(builder.ins().fdiv(l, r_safe))
                 }
                 Operator::Less

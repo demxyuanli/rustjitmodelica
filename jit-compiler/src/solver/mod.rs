@@ -555,17 +555,34 @@ impl Solver for AdaptiveRK45Solver {
         &mut self,
         system: &mut System,
         time: f64,
-        mut dt: f64,
+        dt: f64,
         states: &mut [f64],
     ) -> Result<(), i32> {
-        // Single adaptive step attempt: adjust dt internally but caller passes dt as suggestion.
+        // Integrate the state by EXACTLY `dt` using internal error-controlled
+        // sub-steps. On return `states` corresponds to time + dt, so the driver
+        // (which advances `time` by the full dt) stays in sync. The previous
+        // code shrank dt internally, accepted the smaller step, yet the driver
+        // still advanced time by the full dt -> state/time desync.
         let n = states.len();
         if n == 0 {
             return Ok(());
         }
 
-        let t = time;
-        loop {
+        let t_end = time + dt;
+        let mut ts = time;
+        let mut h = dt;
+        // ponytail: total sub-step cap prevents a hang if the tolerance is
+        // unreachable (e.g. a stiff region rk45 can't resolve). Fail instead.
+        let mut guard: u32 = 0;
+        while ts < t_end {
+            // Never overshoot the requested interval end.
+            if h > t_end - ts {
+                h = t_end - ts;
+            }
+            if h <= 0.0 {
+                break;
+            }
+
             if !system.eval_call_index.is_null() {
                 unsafe {
                     *system.eval_call_index = 0;
@@ -574,58 +591,58 @@ impl Solver for AdaptiveRK45Solver {
             self.y.copy_from_slice(states);
 
             self.tmp.copy_from_slice(&self.y);
-            system.record_eval(t, &self.tmp);
-            system.evaluate_scratch(t, &mut self.tmp, &mut self.k1)?;
+            system.record_eval(ts, &self.tmp);
+            system.evaluate_scratch(ts, &mut self.tmp, &mut self.k1)?;
 
             for i in 0..n {
-                self.tmp[i] = self.y[i] + dt * (1.0 / 5.0) * self.k1[i];
+                self.tmp[i] = self.y[i] + h * (1.0 / 5.0) * self.k1[i];
             }
-            system.record_eval(t + dt * (1.0 / 5.0), &self.tmp);
-            system.evaluate_scratch(t + dt * (1.0 / 5.0), &mut self.tmp, &mut self.k2)?;
+            system.record_eval(ts + h * (1.0 / 5.0), &self.tmp);
+            system.evaluate_scratch(ts + h * (1.0 / 5.0), &mut self.tmp, &mut self.k2)?;
 
             for i in 0..n {
-                self.tmp[i] = self.y[i] + dt * (3.0 / 40.0 * self.k1[i] + 9.0 / 40.0 * self.k2[i]);
+                self.tmp[i] = self.y[i] + h * (3.0 / 40.0 * self.k1[i] + 9.0 / 40.0 * self.k2[i]);
             }
-            system.record_eval(t + dt * (3.0 / 10.0), &self.tmp);
-            system.evaluate_scratch(t + dt * (3.0 / 10.0), &mut self.tmp, &mut self.k3)?;
+            system.record_eval(ts + h * (3.0 / 10.0), &self.tmp);
+            system.evaluate_scratch(ts + h * (3.0 / 10.0), &mut self.tmp, &mut self.k3)?;
 
             for i in 0..n {
                 self.tmp[i] = self.y[i]
-                    + dt * (44.0 / 45.0 * self.k1[i] - 56.0 / 15.0 * self.k2[i]
+                    + h * (44.0 / 45.0 * self.k1[i] - 56.0 / 15.0 * self.k2[i]
                         + 32.0 / 9.0 * self.k3[i]);
             }
-            system.record_eval(t + dt * (4.0 / 5.0), &self.tmp);
-            system.evaluate_scratch(t + dt * (4.0 / 5.0), &mut self.tmp, &mut self.k4)?;
+            system.record_eval(ts + h * (4.0 / 5.0), &self.tmp);
+            system.evaluate_scratch(ts + h * (4.0 / 5.0), &mut self.tmp, &mut self.k4)?;
 
             for i in 0..n {
                 self.tmp[i] = self.y[i]
-                    + dt * (19372.0 / 6561.0 * self.k1[i] - 25360.0 / 2187.0 * self.k2[i]
+                    + h * (19372.0 / 6561.0 * self.k1[i] - 25360.0 / 2187.0 * self.k2[i]
                         + 64448.0 / 6561.0 * self.k3[i]
                         - 212.0 / 729.0 * self.k4[i]);
             }
-            system.record_eval(t + dt * (8.0 / 9.0), &self.tmp);
-            system.evaluate_scratch(t + dt * (8.0 / 9.0), &mut self.tmp, &mut self.k5)?;
+            system.record_eval(ts + h * (8.0 / 9.0), &self.tmp);
+            system.evaluate_scratch(ts + h * (8.0 / 9.0), &mut self.tmp, &mut self.k5)?;
 
             for i in 0..n {
                 self.tmp[i] = self.y[i]
-                    + dt * (9017.0 / 3168.0 * self.k1[i] - 355.0 / 33.0 * self.k2[i]
+                    + h * (9017.0 / 3168.0 * self.k1[i] - 355.0 / 33.0 * self.k2[i]
                         + 46732.0 / 5247.0 * self.k3[i]
                         + 49.0 / 176.0 * self.k4[i]
                         - 5103.0 / 18656.0 * self.k5[i]);
             }
-            system.record_eval(t + dt, &self.tmp);
-            system.evaluate_scratch(t + dt, &mut self.tmp, &mut self.k6)?;
+            system.record_eval(ts + h, &self.tmp);
+            system.evaluate_scratch(ts + h, &mut self.tmp, &mut self.k6)?;
 
             for i in 0..n {
                 self.y5[i] = self.y[i]
-                    + dt * (35.0 / 384.0 * self.k1[i]
+                    + h * (35.0 / 384.0 * self.k1[i]
                         + 500.0 / 1113.0 * self.k3[i]
                         + 125.0 / 192.0 * self.k4[i]
                         - 2187.0 / 6784.0 * self.k5[i]
                         + 11.0 / 84.0 * self.k6[i]);
 
                 self.y4[i] = self.y[i]
-                    + dt * (5179.0 / 57600.0 * self.k1[i]
+                    + h * (5179.0 / 57600.0 * self.k1[i]
                         + 7571.0 / 16695.0 * self.k3[i]
                         + 393.0 / 640.0 * self.k4[i]
                         - 92097.0 / 339200.0 * self.k5[i]
@@ -642,13 +659,22 @@ impl Solver for AdaptiveRK45Solver {
                 }
             }
 
+            guard += 1;
+            if guard > 20_000 {
+                return Err(1);
+            }
+
             if err <= 1.0 {
+                // Accept: advance sub-time by the step we actually took (h),
+                // keeping state and time in sync, then grow the next step.
                 states.copy_from_slice(&self.y5);
-                break;
+                ts += h;
+                let grow = (1.0 / err.max(1e-16)).powf(0.2).clamp(1.0, 5.0);
+                h *= grow;
             } else {
-                // Reject and reduce dt
+                // Reject and shrink; re-attempt without advancing time.
                 let factor = (1.0 / (2.0 * err)).powf(0.25).min(0.5);
-                dt *= factor.max(0.1);
+                h *= factor.max(0.1);
             }
         }
 
