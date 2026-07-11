@@ -182,7 +182,13 @@ impl<'a> System<'a> {
         self.buf_discrete.resize(self.discrete.len(), 0.0);
         self.buf_discrete.copy_from_slice(self.discrete);
         self.buf_when.resize(self.when_states.len(), 0.0);
-        self.buf_when.fill(0.0);
+        // Preserve the real when-edge `pre` values (do NOT zero them): the JIT
+        // computes `edge = cond && pre==0` and overwrites the `new` slots, so
+        // zeroing pre makes every still-true `when` re-fire its body on every
+        // solver stage (e.g. `when time>0.5` re-runs reinit each step, freezing
+        // the state). Copying keeps pre correct so edges fire only on a real
+        // 0->1 transition.
+        self.buf_when.copy_from_slice(self.when_states);
         self.buf_crossings.resize(self.crossings.len(), 0.0);
         self.buf_crossings.fill(0.0);
         self.buf_outputs.resize(self.outputs.len(), 0.0);
@@ -209,7 +215,7 @@ impl<'a> System<'a> {
                     *dst = *src * scale;
                 }
                 self.buf_discrete.copy_from_slice(self.discrete);
-                self.buf_when.fill(0.0);
+                self.buf_when.copy_from_slice(self.when_states);
                 self.buf_crossings.fill(0.0);
                 // SAFETY: calc_derivs is a JIT-compiled function pointer. All array
                 // pointers passed are valid slices owned by the solver with correct lengths.
