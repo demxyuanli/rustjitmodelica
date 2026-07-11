@@ -1,3 +1,29 @@
+/// True if expanding `eqs` would produce connections or algorithm statements
+/// (connect / when / reinit / assert / terminate). Such a loop body cannot be
+/// kept as a symbolic `Equation::For` (which only carries equations) and must
+/// be unrolled with the loop variable substituted, otherwise those statements
+/// are silently dropped.
+fn equations_need_unroll(eqs: &[crate::ast::Equation]) -> bool {
+    use crate::ast::{Equation, Expression};
+    eqs.iter().any(|e| match e {
+        Equation::Connect(..)
+        | Equation::When(..)
+        | Equation::Reinit(..)
+        | Equation::Assert(..)
+        | Equation::Terminate(..) => true,
+        Equation::CallStmt(Expression::Call(name, args)) => {
+            (name == "reinit" || name.ends_with(".reinit")) && args.len() == 2
+        }
+        Equation::For(_, _, _, inner) => equations_need_unroll(inner),
+        Equation::If(_, then_b, elifs, else_b) => {
+            equations_need_unroll(then_b)
+                || elifs.iter().any(|(_, b)| equations_need_unroll(b))
+                || else_b.as_deref().is_some_and(equations_need_unroll)
+        }
+        _ => false,
+    })
+}
+
 impl crate::flatten::Flattener {
     pub(crate) fn expand_equation_list(
         &mut self,
@@ -334,7 +360,9 @@ impl crate::flatten::Flattener {
                     let count = e_int - s_int + 1;
                     // When loop range is large (>100), keep as single Equation::For for JIT to iterate;
                     // avoids huge expansion and stack depth during flatten. See TestLib/BigFor.mo.
-                    if count > 100 {
+                    // Only safe for pure-equation bodies: connect()/algorithm sections have no
+                    // symbolic-For container, so a body containing them must be unrolled instead.
+                    if count > 100 && !equations_need_unroll(body) {
                         let mut temp_eqs = Vec::new();
                         let mut temp_alg = Vec::new();
                         let mut temp_conn = Vec::new();
