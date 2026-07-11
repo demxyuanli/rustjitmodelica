@@ -855,6 +855,12 @@ impl Jit {
             let mut when_idx = 0usize;
             let mut crossings_idx = 0usize;
             let mut sub_var_map: HashMap<String, Value> = HashMap::new();
+            // `time` and `t_end` are pure block-param Values (not backed by a
+            // pointer + index like states/params), so they must be seeded into
+            // var_map here. Without this, any `time`/`t_end` reference inside a
+            // solvable block compiles to the 0.0 unknown-variable fallback.
+            sub_var_map.insert("time".to_string(), time_val);
+            sub_var_map.insert("t_end".to_string(), _t_end);
             let mut sub_ctx = TranslationContext {
                 module: &mut self.module,
                 var_map: &mut sub_var_map,
