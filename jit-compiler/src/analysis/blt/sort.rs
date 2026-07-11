@@ -207,32 +207,41 @@ pub fn sort_algebraic_equations(
         assigned_eq: &mut [Option<usize>],
         visited: &mut [bool],
     ) -> bool {
-        let mut stack: Vec<(usize, usize, Option<usize>)> = vec![(u_start, 0, None)];
-        while let Some((u, idx, var_opt)) = stack.last_mut() {
+        // Iterative Kuhn augmenting-path search. Each stack frame carries the
+        // reassignment to apply on success as (variable, parent equation): when
+        // we descend into frame `child` through variable `v` (currently held by
+        // `child`), on success `v` must be rematched to the PARENT equation that
+        // reached it, not to `child`. Binding `v` to the current frame's own
+        // equation (the previous bug) double-bound the child and left the start
+        // equation unmatched, reporting a spurious high differential index.
+        let mut stack: Vec<(usize, usize, Option<(usize, usize)>)> =
+            vec![(u_start, 0, None)];
+        while let Some((u, idx, reassign)) = stack.last_mut() {
             if *idx >= adj[*u].len() {
-                if let Some(v) = *var_opt {
+                if let Some((v, _)) = *reassign {
                     visited[v] = false;
                 }
                 stack.pop();
                 continue;
             }
-            let v = adj[*u][*idx];
+            let cur_eq = *u;
+            let v = adj[cur_eq][*idx];
             *idx += 1;
             if visited[v] {
                 continue;
             }
             visited[v] = true;
             if assigned_eq[v].is_none() {
-                assigned_eq[v] = Some(*u);
-                while let Some((eq, _, pop_var)) = stack.pop() {
-                    if let Some(var) = pop_var {
-                        assigned_eq[var] = Some(eq);
+                assigned_eq[v] = Some(cur_eq);
+                while let Some((_eq, _, reassign)) = stack.pop() {
+                    if let Some((var, parent_eq)) = reassign {
+                        assigned_eq[var] = Some(parent_eq);
                     }
                 }
                 return true;
             }
             let next_eq = assigned_eq[v].unwrap();
-            stack.push((next_eq, 0, Some(v)));
+            stack.push((next_eq, 0, Some((v, cur_eq))));
         }
         false
     }
