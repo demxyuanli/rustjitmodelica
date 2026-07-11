@@ -5,6 +5,24 @@ use std::collections::HashMap;
 use crate::analysis::expression_utils::{make_mul, make_num};
 use crate::analysis::variable_collection::contains_var;
 
+/// True if making `v = value` an alias would form a circular alias: after
+/// resolving `value` through the aliases already collected, it still references
+/// `v`. Such a self-reference is an algebraic loop (e.g. `a=2*b+1; b=3-a`), which
+/// must stay as real equations for the block solver rather than collapse into an
+/// unresolvable circular alias map (which the codegen would evaluate sequentially
+/// against stale values). The plain `contains_var(value, v)` guards below only
+/// catch a DIRECT self-reference, not one formed through another alias.
+fn alias_would_cycle(
+    v: &str,
+    value: &Expression,
+    alias_map: &HashMap<String, Expression>,
+) -> bool {
+    if alias_map.is_empty() {
+        return false;
+    }
+    contains_var(&substitute_aliases_in_expr(value, alias_map), v)
+}
+
 pub(crate) fn eliminate_aliases(
     equations: Vec<Equation>,
 ) -> (Vec<Equation>, HashMap<String, Expression>) {
@@ -22,7 +40,7 @@ pub(crate) fn eliminate_aliases(
             if let Equation::Simple(lhs, rhs) = eq {
                 if let Expression::Variable(id) = lhs {
                     let v = resolve_id(*id);
-                    if *lhs != *rhs && !contains_var(rhs, &v) {
+                    if *lhs != *rhs && !contains_var(rhs, &v) && !alias_would_cycle(&v, rhs, &alias_map) {
                         if !v.starts_with("der_") {
                             if !alias_map.contains_key(&v) {
                                 alias_map.insert(v, rhs.clone());
@@ -36,7 +54,7 @@ pub(crate) fn eliminate_aliases(
                 if !is_alias {
                     if let Expression::Variable(id) = rhs {
                         let v = resolve_id(*id);
-                        if *lhs != *rhs && !contains_var(lhs, &v) {
+                        if *lhs != *rhs && !contains_var(lhs, &v) && !alias_would_cycle(&v, lhs, &alias_map) {
                             if !v.starts_with("der_") {
                                 let lhs_is_der = if let Expression::Variable(lid) = lhs {
                                     var_starts_with(*lid, "der_")
@@ -59,7 +77,10 @@ pub(crate) fn eliminate_aliases(
                             if n.abs() < 1e-10 {
                                 if let Expression::Variable(id) = &**r {
                                     let v = resolve_id(*id);
-                                    if !alias_map.contains_key(&v) && !contains_var(rhs, &v) {
+                                    if !alias_map.contains_key(&v)
+                                        && !contains_var(rhs, &v)
+                                        && !alias_would_cycle(&v, rhs, &alias_map)
+                                    {
                                         if !v.starts_with("der_") {
                                             let neg_rhs = make_mul(make_num(-1.0), rhs.clone());
                                             alias_map.insert(v, neg_rhs);
