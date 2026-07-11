@@ -88,14 +88,21 @@ struct ShmemWrap(Shmem);
 
 // shared_memory's Shmem is not marked Send/Sync on Windows due to raw pointers.
 // We guard access via an in-shared-memory lock and only expose safe byte-copy operations.
+// SAFETY: ShmemWrap owns the shared memory segment. The underlying OS shmem handle
+// is process-scoped and safe to transfer across threads. All accesses are serialized
+// through the in-shared-memory lock (lock_read/lock_write on the segment header).
 unsafe impl Send for ShmemWrap {}
+// SAFETY: All mutable state inside ShmemWrap is behind the in-shared-memory lock.
+// The shared memory segment supports concurrent reads from different threads.
 unsafe impl Sync for ShmemWrap {}
 
 struct ShmState {
     seg0: ShmemWrap,
 }
 
+// SAFETY: ShmState delegates to ShmemWrap which is Send/Sync.
 unsafe impl Send for ShmState {}
+// SAFETY: ShmState delegates to ShmemWrap which is Sync.
 unsafe impl Sync for ShmState {}
 
 fn seg_size_bytes() -> usize {
@@ -116,6 +123,9 @@ fn index_capacity() -> u32 {
 }
 
 fn init_seg0(seg0: &ShmemWrap) {
+    // SAFETY: seg0.as_ptr() returns a valid pointer to the shared memory segment.
+    // The segment is guaranteed to be at least the size of HeaderV1 + index +
+    // arena. All pointer arithmetic stays within the segment bounds.
     unsafe {
         let base = seg0.0.as_ptr() as *mut u8;
         let hdr = &mut *as_mut::<HeaderV1>(base, 0);
@@ -302,6 +312,9 @@ fn unlock_hdr(hdr: &HeaderV1) {
 
 pub fn shm_get(key: &str) -> Option<Vec<u8>> {
     let st = state()?;
+    // SAFETY: init_seg0 ensures the header is valid. All pointer offsets
+    // (index_off, arena_off) are set by init_seg0 and remain within the
+    // segment. Access is protected by a read lock on the shared-memory header.
     unsafe {
         init_seg0(&st.seg0);
         let base0 = st.seg0.0.as_ptr() as *mut u8;
@@ -343,6 +356,9 @@ pub fn shm_put(key: &str, payload: &[u8]) -> bool {
         Some(s) => s,
         None => return false,
     };
+    // SAFETY: init_seg0 ensures the header is valid. All pointer arithmetic
+    // stays within segment bounds. Access is serialized via a write lock
+    // on the shared-memory header.
     unsafe {
         init_seg0(&st.seg0);
         let base0 = st.seg0.0.as_ptr() as *mut u8;

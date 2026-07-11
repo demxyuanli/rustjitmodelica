@@ -1,6 +1,6 @@
 use crate::ast::{ExtendsClause, Model};
 use crate::flatten::apply_redeclare_extends_blocks;
-use crate::flatten::utils::{is_primitive, merge_models};
+use crate::flatten::utils::{is_primitive, merge_models, qualify_short_type_names};
 use crate::flatten::{apply_modification_to_model, FlattenError, ModifyContext};
 use crate::query_db::QueryDb;
 use std::sync::Arc;
@@ -159,26 +159,12 @@ pub(super) fn flatten_inheritance_pure(
 }
 
 fn qualify_short_types_query(db: &dyn QueryDb, model: &mut Model, base_pkg: &str) {
-    let inner_names: std::collections::HashSet<String> =
-        model.inner_classes.iter().map(|ic| ic.name.clone()).collect();
-    for decl in &mut model.declarations {
-        if !decl.type_name.contains('.') && !is_primitive(&decl.type_name) {
-            if inner_names.contains(&decl.type_name) {
-                continue;
-            }
-            let fqn = format!("{}.{}", base_pkg, decl.type_name);
-            let ast = db.model_ast(fqn.clone());
-            if !ast.model.declarations.is_empty()
-                || !ast.model.equations.is_empty()
-                || !ast.model.extends.is_empty()
-                || !ast.model.inner_classes.is_empty()
-            {
-                decl.type_name = fqn;
-            }
-        }
-    }
-    for ic in &mut model.inner_classes {
-        qualify_short_types_query(db, ic, base_pkg);
-    }
+    qualify_short_type_names(model, base_pkg, &mut |candidate: &str| {
+        let ast = db.model_ast(candidate.to_string());
+        !ast.model.declarations.is_empty()
+            || !ast.model.equations.is_empty()
+            || !ast.model.extends.is_empty()
+            || !ast.model.inner_classes.is_empty()
+    });
 }
 

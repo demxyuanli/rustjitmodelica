@@ -114,3 +114,110 @@ impl ClosureFingerprint {
 pub fn deps_match(deps: &[DepHashEntry]) -> bool {
     ClosureFingerprint::compute(deps).matches_disk()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_dep(path: &str, hash: &str) -> DepHashEntry {
+        DepHashEntry {
+            path: path.to_string(),
+            content_hash: hash.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_closure_fingerprint_compute_stable_ordering() {
+        let deps = vec![
+            make_dep("/d/LibC.mo", "c"),
+            make_dep("/d/LibA.mo", "a"),
+            make_dep("/d/LibB.mo", "b"),
+        ];
+        let fp = ClosureFingerprint::compute(&deps);
+        // Sorted order
+        assert_eq!(fp.deps.len(), 3);
+        assert_eq!(fp.deps[0].path, "/d/LibA.mo");
+        assert_eq!(fp.deps[1].path, "/d/LibB.mo");
+        assert_eq!(fp.deps[2].path, "/d/LibC.mo");
+        assert_eq!(fp.topo_hash.len(), 16);
+        assert!(fp.topo_hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_closure_fingerprint_dedup_same_path() {
+        let deps = vec![
+            make_dep("/d/LibA.mo", "a"),
+            make_dep("/d/LibA.mo", "a"), // duplicate
+            make_dep("/d/LibB.mo", "b"),
+        ];
+        let fp = ClosureFingerprint::compute(&deps);
+        assert_eq!(fp.deps.len(), 2);
+        assert_eq!(fp.deps[0].path, "/d/LibA.mo");
+        assert_eq!(fp.deps[1].path, "/d/LibB.mo");
+    }
+
+    #[test]
+    fn test_closure_fingerprint_compute_empty() {
+        let fp = ClosureFingerprint::compute(&[]);
+        assert!(fp.deps.is_empty());
+        assert_eq!(fp.topo_hash.len(), 16);
+        assert_eq!(fp.depth, 0);
+    }
+
+    #[test]
+    fn test_closure_fingerprint_different_hash_produces_different_topo() {
+        let deps_a = vec![make_dep("/d/Lib.mo", "hash_a")];
+        let deps_b = vec![make_dep("/d/Lib.mo", "hash_b")];
+        let fp_a = ClosureFingerprint::compute(&deps_a);
+        let fp_b = ClosureFingerprint::compute(&deps_b);
+        assert_ne!(fp_a.topo_hash, fp_b.topo_hash);
+    }
+
+    #[test]
+    fn test_closure_fingerprint_different_path_same_hash() {
+        let deps_a = vec![make_dep("/d/A.mo", "h")];
+        let deps_b = vec![make_dep("/d/B.mo", "h")];
+        let fp_a = ClosureFingerprint::compute(&deps_a);
+        let fp_b = ClosureFingerprint::compute(&deps_b);
+        assert_ne!(fp_a.topo_hash, fp_b.topo_hash);
+    }
+
+    #[test]
+    fn test_closure_fingerprint_deterministic() {
+        let deps = vec![
+            make_dep("/d/LibB.mo", "b"),
+            make_dep("/d/LibA.mo", "a"),
+        ];
+        let fp1 = ClosureFingerprint::compute(&deps);
+        let fp2 = ClosureFingerprint::compute(&deps);
+        assert_eq!(fp1.topo_hash, fp2.topo_hash);
+    }
+
+    #[test]
+    fn test_closure_fingerprint_additional_dep_changes_hash() {
+        let deps_small = vec![make_dep("/d/A.mo", "a")];
+        let deps_large = vec![make_dep("/d/A.mo", "a"), make_dep("/d/B.mo", "b")];
+        let fp_small = ClosureFingerprint::compute(&deps_small);
+        let fp_large = ClosureFingerprint::compute(&deps_large);
+        assert_ne!(fp_small.topo_hash, fp_large.topo_hash);
+    }
+
+    #[test]
+    fn test_unified_file_hash_testlib_mo_exists() {
+        // A known file that exists in the repo
+        let path = std::path::Path::new("jit-compiler/TestLib/BouncingBall.mo");
+        if path.is_file() {
+            let hash = unified_file_hash(path);
+            assert!(hash.is_some());
+            let hash = hash.unwrap();
+            assert!(!hash.is_empty());
+            assert_eq!(hash.len(), 16);
+        }
+    }
+
+    #[test]
+    fn test_unified_file_hash_non_existent_is_none() {
+        let hash = unified_file_hash(std::path::Path::new("__nonexistent_file__.xyz"));
+        assert!(hash.is_none());
+    }
+}

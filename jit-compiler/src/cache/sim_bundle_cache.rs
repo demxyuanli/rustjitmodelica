@@ -12,7 +12,7 @@ use xxhash_rust::xxh64::Xxh64;
 
 const SCHEMA_VER: u32 = 1;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompiledSimBundle {
     pub schema_ver: u32,
     pub codegen_key: CodegenCacheKey,

@@ -112,11 +112,12 @@ pub fn sort_algebraic_equations(
     }
 
     // Performance degradation guard: for larger algebraic systems, skip full BLT sorting
-    // and emit a single SolvableBlock to keep compilation bounded.
+    // and emit a single SolvableBlock to keep compilation bounded. Default raised from 63
+    // to 256; most models benefit from BLT. Override via RUSTMODLICA_BLT_MAX_EQ_FOR_SORT.
     let max_eq_for_full_sort = std::env::var("RUSTMODLICA_BLT_MAX_EQ_FOR_SORT")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
-        .unwrap_or(63);
+        .unwrap_or(256);
     if equations.len() > max_eq_for_full_sort {
         let mut unknown_set: HashSet<String> = HashSet::new();
         for eq in &equations {

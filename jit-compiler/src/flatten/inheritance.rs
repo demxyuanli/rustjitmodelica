@@ -1,7 +1,7 @@
 use super::Flattener;
 use crate::ast::{ExtendsClause, Model};
 use crate::flatten::redeclare::apply_redeclare_extends_blocks;
-use crate::flatten::utils::{is_primitive, merge_models};
+use crate::flatten::utils::{is_primitive, merge_models, qualify_short_type_names};
 use crate::flatten::{apply_modification_to_model, FlattenError, ModifyContext};
 use std::sync::Arc;
 
@@ -131,21 +131,8 @@ impl Flattener {
     }
 
     fn qualify_short_types(&mut self, model: &mut Model, base_pkg: &str) {
-        let inner_names: std::collections::HashSet<String> =
-            model.inner_classes.iter().map(|ic| ic.name.clone()).collect();
-        for decl in &mut model.declarations {
-            if !decl.type_name.contains('.') && !is_primitive(&decl.type_name) {
-                if inner_names.contains(&decl.type_name) {
-                    continue;
-                }
-                let fqn = format!("{}.{}", base_pkg, decl.type_name);
-                if self.loader.load_model_silent(&fqn, true).is_ok() {
-                    decl.type_name = fqn;
-                }
-            }
-        }
-        for ic in &mut model.inner_classes {
-            self.qualify_short_types(ic, base_pkg);
-        }
+        qualify_short_type_names(model, base_pkg, &mut |candidate: &str| {
+            self.loader.load_model_silent(candidate, true).is_ok()
+        });
     }
 }

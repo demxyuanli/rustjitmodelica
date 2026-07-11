@@ -11,7 +11,8 @@
 //! tiers in background threads. Tier transitions happen at simulation step boundaries
 //! (no OSR required -- a natural fit for Modelica's time-stepping).
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::sync::OnceLock;
@@ -150,7 +151,7 @@ impl TieringPolicy {
 /// Handle for a tiered function: tracks the current tier and function pointer.
 pub struct TieredFunction {
     current_tier: AtomicU32,
-    func: Mutex<CalcDerivsFunc>,
+    func: AtomicPtr<c_void>,
     /// Background compilation result: set when a tier-up completes.
     pending_upgrade: Mutex<Option<(CompileTier, CalcDerivsFunc)>>,
     /// Counters.
@@ -161,7 +162,7 @@ impl TieredFunction {
     pub fn new(initial_tier: CompileTier, func: CalcDerivsFunc) -> Self {
         Self {
             current_tier: AtomicU32::new(initial_tier as u32),
-            func: Mutex::new(func),
+            func: AtomicPtr::new(func as *mut c_void),
             pending_upgrade: Mutex::new(None),
             tier_transitions: AtomicU32::new(0),
         }
@@ -178,7 +179,10 @@ impl TieredFunction {
     }
 
     pub fn get_func(&self) -> CalcDerivsFunc {
-        *self.func.lock().unwrap()
+        let ptr = self.func.load(Ordering::Acquire);
+        // SAFETY: func is only ever set to a valid CalcDerivsFunc pointer,
+        // never null after construction.
+        unsafe { std::mem::transmute(ptr) }
     }
 
     /// Offer a tier-up: atomically replace the active function if upgrade is pending.
@@ -186,7 +190,7 @@ impl TieredFunction {
     pub fn try_apply_upgrade(&self) -> bool {
         let mut pending = self.pending_upgrade.lock().unwrap();
         if let Some((new_tier, new_func)) = pending.take() {
-            *self.func.lock().unwrap() = new_func;
+            self.func.store(new_func as *mut c_void, Ordering::Release);
             self.current_tier
                 .store(new_tier as u32, Ordering::Release);
             self.tier_transitions.fetch_add(1, Ordering::Relaxed);
@@ -301,10 +305,19 @@ impl TieredScheduler {
                     }
                 }
 
+                // Serialize tier-up env var writes via a process-wide lock so
+                // background threads don't race on std::env::set_var.
+                static TIER_UP_ENV_LOCK: Mutex<()> = Mutex::new(());
+                let _guard = TIER_UP_ENV_LOCK
+                    .lock()
+                    .expect("tier-up env lock poisoned");
+
                 std::env::set_var(
                     "RUSTMODLICA_CRANELIFT_OPT_LEVEL",
                     target_tier.cranelift_opt_level(),
                 );
+                let prev_const_fold = std::env::var("RUSTMODLICA_CONST_FOLD").ok();
+                let prev_eq_dce = std::env::var("RUSTMODLICA_EQ_DCE").ok();
                 if target_tier.skip_const_fold() || force_skip_cf {
                     std::env::set_var("RUSTMODLICA_CONST_FOLD", "0");
                 }
@@ -336,6 +349,18 @@ impl TieredScheduler {
                         eprintln!("[tiered] tier-up failed: {}", e);
                     }
                 }
+                // Restore env vars that may have been overridden.
+                if let Some(v) = prev_const_fold {
+                    std::env::set_var("RUSTMODLICA_CONST_FOLD", &v);
+                } else {
+                    std::env::remove_var("RUSTMODLICA_CONST_FOLD");
+                }
+                if let Some(v) = prev_eq_dce {
+                    std::env::set_var("RUSTMODLICA_EQ_DCE", &v);
+                } else {
+                    std::env::remove_var("RUSTMODLICA_EQ_DCE");
+                }
+                drop(_guard);
             })
         {
             eprintln!("[tiered] thread spawn failed: {}", e);

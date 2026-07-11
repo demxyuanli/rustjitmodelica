@@ -14,13 +14,12 @@ pub struct Codegen {
 }
 
 impl Codegen {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, String> {
         let mut flag_builder = settings::builder();
         let opt_level = std::env::var("RUSTMODLICA_CRANELIFT_AOT_OPT_LEVEL")
             .ok()
             .unwrap_or_else(|| "speed".to_string());
         let _ = flag_builder.set("opt_level", opt_level.trim());
-        // Keep best-effort toggles non-fatal across Cranelift versions.
         if std::env::var("RUSTMODLICA_CRANELIFT_ENABLE_SIMD")
             .ok()
             .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
@@ -28,19 +27,22 @@ impl Codegen {
         {
             let _ = flag_builder.set("enable_simd", "true");
         }
-        let isa_builder = cranelift_native::builder().unwrap();
-        let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
-
-        let builder = ObjectBuilder::new(isa, "modelica_module", cranelift_module::default_libcall_names()).unwrap();
+        let isa_builder = cranelift_native::builder()
+            .map_err(|e| format!("Cranelift native builder failed: {}", e))?;
+        let isa = isa_builder
+            .finish(settings::Flags::new(flag_builder))
+            .map_err(|e| format!("Cranelift ISA creation failed: {}", e))?;
+        let builder = ObjectBuilder::new(isa, "modelica_module", cranelift_module::default_libcall_names())
+            .map_err(|e| format!("Cranelift ObjectBuilder creation failed: {}", e))?;
         let module = ObjectModule::new(builder);
 
-        Self {
+        Ok(Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
             data_ctx: DataDescription::new(),
             module,
             counter: 0,
-        }
+        })
     }
 
     pub fn compile(mut self, model: &Model) -> Result<Vec<u8>, String> {
@@ -89,17 +91,19 @@ impl Codegen {
 
             // Equations
             for eq in &model.equations {
-                if let Expression::Variable(ref var_id) = eq.lhs {
-                    let var_name = crate::string_intern::resolve_id(*var_id);
-                    if let Some(&slot) = var_map.get(&var_name) {
-                        let val = compile_expression(&eq.rhs, &mut builder, &var_map, &mut self.module)?;
-                        builder.ins().stack_store(val, slot, 0);
+                if let Equation::Simple(lhs, rhs) = eq {
+                    if let Expression::Variable(ref var_id) = lhs {
+                        let var_name = crate::string_intern::resolve_id(*var_id);
+                        if let Some(&slot) = var_map.get(&var_name) {
+                            let val = compile_expression(rhs, &mut builder, &var_map, &mut self.module)?;
+                            builder.ins().stack_store(val, slot, 0);
 
-                        // Print
-                        if let Some(&data_id) = string_data_ids.get(&var_name) {
-                            let data_ref = self.module.declare_data_in_func(data_id, &mut builder.func);
-                            let fmt_ptr = builder.ins().global_value(self.module.target_config().pointer_type(), data_ref);
-                            builder.ins().call(printf_func_ref, &[fmt_ptr, val]);
+                            // Print
+                            if let Some(&data_id) = string_data_ids.get(&var_name) {
+                                let data_ref = self.module.declare_data_in_func(data_id, &mut builder.func);
+                                let fmt_ptr = builder.ins().global_value(self.module.target_config().pointer_type(), data_ref);
+                                builder.ins().call(printf_func_ref, &[fmt_ptr, val]);
+                            }
                         }
                     }
                 }
@@ -156,21 +160,24 @@ fn compile_expression(
                 Operator::Sub => Ok(builder.ins().fsub(l, r)),
                 Operator::Mul => Ok(builder.ins().fmul(l, r)),
                 Operator::Div => Ok(builder.ins().fdiv(l, r)),
+                _ => Err(format!("unsupported operator in C codegen: {op:?}")),
             }
         }
-        Expression::Call(func_name, arg) => {
-            let arg_val = compile_expression(arg, builder, var_map, module)?;
-            
+        Expression::Call(func_name, args) => {
+            let first = args.first().ok_or_else(|| "Call with empty args".to_string())?;
+            let arg_val = compile_expression(first, builder, var_map, module)?;
+
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::F64));
             sig.returns.push(AbiParam::new(types::F64));
-            
+
             let func_id = module.declare_function(func_name, Linkage::Import, &sig)
                 .map_err(|e| e.to_string())?;
             let func_ref = module.declare_func_in_func(func_id, &mut builder.func);
-            
+
             let call_inst = builder.ins().call(func_ref, &[arg_val]);
             Ok(builder.inst_results(call_inst)[0])
         }
+        _ => Err("unsupported expression in C codegen".to_string()),
     }
 }

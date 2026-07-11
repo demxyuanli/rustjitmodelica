@@ -96,7 +96,10 @@ pub fn resolve_type_alias(type_aliases: &[(String, String)], name: &str) -> Stri
 
 /// MSL-4: SIunits types (Modelica.SIunits.Time, etc.) are resolved as Real; units parsed but not enforced.
 pub fn is_primitive(type_name: &str) -> bool {
-    matches!(type_name, "Real" | "Integer" | "Boolean" | "String" | "Complex")
+    let short = type_name.rsplit('.').next().unwrap_or(type_name);
+    let is_complex_connector = matches!(short, "ComplexInput" | "ComplexOutput");
+    is_complex_connector
+        || matches!(type_name, "Real" | "Integer" | "Boolean" | "String" | "Complex")
         || type_name == "Clock"
         || type_name.starts_with("Modelica.SIunits.")
         || type_name.starts_with("Modelica.Units.SI.")
@@ -166,36 +169,34 @@ pub fn are_types_compatible(t1: &str, t2: &str) -> bool {
     if t1 == t2 {
         return true;
     }
+    let known_port_suffixes: &[&str] = &[
+        "Port_a", "Port_b", "Ports_a", "Ports_b",
+        "Pin", "Port", "Plug",
+        "Frame", "Frame_a", "Frame_b", "Frame_resolve",
+        "Flange", "Flange_a", "Flange_b",
+        "Support", "Input", "Output",
+        "Bus", "Connector",
+    ];
     let short1 = t1.rsplit('.').next().unwrap_or(t1);
     let short2 = t2.rsplit('.').next().unwrap_or(t2);
+    // Short names match exactly: same connector type in different packages.
     if short1 == short2
-        && (short1.ends_with("Bus")
-            || short1.ends_with("Connector")
-            || short1.ends_with("Port")
-            || short1.ends_with("Pin")
-            || short1.ends_with("Frame")
-            || short1.ends_with("Flange"))
+        && known_port_suffixes.iter().any(|suffix| short1.ends_with(suffix))
     {
         return true;
     }
+    // Different short names but share a known port suffix: handle extends
+    // (e.g. VesselFluidPorts_b extends FluidPorts_b).
+    if short1 != short2 {
+        for suffix in known_port_suffixes {
+            if short1.ends_with(suffix) && short2.ends_with(suffix) {
+                return true;
+            }
+        }
+    }
     let is_likely_connector_type = |s: &str| {
         let short = s.split('.').last().unwrap_or(s);
-        s.contains('.')
-            && (short.ends_with("Pin")
-                || short.ends_with("Port")
-                || short.ends_with("Port_a")
-                || short.ends_with("Port_b")
-                || short.ends_with("Plug")
-                || short.ends_with("Frame")
-                || short.ends_with("Frame_a")
-                || short.ends_with("Frame_b")
-                || short.ends_with("Frame_resolve")
-                || short.ends_with("Flange")
-                || short.ends_with("Flange_a")
-                || short.ends_with("Flange_b")
-                || short.ends_with("Support")
-                || short.ends_with("Input")
-                || short.ends_with("Output"))
+        s.contains('.') && known_port_suffixes.iter().any(|suffix| short.ends_with(suffix))
     };
     let is_real_like = |s: &str| {
         s == "Real"
@@ -562,5 +563,42 @@ pub fn convert_eq_to_alg(eq: Equation) -> AlgorithmStatement {
         Equation::Connect(_, _) => panic!("F4-2: connect() inside when/algorithm is not supported; use equation section for connections"),
         Equation::SolvableBlock { .. } => panic!("F4-2: SolvableBlock (algebraic loop) inside when/algorithm is not supported; put equations in the equation section instead"),
         Equation::MultiAssign(lhss, rhs) => AlgorithmStatement::MultiAssign(lhss, rhs),
+    }
+}
+
+/// Qualify short and relative type names in a model's declarations by walking
+/// the base package scope. Shared between the flattener and query_db paths.
+pub fn qualify_short_type_names(
+    model: &mut Model,
+    base_pkg: &str,
+    exists: &mut dyn FnMut(&str) -> bool,
+) {
+    let inner_names: std::collections::HashSet<String> =
+        model.inner_classes.iter().map(|ic| ic.name.clone()).collect();
+    for decl in &mut model.declarations {
+        if is_primitive(&decl.type_name) || inner_names.contains(&decl.type_name) {
+            continue;
+        }
+        if !decl.type_name.contains('.') {
+            let fqn = format!("{}.{}", base_pkg, decl.type_name);
+            if exists(&fqn) {
+                decl.type_name = fqn;
+            }
+        } else if !decl.type_name.starts_with("Modelica.")
+            && !decl.type_name.starts_with("ModelicaTest.")
+            && !decl.type_name.starts_with("ModelicaServices.") {
+            let mut scope = base_pkg.to_string();
+            while let Some((parent, _)) = scope.rsplit_once('.') {
+                let candidate = format!("{}.{}", parent, decl.type_name);
+                if exists(&candidate) {
+                    decl.type_name = candidate;
+                    break;
+                }
+                scope = parent.to_string();
+            }
+        }
+    }
+    for ic in &mut model.inner_classes {
+        qualify_short_type_names(ic, base_pkg, exists);
     }
 }

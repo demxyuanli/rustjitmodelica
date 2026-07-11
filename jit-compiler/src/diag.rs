@@ -76,14 +76,12 @@ impl fmt::Display for ParseErrorInfo {
 
 impl ParseErrorInfo {
     /// Print error to stderr in Rust compiler style.
-    #[allow(dead_code)]
-    pub fn print(&self) {
+        pub fn print(&self) {
         eprint!("{}", self);
     }
 }
 
 /// Format a pest parse error with path and source into Rust-style output.
-#[allow(dead_code)]
 pub fn format_parse_error(path: &str, source: &str, message: &str, line: usize, column: usize) {
     let info = ParseErrorInfo {
         path: path.to_string(),
@@ -155,7 +153,6 @@ impl fmt::Display for WarningInfo {
 }
 
 /// Build a warning without source snippet (path:line:col only).
-#[allow(dead_code)]
 pub fn warning_at(path: &str, line: usize, column: usize, message: &str) -> WarningInfo {
     WarningInfo {
         path: path.to_string(),
@@ -167,7 +164,6 @@ pub fn warning_at(path: &str, line: usize, column: usize, message: &str) -> Warn
 }
 
 /// Build a warning with source for snippet display.
-#[allow(dead_code)]
 pub fn warning_at_with_source(
     path: &str,
     source: &str,

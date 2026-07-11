@@ -30,6 +30,11 @@ pub fn maybe_print_numeric_jacobian(
     if n == 0 {
         return;
     }
+    let mut _buf_discrete = Vec::new();
+    let mut _buf_when = Vec::new();
+    let mut _buf_crossings = Vec::new();
+    let mut _buf_outputs = Vec::new();
+    let mut _buf_guess = Vec::new();
     let mut system = System {
         calc_derivs,
         params,
@@ -48,11 +53,11 @@ pub fn maybe_print_numeric_jacobian(
         last_eval_state_len: 0,
         scratch_outputs: None,
         homotopy_lambda_ptr,
-        buf_discrete: Vec::new(),
-        buf_when: Vec::new(),
-        buf_crossings: Vec::new(),
-        buf_outputs: Vec::new(),
-        buf_guess: Vec::new(),
+        buf_discrete: &mut _buf_discrete,
+        buf_when: &mut _buf_when,
+        buf_crossings: &mut _buf_crossings,
+        buf_outputs: &mut _buf_outputs,
+        buf_guess: &mut _buf_guess,
         eval_count: 0,
         hotspot_threshold: 1000,
         simd_step_hits: 0,
