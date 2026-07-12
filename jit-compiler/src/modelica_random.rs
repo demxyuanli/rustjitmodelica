@@ -25,11 +25,13 @@ fn step_xorshift64star(state: &mut [i32; 2]) -> f64 {
     x ^= x >> 12;
     x ^= x << 25;
     x ^= x >> 27;
-    x = x.wrapping_mul(2685821657736338717u64);
+    // MSL/Vigna persist the state BEFORE the output multiply (matches
+    // xorshift1024* below); the previous code stored the post-multiply value,
+    // so every draw after the first diverged from MSL.
     let (lo, hi) = pair_from_u64(x);
     state[0] = lo;
     state[1] = hi;
-    modelica_rand_u64(x)
+    modelica_rand_u64(x.wrapping_mul(2685821657736338717u64))
 }
 
 fn step_xorshift128plus(state: &mut [i32; 4]) -> f64 {
@@ -40,14 +42,17 @@ fn step_xorshift128plus(state: &mut [i32; 4]) -> f64 {
     let s0 = s[1];
     s[0] = s[1];
     s1 ^= s1 << 23;
-    s[1] = (s1 ^ s0 ^ (s1 >> 17) ^ (s0 >> 26)).wrapping_add(s0);
+    // Persist s[1] WITHOUT the `+ s0` output term (Vigna/MSL); the previous
+    // code folded +s0 into the stored state, diverging after the first draw.
+    let new_s1 = s1 ^ s0 ^ (s1 >> 17) ^ (s0 >> 26);
+    s[1] = new_s1;
     let (a, b) = pair_from_u64(s[0]);
     state[0] = a;
     state[1] = b;
     let (c, d) = pair_from_u64(s[1]);
     state[2] = c;
     state[3] = d;
-    modelica_rand_u64(s[1])
+    modelica_rand_u64(new_s1.wrapping_add(s0))
 }
 
 fn step_xorshift1024star(state: &mut [i32; 33]) -> f64 {
@@ -140,5 +145,29 @@ pub unsafe extern "C" fn rustmodlica_math_random_msl(
             0
         }
         _ => -3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xorshift_generators_advance_and_stay_in_range() {
+        // Each generator: values in [0,1), state advances (distinct draws), and
+        // is deterministic for a fixed seed. Guards the state-persistence fix.
+        let mut s64: [i32; 2] = [123, 456];
+        let mut s64b = s64;
+        let a = step_xorshift64star(&mut s64);
+        let b = step_xorshift64star(&mut s64);
+        assert!((0.0..1.0).contains(&a) && (0.0..1.0).contains(&b));
+        assert_ne!(a, b, "state must advance between draws");
+        assert_eq!(a, step_xorshift64star(&mut s64b), "must be deterministic");
+
+        let mut s128: [i32; 4] = [1, 2, 3, 4];
+        let c = step_xorshift128plus(&mut s128);
+        let d = step_xorshift128plus(&mut s128);
+        assert!((0.0..1.0).contains(&c) && (0.0..1.0).contains(&d));
+        assert_ne!(c, d, "state must advance between draws");
     }
 }
