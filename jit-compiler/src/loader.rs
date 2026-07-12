@@ -28,6 +28,10 @@ pub struct ModelLoader {
     /// DBG-4: path used to load each model (for source location in errors).
     loaded_paths: HashMap<String, PathBuf>,
     currently_loading: HashSet<String>,
+    /// Candidate file paths that were probed during name resolution but did not
+    /// exist. Recorded as NEGATIVE cache dependencies so that creating one of
+    /// them later (which could change resolution) invalidates the flat cache.
+    probed_absent: HashSet<PathBuf>,
     /// When true, suppress "Loading dependency" and "Resolved inner class" so validate output is JSON-only.
     pub quiet: bool,
 }
@@ -82,8 +86,15 @@ impl ModelLoader {
             loaded_models: HashMap::new(),
             loaded_paths: HashMap::new(),
             currently_loading: HashSet::new(),
+            probed_absent: HashSet::new(),
             quiet: false,
         }
+    }
+
+    /// Candidate paths probed during resolution but found absent, recorded as
+    /// negative cache dependencies (creating one could change resolution).
+    pub fn probed_absent_paths(&self) -> Vec<PathBuf> {
+        self.probed_absent.iter().cloned().collect()
     }
 
     pub fn set_quiet(&mut self, q: bool) {
@@ -523,6 +534,19 @@ impl ModelLoader {
         })();
 
         self.currently_loading.remove(&name_key);
+        if !silent && matches!(result, Err(LoadError::NotFound(_))) {
+            // Record the direct-lookup candidate paths for this unresolved name as
+            // negative dependencies: creating any of them would change resolution.
+            // Only for non-silent (real) references — silent probes are the many
+            // speculative short-name lookups and would bloat the dep set.
+            let rel = name.replace('.', "/");
+            let libs: Vec<PathBuf> = self.library_paths.clone();
+            for lib in &libs {
+                self.probed_absent
+                    .insert(lib.join(format!("{}/package.mo", rel)));
+                self.probed_absent.insert(lib.join(format!("{}.mo", rel)));
+            }
+        }
         result
     }
 

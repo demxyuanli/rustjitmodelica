@@ -100,6 +100,15 @@ impl ClosureFingerprint {
     pub fn matches_disk(&self) -> bool {
         for dep in &self.deps {
             let p = PathBuf::from(dep.path.as_str());
+            if dep.content_hash == ABSENT_DEP_SENTINEL {
+                // Negative dependency: this path was probed and found absent
+                // when the entry was built. Valid only while it stays absent;
+                // if it now exists, name resolution may have changed.
+                if p.exists() {
+                    return false;
+                }
+                continue;
+            }
             let Some(actual) = unified_file_hash(&p) else {
                 return false;
             };
@@ -110,6 +119,12 @@ impl ClosureFingerprint {
         true
     }
 }
+
+/// Sentinel `content_hash` marking a NEGATIVE dependency: a path that was
+/// probed during name resolution but did not exist. Recording it lets a cache
+/// entry be invalidated when a probed-but-absent file is later created (which
+/// could change resolution). Not a real semantic hash, so it cannot collide.
+pub const ABSENT_DEP_SENTINEL: &str = "__RUSTMODLICA_ABSENT_DEP__";
 
 pub fn deps_match(deps: &[DepHashEntry]) -> bool {
     ClosureFingerprint::compute(deps).matches_disk()

@@ -117,12 +117,13 @@ pub fn write_flat_cache_v1(
     model_name: &str,
     flat: &crate::flatten::FlattenedModel,
     deps: &[PathBuf],
+    absent_deps: &[PathBuf],
 ) -> Result<(), String> {
     if !full_cache_enabled() {
         return Ok(());
     }
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let mut entries: Vec<DepHashEntry> = Vec::with_capacity(deps.len());
+    let mut entries: Vec<DepHashEntry> = Vec::with_capacity(deps.len() + absent_deps.len());
     for p in deps {
         let Some(h) = closure_hash::unified_file_hash(p.as_path()) else {
             continue;
@@ -132,11 +133,17 @@ pub fn write_flat_cache_v1(
             content_hash: h,
         });
     }
+    for p in absent_deps {
+        entries.push(DepHashEntry {
+            path: p.display().to_string(),
+            content_hash: closure_hash::ABSENT_DEP_SENTINEL.to_string(),
+        });
+    }
     let scope = scope_from_storage_key(key);
     let scope_pf = scope.prefix();
 
     // Write V2 format (rkyv-based, zero-copy) for future reads
-    let _ = write_flat_cache_v2(dir, key, model_name, flat, deps);
+    let _ = write_flat_cache_v2(dir, key, model_name, flat, deps, absent_deps);
 
     // Also write V1 format for backward compatibility
     let cache = FlatCacheV1::from_flat_model(key.to_string(), model_name, flat, entries);
@@ -235,12 +242,13 @@ pub fn write_flat_cache_v2(
     model_name: &str,
     flat: &crate::flatten::FlattenedModel,
     deps: &[PathBuf],
+    absent_deps: &[PathBuf],
 ) -> Result<(), String> {
     if !full_cache_enabled() {
         return Ok(());
     }
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let mut entries: Vec<DepHashEntry> = Vec::with_capacity(deps.len());
+    let mut entries: Vec<DepHashEntry> = Vec::with_capacity(deps.len() + absent_deps.len());
     for p in deps {
         let Some(h) = closure_hash::unified_file_hash(p.as_path()) else {
             continue;
@@ -248,6 +256,12 @@ pub fn write_flat_cache_v2(
         entries.push(DepHashEntry {
             path: p.display().to_string(),
             content_hash: h,
+        });
+    }
+    for p in absent_deps {
+        entries.push(DepHashEntry {
+            path: p.display().to_string(),
+            content_hash: closure_hash::ABSENT_DEP_SENTINEL.to_string(),
         });
     }
     let cache = FlatCacheV2::from_flat_model(key.to_string(), model_name, flat, entries);

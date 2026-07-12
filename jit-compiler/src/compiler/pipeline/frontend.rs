@@ -435,7 +435,8 @@ pub(crate) fn flatten_and_inline(
         );
         let _ = flatten_cache::write_array_sizes_cache(&cache_root, &key, &flat_model.array_sizes);
         let deps = flattener.loader.loaded_source_paths();
-        let _ = flatten_cache::write_flat_cache_v1(&cache_root, &full_key, model_name, &flat_model, &deps);
+        let absent_deps = flattener.loader.probed_absent_paths();
+        let _ = flatten_cache::write_flat_cache_v1(&cache_root, &full_key, model_name, &flat_model, &deps, &absent_deps);
     }
 
     if let Some(path) = emit_flat_snapshot {
