@@ -37,6 +37,9 @@ pub struct Jit {
     /// model-specific key, preventing cross-model contamination when models share the same
     /// state / discrete / output var shapes.
     pub(super) active_model_name: Option<String>,
+    /// IR copies of block functions compiled by `compile_deferred_blocks`, collected
+    /// for `emit_object_cache_artifact` so the cached object includes all callees.
+    pub(super) block_irs: Vec<cranelift::codegen::ir::Function>,
 }
 
 /// A standalone compiled block with its owning JIT instance.
@@ -99,6 +102,7 @@ impl Jit {
             disk_cache_live: Vec::new(),
             runtime_symbols,
             active_model_name: None,
+            block_irs: Vec::new(),
         }
     }
 
@@ -640,8 +644,9 @@ impl Jit {
                     &param_sig,
                     crate::cache::cache_scope::CacheScope::Project,
                 );
+                let block_irs = std::mem::take(&mut self.block_irs);
                 let build_obj =
-                    std::panic::catch_unwind(|| emit_object_cache_artifact(&ir_for_object_cache));
+                    std::panic::catch_unwind(|| emit_object_cache_artifact(&ir_for_object_cache, &block_irs));
                 match build_obj {
                     Ok(Ok(obj)) => {
                         if let Err(e) = cache.put_object(
@@ -948,6 +953,11 @@ impl Jit {
             builder.ins().return_(&[success_code]);
             builder.seal_all_blocks();
             builder.finalize();
+
+            // Save a copy of the block IR before define_function consumes
+            // it, so emit_object_cache_artifact can include all __block_N
+            // callees alongside calc_derivs (J11).
+            self.block_irs.push(self.ctx.func.clone());
 
             self.module
                 .define_function(*func_id, &mut self.ctx)
