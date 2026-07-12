@@ -68,6 +68,10 @@ impl CacheKeyV2 {
         h.update(self.libs_closure_hash.as_bytes());
         h.update(self.root_content_hash.as_bytes());
         h.update(self.compile_flags.validation_mode.as_bytes());
+        // Delimiter between variable-length fields prevents theoretical
+        // collision (e.g. "full"+"" vs "ful"+"l"). Fields take small vocab
+        // values today, so there is no live collision; hardening.
+        h.update(b"\x00");
         h.update(self.compile_flags.compile_stop.as_bytes());
         h.update(&[self.compile_flags.coarse_constrainedby_only as u8]);
         h.update(&[self.compile_flags.array_size_policy]);
