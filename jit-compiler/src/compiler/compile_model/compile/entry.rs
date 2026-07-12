@@ -2290,6 +2290,7 @@ pub(crate) fn compile(
             )
         {
             crate::jit::interpreter::install_interpreter_context(
+                model_name.to_string(),
                 state_vars_sorted.clone(),
                 param_vars.clone(),
                 diff_equations.clone(),
@@ -2417,6 +2418,7 @@ pub(crate) fn compile(
             );
         if tier0_bypass {
             crate::jit::interpreter::install_interpreter_context(
+                model_name.to_string(),
                 state_vars_sorted.clone(),
                 param_vars.clone(),
                 diff_equations.clone(),

@@ -148,6 +148,16 @@ impl TieringPolicy {
     }
 }
 
+/// Snapshot of the var counts at the time the initial compile was done,
+/// used to reject a tier-up whose fresh compile produced a different layout.
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutSnapshot {
+    pub state_count: usize,
+    pub discrete_count: usize,
+    pub output_count: usize,
+    pub param_count: usize,
+}
+
 /// Handle for a tiered function: tracks the current tier and function pointer.
 pub struct TieredFunction {
     current_tier: AtomicU32,
@@ -156,6 +166,8 @@ pub struct TieredFunction {
     pending_upgrade: Mutex<Option<(CompileTier, CalcDerivsFunc)>>,
     /// Counters.
     tier_transitions: AtomicU32,
+    /// Var-count snapshot from initial compile for layout validation.
+    layout: Mutex<Option<LayoutSnapshot>>,
 }
 
 impl TieredFunction {
@@ -165,7 +177,24 @@ impl TieredFunction {
             func: AtomicPtr::new(func as *mut c_void),
             pending_upgrade: Mutex::new(None),
             tier_transitions: AtomicU32::new(0),
+            layout: Mutex::new(None),
         }
+    }
+
+    /// Seed the layout snapshot from the initial compile so background tier-up
+    /// can validate that a fresh recompile didn't change the var ordering.
+    pub fn set_initial_layout(&self, state: usize, discrete: usize, output: usize, param: usize) {
+        *self.layout.lock().unwrap() = Some(LayoutSnapshot {
+            state_count: state,
+            discrete_count: discrete,
+            output_count: output,
+            param_count: param,
+        });
+    }
+
+    /// Returns the stored snapshot, or `Err(())` if one was never seeded.
+    pub fn layout_snapshot(&self) -> Result<LayoutSnapshot, ()> {
+        self.layout.lock().unwrap().ok_or(())
     }
 
     pub fn current_tier(&self) -> CompileTier {
@@ -214,7 +243,7 @@ impl TieredFunction {
 /// Scheduler that manages tiered compilation for a model.
 pub struct TieredScheduler {
     policy: TieringPolicy,
-    tiered_func: Arc<TieredFunction>,
+    pub(crate) tiered_func: Arc<TieredFunction>,
     model_name: String,
     lib_paths: Vec<std::path::PathBuf>,
     step_count: u64,
@@ -335,6 +364,35 @@ impl TieredScheduler {
                 }
                 match compiler.compile(&model) {
                     Ok(crate::CompileOutput::Simulation(artifacts)) => {
+                        // The fresh compile independently re-derives state/discrete/
+                        // output ordering and may omit variables that const-fold or
+                        // DCE removed. Validate that the counts match the running
+                        // simulation before installing the upgrade — a mismatch
+                        // produces silently wrong results (J8).
+                        let current = tf.layout_snapshot();
+                        if let Ok(cur) = current {
+                            if artifacts.state_vars.len() != cur.state_count
+                                || artifacts.discrete_vars.len() != cur.discrete_count
+                                || artifacts.output_vars.len() != cur.output_count
+                                || artifacts.param_vars.len() != cur.param_count
+                            {
+                                eprintln!(
+                                    "[tiered] tier-up to {:?} skipped: var layout mismatch \
+                                     (new states={}/discrete={}/outputs={}/params={}; \
+                                      running {}/{}/{}/{})",
+                                    target_tier,
+                                    artifacts.state_vars.len(),
+                                    artifacts.discrete_vars.len(),
+                                    artifacts.output_vars.len(),
+                                    artifacts.param_vars.len(),
+                                    cur.state_count,
+                                    cur.discrete_count,
+                                    cur.output_count,
+                                    cur.param_count,
+                                );
+                                return;
+                            }
+                        }
                         tf.set_pending_upgrade(target_tier, artifacts.calc_derivs);
                         eprintln!(
                             "[tiered] tier-up to {:?} ready in {:.1}ms",

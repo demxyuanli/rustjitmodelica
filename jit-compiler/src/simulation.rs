@@ -317,7 +317,7 @@ pub fn run_simulation(
         }
         let initial_tier = policy.select_initial_tier(total_eq_count);
         let initial_func = if initial_tier == crate::jit::tiered::CompileTier::Interpreter
-            && crate::jit::interpreter::is_context_installed()
+            && crate::jit::interpreter::is_context_installed_for(model_name)
         {
             crate::jit::interpreter::interpreter_trampoline as CalcDerivsFunc
         } else {
@@ -329,6 +329,12 @@ pub fn run_simulation(
             initial_tier,
             initial_func,
             policy,
+        );
+        sched.tiered_func.set_initial_layout(
+            state_vars.len(),
+            discrete_vals.len(),
+            output_vars.len(),
+            params.len(),
         );
         if let Some(profile) = crate::condenser::training_run::load_cached_profile(model_name) {
             sched = sched.with_profile(profile);

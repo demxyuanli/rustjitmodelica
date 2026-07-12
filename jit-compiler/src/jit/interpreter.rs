@@ -294,13 +294,47 @@ struct InterpreterContext {
     state_count: usize,
 }
 
-static INTERPRETER_CTX: OnceLock<Mutex<InterpreterContext>> = OnceLock::new();
+/// Per-model interpreter contexts, keyed by model name. Replaces the single
+/// global `OnceLock<Mutex<InterpreterContext>>` which would serve the wrong
+/// model's equations in multi-simulation (IDE) scenarios.
+static INTERPRETER_CTXS: OnceLock<Mutex<std::collections::HashMap<String, InterpreterContext>>> =
+    OnceLock::new();
 
-pub fn is_context_installed() -> bool {
-    INTERPRETER_CTX.get().is_some()
+/// Thread-local active model identifier, set by the simulation driver before
+/// calling the interpreter trampoline so it can find the right context.
+std::thread_local! {
+    pub(crate) static ACTIVE_INTERPRETER_MODEL: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+}
+
+/// Set the active interpreter model for this thread (called by the simulation
+/// driver before invoking calc_derivs). Returns a guard that clears it on drop.
+pub fn set_active_interpreter_model(name: &str) -> TrampolineContext {
+    ACTIVE_INTERPRETER_MODEL.with(|c| *c.borrow_mut() = Some(name.to_string()));
+    TrampolineContext
+}
+
+pub struct TrampolineContext;
+
+impl Drop for TrampolineContext {
+    fn drop(&mut self) {
+        ACTIVE_INTERPRETER_MODEL.with(|c| *c.borrow_mut() = None);
+    }
+}
+
+fn ctx_map() -> &'static Mutex<std::collections::HashMap<String, InterpreterContext>> {
+    INTERPRETER_CTXS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn is_context_installed_for(model_name: &str) -> bool {
+    INTERPRETER_CTXS
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|m| m.contains_key(model_name))
+        .unwrap_or(false)
 }
 
 pub fn install_interpreter_context(
+    model_name: String,
     state_vars: Vec<String>,
     param_vars: Vec<String>,
     diff_equations: Vec<Equation>,
@@ -314,13 +348,7 @@ pub fn install_interpreter_context(
         alg_equations,
         state_count,
     };
-    if let Some(existing) = INTERPRETER_CTX.get() {
-        if let Ok(mut guard) = existing.lock() {
-            *guard = ctx;
-        }
-    } else {
-        let _ = INTERPRETER_CTX.set(Mutex::new(ctx));
-    }
+    ctx_map().lock().map(|mut m| m.insert(model_name, ctx)).ok();
 }
 
 pub unsafe extern "C" fn interpreter_trampoline(
@@ -342,10 +370,16 @@ pub unsafe extern "C" fn interpreter_trampoline(
     if states.is_null() || derivs.is_null() {
         return -1;
     }
-    let Some(ctx_lock) = INTERPRETER_CTX.get() else {
+    let model: Option<String> =
+        ACTIVE_INTERPRETER_MODEL.with(|c| c.borrow().clone());
+    let Some(model) = model else {
         return -1;
     };
-    let Ok(ctx) = ctx_lock.lock() else {
+    let ctx_map = ctx_map();
+    let Ok(ctx_lock) = ctx_map.lock() else {
+        return -1;
+    };
+    let Some(ctx) = ctx_lock.get(&model) else {
         return -1;
     };
     let n = ctx.state_count;

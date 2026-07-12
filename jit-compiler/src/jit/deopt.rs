@@ -95,7 +95,6 @@ impl DeoptManager {
     /// Signal that a deoptimization should happen at the next step boundary.
     pub fn request_deopt(&mut self, guard_id: u32, time: f64, step: u64, reason: &str) {
         self.deopt_pending = true;
-        DEOPT_PENDING.store(true, Ordering::Release);
         self.deopt_events.push(DeoptEvent {
             guard_id,
             simulation_time: time,
@@ -105,15 +104,14 @@ impl DeoptManager {
     }
 
     /// Called at each simulation step boundary. If deopt is pending (from either
-    /// local request_deopt or the global DEOPT_PENDING flag set by guard checks),
-    /// switches to the generic fallback.
+    /// local request_deopt or the guard-check signal), switches to the generic
+    /// fallback. Per-manager (not process-global), so concurrent simulations
+    /// cannot consume each other's deopt signals.
     pub fn check_and_apply(&mut self) -> bool {
-        let global_pending = DEOPT_PENDING.load(Ordering::Acquire);
-        if !self.deopt_pending && !global_pending {
+        if !self.deopt_pending {
             return false;
         }
         self.deopt_pending = false;
-        DEOPT_PENDING.store(false, Ordering::Release);
 
         if let Some(generic) = self.generic_func {
             self.active_func = generic;
