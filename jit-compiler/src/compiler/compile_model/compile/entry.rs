@@ -2461,6 +2461,12 @@ pub(crate) fn compile(
                 &root_model.enumerations,
             )
         };
+        // Background tier-up: leak the Jit so its JITModule's mmap region
+        // (which backs calc_derivs pointer) survives; without this the fn
+        // pointer dangles after the Jit drops (J7 tier-up UAF).
+        if compiler.options.jit_leak {
+            let _: &'static mut _ = Box::leak(Box::new(jit));
+        }
         let jit_elapsed = jit_t0.elapsed();
         perf_report.jit_inline_builtin_hits = crate::jit::translator::expr::take_inline_builtin_hits();
         let mut type_hash = Xxh64::new(0);

@@ -356,6 +356,11 @@ impl TieredScheduler {
 
                 let mut compiler = crate::Compiler::new();
                 compiler.options_mut().quiet = true;
+                // The fresh Jit created by this compile owns the memory backing
+                // calc_derivs. Without leaking it the JITModule mmap is freed
+                // when the Jit drops at end of the closure, leaving a dangling
+                // fn pointer (J7 tier-up UAF).
+                compiler.options_mut().jit_leak = true;
                 for p in &lib_paths {
                     compiler.loader.add_path(p.clone());
                 }

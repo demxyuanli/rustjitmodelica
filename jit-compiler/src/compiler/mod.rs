@@ -68,6 +68,9 @@ pub struct CompilerOptions {
     pub output_interval: f64,
     /// RT1-5: Optional CSV result file path; when set, simulation writes time series to this file.
     pub result_file: Option<String>,
+    /// JIT memory: when true, `Jit::compile()` leaks self via `Box::leak` so the
+    /// code segment backing calc_derivs survives the caller. Used by background tier-up.
+    pub jit_leak: bool,
     /// DBG-3: Warnings level: "all" | "none" | "error" (none = suppress, error = treat as error).
     pub warnings_level: String,
     /// CG1-1: When set, emit C source (model.c, model.h) to this directory.
@@ -494,6 +497,7 @@ impl CompilePerfReport {
 impl Default for CompilerOptions {
     fn default() -> Self {
         CompilerOptions {
+            jit_leak: false,
             backend_dae_info: false,
             index_reduction_method: "pantelides".to_string(),
             tearing_method: "first".to_string(),
