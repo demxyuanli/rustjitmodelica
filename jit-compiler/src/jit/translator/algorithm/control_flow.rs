@@ -130,9 +130,14 @@ pub(super) fn compile_for_stmt(
     builder.ins().jump(header_block, &[]);
     builder.switch_to_block(header_block);
     let curr_i = builder.ins().stack_load(cl_types::F64, loop_var_slot, 0);
-    let cmp = builder
-        .ins()
-        .fcmp(FloatCC::LessThanOrEqual, curr_i, end_val);
+    // Loop continuation depends on step sign: `i <= end` when ascending,
+    // `i >= end` when descending. A fixed `<=` made every negative-step range
+    // (e.g. `for i in 3:-1:1`) skip the body entirely.
+    let zero = builder.ins().f64const(0.0);
+    let step_nonneg = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, step_val, zero);
+    let le = builder.ins().fcmp(FloatCC::LessThanOrEqual, curr_i, end_val);
+    let ge = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, curr_i, end_val);
+    let cmp = builder.ins().select(step_nonneg, le, ge);
     builder.ins().brif(cmp, body_block, &[], exit_block, &[]);
     builder.switch_to_block(body_block);
     ctx.loop_break_stack.push(after_for);
