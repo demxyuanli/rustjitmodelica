@@ -44,7 +44,9 @@ fn eval_builtin(name: &str, args: &[f64]) -> Result<f64, String> {
         } else {
             (a(0) / a(1)).trunc()
         }),
-        "integer" => Ok(a(0).trunc()),
+        // Modelica integer(x) = largest integer <= x (floor), not truncation:
+        // integer(-0.5) is -1, not 0.
+        "integer" => Ok(a(0).floor()),
         "ceil" => Ok(a(0).ceil()),
         "floor" => Ok(a(0).floor()),
         "sin" => Ok(a(0).sin()),
