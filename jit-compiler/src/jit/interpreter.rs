@@ -7,7 +7,7 @@
 //! This is analogous to the JVM interpreter tier in HotSpot: slowest execution but
 //! zero compilation overhead.
 
-use crate::ast::{Expression, Equation, Operator};
+use crate::ast::{AlgorithmStatement, Expression, Equation, Operator};
 use crate::string_intern::resolve_id;
 use std::collections::HashMap;
 
@@ -207,6 +207,73 @@ impl EquationInterpreter {
         }
     }
 
+    /// Evaluate an algebraic equation (non-derivative): assignment, when, or
+    /// solvable-block approximation. Called once before diff equations so that
+    /// algebraic/clocked variables feeding `der` RHSs are not 0-initialized.
+    pub fn eval_alg_equation(&mut self, eq: &Equation, time: f64) {
+        match eq {
+            Equation::Simple(lhs, rhs) => {
+                // Simple assignment: lhs = expr(rhs).  Collect into the variable
+                // map for downstream diff-equation RHS access.
+                if let Expression::Variable(var_id) = lhs {
+                    let var_name = resolve_id(*var_id);
+                    if var_name != "der_x" {
+                        self.variables.insert(var_name, self.eval_expr(rhs));
+                    }
+                }
+            }
+            Equation::When(cond, body, else_whens) => {
+                let all_whens = std::iter::once((cond, body))
+                    .chain(else_whens.iter().map(|(c, b)| (c, b)));
+                for (cond, body) in all_whens {
+                    if self.eval_expr(cond) != 0.0 {
+                        for e in body {
+                            self.eval_alg_equation(e, time);
+                        }
+                        break;
+                    }
+                }
+            }
+            Equation::If(cond, then_eqs, elifs, else_eqs) => {
+                if self.eval_expr(cond) != 0.0 {
+                    for e in then_eqs {
+                        self.eval_alg_equation(e, time);
+                    }
+                } else {
+                    let mut handled = false;
+                    for (ec, ee) in elifs {
+                        if self.eval_expr(ec) != 0.0 {
+                            for e in ee {
+                                self.eval_alg_equation(e, time);
+                            }
+                            handled = true;
+                            break;
+                        }
+                    }
+                    if !handled {
+                        if let Some(else_block) = else_eqs {
+                            for e in else_block {
+                                self.eval_alg_equation(e, time);
+                            }
+                        }
+                    }
+                }
+            }
+            // Solvable blocks are Newton-solved in JIT; interpreter falls back to
+            // a single-pass approximation (already the JIT behavior for
+            // non-iterated blocks — correctness requires the tier to be suitable).
+            _ => {}
+        }
+    }
+
+    /// Evaluate an algorithm statement (when-body, reinit, assignment).
+    /// Unused for now; when-body items are compiled as Equation variants and
+    /// handled by `eval_alg_equation` above.  Full algorithm support would
+    /// mirror jit/translator/algorithm/mod.rs.
+    #[allow(dead_code)]
+    pub fn eval_alg_stmt(&mut self, _s: &AlgorithmStatement, _time: f64) {
+    }
+
     /// Check if the equation system is small enough to be interpreted.
     pub fn is_interpretable(
         alg_eq_count: usize,
@@ -223,6 +290,7 @@ struct InterpreterContext {
     state_vars: Vec<String>,
     param_vars: Vec<String>,
     diff_equations: Vec<Equation>,
+    alg_equations: Vec<Equation>,
     state_count: usize,
 }
 
@@ -236,12 +304,14 @@ pub fn install_interpreter_context(
     state_vars: Vec<String>,
     param_vars: Vec<String>,
     diff_equations: Vec<Equation>,
+    alg_equations: Vec<Equation>,
 ) {
     let state_count = state_vars.len();
     let ctx = InterpreterContext {
         state_vars,
         param_vars,
         diff_equations,
+        alg_equations,
         state_count,
     };
     if let Some(existing) = INTERPRETER_CTX.get() {
@@ -254,7 +324,7 @@ pub fn install_interpreter_context(
 }
 
 pub unsafe extern "C" fn interpreter_trampoline(
-    _time: f64,
+    time: f64,
     states: *mut f64,
     _discrete: *mut f64,
     derivs: *mut f64,
@@ -288,6 +358,13 @@ pub unsafe extern "C" fn interpreter_trampoline(
 
     let mut interp = EquationInterpreter::new();
     interp.load_state(&ctx.state_vars, states_slice, &ctx.param_vars, params_slice);
+    // Inject `time` so expressions referencing it don't read 0.
+    interp.set_variable("time", time);
+    // Evaluate algebraic equations first so their outputs are available when
+    // differential equation RHSs reference them (J5 + J6).
+    for eq in &ctx.alg_equations {
+        interp.eval_alg_equation(eq, time);
+    }
     interp.eval_all_diff_equations(&ctx.diff_equations);
     let derivs_slice = std::slice::from_raw_parts_mut(derivs, n);
     interp.write_derivatives(&ctx.state_vars, derivs_slice);

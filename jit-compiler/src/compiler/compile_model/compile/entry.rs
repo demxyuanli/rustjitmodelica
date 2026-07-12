@@ -2293,6 +2293,7 @@ pub(crate) fn compile(
                 state_vars_sorted.clone(),
                 param_vars.clone(),
                 diff_equations.clone(),
+                alg_equations.to_vec(),
             );
         }
         perf_report.compile_tier = match selected_tier {
@@ -2419,6 +2420,7 @@ pub(crate) fn compile(
                 state_vars_sorted.clone(),
                 param_vars.clone(),
                 diff_equations.clone(),
+                alg_equations.to_vec(),
             );
         }
         let jit_t0 = Instant::now();
