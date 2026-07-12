@@ -5,6 +5,22 @@ use crate::flatten::{apply_modification_to_model, FlattenError, ModifyContext};
 use crate::query_db::QueryDb;
 use std::sync::Arc;
 
+/// Record NEGATIVE deps on the candidate file paths for an unresolved base
+/// class `name`, via `dep_record_file` into the active DepScope so every
+/// enclosing query captures it. Creating one of these files would change
+/// resolution and must invalidate the cached flattening.
+fn record_absent_base_deps(db: &dyn QueryDb, name: &str, seen: &mut std::collections::HashSet<String>) {
+    let rel = name.replace('.', "/");
+    for lib in db.library_paths().iter() {
+        for cand in [format!("{}/package.mo", rel), format!("{}.mo", rel)] {
+            let p = lib.join(&cand).display().to_string();
+            if seen.insert(p.clone()) {
+                super::dep_record_file(&p, crate::cache::closure_hash::ABSENT_DEP_SENTINEL);
+            }
+        }
+    }
+}
+
 pub(super) fn flatten_inheritance_pure(
     db: &dyn QueryDb,
     arc: &mut Arc<Model>,
@@ -67,12 +83,16 @@ pub(super) fn flatten_inheritance_pure(
             m
         } else {
             let st = db.source_text(base_name.clone());
-            if !st.path.is_empty() && seen_paths.insert(st.path.to_string()) {
-                let h = super::semantic_hash_text(st.text.as_str());
-                deps.push(crate::flatten::flat_cache_v1::DepHashEntry {
-                    path: st.path.to_string(),
-                    content_hash: h,
-                });
+            if !st.path.is_empty() {
+                if seen_paths.insert(st.path.to_string()) {
+                    let h = super::semantic_hash_text(st.text.as_str());
+                    deps.push(crate::flatten::flat_cache_v1::DepHashEntry {
+                        path: st.path.to_string(),
+                        content_hash: h,
+                    });
+                }
+            } else {
+                record_absent_base_deps(db, &base_name, seen_paths);
             }
             let loaded = Arc::clone(&db.model_ast(base_name.clone()).model);
             if loaded.as_ref().declarations.is_empty()

@@ -325,6 +325,9 @@ pub(crate) fn flatten_and_inline(
 
     // Query-based flatten: default on for --validate; off for full simulation unless RUSTMODLICA_SALSA=1.
     let salsa_enabled = salsa_query_path_enabled(validate_only);
+    // Negative (absent-probe) deps discovered by the salsa flatten, to fold into
+    // the pipeline flat-cache entry so it invalidates when the file is created.
+    let mut salsa_absent_deps: Vec<std::path::PathBuf> = Vec::new();
     let mut flat_model = if salsa_enabled {
         let model_key = model_name.replace('/', ".");
         let mut db = query_db::salsa_session::take_reusable_database(
@@ -339,8 +342,9 @@ pub(crate) fn flatten_and_inline(
         db.set_coarse_constrainedby_only(coarse_constrainedby_only);
         db.set_compile_stop(std::sync::Arc::new(compile_stop_s.to_string()));
         db.set_validation_mode(std::sync::Arc::new(format!("{:?}", validation_mode)));
-        let inherited = db.inheritance_flattened(model_key.clone()).0;
-        *root_model = inherited;
+        // Compute the full flat FIRST so inheritance_flattened runs within
+        // flat_model_q's DepScope and its deps (incl. absent-probe negatives)
+        // are captured; then read inheritance_flattened (now memoized) for root.
         let res = db.flattened_model_q(model_key.clone()).0;
         if let Some(err) = &res.err {
             return Err(err.clone().into());
@@ -352,7 +356,14 @@ pub(crate) fn flatten_and_inline(
             Ok(v) => v,
             Err(a) => (*a).clone(),
         };
+        let inherited = db.inheritance_flattened(model_key.clone()).0;
+        *root_model = inherited;
         if let Some(deps) = query_db::salsa_session::take_last_flat_model_q_deps() {
+            for d in &deps {
+                if d.content_hash == crate::cache::closure_hash::ABSENT_DEP_SENTINEL {
+                    salsa_absent_deps.push(std::path::PathBuf::from(&d.path));
+                }
+            }
             query_db::salsa_session::return_database(
                 loader,
                 model_key.as_str(),
@@ -435,7 +446,11 @@ pub(crate) fn flatten_and_inline(
         );
         let _ = flatten_cache::write_array_sizes_cache(&cache_root, &key, &flat_model.array_sizes);
         let deps = flattener.loader.loaded_source_paths();
-        let absent_deps = flattener.loader.probed_absent_paths();
+        let mut absent_deps = flattener.loader.probed_absent_paths();
+        // Under the salsa path the loader does not probe; fold in the negative
+        // deps the salsa flatten discovered so the pipeline cache invalidates
+        // when a probed-absent file is created.
+        absent_deps.extend(salsa_absent_deps.iter().cloned());
         let _ = flatten_cache::write_flat_cache_v1(&cache_root, &full_key, model_name, &flat_model, &deps, &absent_deps);
     }
 
