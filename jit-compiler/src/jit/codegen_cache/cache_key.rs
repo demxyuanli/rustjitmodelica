@@ -273,6 +273,11 @@ impl CodegenCacheKey {
         h.update(self.opt_level.as_bytes());
         h.update(self.cache_variant.as_bytes());
         h.update(self.host_tag.as_bytes());
+        // J10: the in-memory key folds these into config.rs, but the disk key
+        // omitted them, so a type-specialized recompile (integer vs float param)
+        // could match the old object from disk.
+        h.update(self.type_profile_hash.as_bytes());
+        h.update(self.param_signature.as_bytes());
         format!("{:016x}", h.digest())
     }
 }
