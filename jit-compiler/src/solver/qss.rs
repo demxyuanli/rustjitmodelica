@@ -37,6 +37,10 @@ pub struct QssSolver {
     dq: Vec<f64>,
     /// Current derivatives.
     derivs: Vec<f64>,
+    /// Constant slope of each state's linear trajectory since its last update.
+    slope: Vec<f64>,
+    /// Simulation time at which each state was last re-anchored.
+    t_last: Vec<f64>,
     /// Absolute tolerance for quantum computation.
     atol: f64,
     /// Relative tolerance for quantum computation.
@@ -54,6 +58,8 @@ impl QssSolver {
             q: vec![0.0; n],
             dq: vec![0.0; n],
             derivs: vec![0.0; n],
+            slope: vec![0.0; n],
+            t_last: vec![0.0; n],
             atol,
             rtol,
             max_internal_steps: max_internal_steps_default(),
@@ -106,9 +112,11 @@ impl Solver for QssSolver {
         system.evaluate(time, &mut self.work_state, &mut self.derivs)?;
         system.record_eval(time, states);
 
-        // Initialize quantized states and compute quanta
+        // Anchor each state's linear trajectory at t = time.
         for i in 0..n {
             self.q[i] = states[i];
+            self.slope[i] = self.derivs[i];
+            self.t_last[i] = time;
             self.dq[i] = self.quantum(states[i], self.derivs[i]);
         }
 
@@ -117,42 +125,43 @@ impl Solver for QssSolver {
         let mut internal_steps = 0u64;
 
         while t < t_end && internal_steps < self.max_internal_steps {
-            // Find state with smallest time-to-next-crossing
-            let mut min_dt = f64::INFINITY;
+            // Absolute time of each state's next quantum crossing, from its own
+            // anchor: t_last[i] + dq[i] / |slope[i]|.
+            let mut min_next = f64::INFINITY;
             let mut min_i = 0usize;
-
             for i in 0..n {
-                let dt_i = self.time_to_crossing(self.dq[i], self.derivs[i]);
-                if dt_i < min_dt {
-                    min_dt = dt_i;
+                let next_i = self.t_last[i] + self.time_to_crossing(self.dq[i], self.slope[i]);
+                if next_i < min_next {
+                    min_next = next_i;
                     min_i = i;
                 }
             }
 
-            // Clamp to global dt
-            if min_dt.is_infinite() {
-                // All states stationary — advance to t_end
-                for i in 0..n {
-                    states[i] = self.q[i] + self.derivs[i] * (t_end - t);
-                }
+            let t_new = if min_next.is_infinite() { t_end } else { min_next.min(t_end) };
+            // Guarantee forward progress (a crossing at/behind t advances by eps).
+            let t_new = t_new.max(t + 1e-15).min(t_end);
+
+            // Advance every state along its OWN linear trajectory since its last
+            // re-anchor — not from a shared step size, which left slow states
+            // pinned near their stale anchor value.
+            for i in 0..n {
+                states[i] = self.q[i] + self.slope[i] * (t_new - self.t_last[i]);
+            }
+            t = t_new;
+
+            if t >= t_end {
                 break;
             }
 
-            let step_dt = min_dt.min(t_end - t).max(1e-15);
-            t += step_dt;
-
-            // Advance all states linearly using their last known derivatives
-            for i in 0..n {
-                states[i] = self.q[i] + self.derivs[i] * step_dt;
-            }
-
-            // Re-evaluate derivatives at the new state
+            // Re-evaluate derivatives at the crossing and re-anchor the crossing
+            // state (QSS1: only the state that reached its quantum updates).
             self.work_state.copy_from_slice(states);
             system.evaluate(t, &mut self.work_state, &mut self.derivs)?;
             system.record_eval(t, states);
 
-            // Update quantized values for the state that crossed (and recompute its quantum)
             self.q[min_i] = states[min_i];
+            self.slope[min_i] = self.derivs[min_i];
+            self.t_last[min_i] = t;
             self.dq[min_i] = self.quantum(states[min_i], self.derivs[min_i]);
 
             internal_steps += 1;
