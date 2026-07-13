@@ -147,7 +147,7 @@ fn strict_dot() -> bool {
     policy_strict_domains().contains("dot")
 }
 
-fn strict_function_builtin() -> bool {
+pub(crate) fn strict_function_builtin() -> bool {
     policy_strict_domains().contains("function_builtin")
 }
 
@@ -160,8 +160,15 @@ fn merge_policy(base: JitPolicyFile, overlay: JitPolicyFile) -> JitPolicyFile {
     if overlay.codegen_disk_max_equations.is_some() {
         out.codegen_disk_max_equations = overlay.codegen_disk_max_equations;
     }
-    out.variable_fallbacks.extend(overlay.variable_fallbacks);
-    out.pre_variable_fallbacks.extend(overlay.pre_variable_fallbacks);
+    // J13: prepend overlay rules so they match BEFORE defaults (first-match
+    // lookup, previously overlay went last and could never override).
+    let mut vf = overlay.variable_fallbacks;
+    vf.extend(out.variable_fallbacks);
+    out.variable_fallbacks = vf;
+
+    let mut pvf = overlay.pre_variable_fallbacks;
+    pvf.extend(out.pre_variable_fallbacks);
+    out.pre_variable_fallbacks = pvf;
     if overlay.schema_version != 0 {
         out.schema_version = overlay.schema_version;
     }
@@ -178,6 +185,10 @@ fn merge_policy(base: JitPolicyFile, overlay: JitPolicyFile) -> JitPolicyFile {
         out.hysteresis.members.extend(overlay.hysteresis.members);
     }
     out.algorithm_random_kind_rules.extend(overlay.algorithm_random_kind_rules);
+    // J12: the base policy's boolean fields default to true, but overlay values
+    // were never copied, so setting them to false in a JSON overlay had no effect.
+    out.pre_chain_variable_fallbacks = overlay.pre_chain_variable_fallbacks;
+    out.pre_generic_underscore_fallback = overlay.pre_generic_underscore_fallback;
     out
 }
 
@@ -378,11 +389,16 @@ fn load_function_builtin_rules() -> FunctionBuiltinPolicy {
             if let Ok(text) = std::fs::read_to_string(path) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                     if let Some(arr) = v.get("function_builtin_rules").and_then(|x| x.as_array()) {
+                        // J13: insert overlay rules at the FRONT so they match
+                        // before built-in defaults (first-match lookup).
+                        let mut overlay_rules: Vec<FunctionBuiltinRule> = Vec::new();
                         for item in arr {
                             if let Ok(r) = serde_json::from_value::<FunctionBuiltinRule>(item.clone()) {
-                                rules.push(r);
+                                overlay_rules.push(r);
                             }
                         }
+                        overlay_rules.extend(rules);
+                        rules = overlay_rules;
                     }
                 }
             }

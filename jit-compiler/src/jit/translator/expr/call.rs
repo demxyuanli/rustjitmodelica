@@ -313,6 +313,14 @@ pub(super) fn compile_call(
     }
     // JSON / namespace builtin dispatch: always on (not gated by RUSTMODLICA_JIT_INLINE_BUILTINS).
     let json_builtin_rule = crate::jit::jit_policy::match_function_builtin_rule(func_name);
+    // J14: in strict function-builtin mode, an unmatched function must hard-fail
+    // instead of silently falling through to namespace passthrough (args[0]).
+    if json_builtin_rule.is_none() && crate::jit::jit_policy::strict_function_builtin() {
+        return Err(format!(
+            "JIT strict function-builtin: '{}' not found in builtin rules",
+            func_name
+        ));
+    }
     if let Some(res) = try_compile_builtin_call(func_name, args, ctx, builder, compile_rec) {
         // Perf counter: only count whitelisted math names when resolution did not use a JSON rule
         // (avoids counting abs/max/min etc. that map to policy handlers).
