@@ -32,6 +32,15 @@ pub struct ModelLoader {
     /// exist. Recorded as NEGATIVE cache dependencies so that creating one of
     /// them later (which could change resolution) invalidates the flat cache.
     probed_absent: HashSet<PathBuf>,
+    /// Memoized `parse_all` results per file path, used by the fallback scans
+    /// (multi-top-level and package-directory) so each source file is read and
+    /// parsed at most once per process. `None` = read or parse failed.
+    scanned_file_items: HashMap<PathBuf, Option<Arc<Vec<crate::ast::ClassItem>>>>,
+    /// Negative name-resolution cache: name -> registration epoch at the time
+    /// the lookup failed with NotFound. Valid only while the epoch is unchanged
+    /// (i.e. no new model/path/library registrations since), so a name that
+    /// could resolve after more files are loaded is retried correctly.
+    absent_name_epoch: HashMap<String, u64>,
     /// When true, suppress "Loading dependency" and "Resolved inner class" so validate output is JSON-only.
     pub quiet: bool,
 }
@@ -87,8 +96,33 @@ impl ModelLoader {
             loaded_paths: HashMap::new(),
             currently_loading: HashSet::new(),
             probed_absent: HashSet::new(),
+            scanned_file_items: HashMap::new(),
+            absent_name_epoch: HashMap::new(),
             quiet: false,
         }
+    }
+
+    /// Monotone counter that changes whenever any new model, path, or library
+    /// root is registered; guards validity of the negative name cache.
+    fn registration_epoch(&self) -> u64 {
+        (self.library_paths.len() + self.loaded_models.len() + self.loaded_paths.len()) as u64
+    }
+
+    /// Read + parse a file once and memoize the result for fallback scans.
+    fn parse_file_items_cached(
+        &mut self,
+        path: &PathBuf,
+    ) -> Option<Arc<Vec<crate::ast::ClassItem>>> {
+        if let Some(cached) = self.scanned_file_items.get(path) {
+            return cached.clone();
+        }
+        let parsed = fs::read_to_string(path)
+            .ok()
+            .and_then(|content| parser::parse_all(&content).ok())
+            .map(Arc::new);
+        self.scanned_file_items
+            .insert(path.clone(), parsed.clone());
+        parsed
     }
 
     /// Candidate paths probed during resolution but found absent, recorded as
@@ -126,9 +160,27 @@ impl ModelLoader {
     }
 
     pub fn add_path(&mut self, path: PathBuf) {
+        if self.library_paths.contains(&path) {
+            return;
+        }
         self.library_paths.push(path.clone());
         if path.join("Modelica").join("package.mo").is_file() {
             let _ = crate::cache::msl_pack::on_msl_library_path_added(&path);
+        }
+        // If `path` is itself a package root (contains package.mo), also register
+        // its parent directory as a fallback root so sibling libraries in the
+        // standard layout (e.g. ModelicaServices next to Modelica) resolve
+        // without relying on the process working directory.
+        if path.join("package.mo").is_file() {
+            if let Some(parent) = path.parent() {
+                let parent = parent.to_path_buf();
+                if !parent.as_os_str().is_empty() && !self.library_paths.contains(&parent) {
+                    self.library_paths.push(parent.clone());
+                    if parent.join("Modelica").join("package.mo").is_file() {
+                        let _ = crate::cache::msl_pack::on_msl_library_path_added(&parent);
+                    }
+                }
+            }
         }
     }
 
@@ -145,6 +197,10 @@ impl ModelLoader {
             self.loaded_models.remove(short);
             self.loaded_paths.remove(short);
         }
+        // Source may have changed on disk; drop memoized scans and negative
+        // resolutions so the next lookups observe fresh state.
+        self.scanned_file_items.clear();
+        self.absent_name_epoch.clear();
     }
 
 
@@ -244,6 +300,23 @@ impl ModelLoader {
         if let Some(arc) = self.loaded_models.get(name) {
             return Ok(Arc::clone(arc));
         }
+        if let Some(ep) = self.absent_name_epoch.get(name) {
+            if *ep == self.registration_epoch() {
+                if !silent {
+                    // Keep negative cache-dependency recording identical to the
+                    // non-memoized path for non-silent (real) references.
+                    let rel = name.replace('.', "/");
+                    let libs: Vec<PathBuf> = self.library_paths.clone();
+                    for lib in &libs {
+                        self.probed_absent
+                            .insert(lib.join(format!("{}/package.mo", rel)));
+                        self.probed_absent.insert(lib.join(format!("{}.mo", rel)));
+                    }
+                }
+                return Err(LoadError::NotFound(name.to_string()));
+            }
+        }
+        crate::query_db::perf_record_add("loader_cache_miss_calls", 1);
         if self.currently_loading.contains(name) {
             return Err(LoadError::RecursiveLoad(name.to_string()));
         }
@@ -416,36 +489,60 @@ impl ModelLoader {
         // If requested class/function is not found by path, scan already-loaded source files
         // for a sibling top-level definition with matching short name.
         {
+            let fallback_scan_t0 = std::time::Instant::now();
+            crate::query_db::perf_record_add("loader_multi_top_scan_count", 1);
             let want_short = name.rsplit_once('.').map(|(_, s)| s).unwrap_or(name);
             let mut seen = std::collections::HashSet::new();
             let paths: Vec<PathBuf> = self.loaded_paths.values().cloned().collect();
+            let mut scan_result = None;
             for p in paths {
-                if !p.exists() || !seen.insert(p.clone()) {
+                if !seen.insert(p.clone()) {
                     continue;
                 }
-                if let Ok(content) = fs::read_to_string(&p) {
-                    if let Ok(items) = parser::parse_all(&content) {
-                        if let Some(item) = items
-                            .into_iter()
-                            .find(|it| Self::item_name(it) == want_short)
-                        {
-                            let arc = Arc::new(Self::item_to_model(item));
-                            self.loaded_models
-                                .insert(name.to_string(), Arc::clone(&arc));
-                            self.loaded_paths.insert(name.to_string(), p.clone());
-                            self.register_inner_classes(name, arc.as_ref());
-                            return Ok(arc);
-                        }
-                    }
+                crate::query_db::perf_record_add("loader_multi_top_scan_files", 1);
+                let Some(items) = self.parse_file_items_cached(&p) else {
+                    continue;
+                };
+                if let Some(item) = items
+                    .iter()
+                    .find(|it| Self::item_name(it) == want_short)
+                    .cloned()
+                {
+                    let arc = Arc::new(Self::item_to_model(item));
+                    self.loaded_models
+                        .insert(name.to_string(), Arc::clone(&arc));
+                    self.loaded_paths.insert(name.to_string(), p.clone());
+                    self.register_inner_classes(name, arc.as_ref());
+                    scan_result = Some(arc);
+                    break;
                 }
+            }
+            crate::query_db::perf_record_us(
+                "loader_multi_top_scan_us",
+                fallback_scan_t0.elapsed().as_micros() as u64,
+            );
+            if let Some(arc) = scan_result {
+                return Ok(arc);
             }
         }
 
         // Package directory scan: e.g. `TestLib.sumArrayExternal` has no `TestLib/sumArrayExternal.mo`,
         // but `TestLib/ExtFuncArrayArg.mo` defines `function sumArrayExternal`.
         if let Some((pkg_rel, short)) = name.rsplit_once('.') {
+            struct DirScanPerfGuard(std::time::Instant);
+            impl Drop for DirScanPerfGuard {
+                fn drop(&mut self) {
+                    crate::query_db::perf_record_us(
+                        "loader_dir_scan_us",
+                        self.0.elapsed().as_micros() as u64,
+                    );
+                }
+            }
+            let _dir_scan_guard = DirScanPerfGuard(std::time::Instant::now());
+            crate::query_db::perf_record_add("loader_dir_scan_count", 1);
             let rel_dir: PathBuf = pkg_rel.replace('.', std::path::MAIN_SEPARATOR_STR).into();
-            for lib_path in &self.library_paths {
+            let libs: Vec<PathBuf> = self.library_paths.clone();
+            for lib_path in &libs {
                 let nested = lib_path.join(&rel_dir);
                 // If `lib_path` already points at a package directory (e.g. CLI `--lib-path=.../TestLib`),
                 // `nested` may be `.../TestLib/TestLib` and miss; fall back to scanning `lib_path`.
@@ -465,13 +562,8 @@ impl ModelLoader {
                         if !path.extension().map(|e| e == "mo").unwrap_or(false) {
                             continue;
                         }
-                        let content = match fs::read_to_string(&path) {
-                            Ok(c) => c,
-                            Err(_) => continue,
-                        };
-                        let items = match parser::parse_all(&content) {
-                            Ok(i) => i,
-                            Err(_) => continue,
+                        let Some(items) = self.parse_file_items_cached(&path) else {
+                            continue;
                         };
                         let Some((idx, _)) = items
                             .iter()
@@ -486,12 +578,12 @@ impl ModelLoader {
                             .insert(name.to_string(), Arc::clone(&arc));
                         self.loaded_paths.insert(name.to_string(), path.clone());
                         self.register_inner_classes(name, arc.as_ref());
-                        for item in items {
-                            let sibling_name = Self::item_name(&item).to_string();
+                        for item in items.iter() {
+                            let sibling_name = Self::item_name(item).to_string();
                             if sibling_name == short {
                                 continue;
                             }
-                            let sibling_model = Self::item_to_model(item);
+                            let sibling_model = Self::item_to_model(item.clone());
                             let fq = format!("{}.{}", pkg_rel, sibling_name);
                             self.loaded_models
                                 .entry(fq.clone())
@@ -534,6 +626,12 @@ impl ModelLoader {
         })();
 
         self.currently_loading.remove(&name_key);
+        if matches!(result, Err(LoadError::NotFound(_))) {
+            // Negative name cache: valid until any new registration changes the
+            // epoch (new file/model registered could change resolution).
+            let epoch = self.registration_epoch();
+            self.absent_name_epoch.insert(name_key.clone(), epoch);
+        }
         if !silent && matches!(result, Err(LoadError::NotFound(_))) {
             // Record the direct-lookup candidate paths for this unresolved name as
             // negative dependencies: creating any of them would change resolution.

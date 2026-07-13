@@ -746,6 +746,23 @@ pub(crate) fn compile(
                 perf_report.inherit_flat_template_cache_hit_ratio
             );
             eprintln!(
+                "[perf] loader.probe cache_miss_calls={} multi_top_scan_count={} multi_top_scan_files={} multi_top_scan_us={} dir_scan_count={} dir_scan_us={}",
+                qperf.get("loader_cache_miss_calls").unwrap_or(&0),
+                qperf.get("loader_multi_top_scan_count").unwrap_or(&0),
+                qperf.get("loader_multi_top_scan_files").unwrap_or(&0),
+                qperf.get("loader_multi_top_scan_us").unwrap_or(&0),
+                qperf.get("loader_dir_scan_count").unwrap_or(&0),
+                qperf.get("loader_dir_scan_us").unwrap_or(&0),
+            );
+            eprintln!(
+                "[perf] inherit.segments_us base_load={} apply_mod={} merge_models={} qualify_short_types={} qualify_probe_count={}",
+                qperf.get("inherit_base_load_us").unwrap_or(&0),
+                qperf.get("inherit_apply_mod_us").unwrap_or(&0),
+                qperf.get("inherit_merge_models_us").unwrap_or(&0),
+                qperf.get("qualify_short_types_us").unwrap_or(&0),
+                qperf.get("qualify_short_type_probe_count").unwrap_or(&0),
+            );
+            eprintln!(
                 "[perf] query.resolve_connections_ms={} resolve_connections_us={}",
                 perf_report.resolve_connections_ms, perf_report.resolve_connections_us
             );
@@ -2464,8 +2481,17 @@ pub(crate) fn compile(
         // Background tier-up: leak the Jit so its JITModule's mmap region
         // (which backs calc_derivs pointer) survives; without this the fn
         // pointer dangles after the Jit drops (J7 tier-up UAF).
+        //
+        // In the normal path, move the Jit into the returned Artifacts
+        // instead of dropping it here: a jit-codegen disk cache HIT stores
+        // its relocated ExecCodeBuffer in `jit.disk_cache_live`, and dropping
+        // the Jit frees that executable memory while `calc_derivs` still
+        // points into it (warm-cache STATUS_ACCESS_VIOLATION, J12).
+        let mut jit_keepalive: Option<Box<crate::jit::Jit>> = None;
         if compiler.options.jit_leak {
             let _: &'static mut _ = Box::leak(Box::new(jit));
+        } else {
+            jit_keepalive = Some(Box::new(jit));
         }
         let jit_elapsed = jit_t0.elapsed();
         perf_report.jit_inline_builtin_hits = crate::jit::translator::expr::take_inline_builtin_hits();
@@ -2844,7 +2870,7 @@ pub(crate) fn compile(
                     result_file: compiler.options.result_file.clone(),
                     user_stub_jits,
                     calc_derivs_codegen_keepalive: aot_jit_codegen_keepalive.take(),
-                    jit_module_keepalive: None,
+                    jit_module_keepalive: jit_keepalive.take(),
                     param_only_update: false,
                     dual_compile_generic: dual_generic,
                     dual_compile_keepalive: dual_keepalive,

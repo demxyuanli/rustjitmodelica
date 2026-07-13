@@ -35,9 +35,14 @@ impl Flattener {
         while let Some((parent_idx, current_idx, qual, ext, idx)) = stack.pop() {
             if idx >= ext.len() {
                 if let Some(pidx) = parent_idx {
+                    let merge_t0 = std::time::Instant::now();
                     let current_snapshot = models[current_idx].clone();
                     let parent = Arc::make_mut(&mut models[pidx]);
                     merge_models(parent, current_snapshot.as_ref());
+                    crate::query_db::perf_record_us(
+                        "inherit_merge_models_us",
+                        merge_t0.elapsed().as_micros() as u64,
+                    );
                 }
                 continue;
             }
@@ -68,6 +73,7 @@ impl Flattener {
                 stack.push((parent_idx, current_idx, qual, ext, idx + 1));
                 continue;
             }
+            let base_load_t0 = std::time::Instant::now();
             let mut base_model = if let Some(m) = base_from_inner {
                 m
             } else {
@@ -99,6 +105,11 @@ impl Flattener {
                 }
             }
             };
+            crate::query_db::perf_record_us(
+                "inherit_base_load_us",
+                base_load_t0.elapsed().as_micros() as u64,
+            );
+            let merge_mod_t0 = std::time::Instant::now();
             let mod_ctx = ModifyContext::for_extends_scope(
                 &qual,
                 self.coarse_constrainedby_only,
@@ -114,6 +125,10 @@ impl Flattener {
                 )?;
             }
             apply_redeclare_extends_blocks(Arc::make_mut(&mut base_model));
+            crate::query_db::perf_record_us(
+                "inherit_apply_mod_us",
+                merge_mod_t0.elapsed().as_micros() as u64,
+            );
 
             if let Some((base_pkg, _)) = base_name.rsplit_once('.') {
                 self.qualify_short_types(Arc::make_mut(&mut base_model), base_pkg);
@@ -131,8 +146,14 @@ impl Flattener {
     }
 
     fn qualify_short_types(&mut self, model: &mut Model, base_pkg: &str) {
+        let t0 = std::time::Instant::now();
         qualify_short_type_names(model, base_pkg, &mut |candidate: &str| {
+            crate::query_db::perf_record_add("qualify_short_type_probe_count", 1);
             self.loader.load_model_silent(candidate, true).is_ok()
         });
+        crate::query_db::perf_record_us(
+            "qualify_short_types_us",
+            t0.elapsed().as_micros() as u64,
+        );
     }
 }
