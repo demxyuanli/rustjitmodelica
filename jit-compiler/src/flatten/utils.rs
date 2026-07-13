@@ -523,6 +523,15 @@ pub fn merge_models(child: &mut Model, base: &Model) {
             child.type_aliases.push((name.clone(), base_type.clone()));
         }
     }
+    // Carry the base class's imports into the merged model. Declarations copied
+    // from the base were written in the base's lexical scope, so aliases like
+    // `import Modelica.Units.NonSI;` must stay resolvable after the merge
+    // (e.g. `NonSI.AngularVelocity_rpm` in Fluid's PartialPump).
+    for (alias, qualified) in &base.imports {
+        if !child.imports.iter().any(|(a, _)| a == alias) {
+            child.imports.push((alias.clone(), qualified.clone()));
+        }
+    }
 }
 
 pub fn convert_eq_to_alg(eq: Equation) -> AlgorithmStatement {
@@ -566,6 +575,54 @@ pub fn convert_eq_to_alg(eq: Equation) -> AlgorithmStatement {
     }
 }
 
+/// True when `type_name` is a package-relative import alias or unit type that must
+/// be resolved through import/global-alias rules, not by prepending enclosing scopes.
+pub fn is_import_scoped_or_unit_type_name(type_name: &str) -> bool {
+    if type_name.starts_with("Modelica.")
+        || type_name.starts_with("ModelicaTest.")
+        || type_name.starts_with("ModelicaServices.")
+    {
+        return true;
+    }
+    if type_name.starts_with("SI.")
+        || type_name.starts_with("NonSI.")
+        || type_name.starts_with("Cv.")
+    {
+        return true;
+    }
+    const IMPORT_SCOPED_PREFIXES: &[&str] = &[
+        "Machines.",
+        "Blocks.",
+        "Translational.",
+        "Rotational.",
+        "Clocked.",
+        "Interfaces.",
+        "Constants.",
+        "Sensors.",
+        "Utilities.",
+        "Types.",
+        "BasicMachines.",
+        "Material.",
+        "Shapes.",
+        "Examples.",
+        "MultiBody.",
+        "ComplexBlocks.",
+        "Visualizers.",
+        "Electrical.",
+        "Mechanics.",
+        "Thermal.",
+        "Fluid.",
+        "Magnetic.",
+        "Units.",
+        "FluxTubes.",
+        "FundamentalWave.",
+        "QuasiStatic.",
+    ];
+    IMPORT_SCOPED_PREFIXES
+        .iter()
+        .any(|prefix| type_name.starts_with(prefix))
+}
+
 /// Qualify short and relative type names in a model's declarations by walking
 /// the base package scope. Shared between the flattener and query_db paths.
 pub fn qualify_short_type_names(
@@ -584,9 +641,7 @@ pub fn qualify_short_type_names(
             if exists(&fqn) {
                 decl.type_name = fqn;
             }
-        } else if !decl.type_name.starts_with("Modelica.")
-            && !decl.type_name.starts_with("ModelicaTest.")
-            && !decl.type_name.starts_with("ModelicaServices.") {
+        } else if !is_import_scoped_or_unit_type_name(&decl.type_name) {
             let mut scope = base_pkg.to_string();
             while let Some((parent, _)) = scope.rsplit_once('.') {
                 let candidate = format!("{}.{}", parent, decl.type_name);

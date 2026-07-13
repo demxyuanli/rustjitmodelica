@@ -620,6 +620,12 @@ pub(super) fn resolve_global_namespace_aliases(name: &str) -> Option<String> {
         if let Some(rest) = name.strip_prefix("SI.") {
             return Some(format!("Modelica.Units.SI.{}", rest));
         }
+        if name == "NonSI" {
+            return Some("Modelica.Units.NonSI".to_string());
+        }
+        if let Some(rest) = name.strip_prefix("NonSI.") {
+            return Some(format!("Modelica.Units.NonSI.{}", rest));
+        }
         if name == "Cv" {
             return Some("Modelica.Units.Conversions".to_string());
         }

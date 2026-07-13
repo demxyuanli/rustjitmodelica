@@ -237,10 +237,13 @@ pub(crate) fn compile_single_unknown_or_tearing_solvable_block(
         );
     }
     ctx.var_map.remove(&t_var);
-    let t_slot = *ctx
-        .stack_slots
-        .get(&t_var)
-        .expect("Tearing var must have stack slot");
+    let t_slot = ctx.stack_slots.get(&t_var).copied().unwrap_or_else(|| {
+        builder.create_sized_stack_slot(cranelift::codegen::ir::StackSlotData::new(
+            cranelift::codegen::ir::StackSlotKind::ExplicitSlot,
+            8,
+            0,
+        ))
+    });
     if let Some(idx) = ctx.output_index(&t_var) {
         let offset = (idx * 8) as i32;
         let init_val = builder
