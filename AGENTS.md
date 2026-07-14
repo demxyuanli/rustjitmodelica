@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -25,16 +25,12 @@ All compiler tests are **inline** `#[cfg(test)] mod tests` blocks — there is n
 ### IDE (modai-ide)
 
 ```bash
-cd modai-ide && npm install && npm run tauri dev   # Full Tauri app (Rust backend + Vite frontend)
-npm run dev                                         # Vite dev server only (no Rust backend)
-npm run build                                       # TypeScript check + Vite production build
-npm run tauri build                                 # Full Tauri production build
-npm test                                            # Run all frontend tests (vitest)
-npx vitest run src/path/to/file.test.ts             # Run a single test file
+cd modai-ide && npm install && npm run tauri dev   # Dev server
+npm run tauri build                                 # Production build
+npm test                                           # Run frontend tests (vitest)
 ```
 
 Frontend stack: React 19 + Vite 7 + TypeScript 5.8 + Tailwind + Monaco Editor.
-Vite dev server runs on port 1420; Tauri's Rust backend loads the frontend from there.
 
 ### Regression & Testing
 
@@ -92,7 +88,7 @@ Dependency graph: `modai-ide` → `rustmodlica` + `modai-worker` → `modai-path
   → Analysis (analysis/) — variable collection, BLT ordering, derivative classification
   → Compiler (compiler/) — equation conversion, Jacobian, initial conditions
   → JIT Backend (jit/) — Cranelift codegen, tiered compilation, deoptimization
-  → Simulation (simulation/ + solver/) — solvers (RK4, RK45, BackwardEuler, Radau, QSS, CVODE, IDA), events
+  → Simulation (simulation/) — solvers (RK4, RK45, BackwardEuler, CVODE, IDA), events
   → Output: CSV / REPL / FMU / C code
 ```
 
@@ -109,59 +105,12 @@ The compiler pipeline entry points are in `compiler/pipeline/`. The public API s
 - **`cache/`** — Multi-tier caching (warmup, artifact, MSL pack, codegen index)
 - **`equation_graph.rs` + `equation_graph_inc/`** — Equation dependency graph (incremental variant)
 
-### Tauri IPC Model
-
-Frontend calls Rust backend via `@tauri-apps/api` `invoke()`:
-```
-React component → src/api/tauri/*.ts → invoke("cmd_name", args) → Rust #[tauri::command] fn
-```
-
-Backend command handlers are registered in `src-tauri/src/lib.rs`'s `invoke_handler`. The command modules are under `src-tauri/src/commands/`.
-
 ### IDE backend (`modai-ide/src-tauri/src/`)
 
 - **`commands/`** — All Tauri IPC commands. JIT integration split across `jit.rs`, `jit_part_a.rs`, `jit_part_b.rs` due to size
 - **`commands/iterate_commands.rs`** — Self-iteration loop: AI generates compiler patches → sandbox build/test → user adopts
 - **`ai.rs` / `ai_tools.rs`** — DeepSeek API integration for code generation
 - **`diagram/`** — Model diagram visualization (equation graph, types)
-- **`db.rs`** — SQLite persistence layer (rusqlite, bundled)
-- **`msl_pack_bootstrap.rs`** — First-run Modelica Standard Library setup
-- **`component_library/`** — Modelica component library management (split across `mod.rs`, `part1.rs`, `part2.rs`)
-- **`index_manager.rs` / `index_db.rs`** — Symbol index for code navigation
-- **`iterate.rs`** — Patch application and compiler self-modification
-- **`equation_graph_actor.rs`** — Background equation graph computation
-- **`traceability.rs`** — Requirement-to-test traceability matrix
-
-### IDE frontend (`modai-ide/src/`)
-
-The React app is a multi-panel IDE workspace centered on `JitIdeWorkspace.tsx`.
-
-**API layer** — `src/api/tauri/` wraps every backend IPC command:
-- `jitSimulation.ts` — Validate, simulate, equation graph
-- `projectModelica.ts` — File operations, component libraries, diagram data
-- `aiAndEquations.ts` — AI chat, code generation, patch management
-- `gitHelpers.ts` — Git status, diff, commit, log
-- `indexSearch.ts` — Symbol search, references, context queries
-
-**Component layout** (composed in `JitIdeWorkspace.tsx`):
-- `JitEditorWorkbench.tsx` — Central editor area with Monaco, tab bar, file tree
-- `JitLeftSidebar.tsx` — Navigation: files, libraries, search, git, outline, timeline
-- `JitRightPanel.tsx` — AI chat, diagram, simulation, settings panels
-- `JitBottomPanel.tsx` — Test manager, regression, traceability, analytics
-- `Titlebar.tsx` — Custom titlebar (Tauri `decorations: false`)
-
-**Key technologies:**
-- **Monaco Editor** (`@monaco-editor/react`) — Code editor, bundled (no CDN). Worker setup in `src/monacoWorkers.ts`
-- **JointJS** (`@joint/core`) — Modelica diagram canvas (`ModelicaDiagramCanvas.tsx`)
-- **ECharts** (`echarts-for-react`) — Simulation result charts (`SimulationChartView.tsx`)
-- **React Flow** (`@xyflow/react`) — Component type relation graphs
-- **ELK.js** — Graph layout for equation diagrams
-
-**i18n** — `src/i18n.ts` provides `t(key)` and `tf(key, values)` functions. Message catalogs in `src/i18n/messagesEn.ts` + `messagesZh.ts`, domain files in `src/i18n/domains/`. Default language is Chinese (`zh`).
-
-**State management** — React Context (`DiagramSchemeContext`, `WorkspaceContext`) + custom hooks (`useAISessions`, `useJitLayout`, `useGit`). No Redux/Zustand.
-
-**Tests** — Vitest, `src/**/*.test.ts`, node environment. Only one test file exists (`gridSnap.test.ts`).
 
 ## Feature Gates
 
@@ -184,8 +133,6 @@ No `rust-toolchain.toml`, `rustfmt.toml`, or clippy config — the project uses 
 | `RUSTMODLICA_TIERUP_STEP_THRESHOLD` | Override background tier-up step count |
 | `RUSTMODLICA_BACKGROUND_TIERUP` | Enable/disable background tier-up (1/0) |
 | `RUSTMODLICA_SIMD_STEP` | RK4 SIMD-style state update (default on) |
-| `RUSTMODLICA_QSS_MAX_STEPS` | Max integration steps for the QSS solver |
-| `RUSTMODLICA_QSS_MIN_QUANTUM` | Minimum quantum size for the QSS solver |
 | `LIBCLANG_PATH` | Required for SUNDIALS build |
 
 JIT policy defaults: `jit-compiler/src/jit/default_jit_policy.json`
@@ -322,10 +269,10 @@ rtk wget <url>          # Compact download output (65%)
 ```bash
 rtk gain                # View token savings statistics
 rtk gain --history      # View command history with savings
-rtk discover            # Analyze Claude Code sessions for missed RTK usage
+rtk discover            # Analyze Codex sessions for missed RTK usage
 rtk proxy <cmd>         # Run command without filtering (for debugging)
-rtk init                # Add RTK instructions to CLAUDE.md
-rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
+rtk init                # Add RTK instructions to AGENTS.md
+rtk init --global       # Add RTK to ~/.Codex/AGENTS.md
 ```
 
 ## Token Savings Overview

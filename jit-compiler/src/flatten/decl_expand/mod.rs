@@ -16,7 +16,8 @@ mod param_pass;
 pub(super) enum ExpandDeclMode {
     /// SuperFast: Only top-level declarations, no recursive sub-model loading
     SuperFast,
-    /// DeclOnly: Expand declarations but skip sub-equations
+    /// DeclOnly: Expand declarations but skip sub-equations (kept for callers that
+    /// intentionally separate eq expansion; salsa path uses DeclAndSubEq).
     DeclOnly,
     /// DeclAndSubEq: Full expansion including sub-model equations
     DeclAndSubEq,

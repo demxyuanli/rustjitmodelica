@@ -596,8 +596,12 @@ fn decl_expanded(db: &dyn QueryDb, model_name: String) -> DeclExpandResPtr {
 
     let out = decl_expand::DeclExpandOut {
         declarations: flat.declarations,
-        // decl_expanded is decl-only; equations are expanded in eq_expanded.
-        equations: Vec::new(),
+        // Nested instance equations/connections from DeclAndSubEq; root sections
+        // are appended in eq_expanded via eq_expand_root_preinherited.
+        equations: flat.equations,
+        algorithms: flat.algorithms,
+        connections: flat.connections,
+        conditional_connections: flat.conditional_connections,
         instances: flat.instances,
         array_sizes: flat.array_sizes,
         inst_records: flat.inst_records,

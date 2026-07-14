@@ -1,5 +1,6 @@
 fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult, String> {
     let _timer = ScopedTimer::new("run_simulation_cmd");
+    let _salsa_env = SalsaEnvDefaults::install();
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let _eq_expand_mode_env =
         ScopedEnvVar::set("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE", normalize_eq_expand_parallel_mode(request.options.as_ref()));
@@ -442,6 +443,7 @@ pub struct StartSessionRequest {
 
 fn start_simulation_session_sync(request: StartSessionRequest) -> Result<String, String> {
     let _timer = ScopedTimer::new("start_simulation_session");
+    let _salsa_env = SalsaEnvDefaults::install();
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let _eq_expand_mode_env =
         ScopedEnvVar::set("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE", normalize_eq_expand_parallel_mode(request.options.as_ref()));

@@ -491,7 +491,7 @@ pub(super) fn resolve_context_prechecks(name: &str, current_qualified: &str) -> 
             && !cq.contains("QuasiStatic");
         if in_magnetic_fw_nonqs {
             if name == "Losses" || name.starts_with("Losses.") {
-                return Some(format!("Modelica.Magnetic.FundamentalWave.{name}"));
+                return Some(format!("Modelica.Electrical.Machines.{name}"));
             }
         }
         if cq == "Modelica.Electrical.Digital" || cq.starts_with("Modelica.Electrical.Digital.") {

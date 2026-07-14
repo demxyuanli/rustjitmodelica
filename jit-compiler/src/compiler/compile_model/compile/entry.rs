@@ -109,16 +109,14 @@ pub(crate) fn compile(
             perf_report.warmup_attributable_hits = w.ok as u64;
         }
         perf_report.jit_incremental_enabled = env_flag("RUSTMODLICA_JIT_INCREMENTAL_RECOMPILE", false);
-        perf_report.jit_cache_variant = std::env::var("RUSTMODLICA_JIT_CACHE_VARIANT")
-            .ok()
-            .unwrap_or_else(|| "speed".to_string());
+        perf_report.jit_cache_variant = crate::jit::jit_cache_variant_from_env();
         let env_const_fold_requested = env_flag("RUSTMODLICA_CONST_FOLD", true);
         let env_eq_dce_requested = env_flag("RUSTMODLICA_EQ_DCE", true);
         perf_report.const_fold_enabled = env_const_fold_requested;
         perf_report.eq_dce_enabled = env_eq_dce_requested;
         perf_report.jit_inline_builtins_enabled = env_flag("RUSTMODLICA_JIT_INLINE_BUILTINS", false);
         perf_report.hotspot_threshold = env_u64("RUSTMODLICA_HOTSPOT_THRESHOLD", 1000);
-        perf_report.simd_step_enabled = env_flag("RUSTMODLICA_SIMD_STEP", false);
+        perf_report.simd_step_enabled = env_flag("RUSTMODLICA_SIMD_STEP", true);
         perf_report.type_specialization_enabled = env_flag("RUSTMODLICA_JIT_TYPE_SPECIALIZATION", false);
         perf_report.stack_scratch_enabled = env_flag("RUSTMODLICA_JIT_STACK_SCRATCH", true);
         perf_report.runtime_boundary_epoch = env_u64("RUSTMODLICA_RUNTIME_BOUNDARY_EPOCH", 1);
@@ -499,6 +497,8 @@ pub(crate) fn compile(
             compiler.options.warnings_level.as_str(),
         )?;
         perf_report.flatten_inline_ms = flatten_t0.elapsed().as_millis() as u64;
+        perf_report.salsa_process_db_hit =
+            crate::query_db::salsa_session::consume_salsa_process_db_hit();
         // Leyden `FlattenCondenser` runs next and calls `compile()` recursively; that inner
         // `compile` executes `query_db::perf_reset()` and would wipe counters gathered above.
         // Snapshot query_db perf here so `CompilePerfReport` / `--perf-json` stay aligned with
@@ -2010,6 +2010,10 @@ pub(crate) fn compile(
             &params,
             Some(&connector_connection_degree),
         );
+        let codegen_ck_hash = codegen_ck.stable_hash();
+        let salsa_codegen_hint = crate::query_db::salsa_session::take_salsa_codegen_stable_hash();
+        perf_report.salsa_codegen_reuse_eligible =
+            salsa_codegen_hint.as_deref() == Some(codegen_ck_hash.as_str());
         let sim_bundle_key = flatten_cache::flatten_cache_dir().map(|_| {
             let flat_full_key = flatten_cache::flatten_full_cache_key(
                 model_name,
@@ -2228,6 +2232,14 @@ pub(crate) fn compile(
                             );
                             apply_fallback_snapshot(&mut perf_report);
                             compiler.last_compile_perf = Some(perf_report);
+                            crate::query_db::salsa_session::record_codegen_stable_hash(
+                                &compiler.loader,
+                                model_name,
+                                compiler.options.coarse_constrainedby_only,
+                                compile_stop_s,
+                                ValidationMode::parse(compiler.options.validation_mode.as_str()),
+                                codegen_ck_hash,
+                            );
                             let cf = Box::new(cached);
                             let param_only = param_sig_delta;
                             return Ok(CompileOutput::Simulation(Artifacts {
@@ -2296,9 +2308,27 @@ pub(crate) fn compile(
                 perf_report.speculation_guard_count = reg.total_guard_count() as u32;
             }
         }
-        let tiering_policy = crate::jit::tiered::TieringPolicy::default();
         let eq_count = alg_equations.len() + diff_equations.len();
+        let tiering_policy = crate::jit::tiered::TieringPolicy::for_equation_count(eq_count);
         let selected_tier = tiering_policy.select_initial_tier(eq_count);
+        perf_report.tierup_step_threshold = tiering_policy.tierup_step_threshold;
+        perf_report.newton_sparse_policy = match crate::solvable_limits::newton_sparse_policy_from_env()
+        {
+            crate::solvable_limits::NewtonSparsePolicy::Dense => "dense".to_string(),
+            crate::solvable_limits::NewtonSparsePolicy::Sparse => "sparse".to_string(),
+            crate::solvable_limits::NewtonSparsePolicy::Auto => "auto".to_string(),
+        };
+        // Prefer NEWTON_PATH when set (same as JIT path preference).
+        if let Ok(raw) = std::env::var("RUSTMODLICA_NEWTON_PATH") {
+            let s = raw.trim().to_ascii_lowercase();
+            if matches!(s.as_str(), "dense" | "dense_only") {
+                perf_report.newton_sparse_policy = "dense".to_string();
+            } else if matches!(s.as_str(), "sparse" | "csr" | "sparse_only") {
+                perf_report.newton_sparse_policy = "sparse".to_string();
+            } else if !s.is_empty() {
+                perf_report.newton_sparse_policy = "auto".to_string();
+            }
+        }
         if selected_tier == crate::jit::tiered::CompileTier::Interpreter
             && crate::jit::interpreter::EquationInterpreter::is_interpretable(
                 alg_equations.len(),
@@ -2511,6 +2541,14 @@ pub(crate) fn compile(
         perf_report.jit_ms = jit_elapsed.as_millis() as u64;
         perf_report.codegen_wall_us = jit_elapsed.as_micros() as u64;
         perf_report.codegen_wall_ms = perf_report.codegen_wall_us / 1000;
+        {
+            let qperf_jit = crate::query_db::perf_snapshot();
+            perf_report.newton_sparse_blocks =
+                *qperf_jit.get("newton_sparse_blocks").unwrap_or(&0);
+            perf_report.newton_dense_blocks = *qperf_jit.get("newton_dense_blocks").unwrap_or(&0);
+            perf_report.newton_sparse_nnz_total =
+                *qperf_jit.get("newton_sparse_nnz_total").unwrap_or(&0);
+        }
         let frontend_flatten_seg_us = perf_report
             .decl_expand_us
             .saturating_add(perf_report.eq_expand_us)
@@ -2839,6 +2877,14 @@ pub(crate) fn compile(
                         );
                     }
                 }
+                crate::query_db::salsa_session::record_codegen_stable_hash(
+                    &compiler.loader,
+                    model_name,
+                    compiler.options.coarse_constrainedby_only,
+                    compile_stop_s,
+                    ValidationMode::parse(compiler.options.validation_mode.as_str()),
+                    codegen_ck_hash,
+                );
                 let loaded_paths = compiler.loader.loaded_source_paths();
                 crate::cache::warmup::trigger_warmup(model_name, &loaded_paths, &lib_paths);
                 Ok(CompileOutput::Simulation(Artifacts {

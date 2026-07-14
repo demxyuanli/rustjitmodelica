@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub const EQ_EXPAND_CACHE_SCHEMA_V1: &str = "rustmodlica_eq_expand_cache_v1";
+pub const EQ_EXPAND_CACHE_SCHEMA_V1: &str = "rustmodlica_eq_expand_cache_v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqExpandResult {
@@ -476,13 +476,13 @@ pub fn eq_expanded(db: &dyn QueryDb, model_name: String) -> super::EqExpandResPt
     let mut flat = crate::flatten::FlattenedModel {
         // Not needed for equation expansion; keep empty to avoid large clones.
         declarations: Vec::new(),
-        // Equation expansion happens here; do not seed from decl_expanded.
-        equations: Vec::new(),
-        algorithms: Vec::new(),
+        // Seed nested instance eqs/conns from DeclAndSubEq; root sections appended below.
+        equations: decl.equations.clone(),
+        algorithms: decl.algorithms.clone(),
         initial_equations: Vec::new(),
         initial_algorithms: Vec::new(),
-        connections: Vec::new(),
-        conditional_connections: Vec::new(),
+        connections: decl.connections.clone(),
+        conditional_connections: decl.conditional_connections.clone(),
         instances: decl.instances.clone(),
         array_sizes: decl.array_sizes.clone(),
         clocked_var_names: HashSet::new(),

@@ -179,20 +179,159 @@ fn build_repro_command(
     cache_dir: &Path,
     paths: &CasePaths,
     model: &str,
+    worker_stdio: bool,
 ) -> Vec<String> {
     let mut cmd: Vec<String> = Vec::new();
     cmd.push(spec.exe_path.display().to_string());
-    cmd.push("--validate".to_string());
+    if worker_stdio {
+        cmd.push("--validate-stdio".to_string());
+    } else {
+        cmd.push("--validate".to_string());
+    }
     cmd.push(format!("--validate-tier={}", spec.validate.validate_tier));
     cmd.push(format!("--validation-mode={}", spec.validate.validation_mode));
-    cmd.push(format!("--perf-json={}", paths.perf_json.display()));
+    if !worker_stdio {
+        cmd.push(format!("--perf-json={}", paths.perf_json.display()));
+    }
     for lp in &spec.lib_paths {
         cmd.push(format!("--lib-path={}", lp.display()));
     }
-    cmd.push(model.to_string());
-    // env overlay description is stored separately; caller can reconstruct a PowerShell wrapper.
+    if !worker_stdio {
+        cmd.push(model.to_string());
+    }
     let _ = (sc, cache_dir);
     cmd
+}
+
+fn read_validate_stdio_response<R: Read>(stdout: &mut BufReader<R>) -> Result<(String, bool)> {
+    let mut collected = String::new();
+    let mut last_json = String::new();
+    let mut success = false;
+    loop {
+        collected.clear();
+        let n = stdout.read_line(&mut collected)?;
+        if n == 0 {
+            break;
+        }
+        let t = collected.trim();
+        if t.starts_with('{') {
+            last_json = t.to_string();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+                if let Some(b) = v.get("success").and_then(|x| x.as_bool()) {
+                    success = b;
+                    break;
+                }
+            }
+        }
+    }
+    if last_json.is_empty() {
+        anyhow::bail!("validate-stdio worker returned no JSON response");
+    }
+    Ok((last_json, success))
+}
+
+fn spawn_validate_stdio_worker(
+    spec: &RunSpec,
+    sc: &Scenario,
+    lib_args: &[String],
+    env_set: &BTreeMap<String, String>,
+    env_unset: &[String],
+) -> Result<Child> {
+    let mut cmd = Command::new(&spec.exe_path);
+    cmd.arg("--validate-stdio");
+    cmd.arg(format!("--validate-tier={}", spec.validate.validate_tier));
+    cmd.arg(format!(
+        "--validation-mode={}",
+        spec.validate.validation_mode
+    ));
+    for a in lib_args {
+        cmd.arg(a);
+    }
+    apply_env_to_command(&mut cmd, env_set, env_unset);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd.spawn()
+        .with_context(|| format!("spawn validate-stdio worker for scenario {}", sc.id))
+}
+
+fn run_worker_scenario_cases(
+    spec: &RunSpec,
+    sc: &Scenario,
+    cache_dir: &Path,
+    lib_args: &[String],
+    env_set: &BTreeMap<String, String>,
+    env_unset: &[String],
+    models: &[String],
+    cases: &mut Vec<Case>,
+    passed: &mut usize,
+    failed: &mut usize,
+) -> Result<()> {
+    let mut child = spawn_validate_stdio_worker(spec, sc, lib_args, env_set, env_unset)?;
+    let mut stdin = child.stdin.take().context("worker stdin")?;
+    let stdout = child.stdout.take().context("worker stdout")?;
+    let stderr = child.stderr.take().context("worker stderr")?;
+    let mut stdout_reader = BufReader::new(stdout);
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = BufReader::new(stderr).read_to_string(&mut buf);
+        buf
+    });
+    let mut stderr_targets: Vec<PathBuf> = Vec::new();
+
+    for model in models {
+        for run_index in 1..=sc.runs.max(1) {
+            let paths = case_paths(&spec.out_dir, &sc.id, model, run_index);
+            stderr_targets.push(paths.stderr_txt.clone());
+            let request = serde_json::json!({
+                "model": model,
+                "perf_json": paths.perf_json.display().to_string(),
+                "cache_stats_json": paths.cache_stats_json.display().to_string(),
+                "dep_graph_json": paths.dep_graph_json.display().to_string(),
+            });
+            let t0 = Instant::now();
+            writeln!(stdin, "{}", request)?;
+            stdin.flush()?;
+            let (stdout_json, success) = read_validate_stdio_response(&mut stdout_reader)
+                .with_context(|| format!("worker response for {}", model))?;
+            let duration_ms = t0.elapsed().as_millis() as u64;
+            std::fs::write(&paths.stdout_txt, format!("{}\n", stdout_json))?;
+            let exit_code = if success { 0 } else { 1 };
+            if success {
+                *passed += 1;
+            } else {
+                *failed += 1;
+            }
+            let repro = build_repro_command(spec, sc, cache_dir, &paths, model, true);
+            cases.push(Case {
+                scenario: sc.id.clone(),
+                model: model.clone(),
+                run_index,
+                success,
+                exit_code,
+                duration_ms,
+                perf_json: Some(paths.perf_json.display().to_string()),
+                cache_stats_json: Some(paths.cache_stats_json.display().to_string()),
+                dep_graph_json: Some(paths.dep_graph_json.display().to_string()),
+                stdout_path: Some(paths.stdout_txt.display().to_string()),
+                stderr_path: Some(paths.stderr_txt.display().to_string()),
+                repro,
+                env: env_set.clone(),
+                env_unset: env_unset.to_vec(),
+                cache_dir: Some(cache_dir.display().to_string()),
+                note: Some("worker-per-scenario validate-stdio".to_string()),
+            });
+        }
+    }
+
+    writeln!(stdin, r#"{{"quit":true}}"#)?;
+    stdin.flush()?;
+    let _ = child.wait();
+    let stderr_buf = stderr_handle.join().unwrap_or_default();
+    for p in stderr_targets {
+        std::fs::write(p, &stderr_buf)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn parse_validate_success(stdout: &str, stderr: &str) -> bool {
@@ -332,10 +471,10 @@ pub fn default_perf_scenarios(hot_runs: usize) -> Vec<Scenario> {
                 set: BTreeMap::from([
                     ("RUSTMODLICA_QUERY_CACHE_NAMESPACE".to_string(), "COLD".to_string()),
                     ("RUSTMODLICA_CACHE_SQLITE".to_string(), "1".to_string()),
+                    ("RUSTMODLICA_SALSA".to_string(), "0".to_string()),
                 ]),
                 unset: vec![
                     "RUSTMODLICA_QUERY_CACHE".to_string(),
-                    "RUSTMODLICA_SALSA".to_string(),
                 ],
             },
         },
@@ -382,10 +521,11 @@ pub fn default_perf_scenarios(hot_runs: usize) -> Vec<Scenario> {
                     ("RUSTMODLICA_QUERY_CACHE_NAMESPACE".to_string(), "EDIT".to_string()),
                     ("RUSTMODLICA_CACHE_SQLITE".to_string(), "1".to_string()),
                     ("RUSTMODLICA_FLATTEN_FULL_CACHE".to_string(), "1".to_string()),
+                    ("RUSTMODLICA_SALSA".to_string(), "1".to_string()),
+                    ("RUSTMODLICA_SALSA_PROCESS_DB".to_string(), "1".to_string()),
                 ]),
                 unset: vec![
                     "RUSTMODLICA_QUERY_CACHE".to_string(),
-                    "RUSTMODLICA_SALSA".to_string(),
                 ],
             },
         },
@@ -490,7 +630,7 @@ impl ValidatePerfRunner {
 
         if spec.worker_per_scenario {
             eprintln!(
-                "[jit-validate-perf] worker-per-scenario PoC enabled: keeping artifact parity with legacy case execution path"
+                "[jit-validate-perf] worker-per-scenario: one validate-stdio process per scenario"
             );
         }
 
@@ -498,6 +638,51 @@ impl ValidatePerfRunner {
             let resolved = &scenarios_resolved[sc_idx];
             let cache_dir = PathBuf::from(&resolved.cache_dir);
             ensure_cache_dir(&cache_dir, sc.cache_dir_policy.clone())?;
+
+            let mut env_set: BTreeMap<String, String> = resolved.env_set.clone();
+            let mut env_unset: Vec<String> = resolved.env_unset.clone();
+            for k in &spec.child_env.unset {
+                if !env_unset.contains(k) {
+                    env_unset.push(k.clone());
+                }
+            }
+            env_unset.sort();
+            env_unset.dedup();
+            for (k, v) in &spec.child_env.set {
+                env_set.insert(k.clone(), v.clone());
+            }
+            if let Some(ref p) = spec.std_cache_root {
+                env_set.insert(
+                    "RUSTMODLICA_STD_CACHE_ROOT".to_string(),
+                    p.display().to_string(),
+                );
+            }
+            if let Some(ref p) = spec.user_cache_root {
+                env_set.insert(
+                    "RUSTMODLICA_USER_CACHE_ROOT".to_string(),
+                    p.display().to_string(),
+                );
+            }
+            env_set.insert(
+                "RUSTMODLICA_PERF_SALSA_STATS".to_string(),
+                "1".to_string(),
+            );
+
+            if spec.worker_per_scenario {
+                run_worker_scenario_cases(
+                    &spec,
+                    sc,
+                    &cache_dir,
+                    &lib_args,
+                    &env_set,
+                    &env_unset,
+                    &spec.models,
+                    &mut cases,
+                    &mut passed,
+                    &mut failed,
+                )?;
+                continue;
+            }
 
             for model in &spec.models {
                 for run_index in 1..=sc.runs.max(1) {
@@ -516,45 +701,19 @@ impl ValidatePerfRunner {
                     }
                     cmd.arg(model);
 
-                    let mut env_set: BTreeMap<String, String> = resolved.env_set.clone();
-                    let mut env_unset: Vec<String> = resolved.env_unset.clone();
-                    for k in &spec.child_env.unset {
-                        if !env_unset.contains(k) {
-                            env_unset.push(k.clone());
-                        }
-                    }
-                    env_unset.sort();
-                    env_unset.dedup();
-                    for (k, v) in &spec.child_env.set {
-                        env_set.insert(k.clone(), v.clone());
-                    }
-                    if let Some(ref p) = spec.std_cache_root {
-                        env_set.insert(
-                            "RUSTMODLICA_STD_CACHE_ROOT".to_string(),
-                            p.display().to_string(),
-                        );
-                    }
-                    if let Some(ref p) = spec.user_cache_root {
-                        env_set.insert(
-                            "RUSTMODLICA_USER_CACHE_ROOT".to_string(),
-                            p.display().to_string(),
-                        );
-                    }
-                    env_set.insert(
-                        "RUSTMODLICA_PERF_SALSA_STATS".to_string(),
-                        "1".to_string(),
-                    );
-                    env_set.insert(
+                    let mut case_env = env_set.clone();
+                    let case_unset = env_unset.clone();
+                    case_env.insert(
                         "RUSTMODLICA_CACHE_STATS_JSON".to_string(),
                         paths.cache_stats_json.display().to_string(),
                     );
-                    env_set.insert(
+                    case_env.insert(
                         "RUSTMODLICA_DEP_GRAPH_JSON".to_string(),
                         paths.dep_graph_json.display().to_string(),
                     );
-                    apply_env_to_command(&mut cmd, &env_set, &env_unset);
+                    apply_env_to_command(&mut cmd, &case_env, &case_unset);
 
-                    let repro = build_repro_command(&spec, sc, &cache_dir, &paths, model);
+                    let repro = build_repro_command(&spec, sc, &cache_dir, &paths, model, false);
                     let t0 = Instant::now();
                     let (exit_code, stdout, stderr) =
                         capture_output_to_files(cmd, &paths.stdout_txt, &paths.stderr_txt)
@@ -581,8 +740,8 @@ impl ValidatePerfRunner {
                         stdout_path: Some(paths.stdout_txt.display().to_string()),
                         stderr_path: Some(paths.stderr_txt.display().to_string()),
                         repro,
-                        env: env_set,
-                        env_unset,
+                        env: case_env,
+                        env_unset: case_unset,
                         cache_dir: Some(cache_dir.display().to_string()),
                         note: None,
                     });

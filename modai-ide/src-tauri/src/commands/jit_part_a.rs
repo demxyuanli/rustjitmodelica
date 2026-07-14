@@ -1,5 +1,6 @@
 fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, String> {
     let _timer = ScopedTimer::new("jit_validate");
+    let _salsa_env = SalsaEnvDefaults::install();
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
     let _eq_expand_mode_env =
         ScopedEnvVar::set("RUSTMODLICA_EQ_EXPAND_PARALLEL_MODE", normalize_eq_expand_parallel_mode(request.options.as_ref()));
@@ -11,6 +12,34 @@ fn jit_validate_sync(request: JitValidateRequest) -> Result<JitValidateResult, S
         .options
         .as_ref()
         .and_then(|o| o.instance_change_impact_probe.clone());
+    let needs_provenance = param_impact_probe.is_some() || instance_impact_probe.is_some();
+
+    if !ide_validate_inprocess_forced() && !needs_provenance {
+        let lib_paths = collect_loader_paths(
+            request.project_dir.as_ref(),
+            request.resolver_context.as_ref(),
+        );
+        let coarse = request
+            .options
+            .as_ref()
+            .and_then(|o| o.coarse_constrainedby_only)
+            .unwrap_or(false);
+        let worker_req = crate::validate_stdio_worker::ValidateWorkerRequest {
+            model_name: model_name.clone(),
+            code: request.code.clone(),
+            lib_paths,
+            validate_tier: validate_tier_cli_string(request.options.as_ref()),
+            validation_mode: "full".to_string(),
+            eq_expand_parallel_mode: normalize_eq_expand_parallel_mode(request.options.as_ref())
+                .to_string(),
+            coarse_constrainedby_only: coarse,
+        };
+        match crate::validate_stdio_worker::validate(worker_req) {
+            Ok(resp) => return Ok(map_worker_validate_response(resp, None)),
+            Err(e) => eprintln!("[jit_validate] validate-stdio worker failed, in-process fallback: {e}"),
+        }
+    }
+
     let mut compiler = rustmodlica::Compiler::new();
     compiler.options = build_compiler_options(request.options);
     compiler.options.validate_only = true;

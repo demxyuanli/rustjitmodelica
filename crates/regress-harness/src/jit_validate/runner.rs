@@ -6,9 +6,9 @@ use crate::jit_validate::{ensure_cache_dir, normalize_model_list, CacheDirPolicy
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::time::Instant;
 
 fn now_rfc3339() -> String {

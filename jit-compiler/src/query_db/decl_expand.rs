@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::flatten::structures::{InstId, InstPathRecord};
-use crate::ast::{Declaration, Equation};
+use crate::ast::{AlgorithmStatement, Declaration, Equation, Expression};
 
-pub const DECL_EXPAND_CACHE_SCHEMA_V1: &str = "rustmodlica_decl_expand_cache_v1";
+pub const DECL_EXPAND_CACHE_SCHEMA_V1: &str = "rustmodlica_decl_expand_cache_v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclExpandResult {
@@ -16,7 +16,11 @@ pub struct DeclExpandResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclExpandOut {
     pub declarations: Vec<Declaration>,
+    /// Nested instance equations from DeclAndSubEq (root eqs added in eq_expanded).
     pub equations: Vec<Equation>,
+    pub algorithms: Vec<AlgorithmStatement>,
+    pub connections: Vec<(String, String)>,
+    pub conditional_connections: Vec<(Expression, (String, String))>,
     pub instances: HashMap<String, String>,
     pub array_sizes: HashMap<String, usize>,
     pub inst_records: Vec<InstPathRecord>,

@@ -491,7 +491,10 @@ impl crate::flatten::Flattener {
 
                             let mut sub_model = match loaded_type {
                                 Some((resolved_candidate, m)) => {
-                                    if m.is_partial {
+                                    // Replaceable components may declare a partial default type;
+                                    // they are legal as long as usage stays within the declared
+                                    // interface (redeclare supplies the concrete type).
+                                    if m.is_partial && !decl.replaceable {
                                         return Err(FlattenError::PartialModelInstantiated {
                                             partial_type: resolved_candidate.clone(),
                                             instance_path: full_path.clone(),
@@ -503,13 +506,28 @@ impl crate::flatten::Flattener {
                                 None => {
                                     let e = last_err.unwrap_or_else(|| LoadError::NotFound(resolved_type.clone()));
                                     if matches!(&e, LoadError::NotFound(_)) {
-                                        if let Some((prefix_type, suffix_type)) = resolved_type.rsplit_once('.') {
-                                            if let Ok(owner) = self.loader.load_model(prefix_type) {
+                                        // Try every scope candidate, not just the literal prefix:
+                                        // `Types.PortFlowDirection` inside Fluid must find the
+                                        // alias on owner `Modelica.Fluid.Types` even though the
+                                        // bare prefix `Types` is not loadable on its own.
+                                        let mut alias_base: Option<String> = None;
+                                        for cand in load_candidates.iter() {
+                                            let Some((prefix_type, suffix_type)) = cand.rsplit_once('.') else {
+                                                continue;
+                                            };
+                                            if let Ok(owner) = self.loader.load_model_silent(prefix_type, true) {
                                                 if let Some((_, base)) =
                                                     owner.type_aliases.iter().find(|(a, _)| a == suffix_type)
                                                 {
                                                     let base = resolve_type_alias(&owner.type_aliases, base);
                                                     if is_primitive(&base) {
+                                                        alias_base = Some(base);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(base) = alias_base {
                                                         flat.declarations.push(Declaration {
                                                             type_name: base.clone(),
                                                             name: full_path.clone(),
@@ -547,9 +565,6 @@ impl crate::flatten::Flattener {
                                                             if is_array { Some(i as usize) } else { None },
                                                         );
                                                         continue;
-                                                    }
-                                                }
-                                            }
                                         }
                                         if !resolved_type.contains('.') {
                                             for (_alias, qual) in &model.imports {
@@ -837,7 +852,9 @@ impl crate::flatten::Flattener {
                             }
 
                             // Reject instantiation of partial models (MLS 4.4.2).
-                            if sub_model.is_partial {
+                            // Replaceable components are exempt: their partial default type is a
+                            // legal interface placeholder until redeclared.
+                            if sub_model.is_partial && !decl.replaceable {
                                 return Err(FlattenError::PartialModelInstantiated {
                                     partial_type: resolved_type.clone(),
                                     instance_path: full_path.clone(),

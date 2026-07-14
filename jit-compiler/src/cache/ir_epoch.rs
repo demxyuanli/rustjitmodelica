@@ -87,11 +87,12 @@ pub const STAGE_EPOCHS: &[StageEpoch] = &[
     StageEpoch { stage: CacheStage::ModelAst, epoch: 1 },
     StageEpoch { stage: CacheStage::Inheritance, epoch: 1 },
     // Bumped 2026-04: decl_expand child param substitution + const-fold affects flattened declaration layout.
-    StageEpoch { stage: CacheStage::DeclExpand, epoch: 3 },
-    StageEpoch { stage: CacheStage::EqExpand, epoch: 1 },
+    // Bumped 2026-07: DeclAndSubEq in salsa decl_expand so nested MultiBody eqs are not dropped.
+    StageEpoch { stage: CacheStage::DeclExpand, epoch: 4 },
+    StageEpoch { stage: CacheStage::EqExpand, epoch: 2 },
     StageEpoch { stage: CacheStage::ConstrainedBy, epoch: 1 },
-    StageEpoch { stage: CacheStage::FlatModelQ, epoch: 1 },
-    StageEpoch { stage: CacheStage::FlatFull, epoch: 1 },
+    StageEpoch { stage: CacheStage::FlatModelQ, epoch: 2 },
+    StageEpoch { stage: CacheStage::FlatFull, epoch: 2 },
     StageEpoch { stage: CacheStage::ArraySizes, epoch: 1 },
 ];
 

@@ -14,6 +14,9 @@ use cranelift_module::{Linkage, Module};
 const JIT_ARM64_VENEER_SIZE: usize = 24;
 
 /// Executable allocation size for the last `define_function` on `ctx`: body + AArch64 veneers.
+/// Retained for diagnostics; the raw disk-cache path that consumed it was removed
+/// because raw JIT bytes are not relocatable.
+#[allow(dead_code)]
 pub(crate) fn jit_executable_allocation_len(ctx: &codegen::Context) -> Option<usize> {
     let cc = ctx.compiled_code()?;
     let body_len = cc.code_buffer().len();

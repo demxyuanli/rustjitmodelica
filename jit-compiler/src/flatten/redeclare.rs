@@ -272,6 +272,10 @@ pub fn apply_redeclare_extends_blocks(model: &mut Model) {
 }
 
 fn merge_redeclare_supplement(target: &mut Model, block: &RedeclareExtendsBlock) {
+    // `redeclare model extends X` declares a replacement class with a plain
+    // (non-partial) class prefix, so the resulting class is instantiable even
+    // when the original local class was partial (MLS 7.3.1).
+    target.is_partial = false;
     if block.is_function {
         target.is_function = true;
     }

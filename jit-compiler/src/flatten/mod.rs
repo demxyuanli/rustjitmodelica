@@ -645,12 +645,16 @@ impl Flattener {
             inst_records: Vec::new(),
             path_to_inst: HashMap::new(),
         };
+        // DeclAndSubEq: expand nested instance equations here so the salsa split
+        // (decl_expanded + eq_expanded) matches legacy Full flatten. DeclOnly left
+        // nested eqs empty and eq_expand_root_preinherited only expanded the root,
+        // collapsing MultiBody models (e.g. EngineV6) to a handful of root connects.
         self.expand_declarations_with_mode(
             root,
             "",
             &mut flat,
             Some(root_path.as_str()),
-            crate::flatten::decl_expand::ExpandDeclMode::DeclOnly,
+            crate::flatten::decl_expand::ExpandDeclMode::DeclAndSubEq,
         )?;
         Ok(flat)
     }
@@ -660,6 +664,8 @@ impl Flattener {
         root: &Model,
         flat: &mut FlattenedModel,
     ) {
+        // Nested instance equations/connections are expected to already be present
+        // in `flat` (from DeclAndSubEq). This only adds the root model's sections.
         let t = std::time::Instant::now();
         self.expand_equations(root, "", flat);
         crate::query_db::perf_record_us(

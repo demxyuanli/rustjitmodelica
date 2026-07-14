@@ -485,7 +485,7 @@ impl Solver for RungeKutta4Solver {
         let simd_enabled = std::env::var("RUSTMODLICA_SIMD_STEP")
             .ok()
             .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON"))
-            .unwrap_or(false);
+            .unwrap_or(true);
         if simd_enabled && n >= 4 {
             let scale = dt / 6.0;
             let mut i = 0usize;

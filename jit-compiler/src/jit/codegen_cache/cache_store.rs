@@ -205,7 +205,21 @@ impl CodegenCache {
 
             let loaded = match entry.artifact_kind.as_str() {
                 "object" => self.load_object_artifact(key, &entry, &raw, runtime_symbols),
-                "raw" => self.load_raw_artifact(key, &entry, &raw),
+                // "raw" entries are byte copies of finalized JIT code. They are
+                // NOT position-independent: RIP-relative calls to imported
+                // symbols (math builtins, Newton linear solvers) only resolve
+                // at the original JIT base address, so re-executing them from a
+                // fresh buffer crashes (STATUS_ACCESS_VIOLATION on MultiBody
+                // models with tearing blocks). Treat them as stale.
+                "raw" => {
+                    eprintln!(
+                        "[jit-codegen-cache] raw artifact is not relocatable, invalidating (model={})",
+                        key.model_name
+                    );
+                    let _ = std::fs::remove_file(&object_path);
+                    let _ = std::fs::remove_file(&entry_path);
+                    None
+                }
                 other => {
                     eprintln!(
                         "[jit-codegen-cache] unknown artifact kind='{}', invalidating",
@@ -223,47 +237,6 @@ impl CodegenCache {
         None
     }
 
-    fn load_raw_artifact(
-        &self,
-        key: &CodegenCacheKey,
-        entry: &CodegenCacheEntry,
-        raw: &[u8],
-    ) -> Option<CachedFunction> {
-        let func_offset = entry.func_offset as usize;
-        let func_size = entry.func_size;
-
-        if func_offset + func_size > raw.len() {
-            eprintln!("[jit-codegen-cache] function bounds exceed object");
-            return None;
-        }
-
-        let exec = ExecCodeBuffer::copy_from_bytes(raw)?;
-        let func_ptr = unsafe { exec.as_ptr().add(func_offset) };
-        let func: crate::jit::types::CalcDerivsFunc = unsafe { std::mem::transmute(func_ptr) };
-        eprintln!(
-            "[jit-codegen-cache] HIT(raw) model={} size={} bytes func_offset={} func_size={}",
-            key.model_name, entry.object_size, func_offset, func_size
-        );
-        #[cfg(any(windows, target_os = "linux"))]
-        {
-            Some(CachedFunction::from_exec_with_import_slots(
-                exec,
-                Vec::new(),
-                func,
-                entry.when_count,
-                entry.crossings_count,
-            ))
-        }
-        #[cfg(not(any(windows, target_os = "linux")))]
-        {
-            Some(CachedFunction::from_exec(
-                exec,
-                func,
-                entry.when_count,
-                entry.crossings_count,
-            ))
-        }
-    }
 
     fn load_object_artifact(
         &self,

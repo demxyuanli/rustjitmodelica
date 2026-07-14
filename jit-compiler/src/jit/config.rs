@@ -29,10 +29,17 @@ pub fn jit_cache_variant_from_env() -> String {
         .ok()
         .map(|s| s.trim().to_ascii_lowercase())
         .unwrap_or_else(|| "speed".to_string());
-    match raw.as_str() {
+    let base = match raw.as_str() {
         "none" | "speed" | "speed_and_size" => raw,
         _ => "speed".to_string(),
-    }
+    };
+    // Fold Newton path policy so dense/auto/sparse do not share codegen blobs (P5).
+    let newton_tag = match crate::solvable_limits::newton_sparse_policy_from_env() {
+        crate::solvable_limits::NewtonSparsePolicy::Dense => "nwd",
+        crate::solvable_limits::NewtonSparsePolicy::Sparse => "nws",
+        crate::solvable_limits::NewtonSparsePolicy::Auto => "nwa",
+    };
+    format!("{base}:{newton_tag}")
 }
 
 fn type_specialization_enabled() -> bool {

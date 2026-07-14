@@ -117,19 +117,19 @@ fn apply_cache_invalidation_if_requested() {
     }
 }
 
-fn salsa_query_path_enabled(validate_only: bool) -> bool {
+fn salsa_query_path_enabled() -> bool {
     match std::env::var("RUSTMODLICA_SALSA") {
         Ok(v) => {
             let t = v.trim();
             if t.is_empty() {
-                return validate_only;
+                return true;
             }
             if t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no") {
                 return false;
             }
             true
         }
-        Err(_) => validate_only,
+        Err(_) => true,
     }
 }
 
@@ -323,8 +323,8 @@ pub(crate) fn flatten_and_inline(
     }
     flattener.loader.set_quiet(quiet);
 
-    // Query-based flatten: default on for --validate; off for full simulation unless RUSTMODLICA_SALSA=1.
-    let salsa_enabled = salsa_query_path_enabled(validate_only);
+    // Query-based flatten: default on; set RUSTMODLICA_SALSA=0 to disable.
+    let salsa_enabled = salsa_query_path_enabled();
     // Negative (absent-probe) deps discovered by the salsa flatten, to fold into
     // the pipeline flat-cache entry so it invalidates when the file is created.
     let mut salsa_absent_deps: Vec<std::path::PathBuf> = Vec::new();

@@ -6,7 +6,7 @@ use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use super::analysis::{collect_modified, collect_modified_equations};
-use super::clock_lowering::{compile_guarded_partition, emit_sample_trigger, jit_executable_allocation_len};
+use super::clock_lowering::{compile_guarded_partition, emit_sample_trigger};
 use super::codegen_cache;
 use super::config::{
     compute_jit_compile_cache_key, jit_cache_variant_from_env, jit_opt_level_from_env,
@@ -598,7 +598,6 @@ impl Jit {
                 }
                 format!("{:?}", e)
             })?;
-        let disk_alloc_len = jit_executable_allocation_len(&self.ctx);
         let ir_for_object_cache = self.ctx.func.clone();
         self.module.clear_context(&mut self.ctx);
         self.module
@@ -645,8 +644,10 @@ impl Jit {
                     crate::cache::cache_scope::CacheScope::Project,
                 );
                 let block_irs = std::mem::take(&mut self.block_irs);
-                let build_obj =
-                    std::panic::catch_unwind(|| emit_object_cache_artifact(&ir_for_object_cache, &block_irs));
+                let jit_decls = self.module.declarations();
+                let build_obj = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    emit_object_cache_artifact(&ir_for_object_cache, &block_irs, jit_decls)
+                }));
                 match build_obj {
                     Ok(Ok(obj)) => {
                         if let Err(e) = cache.put_object(
@@ -666,64 +667,22 @@ impl Jit {
                         }
                     }
                     Ok(Err(e)) => {
-                        eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_ERROR: {}", e);
-                        if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
-                            // SAFETY: func_alloc_len is the allocation length reported by
-                            // Cranelift for this compiled function. The memory at code is
-                            // valid for reads within this length.
-                            let code_bytes =
-                                unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
-                            if let Err(pe) = cache.put(
-                                &key,
-                                code_bytes,
-                                0,
-                                func_alloc_len,
-                                when_count,
-                                crossings_count,
-                                const_fold_params,
-                            ) {
-                                eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE_ERROR: {}", pe);
-                            } else {
-                                eprintln!(
-                                    "[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE size={} bytes",
-                                    code_bytes.len()
-                                );
-                            }
-                        } else {
-                            eprintln!(
-                                "[jit] CODEGEN_CACHE_RAW_FALLBACK_SKIPPED missing compiled_code size (JIT internal)"
-                            );
-                        }
+                        // No disk artifact is written: raw JIT bytes are not
+                        // relocatable (RIP-relative import calls only resolve at
+                        // the original base address), so persisting them produces
+                        // crashing cache hits. In-memory JIT stays authoritative.
+                        eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_ERROR: {} (disk put skipped)", e);
                     }
-                    Err(_) => {
-                        eprintln!("[jit] CODEGEN_CACHE_OBJECT_BUILD_PANIC");
-                        if let Some(func_alloc_len) = disk_alloc_len.filter(|n| *n > 0) {
-                            // SAFETY: func_alloc_len is the allocation length reported by
-                            // Cranelift for this compiled function. The memory at code is
-                            // valid for reads within this length.
-                            let code_bytes =
-                                unsafe { std::slice::from_raw_parts(code, func_alloc_len) };
-                            if let Err(pe) = cache.put(
-                                &key,
-                                code_bytes,
-                                0,
-                                func_alloc_len,
-                                when_count,
-                                crossings_count,
-                                const_fold_params,
-                            ) {
-                                eprintln!("[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE_ERROR: {}", pe);
-                            } else {
-                                eprintln!(
-                                    "[jit] CODEGEN_CACHE_RAW_FALLBACK_WRITE size={} bytes",
-                                    code_bytes.len()
-                                );
-                            }
-                        } else {
-                            eprintln!(
-                                "[jit] CODEGEN_CACHE_RAW_FALLBACK_SKIPPED missing compiled_code size (JIT internal)"
-                            );
-                        }
+                    Err(panic_payload) => {
+                        let msg = panic_payload
+                            .downcast_ref::<String>()
+                            .map(|s| s.as_str())
+                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                            .unwrap_or("<non-string panic>");
+                        eprintln!(
+                            "[jit] CODEGEN_CACHE_OBJECT_BUILD_PANIC: {} (disk put skipped)",
+                            msg
+                        );
                     }
                 }
             }

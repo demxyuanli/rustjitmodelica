@@ -18,6 +18,7 @@ use super::perf_json::{compile_export_sidebar_json, maybe_write_perf_json};
 use super::precompile::{run_precompile, run_msl_precompile_if_needed};
 use super::repl::run_repl_loop;
 use super::validate_json::{emit_validate_json, parse_validate_tier};
+use super::validate_stdio::run_validate_stdio;
 
 use super::RunError;
 
@@ -95,6 +96,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
     let mut script_path: Option<String> = None;
     let mut model_name = None;
     let mut validate_only = false;
+    let mut validate_stdio = false;
     let mut validate_tier: Option<CompileStopPhase> = None;
     let mut output_format: Option<String> = None;
     let mut perf_json_path: Option<String> = None;
@@ -229,6 +231,10 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
         } else if a == "--validate" {
             validate_only = true;
             i += 1;
+        } else if a == "--validate-stdio" {
+            validate_only = true;
+            validate_stdio = true;
+            i += 1;
         } else if let Some(v) = a.strip_prefix("--validate-tier=") {
             validate_tier = Some(parse_validate_tier(v)?);
             i += 1;
@@ -319,6 +325,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
     }
     let model_name = match model_name {
         Some(n) => n,
+        None if validate_stdio => String::new(),
         None => {
             let msg = format!(
                 "Usage: {} [options] <model_name>\n  event-scan [scan-options] [model_name]\n\n  --lang=en|zh  message language\n  --validate  compile only, output JSON to stdout\n  --validate-tier=full|parse|flatten|analyze  with --validate: stop after tier (default full)\n  --validation-mode=full|quick|superfast  with --validate: speed/accuracy trade-off (default full)\n  env RUSTMODLICA_SALSA=0|1  query-based flatten: default on with --validate when unset; use 0 for legacy flatten path; use 1 to force on for simulation\n  --output-format=json  simulation: output time series as JSON to stdout\n  --perf-json=<path>  write structured compile perf report JSON\n  --solver=rk4|rk45|implicit|radau|qss|cvode|ida  (cvode/ida need --features sundials; default: rk45)\n  --warnings=all|none|error  (default: all)\n  --backend-dae-info  print backend DAE statistics\n  --index-reduction-method=<none|dummyDerivative|pantelides|pantelidesDummy|debugPrint>\n  --t-end=<float>  --dt=<float>  --atol=<float>  --rtol=<float>\n  --output-interval=<float>  (default 0.05)\n  --result-file=<path>  write CSV time series to file\n  --emit-flat-snapshot=<path>  Tier S flat JSON after flatten (before inline)\n  --flat-snapshot-only  stop after snapshot (requires --emit-flat-snapshot)\n  --coarse-constrainedby  legacy constrainedby check instead of extends-closure\n  --array-size-policy=legacy|strict  flatten: unevaluated array dims (default legacy: warn+scalar fallback; strict: error unless --array-sizes-json)\n  --array-sizes-json=<path>  JSON object with \"array_sizes\" map: flat base names to positive integer sizes\n  --emit-c=<dir>  emit C source (model.c, model.h) to directory\n  --repl  after compile, enter REPL (inspect vars, simulate, quit)\n  --script=<path>  run .mos script (AST parser + strict executor by default); use - for stdin\n  Env: RUSTMODLICA_SCRIPT_ENGINE=mos|legacy; RUSTMODLICA_NEWTON_SPARSE_POLICY=auto|dense|sparse; RUSTMODLICA_STRICT_NEWTON=1\n  --emit-fmu=<dir>  emit C + modelDescription.xml + fmi2_cs.c for FMI 2.0 CS\n  --emit-fmu-me=<dir>  emit C + modelDescription.xml + fmi2_me.c for FMI 2.0 ME\n  --fmi-model-id=<id>  override FMI modelIdentifier (sanitized; wins over env)\n  --fmi-guid=<uuid|token>  fixed guid attribute (UUID or ASCII alnum/-/_)\n  Env (FMI): RUSTMODLICA_FMI_MODEL_ID, RUSTMODLICA_FMI_MODEL_ID_PREFIX, RUSTMODLICA_FMI_GUID, RUSTMODLICA_FMI_GENERATION_TOOL\n  --external-lib=<path>  load shared library for external function symbols (EXT-1; repeatable)\n  --lib-path=<dir>  add a Modelica library root to the loader search path (repeatable)\n  --modelica-stdlib=<dir>  alias of --lib-path\n  --function-args=<f1,f2,...>  function input values\n\n  event-scan options:\n  --model=<name>  single target model (default: BouncingBall)\n  --models=<m1,m2,...>  multi-model batch scan\n  --lib-path=<dir>  repeatable model library roots\n  --t-end=<float> --dt=<float> --output-interval=<float>\n  --count-values=<v1,v2,...>  values for RUSTMODLICA_EVENT_COUNT_DEADBAND\n  --tail-velocity-values=<v1,v2,...>  values for RUSTMODLICA_TAIL_VELOCITY_DEADBAND\n  --aggregate-mode=sum|avg|max  aggregate sort strategy (default: sum)\n  --aggregate-report=full|compact  output detail level (default: full)\n  --output-file=<path>  write JSON result to file (stdout prints summary)\n  --quiet  alias of --quiet=all\n  --quiet=none|events|all  control scan logging granularity\n  --top-n=<N>  output top N combinations per model and aggregate\n\n  Use model_name '-' to read Modelica source from stdin.",
@@ -376,6 +383,15 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
     compiler.loader.add_path("StandardLib".into());
     compiler.loader.add_path("TestLib".into());
     compiler.loader.add_path("ModelicaTest".into());
+
+    if validate_stdio {
+        if model_name != "-" && !model_name.is_empty() {
+            return Err(
+                "--validate-stdio does not accept a model argument on the command line".into(),
+            );
+        }
+        return run_validate_stdio(&mut compiler);
+    }
 
     let effective_model = if model_name == "-" {
         let mut code = String::new();
@@ -463,6 +479,8 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
             t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false);
+    // Always time simulation when writing --perf-json (not only PERF_TRACE).
+    let sim_perf_enabled = perf_enabled || perf_json_path.is_some();
     let compile_t0 = if perf_enabled { Some(Instant::now()) } else { None };
     let out = match compiler.compile(&effective_model) {
         Ok(o) => o,
@@ -477,6 +495,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     &[],
                     None,
                     false,
+                    None,
                     None,
                 );
                 return Ok(());
@@ -542,6 +561,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some("full"),
                     false,
                     Some(compile_export_sidebar_json(&compile_perf, None)),
+                    None,
                 );
             }
             CompileOutput::Simulation(artifacts) => {
@@ -561,6 +581,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some("full"),
                     false,
                     Some(compile_export_sidebar_json(&compile_perf, Some(artifacts))),
+                    None,
                 );
             }
             CompileOutput::FlatSnapshotDone => {
@@ -580,6 +601,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some("full"),
                     false,
                     Some(compile_export_sidebar_json(&compile_perf, None)),
+                    None,
                 );
             }
             CompileOutput::ValidationParseOk => {
@@ -599,6 +621,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some("parse"),
                     true,
                     Some(compile_export_sidebar_json(&compile_perf, None)),
+                    None,
                 );
             }
             CompileOutput::ValidationFlattenOk { .. } => {
@@ -618,6 +641,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some("flatten"),
                     true,
                     Some(compile_export_sidebar_json(&compile_perf, None)),
+                    None,
                 );
             }
             CompileOutput::ValidationAnalyzed(s) => {
@@ -637,6 +661,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some("analyze"),
                     true,
                     Some(compile_export_sidebar_json(&compile_perf, None)),
+                    None,
                 );
             }
         }
@@ -789,7 +814,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 return Ok(());
             }
             if output_format.as_deref() == Some("json") {
-                let sim_t0 = if perf_enabled { Some(Instant::now()) } else { None };
+                let sim_t0 = if sim_perf_enabled { Some(Instant::now()) } else { None };
                 let sim_compile_sidebar =
                     compile_export_sidebar_json(&compile_perf, Some(&artifacts));
                 let mut deopt_perf_summary = DeoptSimPerfSummary::default();
@@ -821,12 +846,15 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     &effective_model,
                     lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect(),
                 )?;
-                let sim_ms = sim_t0
+                let (sim_ms, sim_us) = sim_t0
                     .as_ref()
-                    .map(|t0| t0.elapsed().as_millis() as u64)
-                    .unwrap_or(0);
-                if sim_ms > 0 {
-                    eprintln!("[perf] sim_ms={}", sim_ms);
+                    .map(|t0| {
+                        let d = t0.elapsed();
+                        (d.as_millis() as u64, d.as_micros() as u64)
+                    })
+                    .unwrap_or((0, 0));
+                if sim_us > 0 {
+                    eprintln!("[perf] sim_ms={} sim_us={}", sim_ms, sim_us);
                 }
                 let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
                 let deopt_json = serde_json::to_value(&deopt_perf_summary)
@@ -841,6 +869,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some(compile_perf.clone()),
                     Some(serde_json::json!({
                         "sim_ms": sim_ms,
+                        "sim_us": sim_us,
                         "event_iter_total": event_iter_total,
                         "clock_dispatch_total": clock_dispatch_total,
                         "deopt": deopt_json,
@@ -861,7 +890,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
             if !json_mode {
                 println!("{}", i18n::msg0("starting_simulation"));
             }
-            let sim_t0 = if perf_enabled { Some(Instant::now()) } else { None };
+            let sim_t0 = if sim_perf_enabled { Some(Instant::now()) } else { None };
             let mut deopt_perf_summary = DeoptSimPerfSummary::default();
             run_simulation(
                 artifacts.calc_derivs,
@@ -893,12 +922,15 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 &effective_model,
                 lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect(),
             )?;
-            let sim_ms = sim_t0
+            let (sim_ms, sim_us) = sim_t0
                 .as_ref()
-                .map(|t0| t0.elapsed().as_millis() as u64)
-                .unwrap_or(0);
-            if sim_ms > 0 {
-                eprintln!("[perf] sim_ms={}", sim_ms);
+                .map(|t0| {
+                    let d = t0.elapsed();
+                    (d.as_millis() as u64, d.as_micros() as u64)
+                })
+                .unwrap_or((0, 0));
+            if sim_us > 0 {
+                eprintln!("[perf] sim_ms={} sim_us={}", sim_ms, sim_us);
             }
             let (event_iter_total, clock_dispatch_total) = runtime_perf_counters();
             let deopt_json = serde_json::to_value(&deopt_perf_summary)
@@ -913,6 +945,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 Some(compile_perf),
                 Some(serde_json::json!({
                     "sim_ms": sim_ms,
+                    "sim_us": sim_us,
                     "event_iter_total": event_iter_total,
                     "clock_dispatch_total": clock_dispatch_total,
                     "deopt": deopt_json,

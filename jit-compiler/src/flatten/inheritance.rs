@@ -149,7 +149,7 @@ impl Flattener {
         let t0 = std::time::Instant::now();
         qualify_short_type_names(model, base_pkg, &mut |candidate: &str| {
             crate::query_db::perf_record_add("qualify_short_type_probe_count", 1);
-            self.loader.load_model_silent(candidate, true).is_ok()
+            self.loader.model_resolvable(candidate)
         });
         crate::query_db::perf_record_us(
             "qualify_short_types_us",

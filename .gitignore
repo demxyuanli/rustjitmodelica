@@ -5,6 +5,8 @@ target_alt/
 jit-compiler/.vscode/
 modai-ide/.vscode/
 modai-ide/node_modules/
+modai-ide/src-tauri/resources/msl-cache/*
+!modai-ide/src-tauri/resources/msl-cache/README.txt
 regress-harness-ink/node_modules/
 regress-harness-ink/dist/
 .regress-harness-ink-session.json
@@ -17,7 +19,6 @@ jit-compiler/ModelicaServices/
 .modai-ide-data/
 modai-ide/src-tauri/.modai-ide-data/
 .vscode/
-build_modelica_dir_regress/
 build_electrical_regress/
 build_modelicatest_regress/
 build_full_regress/
@@ -42,19 +43,13 @@ jit-compiler/build
 jit-compiler/runs/
 build/**
 
-# baseline: JIT validate-perf — track only report.json + jit_perf_baseline.json
-baseline/**/run_manifest.json
-baseline/**/perf_*.json
-baseline/**/stdout_*.txt
-baseline/**/stderr_*.txt
-baseline/**/dep_graph_*.json
-baseline/**/cache_stats_*.json
-baseline/**/cache_*/
-baseline/**/*.sqlite*
-baseline/**/ir_schema_epoch.txt
-baseline/**/aot_archive.bin
-baseline/**/model_hotness_v1.json
-baseline/**/cache_miss_agg_v1.json
+
 
 # realfft / test outputs dropped next to jit-compiler root
 jit-compiler/RealFFT*_resultFFT.matFile*
+# Added by code-review-graph
+.code-review-graph/
+.claude/
+.cursor/
+.qwen/
+

@@ -32,7 +32,12 @@ pub const CSR_FAER_SPARSE_LU_MIN_N: usize = 48;
 pub const CSR_FAER_MAX_AVG_NNZ_PER_ROW: usize = 256;
 
 /// Auto sparse Jacobian path requires `nnz / (n*n)` <= this ratio.
-pub const NEWTON_SPARSE_AUTO_MAX_DENSITY: f64 = 0.75;
+/// Calibrated (P5): 0.35 balances MultiBody tearing blocks vs dense GE cost;
+/// denser blocks stay on the dense Newton path.
+pub const NEWTON_SPARSE_AUTO_MAX_DENSITY: f64 = 0.35;
+
+/// Auto sparse path requires at least this many residuals (CSR overhead on tiny n).
+pub const NEWTON_SPARSE_AUTO_MIN_N: usize = 8;
 
 /// Dense Newton: use Cranelift **stack slot** for J,r,dx only while `n <= JIT_DENSE_STACK_MAX_N`
 /// (keeps workspace under ~200 KiB on stack). Larger dense blocks use a **heap workspace**.
@@ -52,17 +57,34 @@ pub enum NewtonSparsePolicy {
 
 #[inline]
 pub fn newton_sparse_policy_from_env() -> NewtonSparsePolicy {
-    match std::env::var("RUSTMODLICA_NEWTON_SPARSE_POLICY")
+    // Align with JIT path preference: NEWTON_PATH overrides, else NEWTON_SPARSE_POLICY, else auto.
+    let raw = std::env::var("RUSTMODLICA_NEWTON_PATH")
         .ok()
-        .unwrap_or_else(|| "auto".to_string())
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "dense" => NewtonSparsePolicy::Dense,
-        "sparse" => NewtonSparsePolicy::Sparse,
+        .or_else(|| std::env::var("RUSTMODLICA_NEWTON_SPARSE_POLICY").ok())
+        .unwrap_or_else(|| "auto".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "dense" | "dense_only" => NewtonSparsePolicy::Dense,
+        "sparse" | "csr" | "sparse_only" => NewtonSparsePolicy::Sparse,
         _ => NewtonSparsePolicy::Auto,
     }
+}
+
+#[inline]
+fn newton_sparse_auto_min_n() -> usize {
+    std::env::var("RUSTMODLICA_SPARSE_MIN_SIZE")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v >= 3)
+        .unwrap_or(NEWTON_SPARSE_AUTO_MIN_N)
+}
+
+#[inline]
+fn newton_sparse_auto_max_density() -> f64 {
+    std::env::var("RUSTMODLICA_SPARSE_DENSITY_THRESHOLD")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0 && *v < 1.0)
+        .unwrap_or(NEWTON_SPARSE_AUTO_MAX_DENSITY)
 }
 
 #[inline]
@@ -81,9 +103,12 @@ pub fn should_use_newton_sparse_path(
     if policy == NewtonSparsePolicy::Sparse {
         return true;
     }
+    if n < newton_sparse_auto_min_n() {
+        return false;
+    }
     let dense_size = n.saturating_mul(n);
     let density = (nnz as f64) / (dense_size as f64);
-    density <= NEWTON_SPARSE_AUTO_MAX_DENSITY
+    density <= newton_sparse_auto_max_density()
 }
 
 /// `rustmodlica_solve_linear_csr` / [`crate::sparse_solve::CsrMatrix`] routing.

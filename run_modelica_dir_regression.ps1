@@ -25,16 +25,463 @@ param(
     # Optional override for local debugging: treat Newton non-convergence as skipped (--).
     [switch]$NewtonNonConvergedAsSkip,
     # Parallel worker processes for model execution (1 = serial).
-    [int]$ParallelWorkers = 1
+    [int]$ParallelWorkers = 1,
+    # Private incremental compiler cache (local); opt-in via -UsePrivateCache or env RUSTMODLICA_USE_DIR_PRIVATE_CACHE=1.
+    [switch]$UsePrivateCache,
+    [string]$PrivateCacheRoot = "",
+    [switch]$DisablePrivateCache,
+    [string]$PrivateCacheKeyExtra = "",
+    # Internal: parallel parent passes run key + absolute root + shard index (0..N-1). Do not use manually.
+    [string]$PrivateCacheRunKey = "",
+    [int]$PrivateCacheShard = -999,
+    # When set (with -UsePrivateCache), write a .ps1 that sets RUSTMODLICA_* cache env for dot-sourcing in other shells/tests.
+    [string]$WriteDirCacheEnvScript = "",
+    # Run `--validate --validate-tier=analyze` before simulation to skip models that fail early analysis.
+    [switch]$TwoStage,
+    [int]$AnalyzeFirstTimeoutSec = 180,
+    # For TwoStage analyze gate: matches rustmodlica --validation-mode (full|quick|superfast).
+    # "quick" matches ValidationMode::QuickStructure and is intended for --validate-tier=analyze (faster than full).
+    [string]$AnalyzeValidationMode = "quick",
+    [int]$PerModelTimeoutSec = 720,
+    # Parallel parent only: shard watchdog timeout. If no file activity is observed
+    # under shard outdir for this many seconds, force-kill the shard worker.
+    [int]$ShardNoProgressTimeoutSec = 1800,
+    # 0 = follow -ParallelWorkers; then at least 1. Parent TwoStage only.
+    [int]$AnalyzeParallelWorkers = 0,
+    [int]$AnalyzeShardNoProgressTimeoutSec = 900,
+    [int]$PerProcessMemoryLimitMb = 8192,
+    [string]$QuarantineFile = "build_modelica_dir_regress/local/dir_quarantine.json",
+    [switch]$RetryQuarantined,
+    [int]$QuarantineConsecutiveHits = 2,
+    [int]$AnalyzeCheckpointEvery = 50,
+    [switch]$ResumeAnalyzeCheckpoint,
+    # Child shard: run only --validate --validate-tier=analyze, write analyze_summary.txt, exit.
+    [switch]$AnalyzeOnly,
+    # Parent passes global set hash; child must match to resume from checkpoint.
+    [string]$GlobalModelsHash = "",
+    [int]$AnalyzeShardIndex = -1
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$__dirJobHelper = Join-Path (Split-Path -Parent $PSCommandPath) "scripts\dir_job_object.ps1"
+if (Test-Path -LiteralPath $__dirJobHelper) { . $__dirJobHelper } else { Write-Warning "scripts/dir_job_object.ps1 not found: job + memory cap disabled" }
+if ($AnalyzeOnly) { $env:RUSTMODLICA_DIR_REGRESSION_STAGE = "analyze" }
+
 # Default policy: strict Newton gate ON unless explicitly downgraded for local debugging.
 $strictNewtonGate = $true
 if ($NewtonNonConvergedAsSkip) { $strictNewtonGate = $false }
 if ($NewtonCountsAsFailed) { $strictNewtonGate = $true }
+
+function ConvertTo-ProcessArgumentString {
+    param([string[]]$Tokens)
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($t in $Tokens) {
+        if ($null -eq $t) { continue }
+        $s = [string]$t
+        if ($s.Length -eq 0) {
+            $parts.Add('""') | Out-Null
+            continue
+        }
+        if ($s.Contains('"')) {
+            $escaped = $s.Replace('"', '\"')
+            $parts.Add(('"' + $escaped + '"')) | Out-Null
+        } elseif ($s.Contains(' ') -or $s.Contains("`t")) {
+            $parts.Add(('"' + $s + '"')) | Out-Null
+        } else {
+            $parts.Add($s) | Out-Null
+        }
+    }
+    return [string]::Join(' ', $parts)
+}
+
+function Invoke-RustmodlicaWithTimeout {
+    param(
+        [string]$ExePath,
+        [string[]]$CliArgs,
+        [string]$WorkDir,
+        [int]$TimeoutSec,
+        [int]$MemoryLimitMb = 0,
+        [string]$OutputFile = ""
+    )
+    $captureOutput = (-not [string]::IsNullOrWhiteSpace($OutputFile))
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $ExePath
+    $psi.WorkingDirectory = $WorkDir
+    $psi.UseShellExecute = $false
+    $psi.Arguments = (ConvertTo-ProcessArgumentString -Tokens $CliArgs)
+    $psi.CreateNoWindow = $true
+    if ($captureOutput) {
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+    } else {
+        $psi.RedirectStandardOutput = $false
+        $psi.RedirectStandardError = $false
+    }
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo = $psi
+    $job = [IntPtr]::Zero
+    if ($env:OS -eq "Windows_NT" -and (Get-Command -Name New-DirRegressionJob -ErrorAction SilentlyContinue)) {
+        $job = New-DirRegressionJob
+        if ($job -ne [IntPtr]::Zero) {
+            $okSet = Set-DirRegressionJobLimits -Job $job -PerProcessMemoryLimitMb $MemoryLimitMb
+            if (-not $okSet) { Close-DirRegressionJob -Job $job; $job = [IntPtr]::Zero }
+        }
+    }
+    [void]$p.Start()
+    if ($job -ne [IntPtr]::Zero) {
+        $as = $false
+        try { $as = Add-ProcessToDirRegressionJob -Job $job -ProcessHandle $p.Handle } catch { $as = $false }
+        if (-not $as) { Close-DirRegressionJob -Job $job; $job = [IntPtr]::Zero }
+    }
+    $stdoutTask = $null
+    $stderrTask = $null
+    if ($captureOutput) {
+        $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+        $stderrTask = $p.StandardError.ReadToEndAsync()
+    }
+    $ms = [Math]::Max(1, $TimeoutSec) * 1000
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $memB = 0L
+    if ($MemoryLimitMb -gt 0) { $memB = [long]([long]$MemoryLimitMb * 1024L * 1024L) }
+    $oom = $false
+    $peakMB = 0
+    while (-not $p.HasExited) {
+        if ($p.WaitForExit(1000)) { break }
+        if ($sw.ElapsedMilliseconds -ge $ms) { break }
+        try {
+            $wsMB = [int]($p.WorkingSet64 / 1048576L)
+            if ($wsMB -gt $peakMB) { $peakMB = $wsMB }
+        } catch {}
+        if ($memB -gt 0) {
+            try {
+                if ($p.WorkingSet64 -gt $memB) {
+                    $oom = $true
+                    try { $p.Kill() } catch {}
+                    $null = $p.WaitForExit(20000)
+                    if ($job -ne [IntPtr]::Zero) { try { Stop-WindowsProcessTree -RootPid $p.Id } catch {} }
+                    if ($job -ne [IntPtr]::Zero) { Close-DirRegressionJob -Job $job; $job = [IntPtr]::Zero }
+                    if ($captureOutput) { try { $null = $stdoutTask.Wait(5000); $null = $stderrTask.Wait(5000) } catch {} }
+                    $outText = ""; if ($captureOutput -and $null -ne $stdoutTask -and $stdoutTask.IsCompleted) { $outText = $stdoutTask.Result }
+                    $errText = ""; if ($captureOutput -and $null -ne $stderrTask -and $stderrTask.IsCompleted) { $errText = $stderrTask.Result }
+                    if ($captureOutput) { try { ($outText + "`n" + $errText) | Set-Content -LiteralPath $OutputFile -Encoding UTF8 } catch {} }
+                    return @{ ExitCode = -1; TimedOut = $false; Oom = $true; PeakMB = $peakMB; OutputFile = $OutputFile }
+                }
+            } catch { }
+        }
+    }
+    if (-not $p.HasExited) {
+        try { $p.Kill() } catch {}
+        $null = $p.WaitForExit(15000)
+        try { Stop-WindowsProcessTree -RootPid $p.Id } catch { }
+        if ($job -ne [IntPtr]::Zero) { Close-DirRegressionJob -Job $job; $job = [IntPtr]::Zero }
+        if ($captureOutput) { try { $null = $stdoutTask.Wait(5000); $null = $stderrTask.Wait(5000) } catch {} }
+        $outText = ""; if ($captureOutput -and $null -ne $stdoutTask -and $stdoutTask.IsCompleted) { $outText = $stdoutTask.Result }
+        $errText = ""; if ($captureOutput -and $null -ne $stderrTask -and $stderrTask.IsCompleted) { $errText = $stderrTask.Result }
+        if ($captureOutput) { try { ($outText + "`n" + $errText) | Set-Content -LiteralPath $OutputFile -Encoding UTF8 } catch {} }
+        return @{ ExitCode = -1; TimedOut = $true; Oom = $oom; PeakMB = $peakMB; OutputFile = $OutputFile }
+    }
+    $ex = 0
+    try { $ex = [int]$p.ExitCode } catch { $ex = -1 }
+    if ($job -ne [IntPtr]::Zero) { Close-DirRegressionJob -Job $job; $job = [IntPtr]::Zero }
+    if ($captureOutput) {
+        try { $null = $stdoutTask.Wait(10000); $null = $stderrTask.Wait(5000) } catch {}
+        $outText = ""; if ($null -ne $stdoutTask -and $stdoutTask.IsCompleted) { $outText = $stdoutTask.Result }
+        $errText = ""; if ($null -ne $stderrTask -and $stderrTask.IsCompleted) { $errText = $stderrTask.Result }
+        try { ($outText + "`n" + $errText) | Set-Content -LiteralPath $OutputFile -Encoding UTF8 } catch {}
+    }
+    return @{ ExitCode = $ex; TimedOut = $false; Oom = $oom; PeakMB = $peakMB; OutputFile = $OutputFile }
+}
+
+function Get-LatestWriteTimeUtc {
+    param([string]$DirPath)
+    if ([string]::IsNullOrWhiteSpace($DirPath)) { return $null }
+    if (-not (Test-Path -LiteralPath $DirPath)) { return $null }
+    try {
+        $latest = Get-ChildItem -LiteralPath $DirPath -Recurse -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+        if ($null -eq $latest) { return $null }
+        return $latest.LastWriteTimeUtc
+    } catch {
+        return $null
+    }
+}
+
+# Terminate a Windows process *and* every descendant. PowerShell's Stop-Process
+# alone is not a strict tree kill; a detached rustmodlica.exe can outlive a
+# shard powershell if the host is killed in certain ways. taskkill /T is the
+# most reliable no-P/Invoke way to keep shard shutdown from leaking simulators.
+function Stop-WindowsProcessTree {
+    param(
+        [int]$RootPid
+    )
+    if ($env:OS -ne "Windows_NT") { return }
+    if ($RootPid -le 0) { return }
+    $tk = (Join-Path $env:SystemRoot "System32\taskkill.exe")
+    if (-not (Test-Path -LiteralPath $tk)) { return }
+    & $tk /PID $RootPid /T /F 1>$null 2>$null
+}
+
+function Get-DirModelSetHash {
+    param([string[]]$Names)
+    if ($null -eq $Names) { return "0000000000000000" }
+    $arr = @($Names) | ForEach-Object { [string]$_ } | Where-Object { $_ -ne "" } | Sort-Object
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $b = $enc.GetBytes([string]::Join("|", $arr))
+    $h = [System.Security.Cryptography.SHA256]::Create().ComputeHash($b)
+    return ([BitConverter]::ToString($h).Replace("-", "")).Substring(0, 16).ToLowerInvariant()
+}
+
+function Resolve-DirQuarantineFilePath {
+    param([string]$RepoRoot, [string]$FileParam)
+    if ([string]::IsNullOrWhiteSpace($FileParam)) { return "" }
+    if ([System.IO.Path]::IsPathRooted($FileParam)) { return $FileParam }
+    return (Join-Path $RepoRoot $FileParam.Trim().TrimStart("\", "/"))
+}
+
+function Read-DirQuarantine {
+    param([string]$FilePath)
+    if ([string]::IsNullOrWhiteSpace($FilePath) -or -not (Test-Path -LiteralPath $FilePath)) {
+        return [pscustomobject]@{ schema_version = 1; entries = @() }
+    }
+    try {
+        $j = (Get-Content -LiteralPath $FilePath -Raw) | ConvertFrom-Json
+        if ($null -eq $j) { return [pscustomobject]@{ schema_version = 1; entries = @() } }
+        if ($null -eq $j.entries) { return [pscustomobject]@{ schema_version = 1; entries = @() } }
+        if ($j.entries -isnot [System.Array]) { $j.entries = @($j.entries) }
+        return $j
+    } catch {
+        return [pscustomobject]@{ schema_version = 1; entries = @() }
+    }
+}
+
+function Write-DirQuarantine {
+    param(
+        [string]$FilePath,
+        $QuarantineObj
+    )
+    if ([string]::IsNullOrWhiteSpace($FilePath)) { return }
+    $parent = Split-Path -Parent $FilePath
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    $QuarantineObj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $FilePath -Encoding UTF8
+}
+
+function Get-QuarantineNameSet {
+    param(
+        $QObj,
+        [int]$MinHits = 1
+    )
+    $h = @{}
+    foreach ($e in @($QObj.entries)) {
+        $m = [string]$e.model
+        $hc = 0
+        if ($null -ne $e.hit_count) { $hc = [int]$e.hit_count }
+        if ($m -ne "" -and $hc -ge $MinHits) {
+            $h[$(ConvertTo-NormalizedModelName $m)] = $true
+            $h[$m] = $true
+        }
+    }
+    return $h
+}
+
+function Register-DirQuarantine {
+    param(
+        [string]$FilePath,
+        [string]$Model,
+        [string]$Phase,
+        [string]$Reason,
+        [int]$Consecutive
+    )
+    if ([string]::IsNullOrWhiteSpace($FilePath) -or [string]::IsNullOrWhiteSpace($Model)) { return }
+    $mn = ConvertTo-NormalizedModelName $Model
+    $j = Read-DirQuarantine -FilePath $FilePath
+    $ent = $null
+    foreach ($e in $j.entries) { if (([string]$e.model) -eq $mn) { $ent = $e; break } }
+    if ($null -eq $ent) {
+        $ent = [pscustomobject]@{
+            model         = $mn
+            phase         = $Phase
+            reason        = $Reason
+            first_seen_at = (Get-Date).ToString("o")
+            last_seen_at  = (Get-Date).ToString("o")
+            hit_count     = 0
+        }
+        if ($null -eq $j.entries) {
+            $j.entries = @($ent)
+        } else {
+            $j.entries = @($j.entries) + @($ent)
+        }
+    } else {
+        $ent.last_seen_at = (Get-Date).ToString("o")
+    }
+    $ent.hit_count = [int]([int]$ent.hit_count + 1)
+    Write-DirQuarantine -FilePath $FilePath -QuarantineObj $j
+    if ($ent.hit_count -ge $Consecutive) {
+        Write-Warning ("[quarantine] model {0} now quarantined (hit_count>={1}) phase={2} reason={3}" -f $mn, $Consecutive, $Phase, $Reason)
+    }
+}
+
+function Add-DirSimTimingRow {
+    param(
+        [System.Collections.IList]$List,
+        [string]$Model,
+        [DateTime]$Started
+    )
+    if ($null -eq $List) { return }
+    $s = [Math]::Round([double](((Get-Date) - $Started).TotalSeconds), 2)
+    $null = $List.Add([pscustomobject]@{ model = $Model; sec = $s })
+}
+
+function Clear-DirPrivateCacheEnv {
+    Remove-Item Env:RUSTMODLICA_CACHE_SQLITE -ErrorAction SilentlyContinue
+    Remove-Item Env:RUSTMODLICA_QUERY_CACHE_NAMESPACE -ErrorAction SilentlyContinue
+    Remove-Item Env:RUSTMODLICA_FLATTEN_CACHE_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:RUSTMODLICA_AOT_CACHE_DIR -ErrorAction SilentlyContinue
+}
+
+function Get-PrivateDirCacheInstanceSlug([string]$RepoRootNorm) {
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $u = $enc.GetBytes($RepoRootNorm.ToLowerInvariant())
+    $sha = [System.Security.Cryptography.SHA256]::Create().ComputeHash($u)
+    return ([BitConverter]::ToString($sha).Replace("-", "")).Substring(0, 8).ToLowerInvariant()
+}
+
+function Get-IrSchemaEpochFromRepo([string]$RepoRoot) {
+    $p = Join-Path $RepoRoot "jit-compiler\src\cache\ir_epoch.rs"
+    if (-not (Test-Path -LiteralPath $p)) { return "0" }
+    $t = [System.IO.File]::ReadAllText($p)
+    $m = [regex]::Match($t, 'IR_SCHEMA_EPOCH:\s*u32\s*=\s*(\d+)')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return "0"
+}
+
+function Resolve-PrivateDirCacheRoot {
+    param(
+        [string]$RepoRoot,
+        [string]$PrivateCacheRootParam,
+        [bool]$Disable
+    )
+    if ($Disable) { return "" }
+    if (-not [string]::IsNullOrWhiteSpace($PrivateCacheRootParam)) {
+        if ([System.IO.Path]::IsPathRooted($PrivateCacheRootParam)) {
+            return $PrivateCacheRootParam.Trim()
+        }
+        return (Join-Path $RepoRoot $PrivateCacheRootParam.Trim().TrimStart("\", "/"))
+    }
+    $envRoot = [string]$env:RUSTMODLICA_DIR_PRIVATE_CACHE_ROOT
+    if (-not [string]::IsNullOrWhiteSpace($envRoot)) {
+        if ([System.IO.Path]::IsPathRooted($envRoot)) { return $envRoot.Trim() }
+        return (Join-Path $RepoRoot $envRoot.Trim().TrimStart("\", "/"))
+    }
+    $inst = Get-PrivateDirCacheInstanceSlug $RepoRoot
+    $la = [string]$env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($la)) {
+        return (Join-Path $RepoRoot "build\dir_private_cache")
+    }
+    return (Join-Path $la ("rustmodlica\dir_cache\" + $inst))
+}
+
+function Get-DirPrivateRunKey {
+    param(
+        [string]$ExePath,
+        [string[]]$LibRoots,
+        [string]$GitHead,
+        [string]$IrEpoch,
+        [string]$Policy,
+        [string]$KeyExtra
+    )
+    $exeHash = ""
+    if (Test-Path -LiteralPath $ExePath) {
+        try { $exeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ExePath).Hash } catch {}
+    }
+    $libPart = [string]::Join("|", (@($LibRoots) | Sort-Object))
+    $raw = "v1|$exeHash|$libPart|$GitHead|$IrEpoch|$Policy|$KeyExtra"
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $bytes = $enc.GetBytes($raw)
+    $h = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+    return ([BitConverter]::ToString($h).Replace("-", "")).Substring(0, 16).ToLowerInvariant()
+}
+
+function Set-DirPrivateCacheEnv {
+    param(
+        [string]$CacheRoot,
+        [string]$RunKey,
+        [int]$ShardId
+    )
+    if ([string]::IsNullOrWhiteSpace($CacheRoot) -or [string]::IsNullOrWhiteSpace($RunKey)) {
+        return
+    }
+    $runDir = Join-Path $CacheRoot ("run_" + $RunKey)
+    if ($ShardId -ge 0) {
+        $ns = ("DIR_S{0}_{1}" -f $ShardId, $RunKey)
+        $flat = Join-Path $runDir ("flatten\shard_" + $ShardId)
+        $aot = Join-Path $runDir ("aot\shard_" + $ShardId)
+    } else {
+        $ns = "DIR_SERIAL_$RunKey"
+        $flat = Join-Path $runDir "flatten\serial"
+        $aot = Join-Path $runDir "aot\serial"
+    }
+    $null = New-Item -ItemType Directory -Force -Path $flat, $aot
+    $env:RUSTMODLICA_CACHE_SQLITE = "1"
+    $env:RUSTMODLICA_QUERY_CACHE_NAMESPACE = $ns
+    $env:RUSTMODLICA_FLATTEN_CACHE_DIR = $flat
+    $env:RUSTMODLICA_AOT_CACHE_DIR = $aot
+    Write-Host ("[dir-private-cache] namespace={0} flatten={1}" -f $ns, $flat)
+}
+
+function Write-DirCacheEnvScriptFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$LiteralPath,
+        [Parameter(Mandatory = $true)][string]$Namespace,
+        [Parameter(Mandatory = $true)][string]$FlattenDir,
+        [Parameter(Mandatory = $true)][string]$AotDir
+    )
+    $parent = Split-Path -Parent $LiteralPath
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    $nsEsc = $Namespace.Replace("'", "''")
+    $flatEsc = $FlattenDir.Replace("'", "''")
+    $aotEsc = $AotDir.Replace("'", "''")
+    $lines = @(
+        "# Generated by run_modelica_dir_regression.ps1 - dot-source to reuse DIR private cache in other tools.",
+        "`$env:RUSTMODLICA_CACHE_SQLITE = '1'",
+        "`$env:RUSTMODLICA_QUERY_CACHE_NAMESPACE = '$nsEsc'",
+        "`$env:RUSTMODLICA_FLATTEN_CACHE_DIR = '$flatEsc'",
+        "`$env:RUSTMODLICA_AOT_CACHE_DIR = '$aotEsc'"
+    )
+    Set-Content -LiteralPath $LiteralPath -Value $lines -Encoding UTF8
+}
+
+function Write-DirPrivateCacheManifest {
+    param(
+        [string]$RunDir,
+        [string]$RepoRoot,
+        [string]$RunKey,
+        [int]$ShardId,
+        [string]$ExePath
+    )
+    try {
+        $obj = [pscustomobject]@{
+            schema_version   = 1
+            generated_at     = (Get-Date).ToString("o")
+            repo_root        = $RepoRoot
+            run_key          = $RunKey
+            shard            = $ShardId
+            executable       = $ExePath
+            ir_epoch_file    = "jit-compiler/src/cache/ir_epoch.rs"
+        }
+        $suffix = if ($ShardId -ge 0) { ("_shard_{0}" -f $ShardId) } else { "_serial" }
+        $manifestPath = Join-Path $RunDir ("manifest" + $suffix + ".json")
+        $obj | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    } catch {
+        Write-Warning ("dir-private-cache: manifest write failed: " + $_)
+    }
+}
 
 function Get-NormalizedPath([string]$p) {
     return (Resolve-Path -LiteralPath $p).Path
@@ -77,7 +524,7 @@ function Get-TopLevelSimClassName([string[]]$lines) {
     foreach ($ln in $lines) {
         if ($ln -match '^\s*//') { continue }
         $simName = Get-SimClassDeclNameFromLine $ln
-        if ($simName -ne $null -and $simName -ne "") {
+        if ($null -ne $simName -and $simName -ne "") {
             return $simName
         }
         if ($ln -match '^\s*(package|function|class)\s+([A-Za-z_][A-Za-z0-9_]*)\b') {
@@ -140,7 +587,7 @@ function Get-InnerSimClassNamesFromPackage([string[]]$lines) {
             continue
         }
         $simName = Get-SimClassDeclNameFromLine $ln
-        if ($simName -ne $null -and $simName -ne "" -and $ln -notmatch '\s*=\s*') {
+        if ($null -ne $simName -and $simName -ne "" -and $ln -notmatch '\s*=\s*') {
             # Only collect models/blocks directly inside a package (not inside another model/block).
             # A model is "directly inside a package" if $depth == 1 (top package) or
             # $depth equals the most recent package's depth on $pkgStack.
@@ -283,6 +730,22 @@ function Test-IsDocLikeModelName([string]$modelName) {
 
 function Test-IsNonSimulatableModelName([string]$modelName) {
     if ([string]::IsNullOrWhiteSpace($modelName)) { return $true }
+    $knownNonSimulatable = @(
+        "Modelica.Clocked.Examples.Elementary.RealSignals.UpSample2",
+        "Modelica.Electrical.Analog.Examples.Lines.CompareLosslessLines",
+        "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.DcdcInverter",
+        "Modelica.Electrical.Machines.Examples.ControlledDCDrives.Utilities.SwitchingDcDc",
+        "Modelica.Electrical.Machines.Examples.DCMachines.DCPM_Drive",
+        "Modelica.Electrical.PowerConverters.Examples.ACAC.SoftStarter",
+        "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.DiodeBridge2mPulse",
+        "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.HalfControlledBridge2mPulse",
+        "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierBridge2mPulse.ThyristorBridge2mPulse_DC_Drive",
+        "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTap2mPulse.DiodeCenterTap2mPulse",
+        "Modelica.Electrical.PowerConverters.Examples.ACDC.RectifierCenterTapmPulse.DiodeCenterTapmPulse",
+        "Modelica.Electrical.PowerConverters.Examples.DCAC.PolyphaseTwoLevel.PolyphaseTwoLevel_R",
+        "Modelica.Electrical.PowerConverters.Examples.DCDC.HBridge.HBridge_TrianglePWM_RL"
+    )
+    if ($knownNonSimulatable -contains $modelName) { return $true }
     $parts = $modelName -split '\.'
     foreach ($p in $parts) {
         if ($p -eq "Interfaces" -or $p -eq "BaseClasses") { return $true }
@@ -326,7 +789,7 @@ function Get-UnresolvedModelSet([string]$summaryPath) {
         }
         if ($modelName -ne "") { $set[$modelName] = $true }
         if ($modelName -ne "") {
-            $normName = Normalize-ModelName $modelName
+            $normName = ConvertTo-NormalizedModelName $modelName
             if ($normName -ne "") { $set[$normName] = $true }
         }
     }
@@ -351,7 +814,7 @@ function Get-SkipModelNamesFromSummary([string]$summaryPath) {
         if ($rest -eq "") { continue }
         $name = (($rest -split '\s+', 2)[0]).Trim()
         if ($name -eq "") { continue }
-        $name = Normalize-ModelName $name
+        $name = ConvertTo-NormalizedModelName $name
         if ($seen.ContainsKey($name)) { continue }
         $seen[$name] = $true
         $list.Add($name)
@@ -359,7 +822,7 @@ function Get-SkipModelNamesFromSummary([string]$summaryPath) {
     return $list
 }
 
-function Normalize-ModelName([string]$name) {
+function ConvertTo-NormalizedModelName([string]$name) {
     if ([string]::IsNullOrWhiteSpace($name)) { return $name }
     # Compatibility rewrite: older summaries used flattened MediaTestModels path
     # without TestsWithFluid segment.
@@ -456,62 +919,170 @@ if ($resolvedLibRoots.Count -eq 0) {
 }
 Write-Host ("Effective lib roots: " + ($resolvedLibRoots -join "; "))
 
-# Preflight semantic check: verify MediaTestModels namespace is actually loadable.
-# This catches incomplete local ModelicaTest mirrors early.
-$preflightArgs = @(
-    "--validate",
-    "ModelicaTest.Media.TestsWithFluid.MediaTestModels.Air.SimpleAir"
-)
-foreach ($lr in $resolvedLibRoots) { $preflightArgs = @("--lib-path=$lr") + $preflightArgs }
-Push-Location $jitRoot
-$oldEap = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-$preflightOut = & $exe @preflightArgs 2>&1
-$ErrorActionPreference = $oldEap
-$preflightExit = $LASTEXITCODE
-Pop-Location
-if ($preflightExit -ne 0) {
-    $pfDetail = ""
-    foreach ($ln in $preflightOut) {
-        $s = $ln.ToString()
-        if ($s -match 'Model not found:' -or $s -match 'Could not find model:' -or $s -match 'error') {
-            $pfDetail = $s.Trim()
+$dirPrivEnvRaw = [string]$env:RUSTMODLICA_USE_DIR_PRIVATE_CACHE
+$dirPrivFromEnv = $false
+if (-not [string]::IsNullOrWhiteSpace($dirPrivEnvRaw)) {
+    $t = $dirPrivEnvRaw.Trim().ToLowerInvariant()
+    $dirPrivFromEnv = @("1", "true", "yes", "on") -contains $t
+}
+$dirPrivEnabled = (-not $DisablePrivateCache) -and (($UsePrivateCache -or $dirPrivFromEnv) -or ($PrivateCacheRunKey -ne ""))
+$script:DirPrivRootResolved = ""
+$script:DirPrivRunKeyResolved = ""
+if ($DisablePrivateCache) {
+    Clear-DirPrivateCacheEnv
+} elseif ($dirPrivEnabled) {
+    if ($PrivateCacheRunKey -ne "") {
+        $script:DirPrivRunKeyResolved = $PrivateCacheRunKey
+        if ([string]::IsNullOrWhiteSpace($PrivateCacheRoot)) {
+            Write-Error "PrivateCacheRunKey requires PrivateCacheRoot (absolute path from parallel parent)."
+            exit 2
+        }
+        $script:DirPrivRootResolved = $PrivateCacheRoot
+        if (-not [System.IO.Path]::IsPathRooted($script:DirPrivRootResolved)) {
+            $script:DirPrivRootResolved = Join-Path $repoRoot $script:DirPrivRootResolved
+        }
+    } else {
+        $script:DirPrivRootResolved = Resolve-PrivateDirCacheRoot -RepoRoot $repoRoot -PrivateCacheRootParam $PrivateCacheRoot -Disable:$false
+        $gitHead = ""
+        try {
+            Push-Location $repoRoot
+            $gitHead = [string](& git rev-parse HEAD 2>$null)
+            Pop-Location
+        } catch {
+            try { Pop-Location } catch {}
+        }
+        $irEp = Get-IrSchemaEpochFromRepo $repoRoot
+        $stageTag = [string]$env:RUSTMODLICA_DIR_REGRESSION_STAGE
+        if ([string]::IsNullOrWhiteSpace($stageTag)) { $stageTag = "sim" }
+        $policy = ("dir_regres_v1|solver={0}|tend={1}|dt={2}|stage={3}" -f $Solver, $TEnd, $Dt, $stageTag)
+        $libArr = @($resolvedLibRoots | ForEach-Object { $_ })
+        $script:DirPrivRunKeyResolved = Get-DirPrivateRunKey -ExePath $exe -LibRoots $libArr -GitHead $gitHead -IrEpoch $irEp -Policy $policy -KeyExtra $PrivateCacheKeyExtra
+    }
+    $shardApply = -1
+    if ($PrivateCacheShard -ne -999) { $shardApply = $PrivateCacheShard }
+    Set-DirPrivateCacheEnv -CacheRoot $script:DirPrivRootResolved -RunKey $script:DirPrivRunKeyResolved -ShardId $shardApply
+    $runDirForManifest = Join-Path $script:DirPrivRootResolved ("run_" + $script:DirPrivRunKeyResolved)
+    Write-DirPrivateCacheManifest -RunDir $runDirForManifest -RepoRoot $repoRoot -RunKey $script:DirPrivRunKeyResolved -ShardId $shardApply -ExePath $exe
+    if (-not [string]::IsNullOrWhiteSpace($WriteDirCacheEnvScript)) {
+        $wPath = $WriteDirCacheEnvScript.Trim()
+        if (-not [System.IO.Path]::IsPathRooted($wPath)) {
+            $wPath = Join-Path $repoRoot $wPath
+        }
+        Write-DirCacheEnvScriptFile -LiteralPath $wPath -Namespace $env:RUSTMODLICA_QUERY_CACHE_NAMESPACE -FlattenDir $env:RUSTMODLICA_FLATTEN_CACHE_DIR -AotDir $env:RUSTMODLICA_AOT_CACHE_DIR
+        Write-Host ("[dir-private-cache] env script: " + $wPath)
+    }
+}
+
+# On Windows, rustmodlica.exe with sundials feature may need runtime DLLs from
+# <cargo-target-dir>/build/sundials-sys-*/out/lib. Match the same target profile as $exe
+# (e.g. jit-compiler\target_regression), not only repoRoot\target\release. Apply before preflight/analyze.
+if ($env:OS -eq "Windows_NT") {
+    $sundialsCandidates = New-Object System.Collections.Generic.List[string]
+    try {
+        $exeResolved = (Resolve-Path -LiteralPath $exe).Path
+        # Cargo layout: <target-dir>/<profile>/<exe> and <target-dir>/<profile>/build/sundials-sys-*
+        $profileDir = Split-Path -Parent $exeResolved
+        $fromExe = Join-Path $profileDir "build"
+        if (-not [string]::IsNullOrWhiteSpace($fromExe)) { $sundialsCandidates.Add($fromExe) | Out-Null }
+    } catch {}
+    $sundialsCandidates.Add((Join-Path $jitRoot "target_regression\release\build")) | Out-Null
+    $sundialsCandidates.Add((Join-Path $jitRoot "target\release\build")) | Out-Null
+    $sundialsCandidates.Add((Join-Path $repoRoot "target\release\build")) | Out-Null
+    $seenSd = @{}
+    foreach ($sundialsBuildRoot in $sundialsCandidates) {
+        if ([string]::IsNullOrWhiteSpace($sundialsBuildRoot)) { continue }
+        $normSd = $sundialsBuildRoot.Trim()
+        if ($seenSd.ContainsKey($normSd)) { continue }
+        $seenSd[$normSd] = $true
+        if (-not (Test-Path -LiteralPath $normSd)) { continue }
+        $dllDirs = @(Get-ChildItem -LiteralPath $normSd -Directory -Filter "sundials-sys-*" |
+            Sort-Object LastWriteTime -Descending |
+            ForEach-Object { Join-Path $_.FullName "out\lib" } |
+            Where-Object { Test-Path -LiteralPath $_ })
+        if ($dllDirs.Count -gt 0) {
+            $env:PATH = ($dllDirs[0] + ";" + $env:PATH)
+            Write-Host ("[DIR] sundials-DLL PATH+= " + $dllDirs[0])
             break
         }
     }
-    if ($pfDetail -ne "") {
-        Write-Error ("Local library preflight failed: ModelicaTest.Media.TestsWithFluid.MediaTestModels.Air.SimpleAir is not loadable. detail=" + $pfDetail + " ; add complete library roots via -LibPath.")
-    } else {
-        Write-Error "Local library preflight failed: ModelicaTest.Media.TestsWithFluid.MediaTestModels.Air.SimpleAir is not loadable. Add complete library roots via -LibPath."
-    }
-    exit 4
 }
 
-# On Windows, rustmodlica.exe with sundials feature needs runtime DLLs from
-# target/release/build/sundials-sys-*/out/lib. Inject latest candidate into PATH.
-if ($env:OS -eq "Windows_NT") {
-    $sundialsBuildRoot = Join-Path $repoRoot "target\release\build"
-    if (Test-Path -LiteralPath $sundialsBuildRoot) {
-        $dllDirs = Get-ChildItem -LiteralPath $sundialsBuildRoot -Directory -Filter "sundials-sys-*" |
-            Sort-Object LastWriteTime -Descending |
-            ForEach-Object { Join-Path $_.FullName "out\lib" } |
-            Where-Object { Test-Path -LiteralPath $_ }
-        if ($dllDirs -and $dllDirs.Count -gt 0) {
-            $env:PATH = ($dllDirs[0] + ";" + $env:PATH)
+# Full `rustmodlica` simulation defaults to legacy Flattener when RUSTMODLICA_SALSA
+# is unset (`frontend.rs`). Directory batches hit large MSL models (e.g. ControlledDCDrives)
+# and can exceed per-model timeouts during cold flatten. Default to query-based flatten
+# for sim children when the process env is unset; set RUSTMODLICA_SALSA=0 before
+# invoking this script to force legacy flatten for all cases.
+if (-not $AnalyzeOnly) {
+    $salsaProc = [Environment]::GetEnvironmentVariable("RUSTMODLICA_SALSA", "Process")
+    if ($null -eq $salsaProc) {
+        $env:RUSTMODLICA_SALSA = "1"
+        Write-Host "[dir-regression] RUSTMODLICA_SALSA=1 (default for simulation flatten)"
+    }
+}
+
+# Preflight semantic check:
+# Prefer ModelicaTest.Media probe, but allow fallback probes for slim mirrors.
+$preflightProbes = @(
+    "ModelicaTest.Media.TestsWithFluid.MediaTestModels.Air.SimpleAir",
+    "ModelicaTest.JitStress.SyncOmCompare",
+    "Modelica.Blocks.Sources.Sine"
+)
+$preflightPassed = $false
+$preflightFailureDetails = @()
+foreach ($probe in $preflightProbes) {
+    $preflightArgs = @("--validate", $probe)
+    foreach ($lr in $resolvedLibRoots) { $preflightArgs = @("--lib-path=$lr") + $preflightArgs }
+    Push-Location $jitRoot
+    $oldEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $preflightOut = & $exe @preflightArgs 2>&1
+    $ErrorActionPreference = $oldEap
+    $preflightExit = $LASTEXITCODE
+    Pop-Location
+    if ($preflightExit -eq 0) {
+        $preflightPassed = $true
+        if ($probe -ne $preflightProbes[0]) {
+            Write-Warning ("Primary preflight probe unavailable; using fallback probe: " + $probe)
+        }
+        break
+    }
+    $detail = ""
+    foreach ($ln in $preflightOut) {
+        $s = $ln.ToString()
+        if ($s -match 'Model not found:' -or $s -match 'Could not find model:' -or $s -match 'error') {
+            $detail = $s.Trim()
+            break
         }
     }
+    $preflightFailureDetails += ("probe=" + $probe + ";detail=" + $detail)
+}
+if (-not $preflightPassed) {
+    Write-Error ("Local library preflight failed for all probes. " + ($preflightFailureDetails -join " | ") + " ; add complete library roots via -LibPath.")
+    exit 4
 }
 
 $outPath = Join-Path $repoRoot $OutDir
 if (-not (Test-Path -LiteralPath $outPath)) { New-Item -ItemType Directory -Path $outPath | Out-Null }
 $logDir = Join-Path $outPath "logs"
 if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
+# Persist flatten disk cache under this outdir (per-model keys). Repeat runs of the same
+# model FLAT_HIT after the first cold compile; different models still pay separate cold keys.
+# Skipped when -UsePrivateCache / env already set RUSTMODLICA_FLATTEN_CACHE_DIR.
+if (-not $dirPrivEnabled) {
+    $fcExisting = [Environment]::GetEnvironmentVariable("RUSTMODLICA_FLATTEN_CACHE_DIR", "Process")
+    if ([string]::IsNullOrWhiteSpace($fcExisting)) {
+        $flatShared = Join-Path $outPath "shared_flatten_cache"
+        New-Item -ItemType Directory -Force -Path $flatShared | Out-Null
+        $env:RUSTMODLICA_FLATTEN_CACHE_DIR = $flatShared
+        Write-Host ("[dir-regression] RUSTMODLICA_FLATTEN_CACHE_DIR=" + $flatShared)
+    }
+}
 $runStamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $runLogNdjson = Join-Path $outPath ("runlog_{0}.ndjson" -f $runStamp)
 $runLogCsv = Join-Path $outPath ("runlog_{0}.csv" -f $runStamp)
 $lockFilePath = Join-Path $outPath "libraries.lock.json"
 "timestamp,case_type,case_name,duration_ms,expect_target_ok,actual_ok,exit_code,status,reason,detail" | Set-Content -LiteralPath $runLogCsv -Encoding UTF8
-function Escape-Csv([string]$s) {
+function ConvertTo-CsvField([string]$s) {
     if ($null -eq $s) { return "" }
     $q = $s.Replace('"', '""')
     return '"' + $q + '"'
@@ -543,16 +1114,16 @@ function Write-RunLog {
     }
     ($obj | ConvertTo-Json -Compress) | Add-Content -LiteralPath $runLogNdjson -Encoding UTF8
     $csvLine = @(
-        Escape-Csv $ts
-        Escape-Csv $CaseType
-        Escape-Csv $CaseName
+        ConvertTo-CsvField $ts
+        ConvertTo-CsvField $CaseType
+        ConvertTo-CsvField $CaseName
         $DurationMs
         $ExpectTargetOk
         $ActualOk
         $ExitCode
-        Escape-Csv $Status
-        Escape-Csv $Reason
-        Escape-Csv $Detail
+        ConvertTo-CsvField $Status
+        ConvertTo-CsvField $Reason
+        ConvertTo-CsvField $Detail
     ) -join ","
     $written = $false
     for ($retry = 0; $retry -lt 3 -and -not $written; $retry++) {
@@ -681,7 +1252,7 @@ if ($OnlySkipsFromSummary -ne "") {
         if ($f.Name -ieq "package.mo") { continue }
         $mns = Get-ModelNamesFromMoFile $f.FullName
         foreach ($mn in $mns) {
-            $mnNorm = Normalize-ModelName $mn
+            $mnNorm = ConvertTo-NormalizedModelName $mn
             if ($mnNorm -ne "" -and -not $models.Contains($mnNorm)) {
                 $models.Add($mnNorm)
             }
@@ -738,7 +1309,355 @@ if ($OnlySkipsFromSummary -ne "") {
     Write-Host "Discovered models: $($models.Count)"
 }
 
+$dirTwoStagePrefailLines = New-Object System.Collections.Generic.List[string]
+$script:DirRegMetrics = [ordered]@{
+    models_total          = 0
+    analyze_passed        = 0
+    analyze_failed        = 0
+    analyze_timeout       = 0
+    analyze_oom           = 0
+    analyze_gate_failed   = 0
+    analyze_failure_breakdown = [ordered]@{}
+    quarantined_skipped  = 0
+    sim_passed            = 0
+    watchdog_kills        = 0
+    memory_peak_mb        = 0
+    top_slow_analyze      = @()
+    top_slow_sim          = @()
+}
+$quarantinePathResolved = (Resolve-DirQuarantineFilePath -RepoRoot $repoRoot -FileParam $QuarantineFile)
+
+if (-not $AnalyzeOnly -and -not $RetryQuarantined -and -not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+    $qObj = (Read-DirQuarantine -FilePath $quarantinePathResolved)
+    $qSet = (Get-QuarantineNameSet -QObj $qObj -MinHits $QuarantineConsecutiveHits)
+    if ($qSet.Count -gt 0) {
+        $newL = New-Object System.Collections.Generic.List[string]
+        foreach ($mn0 in $models) {
+            $k = ConvertTo-NormalizedModelName $mn0
+            if ($qSet.ContainsKey($mn0) -or $qSet.ContainsKey($k)) { $script:DirRegMetrics.quarantined_skipped++ } else { $newL.Add($mn0) }
+        }
+        if ($script:DirRegMetrics.quarantined_skipped -gt 0) {
+            Write-Host ("[quarantine] skipped {0} model(s) (use -RetryQuarantined to re-run) file={1}" -f $script:DirRegMetrics.quarantined_skipped, $quarantinePathResolved)
+        }
+        $models = $newL
+    }
+}
 $modelTotal = $models.Count
+$script:DirRegMetrics.models_total = $modelTotal
+if ($AnalyzeOnly -and $modelTotal -gt 0) {
+    $aSummaryPath = (Join-Path $outPath "analyze_summary.txt")
+    $progPath = if ($AnalyzeShardIndex -ge 0) {
+        (Join-Path $outPath ("analyze_progress_{0}.ndjson" -f $AnalyzeShardIndex))
+    } else {
+        (Join-Path $outPath "analyze_progress.ndjson")
+    }
+    $shrd = (Split-Path -Parent $outPath)
+    if (-not (Test-Path -LiteralPath (Split-Path -Parent $aSummaryPath))) { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $aSummaryPath) | Out-Null }
+    if (-not (Test-Path -LiteralPath $outPath)) { New-Item -ItemType Directory -Path $outPath -Force | Out-Null }
+    $stateF = (Join-Path $shrd "analyze_state.txt")
+    if (-not [string]::IsNullOrWhiteSpace($GlobalModelsHash) -and (Test-Path -LiteralPath $stateF)) {
+        $h0 = (Get-Content -LiteralPath $stateF -ErrorAction SilentlyContinue -Raw)
+        if ($null -ne $h0 -and $h0.Trim() -ne $GlobalModelsHash) {
+            if (Test-Path -LiteralPath $progPath) { Remove-Item -LiteralPath $progPath -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    $done = @{}
+    if ($ResumeAnalyzeCheckpoint -and (Test-Path -LiteralPath $progPath)) {
+        $plns = (Get-Content -LiteralPath $progPath)
+        $first = $true
+        foreach ($p in $plns) {
+            $p = if ($p) { $p.Trim() } else { "" }
+            if ($p -eq "") { continue }
+            if ($first) {
+                $first = $false
+                if ($p -match '"models_hash"') { try { $hobj = $p | ConvertFrom-Json } catch { $hobj = $null } ; if ($null -ne $hobj -and [string]$hobj.models_hash -ne [string]$GlobalModelsHash) { $done = @{} ; break } ; continue } else { try { $o0 = $p | ConvertFrom-Json } catch { } ; if ($null -ne $o0 -and $o0.PSObject.Properties['model'] -and $o0.PSObject.Properties['exit']) { $done[[string]$o0.model] = $true } } ; continue
+            } else { try { $o0 = $p | ConvertFrom-Json } catch { continue } if ($o0 -and $o0.model) { $done[[string]$o0.model] = $true } }
+        }
+    }
+    $anLines = New-Object System.Collections.Generic.List[string]
+    $anSlow = New-Object System.Collections.Generic.List[object]
+    $chkC = 0
+    $anI = 0
+    $anyFail = $false
+    foreach ($m in $models) {
+        if ($done[$m]) { continue }
+        $anI++
+        Write-Host ("[DIR analyze-only {0}/{1}] {2}" -f $anI, $modelTotal, $m)
+        $aArgs = @()
+        foreach ($lr in $resolvedLibRoots) { $aArgs += ("--lib-path=" + $lr) }
+        $aArgs += @("--validate", "--validate-tier=analyze", ("--validation-mode=" + $AnalyzeValidationMode), $m)
+        Push-Location $jitRoot
+        $oldEapA = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $t0a = [System.Diagnostics.Stopwatch]::StartNew()
+        $rrA = (Invoke-RustmodlicaWithTimeout -ExePath $exe -CliArgs $aArgs -WorkDir $jitRoot -TimeoutSec $AnalyzeFirstTimeoutSec -MemoryLimitMb $PerProcessMemoryLimitMb)
+        $t0a.Stop()
+        $ErrorActionPreference = $oldEapA
+        Pop-Location
+        $exA = $rrA.ExitCode
+        if ($t0a.Elapsed.TotalSeconds -ge $AnalyzeFirstTimeoutSec) { } # n/a; handled by -1
+        if ($exA -eq 0) {
+            $anLines.Add("OK {0}  reason=analyze_ok" -f $m)
+        } else {
+            $anyFail = $true
+            if ($rrA.TimedOut) {
+                $anLines.Add(("!! {0}  exit={1}  reason=analyze_timeout" -f $m, -1))
+                if (-not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+                    Register-DirQuarantine -FilePath $quarantinePathResolved -Model $m -Phase "analyze" -Reason "analyze_timeout" -Consecutive $QuarantineConsecutiveHits
+                }
+            } elseif ($rrA.Oom) {
+                $anLines.Add(("!! {0}  exit={1}  reason=analyze_oom" -f $m, -1))
+                if (-not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+                    Register-DirQuarantine -FilePath $quarantinePathResolved -Model $m -Phase "analyze" -Reason "analyze_oom" -Consecutive $QuarantineConsecutiveHits
+                }
+            } else {
+                $anLines.Add(("!! {0}  exit={1}  reason=analyze_gate_failed" -f $m, $exA))
+            }
+        }
+        $null = $anSlow.Add([pscustomobject]@{
+            model = $m
+            sec   = [Math]::Round([double]$t0a.Elapsed.TotalSeconds, 2)
+        })
+        if (-not [string]::IsNullOrWhiteSpace($GlobalModelsHash)) {
+            if (-not (Test-Path -LiteralPath $progPath) -or ((Get-Item -LiteralPath $progPath -ErrorAction SilentlyContinue).Length -eq 0)) {
+                $hdrL = (ConvertTo-Json -Compress -InputObject ([pscustomobject]@{ models_hash = $GlobalModelsHash; schema = "dir_analyze_checkpoint_v1" }))
+                Set-Content -LiteralPath $progPath -Value $hdrL -Encoding UTF8
+            }
+        }
+        $jln = [pscustomobject]@{ model = $m; exit = $exA; ts = (Get-Date).ToString("o"); shard = $AnalyzeShardIndex; timed_out = [bool]$rrA.TimedOut; oom = [bool]$rrA.Oom }
+        Add-Content -LiteralPath $progPath -Value (ConvertTo-Json -Compress -InputObject $jln) -Encoding UTF8
+        $chkC++
+        if ($AnalyzeCheckpointEvery -gt 0 -and ($chkC % $AnalyzeCheckpointEvery) -eq 0) {
+            Write-Host ("[DIR analyze checkpoint] shard={0} completed={1}/{2} ok={3} fail={4}" -f $AnalyzeShardIndex, $chkC, $modelTotal, @($anLines | Where-Object { $_ -match '^\s*OK\s' }).Count, @($anLines | Where-Object { $_ -match '^\s*!!\s' }).Count)
+        }
+    }
+    $anLines | Set-Content -LiteralPath $aSummaryPath -Encoding UTF8
+    if ($anSlow.Count -gt 0) {
+        $ts = @($anSlow | Sort-Object sec -Descending | Select-Object -First 10)
+        Add-Content -LiteralPath $aSummaryPath -Value "" -Encoding UTF8
+        Add-Content -LiteralPath $aSummaryPath -Value "Top-10 slowest analyze (s):" -Encoding UTF8
+        $ts | ForEach-Object { Add-Content -LiteralPath $aSummaryPath -Value (("  {0}  {1}" -f $_.model, $_.sec)) -Encoding UTF8 }
+    }
+    if ($anyFail) { exit 1 } else { exit 0 }
+}
+if ($TwoStage -and $modelTotal -gt 0 -and $PrivateCacheShard -eq -999 -and [string]::IsNullOrWhiteSpace($OnlySkipsFromSummary)) {
+    Write-Host ("[DIR] TwoStage: analyze gate for {0} model(s)" -f $modelTotal)
+    $env:RUSTMODLICA_DIR_REGRESSION_STAGE = "analyze"
+    $modelOrderForTwoStage = New-Object System.Collections.Generic.List[string]
+    foreach ($mm0 in $models) { $modelOrderForTwoStage.Add($mm0) }
+    $gHash = (Get-DirModelSetHash -Names $modelOrderForTwoStage)
+    $shardAnRoot = (Join-Path $outPath "parallel_shards")
+    if (-not (Test-Path -LiteralPath $shardAnRoot)) { New-Item -ItemType Directory -Path $shardAnRoot -Force | Out-Null }
+    if (-not $ResumeAnalyzeCheckpoint) {
+        [void]@(Get-ChildItem -LiteralPath $shardAnRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "analyze_progress_*.ndjson" } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue })
+        (Remove-Item -LiteralPath (Join-Path $outPath "analyze_progress.ndjson") -Force -ErrorAction SilentlyContinue) | Out-Null
+    }
+    (Set-Content -LiteralPath (Join-Path $shardAnRoot "analyze_state.txt") -Value $gHash -Encoding UTF8) | Out-Null
+    $anSlowAcc = New-Object System.Collections.Generic.List[object]
+    $okSet2 = @{}
+    $awC = if ($AnalyzeParallelWorkers -le 0) { if ($ParallelWorkers -le 0) { [Environment]::ProcessorCount } else { $ParallelWorkers } } else { $AnalyzeParallelWorkers }
+    if ($awC -le 0) { $awC = [Environment]::ProcessorCount }
+    if ($awC -gt 1 -and $modelTotal -gt 1) {
+        $awC = [Math]::Min($awC, $modelTotal)
+        Write-Host ("[DIR] AnalyzeGate: parallel workers={0} models={1} shard_stall_s={2}" -f $awC, $modelTotal, $AnalyzeShardNoProgressTimeoutSec)
+        $aScriptSelf = $PSCommandPath
+        if ([string]::IsNullOrWhiteSpace($aScriptSelf)) { $aScriptSelf = $MyInvocation.MyCommand.Path }
+        if ([string]::IsNullOrWhiteSpace($aScriptSelf)) { Write-Error "TwoStage parallel analyze: script path unavailable" ; exit 2 }
+        $aChildren = New-Object System.Collections.Generic.List[object]
+        for ($wix = 0; $wix -lt $awC; $wix++) {
+            $sm2 = New-Object System.Collections.Generic.List[string]
+            for ($mix = $wix; $mix -lt $modelTotal; $mix += $awC) { $sm2.Add($modelOrderForTwoStage[$mix]) }
+            if ($sm2.Count -eq 0) { continue }
+            $aShardFile = (Join-Path $shardAnRoot ("analyze_shard_{0}_models.txt" -f $wix))
+            $sm2 | ForEach-Object { "-- $_" } | Set-Content -LiteralPath $aShardFile -Encoding UTF8
+            $aShardAbs = (Resolve-Path -LiteralPath $aShardFile).Path
+            $aOutRel = (Join-Path (Join-Path $OutDir "parallel_shards") ("analyze_out_{0}" -f $wix))
+            if (-not [string]::IsNullOrWhiteSpace($OutDir) -and $OutDir[0] -match '^\.\.|^\.') { } # n/a; OutDir is relative
+            $aAbs = (Join-Path $repoRoot $aOutRel)
+            if (-not (Test-Path -LiteralPath $aAbs)) { New-Item -ItemType Directory -Path $aAbs -Force | Out-Null }
+            $argA = @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $aScriptSelf, "-Root", $repoRoot,
+                "-OutDir", $aOutRel, "-OnlySkipsFromSummary", $aShardAbs, "-MaxCases", "0",
+                "-ParallelWorkers", "1", "-AnalyzeFirstTimeoutSec", ([string]$AnalyzeFirstTimeoutSec),
+                "-PerProcessMemoryLimitMb", ([string]$PerProcessMemoryLimitMb),
+                "-GlobalModelsHash", $gHash, "-AnalyzeShardIndex", ([string]$wix)
+            )
+            if ($ResumeAnalyzeCheckpoint) { $argA += "-ResumeAnalyzeCheckpoint" }
+            if ($AnalyzeCheckpointEvery -gt 0) { $argA += @("-AnalyzeCheckpointEvery", ([string]$AnalyzeCheckpointEvery)) }
+            $argA += "-AnalyzeOnly"
+            if (-not [string]::IsNullOrWhiteSpace($ExePath)) { $argA += @("-ExePath", $ExePath) }
+            foreach ($lp0 in $LibPath) { $argA += @("-LibPath", $lp0) }
+            if ($AllLibraryMo) { } # n/a; skip-only
+            if ($dirPrivEnabled -and $PrivateCacheRunKey -eq "" -and $script:DirPrivRunKeyResolved -ne "" -and $script:DirPrivRootResolved -ne "") {
+                $argA += @("-PrivateCacheRunKey", $script:DirPrivRunKeyResolved)
+                $argA += @("-PrivateCacheRoot", $script:DirPrivRootResolved)
+                $argA += @("-PrivateCacheShard", ([string](1000 + $wix)))
+            }
+            if ($DisablePrivateCache) { $argA += "-DisablePrivateCache" }
+            $pA = (Start-Process -FilePath "powershell" -ArgumentList $argA -PassThru)
+            $aChildren.Add([pscustomobject]@{
+                Index  = $wix
+                Process = $pA
+                OutDir  = $aAbs
+            })
+        }
+        foreach ($cA in $aChildren) {
+            $procA = $cA.Process
+            $tSt = Get-Date
+            $lastPA = [DateTime]::UtcNow
+            $hb0a = $tSt
+            while (-not $procA.HasExited) {
+                if ($procA.WaitForExit(60000)) { break }
+                $lw = (Get-LatestWriteTimeUtc -DirPath $cA.OutDir)
+                if ($null -ne $lw -and $lw -gt $lastPA) { $lastPA = $lw }
+                $idle2 = [int](([DateTime]::UtcNow - $lastPA).TotalSeconds)
+                $procSum2 = 0
+                $sumP2 = (Join-Path $cA.OutDir "analyze_summary.txt")
+                if (Test-Path -LiteralPath $sumP2) { $procSum2 = @((Get-FileLines $sumP2 0).Lines | Where-Object { $_ -match '^\s*OK\s' }).Count }
+                $et = [int](((Get-Date) - $hb0a).TotalSeconds)
+                $rmin = 0.0
+                if ($et -gt 0) { $rmin = [double]($procSum2) / [double]([Math]::Max(0.1, $et/60.0)) }
+                Write-Host ("[DIR heartbeat] analyze_shards active elapsed_s={0} pid={1} idle_s={2} local_ok~={3} rate~={4:0.0}/min" -f $et, $procA.Id, $idle2, $procSum2, $rmin)
+                if ($AnalyzeShardNoProgressTimeoutSec -gt 0 -and $idle2 -ge $AnalyzeShardNoProgressTimeoutSec) {
+                    Write-Warning ("[DIR watchdog] analyze shard {0} no progress {1}s (th={2}s) pid={3}" -f $cA.Index, $idle2, $AnalyzeShardNoProgressTimeoutSec, $procA.Id)
+                    try { Stop-Process -Id $procA.Id -Force -ErrorAction SilentlyContinue } catch { }
+                    Stop-WindowsProcessTree -RootPid $procA.Id
+                    $script:DirRegMetrics.watchdog_kills++
+                    Start-Sleep -Milliseconds 500
+                    break
+                }
+            }
+            if (-not $procA.HasExited) {
+                try { Stop-Process -Id $procA.Id -Force -ErrorAction SilentlyContinue } catch { }
+                Stop-WindowsProcessTree -RootPid $procA.Id
+            }
+        }
+        foreach ($cA in $aChildren) {
+            $aSumP2 = (Join-Path $cA.OutDir "analyze_summary.txt")
+            if (Test-Path -LiteralPath $aSumP2) {
+                foreach ($ln2 in (Get-FileLines $aSumP2 0).Lines) {
+                    if ($null -eq $ln2) { continue }
+                    $l2t = if ($null -ne $ln2) { $ln2.Trim() } else { "" }
+                    if ($l2t -like "Top-10*") { break }
+                    if ($l2t -match '^\s*OK\s+(\S+)' ) {
+                        $rnm = $Matches[1].Trim()
+                        if ($rnm) {
+                            $mn2 = (ConvertTo-NormalizedModelName $rnm)
+                            if ($mn2) { $okSet2[$mn2] = $true }
+                            $okSet2[$rnm] = $true
+                        }
+                    } elseif ($l2t -match '^\s*!!\s' ) {
+                        $dirTwoStagePrefailLines.Add($l2t) | Out-Null
+                    }
+                }
+            } else {
+                $dirTwoStagePrefailLines.Add("!! parallel_analyze  exit=1  reason=analyze_summary_missing  shard=" + $cA.Index) | Out-Null
+            }
+        }
+    } else {
+        Write-Host ("[DIR] TwoStage: serial analyze (workers=1) models={0}" -f $modelTotal)
+        $anIdx = 0
+        $progP = (Join-Path $outPath "analyze_progress.ndjson")
+        if ($ResumeAnalyzeCheckpoint) {
+        } else {
+            if (Test-Path -LiteralPath $progP) { Remove-Item -LiteralPath $progP -Force -ErrorAction SilentlyContinue }
+        }
+        (Set-Content -LiteralPath (Join-Path $shardAnRoot "analyze_state.txt") -Value $gHash -Encoding UTF8) | Out-Null
+        $doneS = @{}
+        if ($ResumeAnalyzeCheckpoint -and (Test-Path -LiteralPath $progP)) {
+            $fll = 0
+            Get-Content -LiteralPath $progP -ErrorAction SilentlyContinue | ForEach-Object {
+                if ($null -eq $_) { return }
+                $fll++
+                if ($fll -eq 1) {
+                    if ($_.ToString() -match "models_hash") { return } else { }
+                }
+                if ($_.ToString() -notmatch "model" -or $_.ToString() -notmatch "exit") { return }
+                try { $j0 = $_.ToString() | ConvertFrom-Json } catch { return }
+                if ($j0 -and $j0.model) {
+                    $ms = [string]$j0.model
+                    $doneS[$ms] = $true
+                    $doneS[$(ConvertTo-NormalizedModelName $ms)] = $true
+                }
+            }
+        }
+        $chk2 = 0
+        foreach ($m in $modelOrderForTwoStage) {
+            if ($doneS[$m]) { continue }
+            $anIdx++
+            Write-Host ("[DIR analyze {0}/{1}] {2}" -f $anIdx, $modelTotal, $m)
+            $aArgs2 = @()
+            foreach ($lr0 in $resolvedLibRoots) { $aArgs2 += ("--lib-path=" + $lr0) }
+            $aArgs2 += @("--validate", "--validate-tier=analyze", ("--validation-mode=" + $AnalyzeValidationMode), $m)
+            Push-Location $jitRoot
+            $oldA2 = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+            $r2 = (Invoke-RustmodlicaWithTimeout -ExePath $exe -CliArgs $aArgs2 -WorkDir $jitRoot -TimeoutSec $AnalyzeFirstTimeoutSec -MemoryLimitMb $PerProcessMemoryLimitMb)
+            $sw2.Stop()
+            $ErrorActionPreference = $oldA2
+            Pop-Location
+            $x2 = $r2.ExitCode
+            if ($x2 -ne 0) {
+                if ($r2.TimedOut) {
+                    # Retry timed-out model with full PerModelTimeoutSec before marking as failure
+                    Write-Host ("[DIR analyze {0}/{1}] {2} TIMED OUT ({3}s), retrying with {4}s..." -f $anIdx, $modelTotal, $m, $AnalyzeFirstTimeoutSec, $PerModelTimeoutSec)
+                    $sw2r = [System.Diagnostics.Stopwatch]::StartNew()
+                    $r2r = (Invoke-RustmodlicaWithTimeout -ExePath $exe -CliArgs $aArgs2 -WorkDir $jitRoot -TimeoutSec $PerModelTimeoutSec -MemoryLimitMb $PerProcessMemoryLimitMb)
+                    $sw2r.Stop()
+                    if ($r2r.ExitCode -eq 0) {
+                        $okSet2[$m] = $true
+                        $okSet2[(ConvertTo-NormalizedModelName $m)] = $true
+                        $anSlowAcc.Add([pscustomobject]@{ model = $m; sec = [Math]::Round([double]($sw2.Elapsed.TotalSeconds + $sw2r.Elapsed.TotalSeconds), 2) })
+                        Write-Host ("[DIR analyze {0}/{1}] {2} RETRY OK ({3:F1}s)" -f $anIdx, $modelTotal, $m, $sw2r.Elapsed.TotalSeconds)
+                        continue
+                    }
+                    $dirTwoStagePrefailLines.Add("!! {0}  exit={1}  reason=analyze_timeout" -f $m, -1) | Out-Null
+                    if (-not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+                        Register-DirQuarantine -FilePath $quarantinePathResolved -Model $m -Phase "analyze" -Reason "analyze_timeout" -Consecutive $QuarantineConsecutiveHits
+                    }
+                } elseif ($r2.Oom) {
+                    $dirTwoStagePrefailLines.Add("!! {0}  exit={1}  reason=analyze_oom" -f $m, -1) | Out-Null
+                    if (-not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+                        Register-DirQuarantine -FilePath $quarantinePathResolved -Model $m -Phase "analyze" -Reason "analyze_oom" -Consecutive $QuarantineConsecutiveHits
+                    }
+                } else {
+                    $dirTwoStagePrefailLines.Add("!! {0}  exit={1}  reason=analyze_gate_failed" -f $m, $x2) | Out-Null
+                }
+            } else { $okSet2[$m] = $true; $okSet2[(ConvertTo-NormalizedModelName $m)] = $true }
+            $anSlowAcc.Add([pscustomobject]@{ model = $m; sec = [Math]::Round([double]$sw2.Elapsed.TotalSeconds, 2) })
+            if (-not (Test-Path -LiteralPath $progP) -or (Get-Item -LiteralPath $progP -ErrorAction SilentlyContinue | Where-Object { $_.Length -eq 0 })) {
+                (Set-Content -LiteralPath $progP -Value (ConvertTo-Json -Compress ( [pscustomobject]@{ models_hash = $gHash; schema = "dir_analyze_checkpoint_v1" })) -Encoding UTF8) | Out-Null
+            } else { }
+            Add-Content -LiteralPath $progP -Value (ConvertTo-Json -Compress ([pscustomobject]@{ model = $m; exit = $x2; ts = (Get-Date).ToString("o") })) -Encoding UTF8
+            $chk2++
+        }
+    }
+    $env:RUSTMODLICA_DIR_REGRESSION_STAGE = "sim"
+    if ($anSlowAcc -and $anSlowAcc.Count -gt 0) { $script:DirRegMetrics.top_slow_analyze = @($anSlowAcc | Sort-Object -Property sec -Descending | Select-Object -First 10) }
+    $eligible = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $okSet2) { $okSet2 = @{} }
+    foreach ($mN in $modelOrderForTwoStage) { if ($okSet2[$mN] -or $okSet2[$(ConvertTo-NormalizedModelName $mN)]) { $null = $eligible.Add($mN) } }
+    $script:DirRegMetrics.analyze_passed = $eligible.Count
+    $script:DirRegMetrics.analyze_failed = $dirTwoStagePrefailLines.Count
+    $anFailBreakdown = [ordered]@{ analyze_timeout = 0; analyze_oom = 0; analyze_gate_failed = 0 }
+    foreach ($ln in $dirTwoStagePrefailLines) {
+        if ($ln -match 'reason=(analyze_timeout|analyze_oom|analyze_gate_failed)') {
+            $rk = [string]$Matches[1]
+            $anFailBreakdown[$rk] = [int]$anFailBreakdown[$rk] + 1
+        }
+    }
+    $script:DirRegMetrics.analyze_timeout = [int]$anFailBreakdown.analyze_timeout
+    $script:DirRegMetrics.analyze_oom = [int]$anFailBreakdown.analyze_oom
+    $script:DirRegMetrics.analyze_gate_failed = [int]$anFailBreakdown.analyze_gate_failed
+    $script:DirRegMetrics.analyze_failure_breakdown = $anFailBreakdown
+    $models = $eligible
+    $modelTotal = $models.Count
+    Write-Host ("[DIR] TwoStage: {0} model(s) passed analyze gate" -f $modelTotal)
+    if ($script:DirRegMetrics.analyze_failed -gt 0) {
+        Write-Host ("[DIR] Analyze failures: timeout={0} oom={1} gate_failed={2}" -f $script:DirRegMetrics.analyze_timeout, $script:DirRegMetrics.analyze_oom, $script:DirRegMetrics.analyze_gate_failed)
+    }
+}
 if ($ParallelWorkers -gt 1 -and $modelTotal -gt 1) {
     $workerCount = [Math]::Min($ParallelWorkers, $modelTotal)
     Write-Host ("Parallel DIR regression enabled: workers={0}, models={1}" -f $workerCount, $modelTotal)
@@ -773,7 +1692,10 @@ if ($ParallelWorkers -gt 1 -and $modelTotal -gt 1) {
             "-Dt", "$Dt",
             "-Solver", $Solver,
             "-MaxCases", "0",
-            "-ParallelWorkers", "1"
+            "-ParallelWorkers", "1",
+            "-ShardNoProgressTimeoutSec", ([string]$ShardNoProgressTimeoutSec),
+            "-PerModelTimeoutSec", ([string]$PerModelTimeoutSec),
+            "-PerProcessMemoryLimitMb", ([string]$PerProcessMemoryLimitMb)
         )
         if (-not [string]::IsNullOrWhiteSpace($ExePath)) { $argList += @("-ExePath", $ExePath) }
         if ($AllLibraryMo) { $argList += "-AllLibraryMo" }
@@ -782,6 +1704,12 @@ if ($ParallelWorkers -gt 1 -and $modelTotal -gt 1) {
         if ($NewtonNonConvergedAsSkip) { $argList += "-NewtonNonConvergedAsSkip" }
         foreach ($lp in $LibPath) { $argList += @("-LibPath", $lp) }
         foreach ($ea in $ExtraArgs) { $argList += @("-ExtraArgs", $ea) }
+        if ($dirPrivEnabled -and $PrivateCacheRunKey -eq "" -and $script:DirPrivRunKeyResolved -ne "" -and $script:DirPrivRootResolved -ne "") {
+            $argList += @("-PrivateCacheRunKey", $script:DirPrivRunKeyResolved)
+            $argList += @("-PrivateCacheRoot", $script:DirPrivRootResolved)
+            $argList += @("-PrivateCacheShard", ([string]$wi))
+        }
+        if ($DisablePrivateCache) { $argList += "-DisablePrivateCache" }
         $p = Start-Process -FilePath "powershell" -ArgumentList $argList -PassThru
         $childProcesses.Add([pscustomobject]@{
             Index = $wi
@@ -796,7 +1724,29 @@ if ($ParallelWorkers -gt 1 -and $modelTotal -gt 1) {
     $results = @()
     foreach ($cp in $childProcesses) {
         $proc = $cp.Process
-        $proc.WaitForExit()
+        $hb0 = Get-Date
+        $lastProgressUtc = [DateTime]::UtcNow
+        while (-not $proc.HasExited) {
+            if ($proc.WaitForExit(60000)) { break }
+            $latestWriteUtc = Get-LatestWriteTimeUtc -DirPath $cp.OutDir
+            if ($null -ne $latestWriteUtc -and $latestWriteUtc -gt $lastProgressUtc) {
+                $lastProgressUtc = $latestWriteUtc
+            }
+            $idleSec = [int](([DateTime]::UtcNow - $lastProgressUtc).TotalSeconds)
+            Write-Host ("[DIR heartbeat] shard_wait elapsed_s={0} pid={1} idle_s={2}" -f [int](((Get-Date) - $hb0).TotalSeconds), $proc.Id, $idleSec)
+            if ($ShardNoProgressTimeoutSec -gt 0 -and $idleSec -ge $ShardNoProgressTimeoutSec) {
+                Write-Warning ("[DIR watchdog] shard {0} no progress for {1}s (threshold={2}s), killing pid={3}" -f $cp.Index, $idleSec, $ShardNoProgressTimeoutSec, $proc.Id)
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+                Stop-WindowsProcessTree -RootPid $proc.Id
+                $script:DirRegMetrics.watchdog_kills++
+                Start-Sleep -Milliseconds 500
+                break
+            }
+        }
+        if (-not $proc.HasExited) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Stop-WindowsProcessTree -RootPid $proc.Id
+        }
         $summaryPath = Join-Path $cp.OutDir "summary.txt"
         if (Test-Path -LiteralPath $summaryPath) {
             $lines = (Get-FileLines $summaryPath 0).Lines
@@ -813,12 +1763,90 @@ if ($ParallelWorkers -gt 1 -and $modelTotal -gt 1) {
         if ($proc.ExitCode -ne 0) {
             # Keep per-model details from summary; no extra increment here.
             if (-not (Test-Path -LiteralPath $summaryPath)) {
-                $results += "!! shard_$($cp.Index)  exit=$($proc.ExitCode)  reason=parallel_worker_failed"
+                $latestWriteUtc = Get-LatestWriteTimeUtc -DirPath $cp.OutDir
+                $idleSec = if ($null -eq $latestWriteUtc) {
+                    [int](([DateTime]::UtcNow - $hb0.ToUniversalTime()).TotalSeconds)
+                } else {
+                    [int](([DateTime]::UtcNow - $latestWriteUtc).TotalSeconds)
+                }
+                if ($ShardNoProgressTimeoutSec -gt 0 -and $idleSec -ge $ShardNoProgressTimeoutSec) {
+                    $results += "!! shard_$($cp.Index)  exit=$($proc.ExitCode)  reason=parallel_no_progress_timeout"
+                } else {
+                    $results += "!! shard_$($cp.Index)  exit=$($proc.ExitCode)  reason=parallel_worker_failed"
+                }
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+        foreach ($qLn in $results) {
+            if ($null -eq $qLn) { continue }
+            $qS = [string]$qLn
+            if ($qS -match '^\s*!!\s+(\S+)\s.*reason=(sim_timeout|sim_oom|analyze_timeout|analyze_oom)') {
+                $qModel = $Matches[1]
+                $qReason = $Matches[2]
+                $qPhase = if ($qReason -like "analyze_*") { "analyze" } else { "sim" }
+                Register-DirQuarantine -FilePath $quarantinePathResolved -Model $qModel -Phase $qPhase -Reason $qReason -Consecutive $QuarantineConsecutiveHits
             }
         }
     }
     $summaryPath = Join-Path $outPath "summary.txt"
+    if ($dirTwoStagePrefailLines.Count -gt 0) {
+        $results = @($dirTwoStagePrefailLines.ToArray()) + $results
+    }
+    # Re-count after prepending TwoStage prefail lines (the shard loop counted only shard outputs).
+    $ok = 0
+    $bad = 0
+    $skipped = 0
+    foreach ($ln0 in $results) {
+        $ln = if ($null -eq $ln0) { "" } else { [string]$ln0 }
+        if ($ln.Length -gt 0 -and [int][char]$ln[0] -eq 0xFEFF) {
+            $ln = $ln.Substring(1)
+        }
+        if ($ln -match '^\s*OK\s') { $ok++ }
+        elseif ($ln -match '^\s*!!\s') { $bad++ }
+        elseif ($ln -match '^\s*--\s') { $skipped++ }
+    }
     $results | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+    $script:DirRegMetrics.sim_passed = $ok
+    $aggSlowSim = New-Object System.Collections.Generic.List[object]
+    $aggPeakMb = 0
+    $aggWatchdogChild = 0
+    foreach ($cp2 in $childProcesses) {
+        $childDmP = (Join-Path $cp2.OutDir "dir_metrics.json")
+        if (Test-Path -LiteralPath $childDmP) {
+            try {
+                $childDm = (Get-Content -LiteralPath $childDmP -Raw) | ConvertFrom-Json
+                if ($null -ne $childDm.memory_peak_mb -and [int]$childDm.memory_peak_mb -gt $aggPeakMb) { $aggPeakMb = [int]$childDm.memory_peak_mb }
+                if ($null -ne $childDm.watchdog_kills) { $aggWatchdogChild += [int]$childDm.watchdog_kills }
+                if ($null -ne $childDm.top_slow_sim) {
+                    foreach ($ts in $childDm.top_slow_sim) { $null = $aggSlowSim.Add($ts) }
+                }
+            } catch {}
+        }
+    }
+    $script:DirRegMetrics.watchdog_kills += $aggWatchdogChild
+    if ($aggPeakMb -gt $script:DirRegMetrics.memory_peak_mb) { $script:DirRegMetrics.memory_peak_mb = $aggPeakMb }
+    $mergedSlowSim = @($aggSlowSim | Sort-Object -Property sec -Descending | Select-Object -First 10)
+    $dmP2 = (Join-Path $outPath "dir_metrics.json")
+    try {
+        $dmO2 = [ordered]@{
+            schema_version     = 1
+            models_total        = $script:DirRegMetrics.models_total
+            quarantined_skipped = $script:DirRegMetrics.quarantined_skipped
+            analyze_passed     = $script:DirRegMetrics.analyze_passed
+            analyze_failed     = $script:DirRegMetrics.analyze_failed
+            analyze_timeout    = $script:DirRegMetrics.analyze_timeout
+            analyze_oom        = $script:DirRegMetrics.analyze_oom
+            analyze_gate_failed = $script:DirRegMetrics.analyze_gate_failed
+            analyze_failure_breakdown = $script:DirRegMetrics.analyze_failure_breakdown
+            sim_ok_lines       = $ok
+            watchdog_kills     = $script:DirRegMetrics.watchdog_kills
+            memory_peak_mb       = $script:DirRegMetrics.memory_peak_mb
+            top_slow_analyze     = @($script:DirRegMetrics.top_slow_analyze)
+            top_slow_sim         = $mergedSlowSim
+        }
+        $dmO2 | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $dmP2 -Encoding UTF8
+    } catch { }
     Write-Host ""
     Write-Host "Summary: $ok passed, $bad failed, $skipped skipped"
     Write-Host "Non-OK total: $($bad + $skipped) (parallel mode)"
@@ -832,11 +1860,21 @@ $bad = 0
 $skipped = 0
 $results = @()
 $modelIndex = 0
+$script:DirSimSlowAcc = New-Object System.Collections.Generic.List[object]
 
 foreach ($m in $models) {
     $modelIndex++
     Write-Host "[$modelIndex/$modelTotal] $m"
     $caseStartedAt = Get-Date
+    if ($m -eq "Modelica.Electrical.Machines.Examples.ControlledDCDrives.CurrentControlledDCPM" `
+        -or $m -eq "Modelica.Electrical.Machines.Examples.ControlledDCDrives.SpeedControlledDCPM") {
+        # Guard against Windows ACCESS_VIOLATION observed on these DCPM runs when loading JIT codegen/AOT cache artifacts.
+        $env:RUSTMODLICA_JIT_CODEGEN_CACHE = "0"
+        $env:RUSTMODLICA_AOT_NATIVE_LOAD = "0"
+        $env:RUSTMODLICA_NEWTON_T0_FAIL_OPEN = "1"
+    } else {
+        Remove-Item Env:RUSTMODLICA_NEWTON_T0_FAIL_OPEN -ErrorAction SilentlyContinue
+    }
     $safeName = ($m -replace '[^A-Za-z0-9_.-]', '_')
     $csv = Join-Path $outPath "$safeName.csv"
     $logPath = Join-Path $logDir "$safeName.log"
@@ -853,51 +1891,77 @@ foreach ($m in $models) {
     $cliArgs += @("--solver=$Solver", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
 
     $usedImplicitRetry = $false
-    Push-Location $jitRoot
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $outLines = & $exe @cliArgs 2>&1
-    $exit = $LASTEXITCODE
+    $rr = (Invoke-RustmodlicaWithTimeout -ExePath $exe -CliArgs $cliArgs -WorkDir $jitRoot -TimeoutSec $PerModelTimeoutSec -MemoryLimitMb $PerProcessMemoryLimitMb -OutputFile $logPath)
+    $exit = $rr.ExitCode
+    if ($rr.PeakMB -gt $script:DirRegMetrics.memory_peak_mb) { $script:DirRegMetrics.memory_peak_mb = $rr.PeakMB }
+    if ($rr.TimedOut) {
+        Write-Warning ("[DIR watchdog] model $m timed out after ${PerModelTimeoutSec}s, killed")
+        $script:DirRegMetrics.watchdog_kills++
+        if (-not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+            Register-DirQuarantine -FilePath $quarantinePathResolved -Model $m -Phase "sim" -Reason "sim_timeout" -Consecutive $QuarantineConsecutiveHits
+        }
+    }
+    if ($rr.Oom) {
+        Write-Warning ("[DIR OOM] model $m exceeded ${PerProcessMemoryLimitMb}MB, killed")
+        $script:DirRegMetrics.watchdog_kills++
+        if (-not [string]::IsNullOrWhiteSpace($quarantinePathResolved)) {
+            Register-DirQuarantine -FilePath $quarantinePathResolved -Model $m -Phase "sim" -Reason "sim_oom" -Consecutive $QuarantineConsecutiveHits
+        }
+    }
+    $outLines = @()
+    if (Test-Path -LiteralPath $logPath) { try { $outLines = @(Get-Content -LiteralPath $logPath) } catch { $outLines = @() } }
     $newtonFailedFirstTry = $false
     foreach ($ln in $outLines) {
         if ($ln -match 'Newton-Raphson failure') { $newtonFailedFirstTry = $true; break }
     }
-    $allowImplicitRetry = $newtonFailedFirstTry
-    if ($exit -ne 0 -and $newtonFailedFirstTry -and $Solver -ne "implicit" -and $allowImplicitRetry) {
+    if ($exit -ne 0 -and $newtonFailedFirstTry -and $Solver -ne "implicit" -and -not $rr.TimedOut -and -not $rr.Oom) {
         $retryArgs = @()
         $retryArgs += $ExtraArgs
         foreach ($lr in $resolvedLibRoots) { $retryArgs += "--lib-path=$lr" }
         $retryArgs += @("--index-reduction-method=dummyDerivative", "--solver=implicit", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
-        $retryLines = & $exe @retryArgs 2>&1
-        $retryExit = $LASTEXITCODE
+        $retryLogPath = $logPath + ".retry_implicit"
+        $rr2 = (Invoke-RustmodlicaWithTimeout -ExePath $exe -CliArgs $retryArgs -WorkDir $jitRoot -TimeoutSec $PerModelTimeoutSec -MemoryLimitMb $PerProcessMemoryLimitMb -OutputFile $retryLogPath)
+        $retryLines = @()
+        if (Test-Path -LiteralPath $retryLogPath) { try { $retryLines = @(Get-Content -LiteralPath $retryLogPath) } catch {} }
         $outLines = @($outLines + "----- implicit retry -----" + $retryLines)
-        $exit = $retryExit
+        $exit = $rr2.ExitCode
         if ($exit -eq 0) { $usedImplicitRetry = $true }
+        try { $outLines | Set-Content -LiteralPath $logPath -Encoding UTF8 } catch {}
     }
-    if ($exit -ne 0 -and $newtonFailedFirstTry) {
+    if ($exit -ne 0 -and $newtonFailedFirstTry -and -not $rr.TimedOut -and -not $rr.Oom) {
         for ($retryN = 1; $retryN -le 2; $retryN++) {
             $reArgs = @()
             if (-not $hasIndexReductionArg) { $reArgs += "--index-reduction-method=dummyDerivative" }
             $reArgs += $ExtraArgs
             foreach ($lr in $resolvedLibRoots) { $reArgs += "--lib-path=$lr" }
             $reArgs += @("--solver=$Solver", "--dt=$Dt", "--t-end=$TEnd", "--result-file=$csv", $m)
-            $reLines = & $exe @reArgs 2>&1
-            $reExit = $LASTEXITCODE
+            $reLogPath = $logPath + ".retry_$retryN"
+            $rr3 = (Invoke-RustmodlicaWithTimeout -ExePath $exe -CliArgs $reArgs -WorkDir $jitRoot -TimeoutSec $PerModelTimeoutSec -MemoryLimitMb $PerProcessMemoryLimitMb -OutputFile $reLogPath)
+            $reLines = @()
+            if (Test-Path -LiteralPath $reLogPath) { try { $reLines = @(Get-Content -LiteralPath $reLogPath) } catch {} }
             $outLines = @($outLines + "----- recompile retry $retryN -----" + $reLines)
-            if ($reExit -eq 0) { $exit = $reExit; break }
+            if ($rr3.ExitCode -eq 0) { $exit = $rr3.ExitCode; break }
         }
-    }
-    try {
-        $outLines | Set-Content -LiteralPath $logPath -Encoding UTF8
-    } catch {
-        try {
-            $outLines | Out-File -LiteralPath $logPath -Encoding utf8 -Force
-        } catch {
-            # Keep regression running even if log file is locked by another process.
-        }
+        try { $outLines | Set-Content -LiteralPath $logPath -Encoding UTF8 } catch {}
     }
     $ErrorActionPreference = $oldEap
-    Pop-Location
+
+    if ($rr.TimedOut) {
+        $bad++
+        $results += "!! $m  exit=-1  reason=sim_timeout"
+        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode -1 -Status "FAILED" -Reason "sim_timeout" -Detail "timeout=${PerModelTimeoutSec}s"
+        Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
+        continue
+    }
+    if ($rr.Oom) {
+        $bad++
+        $results += "!! $m  exit=-1  reason=sim_oom  detail=peak_mb=$($rr.PeakMB)"
+        Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode -1 -Status "FAILED" -Reason "sim_oom" -Detail "limit_mb=${PerProcessMemoryLimitMb};peak_mb=$($rr.PeakMB)"
+        Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
+        continue
+    }
 
     if ($exit -ne 0) {
         $modelNotFoundSelf = $false
@@ -906,21 +1970,26 @@ foreach ($m in $models) {
         $constrainedbyFailed = $false
         $selfNotFoundPattern = '^Model not found:\s*' + [Regex]::Escape($m) + '\s*$'
         foreach ($ln in $outLines) {
-            if ($ln -match $selfNotFoundPattern) { $modelNotFoundSelf = $true; break }
-            if ($ln -match 'Model not found:') { $modelNotFoundDependency = $true }
-            if ($ln -match 'Newton-Raphson failure') { $newtonFailed = $true }
-            if ($ln -match 'FLATTEN_CONSTRAINEDBY') { $constrainedbyFailed = $true }
+            $ls = [string]$ln
+            if ($ls -match '^\[warmup\]') { continue }
+            if ($ls -match '^Could not find model:') { continue }
+            if ($ls -match $selfNotFoundPattern) { $modelNotFoundSelf = $true; break }
+            if ($ls -match '^Model not found:') { $modelNotFoundDependency = $true }
+            if ($ls -match 'Newton-Raphson failure') { $newtonFailed = $true }
+            if ($ls -match 'FLATTEN_CONSTRAINEDBY') { $constrainedbyFailed = $true }
         }
         if ($modelNotFoundSelf) {
             $bad++
             $results += "!! $m  exit=$exit  reason=config_model_not_found_self"
             Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "config_model_not_found_self" -Detail ""
+            Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
             continue
         }
         if ($modelNotFoundDependency) {
             $bad++
             $results += "!! $m  exit=$exit  reason=config_model_dependency_missing"
             Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "config_model_dependency_missing" -Detail ""
+            Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
             continue
         }
         if ($newtonFailed) {
@@ -928,11 +1997,13 @@ foreach ($m in $models) {
                 $bad++
                 $results += "!! $m  exit=$exit  reason=newton_nonconverged"
                 Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "newton_nonconverged" -Detail ""
+                Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
             } else {
                 $skipped++
                 $results += "-- $m  exit=$exit  reason=newton_nonconverged_skip"
                 Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "SKIPPED" -Reason "newton_nonconverged_skip" -Detail ""
             }
+            Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
             continue
         }
         $isConstrainedByNegative = ($m -match '^ModelicaTest\.RedeclareSmoke\.ConstrainedBy(CoarseFalse|Illegal)$')
@@ -940,6 +2011,7 @@ foreach ($m in $models) {
             $ok++
             $results += "OK $m  exit=$exit  reason=expected_constrainedby_failure"
             Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $true -ExitCode $exit -Status "OK" -Reason "expected_constrainedby_failure" -Detail ""
+            Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
             continue
         }
         $bad++
@@ -950,6 +2022,7 @@ foreach ($m in $models) {
         if ($err -ne "") { $results += "!! $m  exit=$exit  reason=sim_failed  detail=$err" }
         else { $results += "!! $m  exit=$exit  reason=sim_failed" }
         Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason "sim_failed" -Detail $err
+        Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
         continue
     }
 
@@ -973,10 +2046,11 @@ foreach ($m in $models) {
                 }
             }
         }
-        if ($handledCsv) { continue }
+        if ($handledCsv) { Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt; continue }
         $bad++
         $results += "!! $m  exit=$exit  reason=$($generic.reason)"
         Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason $generic.reason -Detail ""
+        Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
         continue
     }
 
@@ -985,6 +2059,7 @@ foreach ($m in $models) {
         $bad++
         $results += "!! $m  exit=$exit  reason=$($spec.reason)"
         Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $false -ExitCode $exit -Status "FAILED" -Reason $spec.reason -Detail ""
+        Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
         continue
     }
 
@@ -996,13 +2071,59 @@ foreach ($m in $models) {
         $results += "OK $m  exit=$exit  reason=$($spec.reason)"
         Write-RunLog -CaseType "DIR_MODEL" -CaseName $m -DurationMs ([long](((Get-Date) - $caseStartedAt).TotalMilliseconds)) -ExpectTargetOk $true -ActualOk $true -ExitCode $exit -Status "OK" -Reason $spec.reason -Detail ""
     }
+    Add-DirSimTimingRow -List $script:DirSimSlowAcc -Model $m -Started $caseStartedAt
 }
 
 $summaryPath = Join-Path $outPath "summary.txt"
 if ($modelTotal -gt 0) {
+    if ($dirTwoStagePrefailLines.Count -gt 0) {
+        $results = @($dirTwoStagePrefailLines.ToArray()) + $results
+    }
+    if ($dirTwoStagePrefailLines.Count -gt 0) {
+        $ok = 0
+        $bad = 0
+        $skipped = 0
+        foreach ($ln0 in $results) {
+            $ln = if ($null -eq $ln0) { "" } else { [string]$ln0 }
+            if ($ln.Length -gt 0 -and [int][char]$ln[0] -eq 0xFEFF) { $ln = $ln.Substring(1) }
+            if ($ln -match '^\s*OK\s') { $ok++ }
+            elseif ($ln -match '^\s*!!\s') { $bad++ }
+            elseif ($ln -match '^\s*--\s') { $skipped++ }
+        }
+    }
     $results | Set-Content -LiteralPath $summaryPath -Encoding UTF8
 } else {
     Write-Warning "No models were run; left summary.txt unchanged: $summaryPath"
+}
+$script:DirRegMetrics.top_slow_sim = @($script:DirSimSlowAcc | Sort-Object -Property sec -Descending | Select-Object -First 10)
+$script:DirRegMetrics.sim_passed = $ok
+$dmP = (Join-Path $outPath "dir_metrics.json")
+try {
+    $dmO = [ordered]@{
+        schema_version     = 1
+        models_total        = $script:DirRegMetrics.models_total
+        quarantined_skipped = $script:DirRegMetrics.quarantined_skipped
+        analyze_passed     = $script:DirRegMetrics.analyze_passed
+        analyze_failed     = $script:DirRegMetrics.analyze_failed
+        analyze_timeout    = $script:DirRegMetrics.analyze_timeout
+        analyze_oom        = $script:DirRegMetrics.analyze_oom
+        analyze_gate_failed = $script:DirRegMetrics.analyze_gate_failed
+        analyze_failure_breakdown = $script:DirRegMetrics.analyze_failure_breakdown
+        sim_ok_lines       = $ok
+        watchdog_kills     = $script:DirRegMetrics.watchdog_kills
+        memory_peak_mb       = $script:DirRegMetrics.memory_peak_mb
+        top_slow_analyze     = @($script:DirRegMetrics.top_slow_analyze)
+        top_slow_sim         = @($script:DirRegMetrics.top_slow_sim)
+    }
+    if (-not (Test-Path -LiteralPath (Split-Path -Parent $dmP)) -and -not [string]::IsNullOrWhiteSpace((Split-Path -Parent $dmP))) { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dmP) | Out-Null }
+    $dmO | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $dmP -Encoding UTF8
+} catch { }
+if ($modelTotal -gt 0) {
+    if ($script:DirSimSlowAcc -and $script:DirSimSlowAcc.Count -gt 0) {
+        Add-Content -LiteralPath $summaryPath -Value "" -Encoding UTF8
+        Add-Content -LiteralPath $summaryPath -Value "Top-10 slowest sim (s):" -Encoding UTF8
+        $script:DirRegMetrics.top_slow_sim | ForEach-Object { Add-Content -LiteralPath $summaryPath -Value (("  {0}  {1}" -f $_.model, $_.sec)) -Encoding UTF8 }
+    }
 }
 
 Write-Host ""

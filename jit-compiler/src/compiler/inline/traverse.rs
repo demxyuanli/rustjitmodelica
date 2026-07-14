@@ -269,6 +269,7 @@ pub(super) fn inline_function_calls_in_model(
 
     let mut cache: HashMap<String, Arc<Model>> = HashMap::new();
     let mut no_inline: HashSet<String> = HashSet::new();
+    super::seed_inline_model_cache(&mut cache, loader);
     let parallel_poc = inline_parallel_poc_enabled();
     let parallel_min = inline_parallel_min_items();
     if parallel_poc {
@@ -446,4 +447,5 @@ pub(super) fn inline_function_calls_in_model(
         t0.elapsed().as_micros() as u64,
     );
     log_stage_timing(stage_trace, "inline.initial_algorithms", t0);
+    super::merge_inline_model_cache(cache);
 }

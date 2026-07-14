@@ -4,7 +4,7 @@ use crate::query_db::{cache_deps_match_for_stage, QueryDb};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-pub const FLAT_MODEL_Q_SCHEMA_V1: &str = "rustmodlica_flat_model_q_v1";
+pub const FLAT_MODEL_Q_SCHEMA_V1: &str = "rustmodlica_flat_model_q_v2";
 
 #[derive(Debug, Clone)]
 pub struct FlatModelResult {

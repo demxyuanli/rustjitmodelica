@@ -6,6 +6,21 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### P5 simulation numerical kernel (2026-07-14)
+
+- **Newton sparse `auto` production calibration**: `NEWTON_SPARSE_AUTO_MAX_DENSITY=0.35`, `NEWTON_SPARSE_AUTO_MIN_N=8` (overridable via `RUSTMODLICA_SPARSE_DENSITY_THRESHOLD` / `RUSTMODLICA_SPARSE_MIN_SIZE`); unified `RUSTMODLICA_NEWTON_PATH` + `RUSTMODLICA_NEWTON_SPARSE_POLICY` preference.
+- **Perf JSON**: `newton_sparse_blocks`, `newton_dense_blocks`, `newton_sparse_nnz_total`, `newton_sparse_policy`, `tierup_step_threshold`.
+- **Codegen cache**: variant string includes Newton policy tag (`nwa`/`nwd`/`nws`) so path policy changes miss cache correctly.
+- **Tier-up**: `TieringPolicy::for_equation_count` (50/100/200 by size); overrides `RUSTMODLICA_TIERUP_STEP_THRESHOLD`, `RUSTMODLICA_BACKGROUND_TIERUP`.
+- **SIMD step**: `RUSTMODLICA_SIMD_STEP` defaults on for RK4 state update (`n>=4`).
+- **`--perf-json` sim timing**: record `sim_ms` / `sim_us` whenever `--perf-json` is set (not only with `RUSTMODLICA_PERF_TRACE=1`).
+- **Salsa EngineV6 state collapse fix**: query-db `decl_expand_preinherited` now uses `DeclAndSubEq` and passes nested equations/connections into `eq_expanded` (previously root-only eq expand left MultiBody at state=0). Cache stage epochs bumped for DeclExpand/EqExpand/FlatModelQ/FlatFull.
+
+### JIT validate worker (2026-07-13)
+
+- **`--validate-stdio`**: long-lived validate worker; read JSON requests from stdin (`model`, optional `perf_json` / cache artifact paths), emit one validate JSON per request; reuse `ModelLoader` and Salsa session across models in-process.
+- **`regress-harness --worker-per-scenario`**: spawn one `rustmodlica --validate-stdio` per scenario and feed the model matrix over stdin (replaces one-process-per-case). A/B on MultiBody: EngineV6 `devloop_multi_model` run2 ~720ms → ~16ms vs legacy subprocess path.
+
 ### 审计缺口关闭 (2026-05-09 ~ 2026-05-10)
 
 - **DAE指标约简**: Pantelides默认开启 (`--index-reduction-method=pantelides`)，线性求解器扩展 + 诊断
@@ -66,6 +81,7 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - **Import-scoped type qualification guard** (`flatten/utils.rs` `is_import_scoped_or_unit_type_name`): `qualify_short_type_names` no longer prepends enclosing package scopes to `SI.*`, `NonSI.*`, `Machines.*`, `Interfaces.*`, and other import-alias prefixes. Fixes `FLATTEN_PARTIAL` false positives where `SI.Reluctance` was mis-resolved to the partial icon `Icons/Reluctance.mo` (FluxTubes ~15 DIR failures) and `FLATTEN_INCOMPATIBLE_CONNECTOR` from duplicated prefixes such as `...Interfaces.Machines.Interfaces...` (e.g. `DCPM_Temperature`).
 - **NonSI global alias** (`flatten/import_resolve/domains_misc.rs`): map `NonSI` / `NonSI.*` to `Modelica.Units.NonSI.*` so Fluid pump models (`NonSI.AngularVelocity_rpm` in `PartialPump`) validate (12+ `ModelicaTest.Fluid.TestComponents.Machines.*` + `Modelica.Fluid.Examples.*` DIR failures).
 - **Newton tearing stack slot fallback** (`jit/translator/equation/solvable_tearing.rs`): allocate a local stack slot when the tearing variable was not pre-registered in `stack_slots` (fixes JIT panic `Tearing var must have stack slot` on `Modelica.Fluid.Examples.PumpingSystem` simulation).
+- **Magnetic FW `Machines.Losses` alias** (`flatten/import_resolve/domains_magnetic.rs`, `domains_misc.rs`): route `Machines.Losses.*` / `Machines.Interfaces.*` / `Machines.Thermal.*` inherited from `Modelica.Electrical.Machines` to `Modelica.Electrical.Machines.*` instead of `Modelica.Magnetic.*.BasicMachines.*` (fixes 10 SMPM FundamentalWave/QuasiStatic DIR regressions after the import-scoped qualification guard).
 - **Function root entry eval (F3-1)** (`compiler_impl.rs` `run_function_once`): tries **each** output expression in declaration order for scalar `eval_expr` (so a later `output Real s := ...` still yields a value when an earlier output is array/comprehension-only). If **all** outputs fail only with **array/dot/range** or **unknown variable** (cross-output references at entry), returns **0.0** instead of aborting full compile—aligns non-`validate_only` behavior with TestLib multi-output functions.
 
 ### `regress-harness` + ModelicaTest mirror

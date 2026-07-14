@@ -1,4 +1,31 @@
 ﻿use super::context::ResolveContext;
+
+/// In Magnetic FundamentalWave, `Machines.<rest>` usually refers to the local
+/// `BasicMachines` package, but subpackages inherited from `Modelica.Electrical.Machines`
+/// (losses, interfaces, thermal, etc.) must stay under Electrical.Machines.
+fn resolve_magnetic_fw_machines_rest(rest: &str, magnetic_basic_machines: &str) -> String {
+    const ELECTRICAL_MACHINES_PREFIXES: &[&str] = &[
+        "Losses",
+        "Interfaces",
+        "Thermal",
+        "Utilities",
+        "Sensors",
+        "SpacePhasors",
+        "Examples",
+        "Icons",
+        "UsersGuide",
+    ];
+    if rest == "BasicMachines" || rest.starts_with("BasicMachines.") {
+        return format!("Modelica.Electrical.Machines.{rest}");
+    }
+    for prefix in ELECTRICAL_MACHINES_PREFIXES {
+        if rest == *prefix || rest.starts_with(&format!("{prefix}.")) {
+            return format!("Modelica.Electrical.Machines.{rest}");
+        }
+    }
+    format!("{magnetic_basic_machines}.{rest}")
+}
+
 pub(super) fn resolve_magnetic_domain(
         name: &str,
         current_qualified: &str,
@@ -66,9 +93,9 @@ pub(super) fn resolve_magnetic_domain(
             }
             if name.starts_with("Machines.") {
                 let rest = name.trim_start_matches("Machines.");
-                return Some(format!(
-                    "Modelica.Magnetic.FundamentalWave.BasicMachines.{}",
-                    rest
+                return Some(resolve_magnetic_fw_machines_rest(
+                    rest,
+                    "Modelica.Magnetic.FundamentalWave.BasicMachines",
                 ));
             }
         }
@@ -151,9 +178,9 @@ pub(super) fn resolve_magnetic_domain(
             }
             if name.starts_with("Machines.") {
                 let rest = name.trim_start_matches("Machines.");
-                return Some(format!(
-                    "Modelica.Magnetic.QuasiStatic.FundamentalWave.BasicMachines.{}",
-                    rest
+                return Some(resolve_magnetic_fw_machines_rest(
+                    rest,
+                    "Modelica.Magnetic.QuasiStatic.FundamentalWave.BasicMachines",
                 ));
             }
         }

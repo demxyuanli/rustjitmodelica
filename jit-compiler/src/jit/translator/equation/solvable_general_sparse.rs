@@ -8,8 +8,7 @@ use cranelift_module::{Linkage, Module};
 use crate::jit::context::TranslationContext;
 use crate::jit::translator::expr::compile_expression;
 use crate::solvable_limits::{
-    newton_sparse_policy_from_env, should_use_newton_sparse_path, validate_solvable_residual_count,
-    JIT_STACK_BUFFER_BYTES_MAX,
+    should_use_newton_sparse_path, validate_solvable_residual_count, JIT_STACK_BUFFER_BYTES_MAX,
 };
 
 use super::helpers::store_diag_residual_and_x;
@@ -76,7 +75,8 @@ pub(super) fn build_sparse_jacobian_pattern(
     unknowns: &[String],
     residuals: &[Expression],
 ) -> Option<SparseJacobianPattern> {
-    let policy = newton_sparse_policy_from_env();
+    use super::linearized::{parse_newton_path_preference, preference_to_sparse_policy};
+    let policy = preference_to_sparse_policy(parse_newton_path_preference());
     let n = residuals.len();
     if n < 3 || unknowns.len() < n {
         return None;
@@ -86,6 +86,8 @@ pub(super) fn build_sparse_jacobian_pattern(
         .map(SparseJacobianPattern::from_analysis_pattern)?;
 
     let nnz = pattern.nnz();
+    // Structural pattern always returned when valid; selection gate is applied by caller
+    // for compile path. For probe helpers, still apply policy so `is_some` means "would use sparse".
     if !should_use_newton_sparse_path(policy, n, nnz, unknowns.len()) {
         return None;
     }

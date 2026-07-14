@@ -12,5 +12,6 @@ mod precompile;
 mod repl;
 mod run;
 mod validate_json;
+mod validate_stdio;
 
 pub use run::run;

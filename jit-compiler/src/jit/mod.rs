@@ -18,6 +18,6 @@ pub mod types;
 mod var_fallback_policy;
 
 pub use compile::Jit;
-pub use config::calc_derivs_codegen_cache_key;
+pub use config::{calc_derivs_codegen_cache_key, jit_cache_variant_from_env};
 pub use connector_degree::build_connector_connection_degree;
 pub use types::{ArrayInfo, ArrayType, CalcDerivsFunc};

@@ -11,6 +11,7 @@ mod db;
 mod diagram;
 mod equation_graph_actor;
 mod msl_pack_bootstrap;
+mod validate_stdio_worker;
 mod file_watcher;
 mod git;
 mod index_db;

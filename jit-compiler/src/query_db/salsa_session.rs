@@ -3,6 +3,8 @@
 //!
 //! Reuse is gated by the same qualified key as [`super::flat_model::flattened_model_q`] and
 //! [`crate::cache::closure_hash::deps_match`] on the dependency list recorded for that query.
+//! When a full compile completes, [`record_codegen_stable_hash`] stores the JIT codegen key on the
+//! session so a later reuse with unchanged deps can skip redundant codegen work.
 //!
 //! ## Environment
 //! - `RUSTMODLICA_SALSA_PROCESS_DB` — `0`/`false`/`no` disables reuse (default: on).
@@ -26,6 +28,14 @@ thread_local! {
     static SALSA_PROCESS_LRU: RefCell<Vec<SalsaProcessSession>> = const { RefCell::new(Vec::new()) };
 }
 
+thread_local! {
+    static LAST_TAKE_HIT: RefCell<bool> = const { RefCell::new(false) };
+}
+
+thread_local! {
+    static LAST_TAKE_CODEGEN_HASH: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
 static SALSA_DB_HIT: AtomicU64 = AtomicU64::new(0);
 static SALSA_DB_MISS: AtomicU64 = AtomicU64::new(0);
 static SALSA_DB_EVICTION: AtomicU64 = AtomicU64::new(0);
@@ -43,6 +53,7 @@ struct SalsaProcessSession {
     key: String,
     deps: Vec<DepHashEntry>,
     db: super::Database,
+    codegen_stable_hash: Option<String>,
 }
 
 fn process_db_enabled() -> bool {
@@ -97,6 +108,47 @@ pub fn take_last_flat_model_q_deps() -> Option<Vec<DepHashEntry>> {
     LAST_FLAT_MODEL_Q_DEPS.with(|c| c.borrow_mut().take())
 }
 
+/// True when the most recent [`take_reusable_database`] on this thread returned a cached session.
+pub fn consume_salsa_process_db_hit() -> bool {
+    LAST_TAKE_HIT.with(|c| {
+        let hit = *c.borrow();
+        *c.borrow_mut() = false;
+        hit
+    })
+}
+
+/// Codegen stable hash from the session returned by the last [`take_reusable_database`] hit.
+pub fn take_salsa_codegen_stable_hash() -> Option<String> {
+    LAST_TAKE_CODEGEN_HASH.with(|c| c.borrow_mut().take())
+}
+
+/// Associates `hash` with the in-LRU session for `model_name` after a successful codegen compile.
+pub fn record_codegen_stable_hash(
+    loader: &ModelLoader,
+    model_name: &str,
+    coarse_constrainedby_only: bool,
+    compile_stop: &str,
+    validation_mode: ValidationMode,
+    hash: String,
+) {
+    if !process_db_enabled() {
+        return;
+    }
+    let key = flat_model_q_key_string(
+        loader,
+        model_name,
+        coarse_constrainedby_only,
+        compile_stop,
+        validation_mode,
+    );
+    SALSA_PROCESS_LRU.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some(sess) = slot.iter_mut().find(|s| s.key == key) {
+            sess.codegen_stable_hash = Some(hash);
+        }
+    });
+}
+
 /// If process-local reuse is enabled and a stored session matches `key` and disk deps, returns
 /// the cached [`super::Database`]. Otherwise returns `None` (caller should use `Database::default()`).
 pub fn take_reusable_database(
@@ -106,6 +158,8 @@ pub fn take_reusable_database(
     compile_stop: &str,
     validation_mode: ValidationMode,
 ) -> Option<super::Database> {
+    LAST_TAKE_HIT.with(|c| *c.borrow_mut() = false);
+    LAST_TAKE_CODEGEN_HASH.with(|c| *c.borrow_mut() = None);
     if !process_db_enabled() {
         return None;
     }
@@ -124,6 +178,8 @@ pub fn take_reusable_database(
         {
             let sess = slot.remove(idx);
             SALSA_DB_HIT.fetch_add(1, Ordering::Relaxed);
+            LAST_TAKE_HIT.with(|c| *c.borrow_mut() = true);
+            LAST_TAKE_CODEGEN_HASH.with(|c| *c.borrow_mut() = sess.codegen_stable_hash);
             return Some(sess.db);
         }
         SALSA_DB_MISS.fetch_add(1, Ordering::Relaxed);
@@ -154,8 +210,17 @@ pub fn return_database(
     let cap = lru_capacity();
     SALSA_PROCESS_LRU.with(|cell| {
         let mut slot = cell.borrow_mut();
+        let prev_codegen = slot
+            .iter()
+            .find(|s| s.key == key)
+            .and_then(|s| s.codegen_stable_hash.clone());
         slot.retain(|s| s.key != key);
-        slot.push(SalsaProcessSession { key, deps, db });
+        slot.push(SalsaProcessSession {
+            key,
+            deps,
+            db,
+            codegen_stable_hash: prev_codegen,
+        });
         while slot.len() > cap {
             slot.remove(0);
             SALSA_DB_EVICTION.fetch_add(1, Ordering::Relaxed);

@@ -125,6 +125,12 @@ impl ExecCodeBuffer {
 
 impl Drop for ExecCodeBuffer {
     fn drop(&mut self) {
+        if reloc_trace::trace_basic() {
+            reloc_trace::trace_line(format_args!(
+                "exec_buffer DROP ptr={:p} len={}",
+                self.ptr, self.len
+            ));
+        }
         #[cfg(windows)]
         {
             use windows_sys::Win32::System::Memory::{VirtualFree, MEM_RELEASE};

@@ -222,6 +222,12 @@ fn resolve_external_symbol_windows(
     for c in &candidates {
         if let Some(&ptr) = runtime_symbols.get(c) {
             let addr = ptr as usize;
+            if reloc_trace::trace_basic() {
+                reloc_trace::trace_line(format_args!(
+                    "resolve {:?} via runtime_symbols[{}] -> 0x{:x}",
+                    raw_name, c, addr
+                ));
+            }
             if raw_name.starts_with("__imp_") {
                 import_slots.push(Box::new(addr));
                 return import_slots.last().map(|b| &**b as *const usize as usize);
@@ -235,12 +241,21 @@ fn resolve_external_symbol_windows(
         let ptr = unsafe { GetProcAddress(GetModuleHandleA(std::ptr::null()), c_bytes.as_ptr()) };
         if let Some(p) = ptr {
             let addr = p as usize;
+            if reloc_trace::trace_basic() {
+                reloc_trace::trace_line(format_args!(
+                    "resolve {:?} via GetProcAddress[{}] -> 0x{:x}",
+                    raw_name, c, addr
+                ));
+            }
             if raw_name.starts_with("__imp_") {
                 import_slots.push(Box::new(addr));
                 return import_slots.last().map(|b| &**b as *const usize as usize);
             }
             return Some(addr);
         }
+    }
+    if reloc_trace::trace_basic() {
+        reloc_trace::trace_line(format_args!("resolve {:?} FAILED", raw_name));
     }
     None
 }
@@ -255,7 +270,29 @@ fn apply_relocation_windows(
     size_bits: u8,
     addend: i64,
 ) -> Option<()> {
-    let target = (target_addr as i128).saturating_add(addend as i128);
+    // COFF relocations use implicit addends: the value already stored at the
+    // relocation site is part of the addend and must be preserved. For
+    // PC-relative kinds the `object` crate additionally folds the instruction
+    // -length bias into `addend` (e.g. IMAGE_REL_AMD64_REL32 => -4), so the
+    // final value is simply S + A + stored - P with P = the address of the
+    // relocated field itself (NOT the end of the field).
+    let stored: i128 = match size_bits {
+        8 => read_u8(image, image_len, place_off)? as i8 as i128,
+        16 => read_u16(image, image_len, place_off)? as i16 as i128,
+        32 => read_u32(image, image_len, place_off)? as i32 as i128,
+        64 => read_u64(image, image_len, place_off)? as i64 as i128,
+        _ => return None,
+    };
+    let target = (target_addr as i128)
+        .saturating_add(addend as i128)
+        .saturating_add(stored);
+    let place_addr = (base_addr as i128).saturating_add(place_off as i128);
+    if reloc_trace::trace_sections() {
+        reloc_trace::trace_line(format_args!(
+            "reloc kind={:?} size={} place_off=0x{:x} sym_target=0x{:x} addend={} stored={}",
+            kind, size_bits, place_off, target_addr, addend, stored
+        ));
+    }
     match (kind, size_bits) {
         (object::RelocationKind::Absolute, 8) | (object::RelocationKind::ImageOffset, 8) => {
             write_u8(image, image_len, place_off, target as u8)
@@ -270,28 +307,24 @@ fn apply_relocation_windows(
             write_u32(image, image_len, place_off, target as u32)
         }
         (object::RelocationKind::Relative, 8) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(1);
-            let disp = target.saturating_sub(place_next);
+            let disp = target.saturating_sub(place_addr);
             let disp8 = i8::try_from(disp).ok()?;
             write_u8(image, image_len, place_off, disp8 as u8)
         }
         (object::RelocationKind::Relative, 16) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(2);
-            let disp = target.saturating_sub(place_next);
+            let disp = target.saturating_sub(place_addr);
             let disp16 = i16::try_from(disp).ok()?;
             write_u16(image, image_len, place_off, disp16 as u16)
         }
         (object::RelocationKind::Relative, 32) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(4);
-            let disp = target.saturating_sub(place_next);
+            let disp = target.saturating_sub(place_addr);
             if disp < i32::MIN as i128 || disp > i32::MAX as i128 {
                 return None;
             }
             write_u32(image, image_len, place_off, disp as i32 as u32)
         }
         (object::RelocationKind::Relative, 64) => {
-            let place_next = (base_addr as i128).saturating_add(place_off as i128).saturating_add(8);
-            let disp = target.saturating_sub(place_next);
+            let disp = target.saturating_sub(place_addr);
             let disp64 = i64::try_from(disp).ok()?;
             write_u64(image, image_len, place_off, disp64 as u64)
         }
@@ -322,6 +355,40 @@ fn apply_relocation_windows(
         }
         _ => None,
     }
+}
+
+fn read_u8(image: *const u8, image_len: usize, off: usize) -> Option<u8> {
+    if off.checked_add(1)? > image_len {
+        return None;
+    }
+    Some(unsafe { std::ptr::read(image.add(off)) })
+}
+
+fn read_u16(image: *const u8, image_len: usize, off: usize) -> Option<u16> {
+    if off.checked_add(2)? > image_len {
+        return None;
+    }
+    let mut b = [0u8; 2];
+    unsafe { std::ptr::copy_nonoverlapping(image.add(off), b.as_mut_ptr(), 2) };
+    Some(u16::from_le_bytes(b))
+}
+
+fn read_u32(image: *const u8, image_len: usize, off: usize) -> Option<u32> {
+    if off.checked_add(4)? > image_len {
+        return None;
+    }
+    let mut b = [0u8; 4];
+    unsafe { std::ptr::copy_nonoverlapping(image.add(off), b.as_mut_ptr(), 4) };
+    Some(u32::from_le_bytes(b))
+}
+
+fn read_u64(image: *const u8, image_len: usize, off: usize) -> Option<u64> {
+    if off.checked_add(8)? > image_len {
+        return None;
+    }
+    let mut b = [0u8; 8];
+    unsafe { std::ptr::copy_nonoverlapping(image.add(off), b.as_mut_ptr(), 8) };
+    Some(u64::from_le_bytes(b))
 }
 
 fn write_u32(image: *mut u8, image_len: usize, off: usize, v: u32) -> Option<()> {
@@ -592,25 +659,17 @@ fn load_raw_blob_fallback(
     raw: &[u8],
     trace_ctx: &str,
 ) -> Option<(ExecCodeBuffer, usize, Vec<Box<usize>>)> {
-    if raw.is_empty() {
-        return None;
-    }
+    // Raw (non-COFF) blobs are byte copies of finalized JIT code. They are not
+    // position-independent: PC-relative references to imported symbols only
+    // resolve at the original JIT base address, so executing a copy at a new
+    // base crashes. Refuse to load and let the caller fall back to a fresh
+    // in-memory JIT compile.
     if reloc_trace::trace_basic() {
         reloc_trace::trace_line(format_args!(
-            "{} raw_fallback len={} (no COFF reloc; func_off=0)",
+            "{} raw blob rejected (not relocatable) len={}",
             trace_ctx,
             raw.len()
         ));
     }
-    let exec = ExecCodeBuffer::alloc_rw(raw.len())?;
-    unsafe {
-        std::ptr::copy_nonoverlapping(raw.as_ptr(), exec.as_mut_ptr(), raw.len());
-    }
-    if !exec.make_rx() {
-        if reloc_trace::trace_basic() {
-            reloc_trace::trace_line(format_args!("{} raw_fallback VirtualProtect failed", trace_ctx));
-        }
-        return None;
-    }
-    Some((exec, 0, Vec::new()))
+    None
 }

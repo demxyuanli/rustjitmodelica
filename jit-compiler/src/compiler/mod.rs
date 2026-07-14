@@ -385,6 +385,12 @@ pub struct CompilePerfReport {
     /// Approximate flat-full cache read path (get + deserialize), microseconds.
     #[serde(default)]
     pub salsa_flat_full_get_us: u64,
+    /// True when process-local Salsa DB was reused for this compile's flatten query path.
+    #[serde(default)]
+    pub salsa_process_db_hit: bool,
+    /// True when reused Salsa session carried the same codegen stable hash as this compile.
+    #[serde(default)]
+    pub salsa_codegen_reuse_eligible: bool,
     #[serde(default)]
     pub flatten_inline_subst_rewrite_us: u64,
     #[serde(default)]
@@ -400,6 +406,19 @@ pub struct CompilePerfReport {
     pub simd_step_enabled: bool,
     pub simd_step_hits: u64,
     pub simd_step_fallbacks: u64,
+    /// Newton SolvableBlock path counters (filled after JIT translation).
+    #[serde(default)]
+    pub newton_sparse_blocks: u64,
+    #[serde(default)]
+    pub newton_dense_blocks: u64,
+    #[serde(default)]
+    pub newton_sparse_nnz_total: u64,
+    /// Effective Newton sparse policy string: auto|dense|sparse.
+    #[serde(default)]
+    pub newton_sparse_policy: String,
+    /// Background tier-up step threshold used / recommended for this model size.
+    #[serde(default)]
+    pub tierup_step_threshold: u64,
     pub type_specialization_enabled: bool,
     pub type_profile_hash: String,
     pub stack_scratch_enabled: bool,

@@ -310,7 +310,7 @@ pub fn run_simulation(
     let total_eq_count = state_vars.len() + crossings_count;
     let mut tiered_scheduler: Option<crate::jit::tiered::TieredScheduler> = if tiered_enabled {
         crate::jit::tiered::clear_tiered_events();
-        let mut policy = crate::jit::tiered::TieringPolicy::default();
+        let mut policy = crate::jit::tiered::TieringPolicy::for_equation_count(total_eq_count);
         if crate::cache::fold_benefit_record::tierup_skip_const_fold() {
             policy.force_adaptive_skip_const_fold = true;
             policy.force_adaptive_skip_eq_dce = true;

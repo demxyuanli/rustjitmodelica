@@ -114,6 +114,33 @@ impl Default for TieringPolicy {
 }
 
 impl TieringPolicy {
+    /// Build policy from equation count and optional env overrides (P5 calibration).
+    /// - small (<=50 eq): tierup after 50 steps
+    /// - medium: 100 steps (legacy default)
+    /// - large (>500 eq): 200 steps (avoid thrashing on MultiBody-scale models)
+    pub fn for_equation_count(equation_count: usize) -> Self {
+        let mut p = Self::default();
+        p.tierup_step_threshold = if equation_count <= 50 {
+            50
+        } else if equation_count > 500 {
+            200
+        } else {
+            100
+        };
+        if let Ok(raw) = std::env::var("RUSTMODLICA_TIERUP_STEP_THRESHOLD") {
+            if let Ok(v) = raw.trim().parse::<u64>() {
+                if v > 0 {
+                    p.tierup_step_threshold = v;
+                }
+            }
+        }
+        if let Ok(raw) = std::env::var("RUSTMODLICA_BACKGROUND_TIERUP") {
+            let t = raw.trim().to_ascii_lowercase();
+            p.background_tierup = matches!(t.as_str(), "1" | "true" | "on" | "yes");
+        }
+        p
+    }
+
     /// Select initial tier based on model complexity.
     pub fn select_initial_tier(&self, equation_count: usize) -> CompileTier {
         if equation_count <= self.interpreter_threshold {

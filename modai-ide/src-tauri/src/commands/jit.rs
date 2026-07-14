@@ -461,6 +461,141 @@ fn build_compile_trace(
     lines
 }
 
+fn build_compile_trace_from_perf_value(
+    perf: &serde_json::Value,
+    state_vars_len: usize,
+    output_vars_len: usize,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "compile: eq_expand_parallel_mode={}",
+        current_eq_expand_parallel_mode_from_env()
+    ));
+    let u64_field = |key: &str| perf.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    let str_field = |key: &str| {
+        perf.get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let bool_field = |key: &str| perf.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+    lines.push(format!("compile: load_model {} ms", u64_field("load_model_ms")));
+    lines.push(format!(
+        "compile: flatten_inline {} ms",
+        u64_field("flatten_inline_ms")
+    ));
+    lines.push(format!(
+        "compile: trackA flatten_wall_us={} inline_wall_us={}",
+        u64_field("flatten_wall_us"),
+        u64_field("inline_wall_us")
+    ));
+    lines.push(format!("compile: analyze {} ms", u64_field("analyze_ms")));
+    lines.push(format!("compile: backend_dae {} ms", u64_field("backend_dae_ms")));
+    lines.push(format!(
+        "compile: backend_dae_cache_status={}",
+        str_field("backend_dae_cache_status")
+    ));
+    lines.push(format!(
+        "compile: param_only_update={}",
+        bool_field("param_only_update")
+    ));
+    lines.push(format!(
+        "compile: external_resolve {} ms",
+        u64_field("external_resolve_ms")
+    ));
+    lines.push(format!(
+        "compile: trackB codegen_wall_us={} codegen_wall_ms={} jit_ms={}",
+        u64_field("codegen_wall_us"),
+        u64_field("codegen_wall_ms"),
+        u64_field("jit_ms")
+    ));
+    lines.push(format!(
+        "compile: layout states={} discrete={} params={} alg_eq={} diff_eq={}",
+        u64_field("state_count"),
+        u64_field("discrete_count"),
+        u64_field("param_count"),
+        u64_field("alg_eq_count"),
+        u64_field("diff_eq_count")
+    ));
+    if bool_field("jit_compile_ok") {
+        lines.push("compile: JIT codegen OK".to_string());
+    } else if let Some(je) = perf.get("jit_error").and_then(|v| v.as_str()) {
+        if !je.is_empty() {
+            lines.push(format!("compile: JIT error: {je}"));
+        }
+    }
+    let fallback_total = u64_field("fallback_total");
+    if fallback_total > 0 {
+        lines.push(format!("compile: fallbacks total={fallback_total}"));
+    }
+    if bool_field("salsa_process_db_hit") {
+        lines.push("compile: salsa_process_db_hit=true".to_string());
+    }
+    lines.push(format!(
+        "validate: state_vars={state_vars_len} output_vars={output_vars_len}"
+    ));
+    lines
+}
+
+fn validate_tier_cli_string(opts: Option<&JitValidateOptions>) -> String {
+    opts.and_then(|o| o.validation_tier.as_deref())
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "full".to_string())
+        .to_string()
+}
+
+fn ide_validate_inprocess_forced() -> bool {
+    std::env::var("RUSTMODLICA_IDE_VALIDATE_INPROCESS")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn map_worker_validate_response(
+    resp: crate::validate_stdio_worker::ValidateWorkerResponse,
+    provenance: Option<JitProvenanceReport>,
+) -> JitValidateResult {
+    let warnings: Vec<rustmodlica::WarningInfo> = resp
+        .warnings
+        .into_iter()
+        .map(|w| rustmodlica::WarningInfo {
+            path: w.path,
+            line: w.line,
+            column: w.column,
+            message: w.message,
+            source: None,
+        })
+        .collect();
+    let state_len = resp.state_vars.len();
+    let output_len = resp.output_vars.len();
+    let compile_trace = if let Some(ref perf) = resp.compile_perf {
+        build_compile_trace_from_perf_value(perf, state_len, output_len)
+    } else {
+        build_compile_trace(None, state_len, output_len)
+    };
+    let diagnostics: Vec<DiagnosticErrorItem> = resp
+        .errors
+        .iter()
+        .map(|m| diagnostics_from_error_message(m))
+        .collect();
+    jit_validate_result_body(
+        resp.success,
+        warnings,
+        resp.errors,
+        diagnostics,
+        resp.state_vars,
+        resp.output_vars,
+        compile_trace,
+        resp.validation_stop_phase,
+        resp.validation_partial,
+        provenance,
+    )
+}
+
 fn parse_validation_tier(s: &str) -> Option<CompileStopPhase> {
     match s.trim().to_ascii_lowercase().as_str() {
         "full" => Some(CompileStopPhase::Full),
@@ -498,6 +633,29 @@ fn current_eq_expand_parallel_mode_from_env() -> &'static str {
 struct ScopedEnvVar {
     key: &'static str,
     prev: Option<String>,
+}
+
+/// Default Salsa + process DB when env vars are unset (IDE validate/sim hot path).
+struct SalsaEnvDefaults {
+    _salsa: Option<ScopedEnvVar>,
+    _process_db: Option<ScopedEnvVar>,
+}
+
+impl SalsaEnvDefaults {
+    fn install() -> Self {
+        Self {
+            _salsa: if std::env::var("RUSTMODLICA_SALSA").is_err() {
+                Some(ScopedEnvVar::set("RUSTMODLICA_SALSA", "1"))
+            } else {
+                None
+            },
+            _process_db: if std::env::var("RUSTMODLICA_SALSA_PROCESS_DB").is_err() {
+                Some(ScopedEnvVar::set("RUSTMODLICA_SALSA_PROCESS_DB", "1"))
+            } else {
+                None
+            },
+        }
+    }
 }
 
 impl ScopedEnvVar {

@@ -41,6 +41,8 @@ pub struct ModelLoader {
     /// (i.e. no new model/path/library registrations since), so a name that
     /// could resolve after more files are loaded is retried correctly.
     absent_name_epoch: HashMap<String, u64>,
+    /// Cached `Path::exists` for direct model file probes (lib-relative).
+    path_exists_cache: HashMap<String, bool>,
     /// When true, suppress "Loading dependency" and "Resolved inner class" so validate output is JSON-only.
     pub quiet: bool,
 }
@@ -98,8 +100,62 @@ impl ModelLoader {
             probed_absent: HashSet::new(),
             scanned_file_items: HashMap::new(),
             absent_name_epoch: HashMap::new(),
+            path_exists_cache: HashMap::new(),
             quiet: false,
         }
+    }
+
+    /// Fast existence check for type-name qualification (no parse, no dir scan).
+    pub fn model_resolvable(&mut self, name: &str) -> bool {
+        if self.loaded_models.contains_key(name) {
+            return true;
+        }
+        if let Some(ep) = self.absent_name_epoch.get(name) {
+            if *ep == self.registration_epoch() {
+                return false;
+            }
+        }
+        let rel = name.replace('.', "/");
+        let libs: Vec<PathBuf> = self.library_paths.clone();
+        for lib in &libs {
+            let candidates = [
+                lib.join(format!("{}/package.mo", rel)),
+                lib.join(format!("{}.mo", rel)),
+            ];
+            for path in candidates {
+                let key = path.to_string_lossy().into_owned();
+                let exists = if let Some(&cached) = self.path_exists_cache.get(&key) {
+                    cached
+                } else {
+                    let e = path.exists();
+                    self.path_exists_cache.insert(key, e);
+                    e
+                };
+                if exists {
+                    return true;
+                }
+            }
+        }
+        if let Some((prefix, suffix)) = name.rsplit_once('.') {
+            if let Some(base) = self.loaded_models.get(prefix) {
+                if base.find_inner_class(suffix).is_some() {
+                    return true;
+                }
+            }
+        }
+        self.absent_name_epoch
+            .insert(name.to_string(), self.registration_epoch());
+        false
+    }
+
+    /// Returns a model already registered in this loader without loading.
+    pub fn peek_loaded_model(&self, name: &str) -> Option<Arc<Model>> {
+        self.loaded_models.get(name).cloned()
+    }
+
+    /// Snapshot models already loaded (for inline warm-cache seeding).
+    pub fn snapshot_warm_models(&self) -> HashMap<String, Arc<Model>> {
+        self.loaded_models.clone()
     }
 
     /// Monotone counter that changes whenever any new model, path, or library
@@ -164,6 +220,7 @@ impl ModelLoader {
             return;
         }
         self.library_paths.push(path.clone());
+        self.path_exists_cache.clear();
         if path.join("Modelica").join("package.mo").is_file() {
             let _ = crate::cache::msl_pack::on_msl_library_path_added(&path);
         }
@@ -201,6 +258,7 @@ impl ModelLoader {
         // resolutions so the next lookups observe fresh state.
         self.scanned_file_items.clear();
         self.absent_name_epoch.clear();
+        self.path_exists_cache.clear();
     }
 
 
@@ -493,7 +551,26 @@ impl ModelLoader {
             crate::query_db::perf_record_add("loader_multi_top_scan_count", 1);
             let want_short = name.rsplit_once('.').map(|(_, s)| s).unwrap_or(name);
             let mut seen = std::collections::HashSet::new();
-            let paths: Vec<PathBuf> = self.loaded_paths.values().cloned().collect();
+            // For a qualified request `Pkg.Sub.Short`, only scan files that are already
+            // registered under the same parent scope (`Pkg.Sub` itself or a direct child
+            // `Pkg.Sub.X`). Scanning every loaded file matches unrelated classes that merely
+            // share the short name (e.g. `FluxTubes.SI.Reluctance` must not resolve to the
+            // partial icon `FluxTubes.Icons.Reluctance`).
+            let paths: Vec<PathBuf> = match name.rsplit_once('.') {
+                Some((parent, _)) => {
+                    let dot_parent = format!("{}.", parent);
+                    self.loaded_paths
+                        .iter()
+                        .filter(|(k, _)| {
+                            k.as_str() == parent
+                                || (k.starts_with(&dot_parent)
+                                    && !k[dot_parent.len()..].contains('.'))
+                        })
+                        .map(|(_, v)| v.clone())
+                        .collect()
+                }
+                None => self.loaded_paths.values().cloned().collect(),
+            };
             let mut scan_result = None;
             for p in paths {
                 if !seen.insert(p.clone()) {

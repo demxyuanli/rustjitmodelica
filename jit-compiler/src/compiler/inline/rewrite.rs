@@ -32,6 +32,10 @@ pub(super) fn load_model_inline_cached(
     if let Some(m) = cache.get(cand).cloned() {
         return Some(m);
     }
+    if let Some(m) = loader.peek_loaded_model(cand) {
+        cache.insert(cand.to_string(), Arc::clone(&m));
+        return Some(m);
+    }
     if failed_model_loads()
         .read()
         .map(|s| s.contains(cand))

@@ -4,7 +4,7 @@ use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
 
 use crate::jit::context::TranslationContext;
-use crate::solvable_limits::validate_solvable_residual_count;
+use crate::solvable_limits::{should_use_newton_sparse_path, validate_solvable_residual_count};
 
 pub(super) use super::solvable_assert::{emit_assert_suppress_begin, emit_assert_suppress_end};
 use super::solvable_general_dense::compile_solvable_block_general_dense_n;
@@ -12,40 +12,9 @@ use super::solvable_general_sparse::{
     build_sparse_jacobian_pattern, compile_solvable_block_general_sparse_n, SparseJacobianPattern,
 };
 use super::linearized::{
-    parse_newton_path_preference, NewtonLinearizationStats, NewtonLinearizedSystem,
-    NewtonPathPreference,
+    parse_newton_path_preference, preference_to_sparse_policy, NewtonLinearizationStats,
+    NewtonLinearizedSystem, NewtonPathPreference,
 };
-
-/// SPARSE-2: Sparsity detection heuristic - returns true if Jacobian is sparse enough.
-/// Uses density threshold (default 0.3) and minimum size (default 4).
-fn is_sparse_heuristic(nnz: usize, n: usize) -> bool {
-    if n < sparse_min_size() {
-        return false;
-    }
-    let total = n.saturating_mul(n);
-    if total == 0 {
-        return false;
-    }
-    let density = nnz as f64 / total as f64;
-    density < sparse_density_threshold()
-}
-
-/// SPARSE-2: Minimum size for sparse heuristic to apply.
-fn sparse_min_size() -> usize {
-    std::env::var("RUSTMODLICA_SPARSE_MIN_SIZE")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .unwrap_or(4)
-}
-
-/// SPARSE-2: Density threshold for sparse heuristic (default 0.3 = 30% non-zeros).
-fn sparse_density_threshold() -> f64 {
-    std::env::var("RUSTMODLICA_SPARSE_DENSITY_THRESHOLD")
-        .ok()
-        .and_then(|v| v.trim().parse::<f64>().ok())
-        .filter(|v| v.is_finite() && *v > 0.0 && *v < 1.0)
-        .unwrap_or(0.3)
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct SymbolicJacobianPlan {
@@ -160,28 +129,33 @@ pub(crate) fn compile_solvable_block_general_n(
     }
     
     let preference = parse_newton_path_preference();
-    
-    // SPARSE-2: Build sparse pattern if not dense-only preference
-    let sparse_pattern: Option<SparseJacobianPattern> = if preference == NewtonPathPreference::DenseOnly {
-        None
-    } else {
-        build_sparse_jacobian_pattern(&unknowns[..n], residuals)
-    };
-    
-    // SPARSE-2: Use sparsity detection heuristic to select path
+    let policy = preference_to_sparse_policy(preference);
+
+    let sparse_pattern: Option<SparseJacobianPattern> =
+        if preference == NewtonPathPreference::DenseOnly {
+            None
+        } else {
+            build_sparse_jacobian_pattern(&unknowns[..n], residuals)
+        };
+
     let use_sparse = if let Some(ref pattern) = sparse_pattern {
-        let nnz = pattern.nnz();
-        is_sparse_heuristic(nnz, n)
+        should_use_newton_sparse_path(policy, n, pattern.nnz(), unknowns.len())
     } else {
         false
     };
 
     let selected = if use_sparse {
+        crate::query_db::perf_record_add("newton_sparse_blocks", 1);
+        crate::query_db::perf_record_add(
+            "newton_sparse_nnz_total",
+            sparse_pattern.as_ref().map(|p| p.nnz() as u64).unwrap_or(0),
+        );
         NewtonLinearizedSystem::Csr(NewtonLinearizationStats {
             residual_count: n,
             nnz: sparse_pattern.as_ref().map(|p| p.nnz()).unwrap_or(n * n),
         })
     } else {
+        crate::query_db::perf_record_add("newton_dense_blocks", 1);
         NewtonLinearizedSystem::Dense(NewtonLinearizationStats {
             residual_count: n,
             nnz: n.saturating_mul(n),

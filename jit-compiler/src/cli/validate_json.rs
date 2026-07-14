@@ -11,6 +11,7 @@ pub(crate) fn emit_validate_json(
     validation_stop_phase: Option<&str>,
     validation_partial: bool,
     compile_export: Option<serde_json::Value>,
+    compile_perf: Option<serde_json::Value>,
 ) {
     let warnings_json: Vec<serde_json::Value> = warnings
         .iter()
@@ -37,6 +38,11 @@ pub(crate) fn emit_validate_json(
             for (k, v) in extra {
                 out_obj.insert(k.clone(), v.clone());
             }
+        }
+    }
+    if let Some(perf) = compile_perf {
+        if let Some(out_obj) = out.as_object_mut() {
+            out_obj.insert("compilePerf".to_string(), perf);
         }
     }
     println!("{}", serde_json::to_string(&out).unwrap_or_default());
