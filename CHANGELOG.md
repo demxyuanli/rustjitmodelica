@@ -6,6 +6,39 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Modai Studio P0 MVP (2026-07-21)
+
+- **App**: new workspace member `modai-studio` (Tauri 2 + React + XYFlow) — Library | Canvas | Properties | Results shell.
+- **Backend**: project open/save (`studio-project.json` + `*.mo` + `*.diagram.json`), builtin catalog (14 blocks), `emit_mo`, `studio_validate` / `studio_simulate` via `rustmodlica` with default MSL root under `jit-compiler`.
+- **Examples**: `modai-studio/examples/signal_feedback`, `rc_circuit`.
+- **Tasks**: `docs/modai-studio/08-implementation-tasks.md`, `build/modai_studio/tasks.json` (S01–S09 done).
+
+### Modai Studio P1 Core (2026-07-21)
+
+- **Sim control**: async `studio_simulate` with `SimControl` cancel (`studio_cancel_simulation`) + `studio-sim-progress` events (`simTime`/`tEnd`/fraction); UI Stop + progress bar.
+- **Edit**: Undo/Redo, Copy/Paste, Snap grid, Align L/T/H/V; Outline panel; edge signal labels; invalid edges red + Messages click-to-focus instance.
+- **Export**: Results CSV/JSON download (C01–C06 done in `build/modai_studio/tasks_p1.json`).
+
+### Modai Studio P2 Pro (2026-07-21)
+
+- **Subsystems**: Create Subsystem from selection; double-click drill + breadcrumb; `subsystems/*.diagram.json` I/O; emit flattens via instance-name prefix + `portBindings`.
+- **Multi-run**: Runs tab stores last 20 successful runs; overlay dashed curves vs latest solid Results.
+- **Catalog**: Inductor, VoltageSensor, CurrentSensor, Damper, Torque (Sensors/Analog/Rotational).
+
+### Modai Studio P3 Future (partial) (2026-07-21)
+
+- **Emit**: `studio_emit_artifacts` — C (`model.c`/`model.h`) and FMI 2.0 CS + `.fmu` package via `rustmodlica::fmi`.
+- **XY**: Results dock XY phase scatter; Runs show `wallMs` profiler.
+- **Dashboard**: pre-run numeric sliders (not mid-sim online tune).
+- **Variant**: Properties type switch among Sources/Math/Continuous compatible groups.
+- **Out/Blocked**: true Pause/Step, Multibody 3D, Embedded Coder-grade.
+
+### Modai Studio F91 FMU import cosim (2026-07-21)
+
+- **Import**: `studio_pick_fmu_file` / `studio_import_fmu` — unzip `.fmu`, parse `modelDescription.xml`, catalog under Imported FMU, extract to `imported_fmus/`.
+- **Canvas**: `nodeKind=fmu` block with signal ports from causality input/output; emit nested Modelica stub block.
+- **Sim bridge**: FMI2 CS host (`libloading`) + signal-domain cosim interpreter when diagram contains FMU nodes.
+
 ### Media.Examples loader + Noise/ComplexBlocks (2026-07-21)
 
 - **Parser**: `redeclare_class_definition` / `redeclare_short_class_definition`; `redeclare_*_extends` accepts `replaceable`/`partial` and `record|package|block|connector` (unblocks giant `Modelica/Media/package.mo`).

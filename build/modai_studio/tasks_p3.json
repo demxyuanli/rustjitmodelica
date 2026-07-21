@@ -1,0 +1,21 @@
+{
+  "product": "modai-studio",
+  "phase": "P3",
+  "goal": "FMU/C emit, XY plot, dashboard knobs, variant switch, FMU import cosim",
+  "updatedAt": "2026-07-21",
+  "tasks": [
+    { "id": "P301", "title": "studio_emit_c / studio_emit_fmu IPC", "status": "done", "milestone": "P3" },
+    { "id": "P302", "title": "XY phase plot + run wall-time profiler", "status": "done", "milestone": "P3" },
+    { "id": "P303", "title": "Dashboard pre-run param knobs", "status": "done", "milestone": "P3" },
+    { "id": "P304", "title": "Variant type switch in Properties", "status": "done", "milestone": "P3" },
+    { "id": "P305", "title": "Build verify; Pause marked blocked", "status": "done", "milestone": "P3" },
+    { "id": "P306", "title": "F91 FMU import catalog node + FMI2 CS cosim bridge", "status": "done", "milestone": "P3" }
+  ],
+  "out": [
+    "True Pause/Step (solver hold)",
+    "Fast Restart product API",
+    "Multibody 3D viewport",
+    "Embedded Coder-grade codegen",
+    "Physical-domain + FMU hybrid cosim"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "product": "modai-studio",
+  "phase": "P2",
+  "goal": "Subsystem drill + multi-run overlay + physical catalog expand",
+  "updatedAt": "2026-07-21",
+  "tasks": [
+    { "id": "P201", "title": "Project bundle subsystems I/O + flatten emit", "status": "done", "milestone": "P2" },
+    { "id": "P202", "title": "Create subsystem / drill / breadcrumb UI", "status": "done", "milestone": "P2" },
+    { "id": "P203", "title": "Multi-run history + curve overlay", "status": "done", "milestone": "P2" },
+    { "id": "P204", "title": "Physical catalog sensors + inductor/damper/torque", "status": "done", "milestone": "P2" },
+    { "id": "P205", "title": "Build verify", "status": "done", "milestone": "P2" }
+  ]
+}

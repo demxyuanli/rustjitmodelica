@@ -1,0 +1,62 @@
+{
+  "product": "modai-studio",
+  "phase": "P0",
+  "goal": "Library drag -> connect -> validate/run -> Results curves",
+  "updatedAt": "2026-07-21",
+  "tasks": [
+    {
+      "id": "S01",
+      "title": "Scaffold Tauri+Vite workspace member",
+      "status": "done",
+      "milestone": "M1"
+    },
+    {
+      "id": "S02",
+      "title": "Diagram/project types + catalog JSON",
+      "status": "done",
+      "milestone": "M1"
+    },
+    {
+      "id": "S03",
+      "title": "emit_mo + project open/save IPC",
+      "status": "done",
+      "milestone": "M2"
+    },
+    {
+      "id": "S04",
+      "title": "sim_bridge validate/simulate with lib paths",
+      "status": "done",
+      "milestone": "M2"
+    },
+    {
+      "id": "S05",
+      "title": "App shell layout Library|Canvas|Props|Results",
+      "status": "done",
+      "milestone": "M3"
+    },
+    {
+      "id": "S06",
+      "title": "XYFlow canvas drag/connect/select/edit params",
+      "status": "done",
+      "milestone": "M3"
+    },
+    {
+      "id": "S07",
+      "title": "Toolbar Update/Run + Results/Messages panels",
+      "status": "done",
+      "milestone": "M3"
+    },
+    {
+      "id": "S08",
+      "title": "Examples signal_feedback + rc_circuit",
+      "status": "done",
+      "milestone": "M4"
+    },
+    {
+      "id": "S09",
+      "title": "Build verify cargo + npm",
+      "status": "done",
+      "milestone": "M4"
+    }
+  ]
+}

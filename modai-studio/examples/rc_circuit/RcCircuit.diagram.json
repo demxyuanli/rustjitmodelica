@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "modelName": "RcCircuit",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_v1",
+      "instanceName": "vsource1",
+      "typeName": "Modelica.Electrical.Analog.Sources.ConstantVoltage",
+      "domain": "electrical",
+      "catalogId": "analog.sources.constantVoltage",
+      "position": { "x": 40, "y": 100 },
+      "rotation": 0,
+      "params": [{ "name": "V", "value": "1" }],
+      "ports": [
+        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" },
+        { "id": "n", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "vsource1" }
+    },
+    {
+      "id": "n_r1",
+      "instanceName": "resistor1",
+      "typeName": "Modelica.Electrical.Analog.Basic.Resistor",
+      "domain": "electrical",
+      "catalogId": "analog.basic.resistor",
+      "position": { "x": 220, "y": 40 },
+      "rotation": 0,
+      "params": [{ "name": "R", "value": "1000" }],
+      "ports": [
+        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" },
+        { "id": "n", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "resistor1" }
+    },
+    {
+      "id": "n_c1",
+      "instanceName": "capacitor1",
+      "typeName": "Modelica.Electrical.Analog.Basic.Capacitor",
+      "domain": "electrical",
+      "catalogId": "analog.basic.capacitor",
+      "position": { "x": 400, "y": 100 },
+      "rotation": 0,
+      "params": [{ "name": "C", "value": "1e-3" }],
+      "ports": [
+        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" },
+        { "id": "n", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["v"],
+      "ui": { "label": "capacitor1" }
+    },
+    {
+      "id": "n_g1",
+      "instanceName": "ground1",
+      "typeName": "Modelica.Electrical.Analog.Basic.Ground",
+      "domain": "electrical",
+      "catalogId": "analog.basic.ground",
+      "position": { "x": 220, "y": 220 },
+      "rotation": 0,
+      "params": [],
+      "ports": [
+        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "ground1" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceNodeId": "n_v1",
+      "sourcePortId": "p",
+      "targetNodeId": "n_r1",
+      "targetPortId": "p",
+      "signalName": null,
+      "vertices": [],
+      "routing": "orthogonal"
+    },
+    {
+      "id": "e2",
+      "sourceNodeId": "n_r1",
+      "sourcePortId": "n",
+      "targetNodeId": "n_c1",
+      "targetPortId": "p",
+      "signalName": null,
+      "vertices": [],
+      "routing": "orthogonal"
+    },
+    {
+      "id": "e3",
+      "sourceNodeId": "n_c1",
+      "sourcePortId": "n",
+      "targetNodeId": "n_g1",
+      "targetPortId": "p",
+      "signalName": null,
+      "vertices": [],
+      "routing": "orthogonal"
+    },
+    {
+      "id": "e4",
+      "sourceNodeId": "n_v1",
+      "sourcePortId": "n",
+      "targetNodeId": "n_g1",
+      "targetPortId": "p",
+      "signalName": null,
+      "vertices": [],
+      "routing": "orthogonal"
+    }
+  ],
+  "annotations": [],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}

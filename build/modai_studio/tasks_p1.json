@@ -1,0 +1,44 @@
+{
+  "product": "modai-studio",
+  "phase": "P1",
+  "goal": "Studio-Core editing handfeel + cancel/progress + CSV",
+  "updatedAt": "2026-07-21",
+  "tasks": [
+    {
+      "id": "C01",
+      "title": "Undo/redo edit stack",
+      "status": "done",
+      "milestone": "P1"
+    },
+    {
+      "id": "C02",
+      "title": "Sim cancel + progress bar IPC",
+      "status": "done",
+      "milestone": "P1"
+    },
+    {
+      "id": "C03",
+      "title": "Export results CSV/JSON",
+      "status": "done",
+      "milestone": "P1"
+    },
+    {
+      "id": "C04",
+      "title": "Copy/paste + snap grid + align",
+      "status": "done",
+      "milestone": "P1"
+    },
+    {
+      "id": "C05",
+      "title": "Illegal edge highlight + error jump",
+      "status": "done",
+      "milestone": "P1"
+    },
+    {
+      "id": "C06",
+      "title": "Outline tree + signal labels",
+      "status": "done",
+      "milestone": "P1"
+    }
+  ]
+}
