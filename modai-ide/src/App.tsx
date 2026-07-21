@@ -432,6 +432,10 @@ function App() {
     await sim.runSimulation(code, modelName, project.projectDir);
   }, [code, modelName, project.projectDir, sim, layout]);
 
+  const handleCancelSimulation = useCallback(async () => {
+    await sim.cancelSimulation();
+  }, [sim]);
+
   const handleTestAll = useCallback(async () => {
     if (project.projectDir && project.moFiles.length > 0) {
       layout.setShowBottomPanel(true);
@@ -590,6 +594,7 @@ function App() {
           handleCreateMoFile={handleCreateMoFile}
           handleValidate={handleValidate}
           handleRunSimulation={handleRunSimulation}
+          handleCancelSimulation={handleCancelSimulation}
           handleTestAll={handleTestAll}
           handleInsertAi={handleInsertAi}
           handleApplyDiff={handleApplyDiff}

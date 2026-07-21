@@ -3,7 +3,7 @@ import type { JointPaperHandle } from "../utils/jointUtils";
 
 export function useDiagramViewPaperState() {
   const [paperHandle, setPaperHandle] = useState<JointPaperHandle | null>(null);
-  const [showMiniMap, setShowMiniMap] = useState(true);
+  const [showMiniMap, setShowMiniMap] = useState(false);
   const [gridEnabled, setGridEnabled] = useState(true);
   const [gridSize, setGridSize] = useState(10);
   const [showGrid, setShowGrid] = useState(true);

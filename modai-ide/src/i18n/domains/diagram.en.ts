@@ -28,6 +28,8 @@ export const diagramMessagesEn = {
     diagramSnapGrid: "Grid",
     diagramSnapGridGuides: "Grid + guides",
     diagramGridSize: "Grid px",
+    diagramConnectMode: "Connect",
+    diagramConnectModeHint: "Connect mode: drag from an output port to an input port. Esc to exit.",
     diagramRotate90: "Rotate 90",
     diagramFlipH: "Flip horizontal",
     diagramFlipV: "Flip vertical",

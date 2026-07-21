@@ -34,6 +34,7 @@ import {
   MessageSquarePlus,
   ArrowDown,
   History,
+  Square,
 } from "lucide-react";
 
 export type AppIconName =
@@ -43,6 +44,7 @@ export type AppIconName =
   | "ai"
   | "diff"
   | "run"
+  | "stop"
   | "validate"
   | "settings"
   | "simSettings"
@@ -94,6 +96,8 @@ export function AppIcon({ name, className, ...rest }: { name: AppIconName } & Ic
       return <FileDiff className={mergedClassName} {...rest} />;
     case "run":
       return <Play className={mergedClassName} {...rest} />;
+    case "stop":
+      return <Square className={mergedClassName} {...rest} />;
     case "validate":
       return <CheckCircle2 className={mergedClassName} {...rest} />;
     case "settings":

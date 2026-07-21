@@ -456,77 +456,114 @@ pub fn query_component_types(
             has_more: false,
         });
     }
-    let use_index = use_index
-        && match component_library_index::open_connection() {
-            Ok(conn) => library_ids
-                .iter()
-                .all(|id| {
-                    let Some(existing) = component_library_index::get_library_fingerprint(&conn, id)
-                        .ok()
-                        .flatten()
-                    else {
-                        return false;
-                    };
-                    let Some(lib) = libraries.iter().find(|l| &l.record.id == id) else {
-                        return false;
-                    };
-                    existing == library_path_fingerprint(&lib.absolute_path)
-                }),
-            Err(_) => false,
-        };
+
+    // Prefer partial index: never require every library to be indexed before answering.
+    // Full folder scans of system/global MSL hang the IDE when done in the query path.
+    let mut indexed_ids: Vec<String> = Vec::new();
+    let mut lightweight_libs: Vec<&ResolvedComponentLibrary> = Vec::new();
     if use_index {
         if let Ok(conn) = component_library_index::open_connection() {
-            let offset = options.offset;
-            let limit = options.limit.max(1);
-            let q = query_lower.as_deref();
-            if let Ok((rows, total)) =
-                component_library_index::query_components(&conn, &library_ids, q, offset, limit)
-            {
-                let items: Vec<DiscoveredComponentType> =
-                    rows.iter().map(component_row_to_discovered).collect();
-                let has_more = offset + items.len() < total;
-                return Ok(QueryComponentTypesResult {
-                    items,
-                    total,
-                    has_more,
-                });
+            for lib in &libraries {
+                let id = &lib.record.id;
+                let fresh = component_library_index::get_library_fingerprint(&conn, id)
+                    .ok()
+                    .flatten()
+                    .map(|fp| fp == library_path_fingerprint(&lib.absolute_path))
+                    .unwrap_or(false);
+                if fresh {
+                    indexed_ids.push(id.clone());
+                } else if lib.record.kind == KIND_FILE || lib.record.scope == SCOPE_PROJECT {
+                    // Small / project-local sources are safe to scan inline.
+                    lightweight_libs.push(lib);
+                }
+                // Stale system/global folders: skip cold full-scan; rebuild index elsewhere.
+            }
+        } else {
+            for lib in &libraries {
+                if lib.record.kind == KIND_FILE || lib.record.scope == SCOPE_PROJECT {
+                    lightweight_libs.push(lib);
+                }
+            }
+        }
+    } else {
+        for lib in &libraries {
+            if lib.record.kind == KIND_FILE || lib.record.scope == SCOPE_PROJECT {
+                lightweight_libs.push(lib);
             }
         }
     }
-    let discovered = discover_instantiable_components_from_libraries(&libraries)?;
-    if let Ok(conn) = component_library_index::open_connection() {
-        let _ = populate_component_index(&conn, &libraries, &discovered);
+
+    let mut items: Vec<DiscoveredComponentType> = Vec::new();
+    if !indexed_ids.is_empty() {
+        if let Ok(conn) = component_library_index::open_connection() {
+            // Pull a generous page from index; we re-paginate after merging lightweight hits.
+            let fetch_limit = (options.offset + options.limit.max(1)).max(options.limit.max(1));
+            if let Ok((rows, _total)) = component_library_index::query_components(
+                &conn,
+                &indexed_ids,
+                query_lower.as_deref(),
+                0,
+                fetch_limit.max(500),
+            ) {
+                items.extend(rows.iter().map(component_row_to_discovered));
+            }
+        }
     }
-    let mut items = discovered;
-    if let Some(term) = query_lower.as_deref() {
+
+    if !lightweight_libs.is_empty() {
+        let owned: Vec<ResolvedComponentLibrary> = lightweight_libs.iter().map(|l| (*l).clone()).collect();
+        let discovered = discover_instantiable_components_from_libraries(&owned)?;
+        if let Ok(conn) = component_library_index::open_connection() {
+            let _ = populate_component_index(&conn, &owned, &discovered);
+        }
+        if let Some(term) = query_lower.as_deref() {
+            items.extend(discovered.into_iter().filter(|item| {
+                item.name.to_lowercase().contains(term)
+                    || item.qualified_name.to_lowercase().contains(term)
+                    || item.library_name.to_lowercase().contains(term)
+                    || item
+                        .path
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(term)
+                    || item
+                        .summary
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(term)
+                    || item
+                        .usage_help
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(term)
+                    || item
+                        .example_titles
+                        .iter()
+                        .any(|title| title.to_lowercase().contains(term))
+            }));
+        } else {
+            items.extend(discovered);
+        }
+    }
+
+    // Deduplicate by qualified_name + library_id (index + lightweight may overlap).
+    {
+        let mut seen = std::collections::HashSet::<String>::new();
         items.retain(|item| {
-            item.name.to_lowercase().contains(term)
-                || item.qualified_name.to_lowercase().contains(term)
-                || item.library_name.to_lowercase().contains(term)
-                || item
-                    .path
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .contains(term)
-                || item
-                    .summary
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .contains(term)
-                || item
-                    .usage_help
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .contains(term)
-                || item
-                    .example_titles
-                    .iter()
-                    .any(|title| title.to_lowercase().contains(term))
+            let key = format!("{}::{}", item.library_id, item.qualified_name);
+            seen.insert(key)
         });
     }
+    items.sort_by(|a, b| {
+        scope_rank(&b.library_scope)
+            .cmp(&scope_rank(&a.library_scope))
+            .then(a.library_name.cmp(&b.library_name))
+            .then(a.qualified_name.cmp(&b.qualified_name))
+    });
+
     let total = items.len();
     let offset = options.offset.min(total);
     let limit = options.limit.max(1);

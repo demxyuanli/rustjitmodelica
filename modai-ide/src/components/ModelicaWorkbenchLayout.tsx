@@ -60,6 +60,7 @@ export interface ModelicaWorkbenchLayoutProps {
   handleCreateMoFile: (relativePath: string, content: string) => Promise<void>;
   handleValidate: () => Promise<void>;
   handleRunSimulation: () => Promise<void>;
+  handleCancelSimulation: () => Promise<void>;
   handleTestAll: () => Promise<void>;
   handleInsertAi: () => void;
   handleApplyDiff: (diff: string) => Promise<void>;
@@ -103,6 +104,7 @@ export function ModelicaWorkbenchLayout(props: ModelicaWorkbenchLayoutProps) {
     handleCreateMoFile,
     handleValidate,
     handleRunSimulation,
+    handleCancelSimulation,
     handleTestAll,
     handleInsertAi,
     handleApplyDiff,
@@ -332,6 +334,7 @@ export function ModelicaWorkbenchLayout(props: ModelicaWorkbenchLayoutProps) {
                   actions={{
                     onValidate: handleValidate,
                     onRunSimulation: handleRunSimulation,
+                    onCancelSimulation: handleCancelSimulation,
                     onTestAll: handleTestAll,
                     onExportCSV: sim.exportCSV,
                     onExportJSON: sim.exportJSON,
@@ -350,6 +353,7 @@ export function ModelicaWorkbenchLayout(props: ModelicaWorkbenchLayoutProps) {
                     simResult: sim.simResult,
                     validateLoading: sim.validateLoading,
                     simLoading: sim.simLoading,
+                    simLiveProgress: sim.simLiveProgress,
                     testAllLoading: sim.testAllLoading,
                     testAllResults: sim.testAllResults,
                     moFilesCount: project.moFiles.length,

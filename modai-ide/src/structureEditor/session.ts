@@ -188,11 +188,13 @@ export class StructureGraphSession {
     this.doc = cloneDoc(d);
     this.docContentVersion = 0;
     this.bumpDocContentVersion();
+    this._canvasCache = null;
     if (resetUndo) {
       this.clearUndo();
+      // Snapshot only — defer getNodesLinksForCanvas until the editor asks for it.
+      // Building the canvas graph during IPC completion has crashed WebView2.
       this.undoStack = [{ doc: cloneDoc(d), ts: Date.now() }];
-      const { nodes, links } = this.getNodesLinksForCanvas(() => {});
-      this.lastUndoKey = buildUndoHistoryKey(nodes, links);
+      this.lastUndoKey = "";
     }
     this.selection = [];
     this.emit();

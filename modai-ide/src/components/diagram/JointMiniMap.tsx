@@ -156,7 +156,10 @@ export const JointMiniMap = React.memo(function JointMiniMap({
       offsetX,
       offsetY,
     };
-    const snap = JSON.stringify(next);
+    const elSig = elements.map((e) => `${e.x},${e.y},${e.w},${e.h}`).join(";");
+    const linkSig = links.map((l) => `${l.x1},${l.y1},${l.x2},${l.y2}`).join(";");
+    const vp = next.viewport;
+    const snap = `${elSig}|${linkSig}|${vp.x},${vp.y},${vp.w},${vp.h}`;
     if (snap === lastStateSnapRef.current) return;
     lastStateSnapRef.current = snap;
     setState(next);
@@ -176,20 +179,20 @@ export const JointMiniMap = React.memo(function JointMiniMap({
       });
     };
 
-    graph.on("batch:stop", scheduleUpdate);
-    graph.on("add", computeState);
-    graph.on("remove", computeState);
-    // Temporarily disable scale/translate listeners to test if MiniMap causes the freeze
-    // paper.on("scale", scheduleUpdate);
-    // paper.on("translate", scheduleUpdate);
+    // Only schedule via RAF on structural batch end / pan-zoom. Ignore stroke
+    // paint batches and never listen to add/remove (per-cell setState crashes).
+    const onBatchStop = (batchName?: string) => {
+      if (batchName === "se-stroke-all" || batchName === "se-stroke-hover" || batchName === "se-port-magnets") return;
+      scheduleUpdate();
+    };
+    // Temporarily disable scale/translate listeners: pan/zoom at 60Hz + setState
+    // freezes the WebView while the Rust process keeps burning CPU.
+    // Minimap still refreshes on batch:stop after structural edits.
+    graph.on("batch:stop", onBatchStop);
 
     return () => {
       if (rafId != null) cancelAnimationFrame(rafId);
-      graph.off("batch:stop", scheduleUpdate);
-      graph.off("add", computeState);
-      graph.off("remove", computeState);
-      // paper.off("scale", scheduleUpdate);
-      // paper.off("translate", scheduleUpdate);
+      graph.off("batch:stop", onBatchStop);
     };
   }, [paper, graph, computeState]);
 

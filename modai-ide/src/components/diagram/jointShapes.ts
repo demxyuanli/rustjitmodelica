@@ -68,6 +68,7 @@ function createBlockElement(opts: CreateElementOptions, colors: ReturnType<typeo
         strokeWidth: 1,
         rx: 4,
         ry: 4,
+        magnet: false,
       },
       label: {
         text: displayLabel,
@@ -84,12 +85,14 @@ function createBlockElement(opts: CreateElementOptions, colors: ReturnType<typeo
       groups: {
         input: {
           position: { name: "left" },
-          attrs: { portBody: { magnet: "passive", width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
+          // magnet:false — active magnets force JointJS hit-tests on every
+          // mousemove and freeze the WebView on dense structure diagrams.
+          attrs: { portBody: { magnet: false, width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
           markup: portMarkup(),
         },
         output: {
           position: { name: "right" },
-          attrs: { portBody: { magnet: true, width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
+          attrs: { portBody: { magnet: false, width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
           markup: portMarkup(),
         },
       },
@@ -115,6 +118,7 @@ function createSourceElement(opts: CreateElementOptions, colors: ReturnType<type
         fill: colors.bgElevated,
         stroke: opts.hasError ? "#ef4444" : colors.border,
         strokeWidth: 1,
+        magnet: false,
       },
       label: {
         text: opts.label,
@@ -131,7 +135,7 @@ function createSourceElement(opts: CreateElementOptions, colors: ReturnType<type
       groups: {
         output: {
           position: { name: "right" },
-          attrs: { portBody: { magnet: true, width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
+          attrs: { portBody: { magnet: false, width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
           markup: portMarkup(),
         },
       },
@@ -155,6 +159,7 @@ function createSinkElement(opts: CreateElementOptions, colors: ReturnType<typeof
         fill: colors.bgElevated,
         stroke: opts.hasError ? "#ef4444" : colors.border,
         strokeWidth: 1,
+        magnet: false,
       },
       label: {
         text: opts.label,
@@ -169,7 +174,7 @@ function createSinkElement(opts: CreateElementOptions, colors: ReturnType<typeof
       groups: {
         input: {
           position: { name: "left" },
-          attrs: { portBody: { magnet: "passive", width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
+          attrs: { portBody: { magnet: false, width: PORT_SIZE, height: PORT_SIZE, x: -PORT_SIZE / 2, y: -PORT_SIZE / 2 } },
           markup: portMarkup(),
         },
       },
@@ -228,6 +233,34 @@ export function resolvePortId(
   return portId;
 }
 
+/** Enable/disable port magnets for drag-connect. Keep off unless connect mode is armed. */
+export function setElementPortMagnets(el: dia.Element, enabled: boolean): void {
+  for (const port of el.getPorts()) {
+    const id = port.id;
+    if (!id) continue;
+    if (!enabled) {
+      el.portProp(id, "attrs/portBody/magnet", false);
+      continue;
+    }
+    if (port.group === "output") {
+      el.portProp(id, "attrs/portBody/magnet", true);
+    } else {
+      el.portProp(id, "attrs/portBody/magnet", "passive");
+    }
+  }
+}
+
+export function setGraphPortMagnets(graph: dia.Graph, enabled: boolean): void {
+  graph.startBatch("se-port-magnets");
+  try {
+    for (const cell of graph.getElements()) {
+      setElementPortMagnets(cell as dia.Element, enabled);
+    }
+  } finally {
+    graph.stopBatch("se-port-magnets");
+  }
+}
+
 export function createLink(
   opts: {
     id: string;
@@ -251,14 +284,20 @@ export function createLink(
     targetPort = resolvePortId(graph, opts.target, opts.targetPort, "target");
   }
 
-  const rname = opts.routerName && opts.routerName.length ? opts.routerName : "manhattan";
+  const rname = opts.routerName && opts.routerName.length ? opts.routerName : "normal";
   const step = opts.gridStep && opts.gridStep > 0 ? opts.gridStep : 10;
+  const routerArgs =
+    rname === "manhattan"
+      ? { step, maximumLoops: 50 }
+      : rname === "orthogonal"
+        ? { padding: Math.max(4, step / 2) }
+        : undefined;
 
   const link = new shapes.standard.Link({
     id: opts.id,
     source: { id: opts.source, port: sourcePort },
     target: { id: opts.target, port: targetPort },
-    router: { name: rname, args: { step } },
+    router: routerArgs ? { name: rname, args: routerArgs } : { name: rname },
     connector: { name: "rounded", args: { radius: 4 } },
     attrs: {
       line: {

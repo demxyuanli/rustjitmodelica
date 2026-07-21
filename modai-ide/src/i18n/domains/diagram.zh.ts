@@ -30,6 +30,9 @@ export const diagramMessagesZh = {
     diagramSnapGrid: "\u7f51\u683c",
     diagramSnapGridGuides: "\u7f51\u683c+\u5bf9\u9f50\u7ebf",
     diagramGridSize: "\u7f51\u683c\u50cf\u7d20",
+    diagramConnectMode: "\u8fde\u7ebf",
+    diagramConnectModeHint:
+      "\u8fde\u7ebf\u6a21\u5f0f\uff1a\u4ece\u8f93\u51fa\u7aef\u53e3\u62d6\u5230\u8f93\u5165\u7aef\u53e3\u3002Esc \u9000\u51fa\u3002",
     diagramRotate90: "\u65cb\u8f6c90",
     diagramFlipH: "\u6c34\u5e73\u7ffb\u8f6c",
     diagramFlipV: "\u5782\u76f4\u7ffb\u8f6c",

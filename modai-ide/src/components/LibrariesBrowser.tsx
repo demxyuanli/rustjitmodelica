@@ -1,6 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState, startTransition } from "react";
-import { listInstantiableClasses } from "../api/tauri";
+import { queryComponentLibraryTypes } from "../api/tauri";
 import type { InstantiableClass } from "../types";
 import type { MoTreeEntry } from "../hooks/useProject";
 import { recentProjectDisplayName } from "../hooks/useRecentProjects";
@@ -11,7 +11,9 @@ import { useDiagramScheme } from "../contexts/DiagramSchemeContext";
 
 export const MODELICA_DRAG_TYPE = "application/modelica-type";
 
-const LIBRARY_DIAGRAM_SIDEBAR_RENDER_CAP = 450;
+/** Cap both IPC payload and DOM nodes — full MSL list_instantiable_classes OOMs WebView2. */
+const LIBRARY_DIAGRAM_SIDEBAR_RENDER_CAP = 80;
+const LIBRARY_QUERY_LIMIT = 80;
 
 export interface ModelicaDragPayload {
   typeName: string;
@@ -232,6 +234,9 @@ export function LibrariesBrowser({
   const [category, setCategory] = useState<CategoryKey>("all");
   const [favorites, setFavorites] = useState<Set<string>>(loadFavorites);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  /** Do not auto-scan MSL on diagram open — that sync/cold path hangs the process. */
+  const [catalogArmed, setCatalogArmed] = useState(false);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const { scheme } = useDiagramScheme();
   const categoryColors = useMemo<Record<CategoryKey, string>>(
     () => ({
@@ -247,26 +252,39 @@ export function LibrariesBrowser({
   );
 
   useEffect(() => {
-    if (!projectDir || variant !== "standalone") {
-      setClasses([]);
+    if (!projectDir || variant !== "standalone" || !catalogArmed) {
+      if (!catalogArmed) setClasses([]);
       return;
     }
     let cancelled = false;
-    listInstantiableClasses(projectDir)
-      .then((items) => {
-        if (!cancelled) {
-          startTransition(() => setClasses(items));
-        }
+    const delayMs = query.trim() ? 250 : 0;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setCatalogLoading(true);
+      queryComponentLibraryTypes({
+        projectDir,
+        query: query.trim(),
+        offset: 0,
+        limit: LIBRARY_QUERY_LIMIT,
+        enabledOnly: true,
       })
-      .catch(() => {
-        if (!cancelled) {
+        .then((res) => {
+          if (cancelled) return;
+          startTransition(() => setClasses(res.items));
+        })
+        .catch(() => {
+          if (cancelled) return;
           setClasses([]);
-        }
-      });
+        })
+        .finally(() => {
+          if (!cancelled) setCatalogLoading(false);
+        });
+    }, delayMs);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, [projectDir, variant, libraryRefreshToken]);
+  }, [projectDir, variant, libraryRefreshToken, query, catalogArmed]);
 
   const toggleFavorite = useCallback((qualifiedName: string) => {
     setFavorites((prev) => {
@@ -381,6 +399,21 @@ export function LibrariesBrowser({
         </div>
         {showLibraryGroups && (
           <>
+            {!catalogArmed ? (
+              <div className="space-y-2">
+                <p className="text-[10px] text-[var(--text-muted)] leading-snug">
+                  {t("componentCatalogIdleHint")}
+                </p>
+                <button
+                  type="button"
+                  className="w-full rounded bg-primary/20 px-2 py-1.5 text-[11px] text-primary hover:bg-primary/30"
+                  onClick={() => setCatalogArmed(true)}
+                >
+                  {t("loadComponentCatalog")}
+                </button>
+              </div>
+            ) : (
+              <>
             <input
               type="text"
               value={query}
@@ -414,9 +447,11 @@ export function LibrariesBrowser({
                 {showFavoritesOnly ? "\u2605" : "\u2606"} {t("favorites")} ({favorites.size})
               </button>
               <span className="text-[10px] text-[var(--text-muted)]">
-                {filteredClasses.length} / {classes.length}
+                {catalogLoading ? t("loadingComponentCatalog") : `${filteredClasses.length} / ${classes.length}`}
               </span>
             </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -478,7 +513,7 @@ export function LibrariesBrowser({
               </div>
             )}
 
-            {showLibraryGroups && (
+            {showLibraryGroups && catalogArmed && (
               <div className="p-2 space-y-3">
                 {librarySidebarList.groups.map(([group, items]) => (
                   <div key={group}>

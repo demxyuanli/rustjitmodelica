@@ -51,7 +51,7 @@ pub fn list_instantiable_classes(project_dir: Option<String>) -> Result<Vec<Inst
 }
 
 #[tauri::command]
-pub fn query_component_library_types(
+pub async fn query_component_library_types(
     project_dir: Option<String>,
     library_id: Option<String>,
     scope: Option<String>,
@@ -60,41 +60,47 @@ pub fn query_component_library_types(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<ComponentLibraryTypeQueryResult, String> {
-    let settings = app_settings::load_settings().unwrap_or_default();
-    let use_index = settings.index_cache.component_library_index_enabled;
-    let result = component_library::query_component_types(
-        project_dir.as_deref().map(Path::new),
-        component_library::QueryComponentTypesOptions {
-            library_id,
-            scope,
-            enabled_only: enabled_only.unwrap_or(true),
-            query,
-            offset: offset.unwrap_or(0),
-            limit: limit.unwrap_or(100),
-        },
-        use_index,
-    )?;
-    Ok(ComponentLibraryTypeQueryResult {
-        items: result
-            .items
-            .into_iter()
-            .map(|item| InstantiableClass {
-                name: item.name,
-                qualified_name: item.qualified_name,
-                path: item.path,
-                source: item.source,
-                kind: item.kind,
-                library_id: item.library_id,
-                library_name: item.library_name,
-                library_scope: item.library_scope,
-                summary: item.summary,
-                usage_help: item.usage_help,
-                example_titles: item.example_titles,
-            })
-            .collect(),
-        total: result.total,
-        has_more: result.has_more,
+    // Cold-path discovery can parse large MSL trees; never run that on the async
+    // runtime thread or the WebView IPC path looks "suspended".
+    tokio::task::spawn_blocking(move || {
+        let settings = app_settings::load_settings().unwrap_or_default();
+        let use_index = settings.index_cache.component_library_index_enabled;
+        let result = component_library::query_component_types(
+            project_dir.as_deref().map(Path::new),
+            component_library::QueryComponentTypesOptions {
+                library_id,
+                scope,
+                enabled_only: enabled_only.unwrap_or(true),
+                query,
+                offset: offset.unwrap_or(0),
+                limit: limit.unwrap_or(100),
+            },
+            use_index,
+        )?;
+        Ok(ComponentLibraryTypeQueryResult {
+            items: result
+                .items
+                .into_iter()
+                .map(|item| InstantiableClass {
+                    name: item.name,
+                    qualified_name: item.qualified_name,
+                    path: item.path,
+                    source: item.source,
+                    kind: item.kind,
+                    library_id: item.library_id,
+                    library_name: item.library_name,
+                    library_scope: item.library_scope,
+                    summary: item.summary,
+                    usage_help: item.usage_help,
+                    example_titles: item.example_titles,
+                })
+                .collect(),
+            total: result.total,
+            has_more: result.has_more,
+        })
     })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 #[tauri::command]

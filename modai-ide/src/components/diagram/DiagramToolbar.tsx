@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import {
   Square,
   Circle,
@@ -19,6 +20,7 @@ import {
   FlipHorizontal,
   FlipVertical,
   Focus,
+  Cable,
 } from "lucide-react";
 import { t } from "../../i18n";
 import type { GraphicItem } from "../diagramGraphicTypes";
@@ -65,9 +67,11 @@ export interface DiagramToolbarProps {
     onRotate90: () => void;
     onFlipH: () => void;
     onFlipV: () => void;
-    pointerText: string | null;
+    pointerTextRef?: RefObject<HTMLSpanElement | null>;
     /** Element ids only (excludes connection cell ids). */
     selectedElementIds: string[];
+    connectMode?: boolean;
+    onConnectMode?: (on: boolean) => void;
   };
 }
 
@@ -159,6 +163,20 @@ export function DiagramToolbar({
           <div className="flex items-center gap-0.5 rounded border border-[var(--border)] bg-[var(--surface)] p-0.5">
             <button
               type="button"
+              className={`toolbar-icon-btn flex rounded items-center justify-center ${
+                structureToolbar.connectMode
+                  ? "bg-primary/20 text-primary"
+                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              } hover:bg-white/10`}
+              onClick={() => structureToolbar.onConnectMode?.(!structureToolbar.connectMode)}
+              title={
+                structureToolbar.connectMode ? t("diagramConnectModeHint") : t("diagramConnectMode")
+              }
+            >
+              <Cable className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
               className="toolbar-icon-btn flex rounded items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-white/10"
               onClick={() => structureToolbar.onRotate90()}
               title={t("diagramRotate90")}
@@ -199,11 +217,10 @@ export function DiagramToolbar({
               <span className="text-[10px] font-mono px-0.5">1:1</span>
             </button>
           </div>
-          {structureToolbar.pointerText && (
-            <span className="text-[10px] font-mono text-[var(--text-muted)] ml-1">
-              {t("diagramPointerXY")}: {structureToolbar.pointerText}
-            </span>
-          )}
+          <span className="text-[10px] font-mono text-[var(--text-muted)] ml-1">
+            {t("diagramPointerXY")}:{" "}
+            <span ref={structureToolbar.pointerTextRef ?? undefined} />
+          </span>
           {(showZoom || showMinimapToggle) && <ToolbarSeparator />}
         </>
       )}

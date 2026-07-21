@@ -110,7 +110,7 @@ export function createPaper(opts: CreatePaperOptions): dia.Paper {
     width: w,
     height: h,
     gridSize,
-    drawGrid: { name: "dot", args: { color: colors.border } },
+    drawGrid: false,
     background: { color: colors.bg },
     async: false,
     cellViewNamespace: shapes,
@@ -118,11 +118,21 @@ export function createPaper(opts: CreatePaperOptions): dia.Paper {
       ? false
       : {
           elementMove: true,
-          addLinkFromMagnet: true,
+          // Magnet tracking on every mousemove is extremely expensive with many ports/links.
+          addLinkFromMagnet: false,
           labelMove: false,
+          linkMove: true,
         },
-    snapLinks: { radius: 15 },
-    defaultRouter: { name: "manhattan", args: { step: gridSize } },
+    snapLinks: false,
+    markAvailable: false,
+    // Disable default hover/connecting highlighters — they re-route links under the cursor.
+    highlighting: false,
+    // Avoid EXACT/APPROX z-order work during pointer motion.
+    sorting: dia.Paper.sorting.NONE,
+    // Never start magnet interactions from incidental mouse jitter.
+    magnetThreshold: Number.POSITIVE_INFINITY,
+    moveThreshold: 1,
+    defaultRouter: { name: "normal" },
     defaultConnector: { name: "rounded", args: { radius: 4 } },
     defaultLink: () =>
       new shapes.standard.Link({
@@ -152,6 +162,10 @@ export function createPaper(opts: CreatePaperOptions): dia.Paper {
     },
     linkPinning: false,
   });
+
+  // JointJS default mouseover/enter/leave call findView() on every SVG subnode
+  // transition. With ports+labels+links that freezes WebView2 on bare mousemove.
+  disablePaperHoverTracking(paper);
 
   const RESIZE_EPS = 0.75;
   let resizeRaf: number | null = null;
@@ -197,8 +211,44 @@ export function createPaper(opts: CreatePaperOptions): dia.Paper {
     return origRemove();
   };
 
-  setupPanAndZoom(paper, opts.onScale, opts.onTranslate, readOnly, allowBlankPan);
+  // Never pass readOnly as allowPanFromElement — that inverted flag enabled
+  // element-drag pan while editing and added extra pointer handlers.
+  setupPanAndZoom(paper, opts.onScale, opts.onTranslate, false, allowBlankPan);
   return paper;
+}
+
+/**
+ * Strip JointJS hover hit-testing. Paper defaults bind mouseover/mouseenter/mouseleave
+ * which call findView() whenever the pointer crosses any SVG child (ports, labels,
+ * link paths). On dense structure diagrams that saturates the WebView UI thread.
+ *
+ * Pointer down/up/click/wheel/pan remain intact. After a drag, Paper re-delegates
+ * from `paper.events`, so we replace that map (not only the live listeners).
+ */
+export function disablePaperHoverTracking(paper: dia.Paper): void {
+  const nextEvents: Record<string, string> = {
+    dblclick: "pointerdblclick",
+    dbltap: "pointerdblclick",
+    contextmenu: "contextmenu",
+    mousedown: "pointerdown",
+    touchstart: "pointerdown",
+    wheel: "mousewheel",
+    "mousedown .joint-link .label": "onlabel",
+    "touchstart .joint-link .label": "onlabel",
+    "dragstart .joint-cell image": "onImageDragStart",
+  };
+  const p = paper as unknown as {
+    events: Record<string, string>;
+    undelegateEvents: () => unknown;
+    delegateEvents: (events?: Record<string, string>) => unknown;
+  };
+  p.events = nextEvents;
+  try {
+    p.undelegateEvents();
+    p.delegateEvents(nextEvents);
+  } catch {
+    /* paper may be tearing down */
+  }
 }
 
 function setupPanAndZoom(

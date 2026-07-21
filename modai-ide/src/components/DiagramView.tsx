@@ -82,7 +82,8 @@ export function DiagramView({
   const [messages, setMessages] = useState<GraphicalMessage[]>([]);
   const [structureSnapMode, setStructureSnapMode] = useState<StructureSnapMode>("grid");
   const [structureGridSize, setStructureGridSize] = useState(STRUCTURE_GRID_DEFAULT);
-  const [pointerLocal, setPointerLocal] = useState<{ x: number; y: number } | null>(null);
+  const [structureConnectMode, setStructureConnectMode] = useState(false);
+  const pointerTextRef = useRef<HTMLSpanElement | null>(null);
 
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -105,17 +106,23 @@ export function DiagramView({
   const handleDoubleClickRef = useRef(handleDoubleClick);
   handleDoubleClickRef.current = handleDoubleClick;
 
-  const sessionRevision = useSyncExternalStore(
+  // Doc edits only — selection/sim must not rebuild diagram or sync fingerprints.
+  const docContentVersion = useSyncExternalStore(
     session.subscribe,
-    () => session.getRevision(),
-    () => session.getRevision(),
+    () => session.getDocumentContentVersion(),
+    () => session.getDocumentContentVersion(),
+  );
+  const selectionKey = useSyncExternalStore(
+    session.subscribe,
+    () => session.getStructureSelectionIds().join("\0"),
+    () => session.getStructureSelectionIds().join("\0"),
   );
 
   const diagram = useMemo(() => {
-    void sessionRevision;
+    void docContentVersion;
     const doc = session.getDocument();
     return doc ? documentToDiagram(doc) : null;
-  }, [session, sessionRevision]);
+  }, [session, docContentVersion]);
 
   const activeGraphics =
     mode === "icon" ? (diagram?.iconAnnotation?.graphics ?? []) : (diagram?.diagramAnnotation?.graphics ?? []);
@@ -126,6 +133,16 @@ export function DiagramView({
     },
     [session],
   );
+
+  const onPointerPaperLocal = useCallback((pt: { x: number; y: number } | null) => {
+    const el = pointerTextRef.current;
+    if (!el) return;
+    if (!pt) {
+      el.textContent = "";
+      return;
+    }
+    el.textContent = `${pt.x.toFixed(1)}, ${pt.y.toFixed(1)}`;
+  }, []);
 
   const {
     selectedGraphicPath,
@@ -202,7 +219,7 @@ export function DiagramView({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [readOnly, session, sessionRevision]);
+  }, [readOnly, session, docContentVersion]);
 
   useEffect(() => {
     // Avoid the reload round-trip when the parent is just echoing back the
@@ -419,17 +436,18 @@ export function DiagramView({
   );
 
   const syncContentFingerprint = useMemo(() => {
-    void sessionRevision;
+    void docContentVersion;
     const doc = session.getDocument();
     if (!doc) return "";
     const { nodes, links } = session.getNodesLinksForCanvas(handleDoubleClickRef.current);
     return buildDiagramSyncKey(nodes, links, doc.graphical);
-  }, [session, sessionRevision]);
+  }, [session, docContentVersion]);
 
   const selectedComponent = useMemo(() => {
-    void sessionRevision;
+    void selectionKey;
+    void docContentVersion;
     return session.getSelectedComponentForPanel(handleDoubleClickRef.current);
-  }, [session, sessionRevision]);
+  }, [session, selectionKey, docContentVersion]);
 
   const updateSelectedParam = useCallback(
     (name: string, value: string) => {
@@ -564,19 +582,19 @@ export function DiagramView({
       setMessages((prev) => prev.filter((m) => !m.text.startsWith("Incompatible connectors")));
       return true;
     },
-    [readOnly, session, sessionRevision],
+    [readOnly, session, docContentVersion],
   );
 
   const structureNodeCount = useMemo(() => {
-    void sessionRevision;
+    void docContentVersion;
     return session.getNodesLinksForCanvas(handleDoubleClickRef.current).nodes.length;
-  }, [session, sessionRevision]);
+  }, [session, docContentVersion]);
 
   const structureSelectedElementIds = useMemo(() => {
-    void sessionRevision;
+    void selectionKey;
     const LINK_ID = /^e-.+-\d+$/;
     return session.getStructureSelectionIds().filter((id) => !LINK_ID.test(id));
-  }, [session, sessionRevision]);
+  }, [session, selectionKey]);
 
   if (loading) {
     return (
@@ -776,8 +794,10 @@ export function DiagramView({
               onRotate90: () => session.applyRotateSelected90(),
               onFlipH: () => session.applyFlipSelected("horizontal"),
               onFlipV: () => session.applyFlipSelected("vertical"),
-              pointerText: pointerLocal ? `${pointerLocal.x.toFixed(1)}, ${pointerLocal.y.toFixed(1)}` : null,
+              pointerTextRef,
               selectedElementIds: structureSelectedElementIds,
+              connectMode: structureConnectMode,
+              onConnectMode: setStructureConnectMode,
             }}
           />
           <DiagramCoordinateStrip
@@ -796,8 +816,10 @@ export function DiagramView({
               snapToGrid={structureSnapMode !== "none"}
               snapMode={structureSnapMode}
               structureGridSize={structureGridSize}
-              onPointerPaperLocal={setPointerLocal}
+              onPointerPaperLocal={onPointerPaperLocal}
               canConnect={canConnect}
+              connectMode={structureConnectMode}
+              onConnectModeChange={setStructureConnectMode}
               onDiagramSelection={() => setSelectedGraphicPath(null)}
             />
           </div>

@@ -4,6 +4,7 @@ import {
   createElement,
   createLink,
   determineNodeShape,
+  setGraphPortMagnets,
   type NodeShape,
 } from "../components/diagram/jointShapes";
 import {
@@ -41,6 +42,9 @@ export interface JointStructureEditorProps {
     target: string,
     targetPort: string,
   ) => boolean;
+  /** When true, port magnets + addLinkFromMagnet are armed for drag-connect. */
+  connectMode?: boolean;
+  onConnectModeChange?: (on: boolean) => void;
   onDiagramSelection?: () => void;
 }
 
@@ -155,16 +159,22 @@ function mountNode(g: dia.Graph, node: DiagramNode) {
 function linkRouterName(link: dia.Link): string {
   const r = link.prop("router") as { name?: string } | string | undefined;
   if (r && typeof r === "object" && r.name) return r.name;
-  return "manhattan";
+  return "normal";
 }
 
 function syncLinkGeometry(jl: dia.Link, link: DiagramLink, gridStep: number) {
   if (link.vertices?.length && vertKey(jl.vertices()) !== vertKey(link.vertices)) {
     jl.vertices(link.vertices);
   }
-  const want = link.router ?? "manhattan";
+  const want = link.router ?? "normal";
   if (linkRouterName(jl) !== want) {
-    jl.router({ name: want, args: { step: gridStep } });
+    if (want === "manhattan") {
+      jl.router({ name: want, args: { step: gridStep, maximumLoops: 50 } });
+    } else if (want === "orthogonal") {
+      jl.router({ name: want, args: { padding: Math.max(4, gridStep / 2) } });
+    } else {
+      jl.router({ name: "normal" });
+    }
   }
 }
 
@@ -267,12 +277,14 @@ export function JointStructureEditor({
   onDoubleClick,
   onAltDoubleClick,
   onPaperReady,
-  showMiniMap = true,
+  showMiniMap = false,
   snapToGrid = true,
   snapMode: snapModeProp,
   structureGridSize = STRUCTURE_GRID_DEFAULT,
   onPointerPaperLocal,
   canConnect,
+  connectMode = false,
+  onConnectModeChange,
   onDiagramSelection,
 }: JointStructureEditorProps) {
   const snapMode: StructureSnapMode = snapModeProp ?? (snapToGrid ? "grid" : "none");
@@ -293,6 +305,10 @@ export function JointStructureEditor({
   onSelRef.current = onDiagramSelection;
   const onPtrLocalRef = useRef(onPointerPaperLocal);
   onPtrLocalRef.current = onPointerPaperLocal;
+  const connectModeRef = useRef(connectMode);
+  connectModeRef.current = connectMode;
+  const onConnectModeChangeRef = useRef(onConnectModeChange);
+  onConnectModeChangeRef.current = onConnectModeChange;
 
   const [ctxMenu, setCtxMenu] = useState<{ visible: boolean; x: number; y: number; items: ContextMenuItem[] }>({
     visible: false,
@@ -328,6 +344,8 @@ export function JointStructureEditor({
   const applyingSessionGraphRef = useRef(false);
   /** `docContentVersion|grid` — only full reconcile when document content or grid step for routing changes. */
   const lastReconciledKeyRef = useRef<string | null>(null);
+  /** Set after deferred paper boot; StrictMode can cancel the first mount before boot. */
+  const paperBootedRef = useRef(false);
 
   const errKey = useMemo(
     () => bundle.nodes.map((n) => `${n.id}:${n.data?.hasError ? 1 : 0}`).join("|"),
@@ -336,6 +354,32 @@ export function JointStructureEditor({
   const errKeyRef = useRef(errKey);
   errKeyRef.current = errKey;
   const lastErrKeyRef = useRef("");
+
+  const applyConnectModeToPaper = (graph: dia.Graph, paper: dia.Paper, on: boolean) => {
+    const o = paper.options as {
+      interactive?: unknown;
+      snapLinks?: unknown;
+      magnetThreshold?: number;
+      gridSize?: number;
+    };
+    o.gridSize = snapMode === "none" ? 1 : gridStepRef.current;
+    if (readOnly) {
+      o.interactive = false;
+      o.snapLinks = false;
+      o.magnetThreshold = Number.POSITIVE_INFINITY;
+      setGraphPortMagnets(graph, false);
+      return;
+    }
+    o.interactive = {
+      elementMove: !on,
+      addLinkFromMagnet: on,
+      labelMove: false,
+      linkMove: !on,
+    };
+    o.snapLinks = on ? { radius: 18 } : false;
+    o.magnetThreshold = on ? 0 : Number.POSITIVE_INFINITY;
+    setGraphPortMagnets(graph, on);
+  };
 
   paintAllRef.current = () => {
     const g = graphRef.current;
@@ -407,6 +451,7 @@ export function JointStructureEditor({
     if (!root) return;
     let alive = true;
     let readyRaf: number | null = null;
+    let bootRaf: number | null = null;
     let guideMoveRaf: number | null = null;
     let marqueeSuppressBlank = false;
 
@@ -461,20 +506,6 @@ export function JointStructureEditor({
     });
     graphRef.current = graph;
     paperRef.current = paper;
-
-    const init = sessionRef.current.getNodesLinksForCanvas(onDblRef.current);
-    applyingSessionGraphRef.current = true;
-    paper.freeze();
-    try {
-      reconcileGraph(graph, init.nodes, init.links, gridStepRef.current);
-      lastReconciledKeyRef.current = `${sessionRef.current.getDocumentContentVersion()}|${gridStepRef.current}`;
-      paintAllRef.current();
-    } finally {
-      paper.unfreeze();
-      setTimeout(() => {
-        applyingSessionGraphRef.current = false;
-      }, 0);
-    }
 
     const clearMarqueeBox = () => {
       el.querySelector(".modai-structure-marquee")?.remove();
@@ -558,14 +589,9 @@ export function JointStructureEditor({
       window.addEventListener("mouseup", onUp);
     });
 
-    paper.on("element:mouseenter", (ev: dia.ElementView) => {
-      hoverRef.current = ev.model.id as string;
-      scheduleHoverRef.current();
-    });
-    paper.on("element:mouseleave", () => {
-      hoverRef.current = null;
-      scheduleHoverRef.current();
-    });
+    // Hover stroke updates call el.attr() which can force link re-layout under the
+    // cursor and freeze the WebView on mousemove — disabled intentionally.
+    // Magnets are also disabled in createPaper (addLinkFromMagnet: false).
 
     paper.on("element:pointermove", (view: dia.ElementView) => {
       if (readOnly || snapMode !== "gridAndGuide") return;
@@ -586,6 +612,7 @@ export function JointStructureEditor({
       if (guideMoveRaf != null) cancelAnimationFrame(guideMoveRaf);
       guideMoveRaf = requestAnimationFrame(() => {
         guideMoveRaf = null;
+        if (!alive) return;
         renderGuides(paper, snap.guides);
       });
     });
@@ -602,13 +629,8 @@ export function JointStructureEditor({
       sessionRef.current.applyNodePosition(m.id as string, { x: p.x, y: p.y });
     });
 
-    const onPaperMouseMove = (e: MouseEvent) => {
-      const lp = paper.clientToLocalPoint({ x: e.clientX, y: e.clientY });
-      onPtrLocalRef.current?.({ x: lp.x, y: lp.y });
-    };
-    const onPaperMouseLeave = () => onPtrLocalRef.current?.(null);
-    paper.el.addEventListener("mousemove", onPaperMouseMove);
-    paper.el.addEventListener("mouseleave", onPaperMouseLeave);
+    // Do not attach paper mousemove listeners — clientToLocalPoint + React/DOM
+    // updates on every move have frozen the WebView (CPU busy, UI dead).
 
     paper.on("link:connect", (lv: dia.LinkView) => {
       const m = lv.model;
@@ -656,17 +678,49 @@ export function JointStructureEditor({
       });
     };
 
-    if (graph.getElements().length > 0) {
+    // Defer heavy reconcile past StrictMode's mount→cleanup→remount cycle so the
+    // first disposable Paper never runs link routing + SVG sync.
+    bootRaf = requestAnimationFrame(() => {
+      bootRaf = null;
+      if (!alive) return;
+      applyingSessionGraphRef.current = true;
+      paper.freeze();
       try {
-        paper.transformToFitContent({ padding: 30, maxScale: 1.5, minScale: 0.1 });
-      } catch {
-        /* ignore */
+        const init = sessionRef.current.getNodesLinksForCanvas(onDblRef.current);
+        reconcileGraph(graph, init.nodes, init.links, gridStepRef.current);
+        lastReconciledKeyRef.current = `${sessionRef.current.getDocumentContentVersion()}|${gridStepRef.current}`;
+        paintAllRef.current();
+        applyConnectModeToPaper(graph, paper, connectModeRef.current);
+        paperBootedRef.current = true;
+      } catch (err) {
+        console.error("[modai] JointStructureEditor boot failed", err);
+      } finally {
+        if (alive) {
+          try {
+            paper.unfreeze();
+          } catch {
+            /* ignore */
+          }
+        }
+        setTimeout(() => {
+          applyingSessionGraphRef.current = false;
+        }, 0);
       }
-    }
-    armReady();
+      if (!alive) return;
+      if (graph.getElements().length > 0) {
+        try {
+          paper.transformToFitContent({ padding: 30, maxScale: 1.5, minScale: 0.1 });
+        } catch {
+          /* ignore */
+        }
+      }
+      armReady();
+    });
 
     return () => {
       alive = false;
+      paperBootedRef.current = false;
+      if (bootRaf != null) cancelAnimationFrame(bootRaf);
       if (readyRaf != null) cancelAnimationFrame(readyRaf);
       onPaperReady?.(null);
       if (hoverRafRef.current != null) cancelAnimationFrame(hoverRafRef.current);
@@ -675,55 +729,65 @@ export function JointStructureEditor({
       guideMoveRaf = null;
       clearGuideSvg();
       clearMarqueeBox();
-      paper.el.removeEventListener("mousemove", onPaperMouseMove);
-      paper.el.removeEventListener("mouseleave", onPaperMouseLeave);
-      paper.remove();
+      try {
+        paper.freeze();
+        graph.clear();
+      } catch {
+        /* ignore */
+      }
+      try {
+        paper.remove();
+      } catch {
+        /* ignore */
+      }
+      el.remove();
       graphRef.current = null;
       paperRef.current = null;
+      lastReconciledKeyRef.current = null;
     };
   }, [readOnly, snapMode]);
 
   useEffect(() => {
     const p = paperRef.current;
-    if (!p) return;
-    const o = p.options as { interactive?: unknown; gridSize?: number };
-    o.interactive = readOnly ? false : { elementMove: true, addLinkFromMagnet: true, labelMove: false };
-    o.gridSize = snapMode === "none" ? 1 : gridStepRef.current;
-  }, [readOnly, snapMode, structureGridSize]);
+    const gr = graphRef.current;
+    if (!p || !gr || !paperBootedRef.current) return;
+    applyConnectModeToPaper(gr, p, connectMode);
+  }, [readOnly, snapMode, structureGridSize, connectMode]);
 
   useEffect(() => {
     const gr = graphRef.current;
     const p = paperRef.current;
-    if (!gr) return;
-    applyingSessionGraphRef.current = true;
-    if (p) p.freeze();
-    try {
-      const { nodes, links } = bundleRef.current;
-      const s = sessionRef.current;
-      const rKey = `${s.getDocumentContentVersion()}|${gridStepRef.current}`;
-      if (lastReconciledKeyRef.current !== rKey) {
+    if (!gr || !paperBootedRef.current) return;
+    const s = sessionRef.current;
+    const rKey = `${s.getDocumentContentVersion()}|${gridStepRef.current}`;
+    const needsReconcile = lastReconciledKeyRef.current !== rKey;
+    // Only freeze when topology/layout actually changes. Freeze+unfreeze on every
+    // selection revision forces JointJS to re-route all links and can
+    // hang/crash the WebView (exit 0xcfffffff).
+    if (needsReconcile) {
+      applyingSessionGraphRef.current = true;
+      if (p) p.freeze();
+      try {
         lastReconciledKeyRef.current = rKey;
+        const { nodes, links } = bundleRef.current;
         reconcileGraph(gr, nodes, links, gridStepRef.current);
+        paintAllRef.current();
+        if (p) applyConnectModeToPaper(gr, p, connectModeRef.current);
+      } finally {
+        if (p) p.unfreeze();
+        setTimeout(() => {
+          applyingSessionGraphRef.current = false;
+        }, 0);
       }
+    } else {
       paintAllRef.current();
-    } finally {
-      if (p) p.unfreeze();
-      setTimeout(() => {
-        applyingSessionGraphRef.current = false;
-      }, 0);
     }
   }, [revision, structureGridSize]);
 
   useEffect(() => {
     const gr = graphRef.current;
-    const p = paperRef.current;
-    if (!gr) return;
-    if (p) p.freeze();
-    try {
-      paintAllRef.current();
-    } finally {
-      if (p) p.unfreeze();
-    }
+    if (!gr || !paperBootedRef.current) return;
+    paintAllRef.current();
   }, [schemeId, errKey]);
 
   useEffect(() => {
@@ -731,6 +795,11 @@ export function JointStructureEditor({
     const key = (e: KeyboardEvent) => {
       const root = rootRef.current;
       if (!root || !root.contains(document.activeElement)) return;
+      if (e.key === "Escape" && connectModeRef.current) {
+        e.preventDefault();
+        onConnectModeChangeRef.current?.(false);
+        return;
+      }
       const gph = graphRef.current;
       if (!gph) return;
       if (e.key === "Delete") {
