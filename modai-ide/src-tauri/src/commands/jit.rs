@@ -157,6 +157,12 @@ struct JitProgressEvent {
     total_steps: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+    /// Simulation time (seconds), when the driver reports cooperative progress.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sim_time: Option<f64>,
+    /// Simulation stop time (seconds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    t_end: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,17 +227,44 @@ fn emit_and_persist(app: &AppHandle, payload: JitProgressEvent) {
     });
 }
 
+fn active_sim_cancel_map() -> &'static std::sync::Mutex<
+    std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+> {
+    static MAP: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    > = std::sync::OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 fn emit_jit_progress(app: &AppHandle, task: &str, stage: &str, elapsed_sec: u64, message: impl Into<String>) {
+    emit_jit_progress_ex(app, None, task, stage, elapsed_sec, message, None, None, None, None, None);
+}
+
+fn emit_jit_progress_ex(
+    app: &AppHandle,
+    session_id: Option<&str>,
+    task: &str,
+    stage: &str,
+    elapsed_sec: u64,
+    message: impl Into<String>,
+    current_step: Option<usize>,
+    total_steps: Option<usize>,
+    reason: Option<&str>,
+    sim_time: Option<f64>,
+    t_end: Option<f64>,
+) {
     let payload = JitProgressEvent {
         category: "progress".to_string(),
-        session_id: None,
+        session_id: session_id.map(|s| s.to_string()),
         task: task.to_string(),
         stage: stage.to_string(),
         elapsed_sec,
         message: message.into(),
-        current_step: None,
-        total_steps: None,
-        reason: None,
+        current_step,
+        total_steps,
+        reason: reason.map(|s| s.to_string()),
+        sim_time,
+        t_end,
     };
     emit_and_persist(app, payload);
 }
@@ -257,6 +290,8 @@ fn emit_jit_progress_for_session(
         current_step,
         total_steps,
         reason: reason.map(|s| s.to_string()),
+        sim_time: None,
+        t_end: None,
     };
     emit_and_persist(app, payload);
 }
@@ -281,6 +316,8 @@ fn emit_jit_control(
         current_step,
         total_steps,
         reason: reason.map(|s| s.to_string()),
+        sim_time: None,
+        t_end: None,
     };
     emit_and_persist(app, payload);
 }
@@ -293,9 +330,21 @@ fn emit_jit_error(
     message: impl Into<String>,
     reason: Option<&str>,
 ) {
+    emit_jit_error_ex(app, None, task, stage, elapsed_sec, message, reason);
+}
+
+fn emit_jit_error_ex(
+    app: &AppHandle,
+    session_id: Option<&str>,
+    task: &str,
+    stage: &str,
+    elapsed_sec: u64,
+    message: impl Into<String>,
+    reason: Option<&str>,
+) {
     let payload = JitProgressEvent {
         category: "error".to_string(),
-        session_id: None,
+        session_id: session_id.map(|s| s.to_string()),
         task: task.to_string(),
         stage: stage.to_string(),
         elapsed_sec,
@@ -303,6 +352,8 @@ fn emit_jit_error(
         current_step: None,
         total_steps: None,
         reason: reason.map(|s| s.to_string()),
+        sim_time: None,
+        t_end: None,
     };
     emit_and_persist(app, payload);
 }

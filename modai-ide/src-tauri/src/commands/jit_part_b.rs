@@ -1,4 +1,7 @@
-fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult, String> {
+fn run_simulation_sync(
+    request: RunSimulationRequest,
+    mut control: Option<rustmodlica::SimControl>,
+) -> Result<SimulationResult, String> {
     let _timer = ScopedTimer::new("run_simulation_cmd");
     let _salsa_env = SalsaEnvDefaults::install();
     let model_name = resolve_model_name(&request.code, request.model_name.as_ref())?;
@@ -29,6 +32,13 @@ fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult
         }
         rustmodlica::CompileOutput::Simulation(artifacts) => artifacts,
     };
+    if let Some(ctrl) = control.as_mut() {
+        let min_dt = artifacts
+            .output_interval
+            .max(artifacts.t_end / 200.0)
+            .max(1e-9);
+        ctrl.set_progress_min_dt(min_dt);
+    }
     rustmodlica::run_simulation_collect(
         artifacts.calc_derivs,
         artifacts.when_count,
@@ -56,15 +66,28 @@ fn run_simulation_sync(request: RunSimulationRequest) -> Result<SimulationResult
         None,
         &model_name,
         compiler.loader.library_paths.clone(),
+        control.as_mut(),
     )
     .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn run_simulation_cmd(request: RunSimulationRequest) -> Result<SimulationResult, String> {
-    tokio::task::spawn_blocking(move || run_simulation_sync(request))
+    tokio::task::spawn_blocking(move || run_simulation_sync(request, None))
         .await
         .map_err(|e| format!("blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn cancel_simulation_run(run_id: String) -> Result<bool, String> {
+    let map = active_sim_cancel_map();
+    let guard = map.lock().map_err(|e| e.to_string())?;
+    if let Some(flag) = guard.get(&run_id) {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 #[tauri::command]
@@ -73,10 +96,37 @@ pub async fn run_simulation_cmd_v2(
     request: RunSimulationRequest,
 ) -> Result<JitApiEnvelope<SimulationResult>, String> {
     let task_name = "simulate";
-    emit_jit_progress(&app, task_name, "started", 0, "Simulation started");
+    let run_id = format!("simrun_{}", uuid_simple());
+    emit_jit_progress_ex(
+        &app,
+        Some(&run_id),
+        task_name,
+        "started",
+        0,
+        "Simulation started",
+        None,
+        None,
+        None,
+        Some(0.0),
+        None,
+    );
     let started = Instant::now();
-    let mut task = tokio::task::spawn_blocking(move || run_simulation_sync(request));
-    let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
+    let latest = std::sync::Arc::new(std::sync::Mutex::new(None::<(f64, f64, u64)>));
+    let latest_cb = latest.clone();
+    let mut control = rustmodlica::SimControl::new().on_progress(move |p| {
+        if let Ok(mut g) = latest_cb.lock() {
+            *g = Some((p.time, p.t_end, p.step));
+        }
+    });
+    {
+        let map = active_sim_cancel_map();
+        if let Ok(mut g) = map.lock() {
+            g.insert(run_id.clone(), control.cancel_flag());
+        }
+    }
+    let run_id_cleanup = run_id.clone();
+    let mut task = tokio::task::spawn_blocking(move || run_simulation_sync(request, Some(control)));
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(1));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let join = loop {
         tokio::select! {
@@ -85,16 +135,45 @@ pub async fn run_simulation_cmd_v2(
             }
             _ = heartbeat.tick() => {
                 let elapsed = started.elapsed().as_secs().max(1);
-                emit_jit_progress(
-                    &app,
-                    task_name,
-                    "running",
-                    elapsed,
-                    format!("Simulation running ({}s)...", elapsed),
-                );
+                let snap = latest.lock().ok().and_then(|g| *g);
+                if let Some((sim_t, t_end, step)) = snap {
+                    emit_jit_progress_ex(
+                        &app,
+                        Some(&run_id),
+                        task_name,
+                        "running",
+                        elapsed,
+                        format!(
+                            "Simulation t={:.4}/{:.4} (step {}, wall {}s)",
+                            sim_t, t_end, step, elapsed
+                        ),
+                        Some(step as usize),
+                        None,
+                        None,
+                        Some(sim_t),
+                        Some(t_end),
+                    );
+                } else {
+                    emit_jit_progress_ex(
+                        &app,
+                        Some(&run_id),
+                        task_name,
+                        "running",
+                        elapsed,
+                        format!("Simulation running ({}s)...", elapsed),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                }
             }
         }
     };
+    if let Ok(mut g) = active_sim_cancel_map().lock() {
+        g.remove(&run_id_cleanup);
+    }
     match join
         .map_err(|e| {
             emit_jit_error(&app, task_name, "failed", started.elapsed().as_secs(), format!("Simulation join error: {e}"), Some("join"));
@@ -103,19 +182,29 @@ pub async fn run_simulation_cmd_v2(
     {
         Ok(data) => Ok(envelope_ok("simulate", data)),
         Err(message) => {
+            let cancelled = rustmodlica::is_sim_cancelled_error(&message);
             let d = diagnostics_from_error_message(&message);
-            emit_jit_error(
+            emit_jit_error_ex(
                 &app,
+                Some(&run_id_cleanup),
                 task_name,
-                "failed",
+                if cancelled { "cancelled" } else { "failed" },
                 started.elapsed().as_secs().max(1),
-                format!("Simulation failed: {}", message),
-                Some("simulate"),
+                if cancelled {
+                    format!("Simulation cancelled: {}", message)
+                } else {
+                    format!("Simulation failed: {}", message)
+                },
+                Some(if cancelled { "cancel" } else { "simulate" }),
             );
             Ok(envelope_err(
                 "simulate",
                 vec![JitApiError {
-                    code: d.code,
+                    code: if cancelled {
+                        "SIM_CANCELLED".into()
+                    } else {
+                        d.code
+                    },
                     message: d.message,
                     path: d.path,
                     line: d.line,
@@ -503,6 +592,7 @@ fn start_simulation_session_sync(request: StartSessionRequest) -> Result<String,
         None,
         &model_name,
         compiler.loader.library_paths.clone(),
+        None,
     )
     .map_err(|e| e.to_string())?;
 

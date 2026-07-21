@@ -53,3 +53,10 @@ jit-compiler/RealFFT*_resultFFT.matFile*
 .cursor/
 .qwen/
 
+# CodeGraph local indexes (machine-specific)
+.codegraph/
+**/.codegraph/
+
+# Scratch parse fixtures
+jit-compiler/TestLib/test_parse.mo
+

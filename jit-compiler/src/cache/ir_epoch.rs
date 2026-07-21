@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_epoch_for_stage() {
         assert_eq!(epoch_for_stage(CacheStage::Parse), 1);
-        assert_eq!(epoch_for_stage(CacheStage::FlatModelQ), 1);
+        assert_eq!(epoch_for_stage(CacheStage::FlatModelQ), 2);
     }
 
     #[test]

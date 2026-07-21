@@ -127,6 +127,7 @@ impl ScriptRunner {
                             None,
                             self.current_model.as_deref().unwrap_or(""),
                             self.compiler.loader.library_paths.clone(),
+                            None,
                         )?;
                         Ok(true)
                     }
@@ -359,6 +360,7 @@ impl ScriptRunner {
                     None,
                     self.current_model.as_deref().unwrap_or(""),
                     self.compiler.loader.library_paths.clone(),
+                    None,
                 )?;
                 Ok(true)
             }

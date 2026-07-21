@@ -1831,7 +1831,8 @@
       "tags": [
         "msl",
         "electrical",
-        "analog"
+        "analog",
+        "missing_in_om_msl_4_1_0"
       ],
       "expect": {
         "kind": "exit_zero"
@@ -3909,7 +3910,8 @@
       "tags": [
         "msl",
         "electrical",
-        "power_converters"
+        "power_converters",
+        "sim_ok_implicit"
       ],
       "expect": {
         "kind": "exit_zero"
@@ -3961,7 +3963,8 @@
       "tags": [
         "msl",
         "electrical",
-        "power_converters"
+        "power_converters",
+        "sim_ok_implicit"
       ],
       "expect": {
         "kind": "exit_zero"

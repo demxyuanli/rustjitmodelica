@@ -19,6 +19,9 @@ pub(super) fn compile_if_stmt(
     builder: &mut cranelift::frontend::FunctionBuilder<'_>,
     compile_stmt: CompileStmt,
 ) -> Result<(), String> {
+    // Branch-local SSA Values must not leak via var_map into sibling arms
+    // (Cranelift verifier: stack_store of f64const from non-dominating then-block).
+    let var_map_snapshot = ctx.var_map.clone();
     let true_block = builder.create_block();
     let mut next_block = builder.create_block();
     let end_block = builder.create_block();
@@ -34,6 +37,7 @@ pub(super) fn compile_if_stmt(
     }
     builder.ins().jump(end_block, &[]);
     builder.seal_block(true_block);
+    ctx.var_map.clone_from(&var_map_snapshot);
     for (cond, stmts) in else_ifs {
         let check_block = next_block;
         let body_block = builder.create_block();
@@ -49,6 +53,7 @@ pub(super) fn compile_if_stmt(
         }
         builder.ins().jump(end_block, &[]);
         builder.seal_block(body_block);
+        ctx.var_map.clone_from(&var_map_snapshot);
     }
     builder.switch_to_block(next_block);
     if let Some(stmts) = else_stmts {
@@ -58,6 +63,7 @@ pub(super) fn compile_if_stmt(
     }
     builder.ins().jump(end_block, &[]);
     builder.seal_block(next_block);
+    ctx.var_map.clone_from(&var_map_snapshot);
     builder.switch_to_block(end_block);
     Ok(())
 }
@@ -167,6 +173,7 @@ pub(super) fn compile_when_stmt(
     compile_stmt: CompileStmt,
 ) -> Result<(), String> {
     compile_zero_crossing_store(cond, ctx, builder)?;
+    let var_map_snapshot = ctx.var_map.clone();
     let true_block = builder.create_block();
     let mut next_block = builder.create_block();
     let end_block = builder.create_block();
@@ -197,6 +204,7 @@ pub(super) fn compile_when_stmt(
     }
     builder.ins().jump(end_block, &[]);
     builder.seal_block(true_block);
+    ctx.var_map.clone_from(&var_map_snapshot);
     for (cond, stmts) in else_whens {
         let check_block = next_block;
         let body_block = builder.create_block();
@@ -230,10 +238,12 @@ pub(super) fn compile_when_stmt(
         }
         builder.ins().jump(end_block, &[]);
         builder.seal_block(body_block);
+        ctx.var_map.clone_from(&var_map_snapshot);
     }
     builder.switch_to_block(next_block);
     builder.ins().jump(end_block, &[]);
     builder.seal_block(next_block);
+    ctx.var_map.clone_from(&var_map_snapshot);
     builder.switch_to_block(end_block);
     Ok(())
 }

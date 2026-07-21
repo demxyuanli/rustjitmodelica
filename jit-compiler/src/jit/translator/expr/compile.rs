@@ -238,6 +238,32 @@ pub(super) fn compile_expression_rec(
                     }
                 }
             }
+            // Fluid/Media residual: {v1, v2, ...}.member → try v_i_member / v_i, else first elem.
+            if let Expression::ArrayLiteral(items) = inner.as_ref() {
+                for item in items {
+                    if let Expression::Variable(id) = item {
+                        let base = crate::string_intern::resolve_id(*id);
+                        let candidates = [
+                            format!("{}_{}", base, member),
+                            format!("{}_{}", base.replace('.', "_"), member),
+                            format!("{}.{}", base, member),
+                            base.clone(),
+                        ];
+                        for cand in &candidates {
+                            if jit_scalar_name_bound(ctx, cand) {
+                                return compile_expression_rec(
+                                    &Expression::var(cand),
+                                    ctx,
+                                    builder,
+                                );
+                            }
+                        }
+                    }
+                }
+                if let Some(first) = items.first() {
+                    return compile_expression_rec(first, ctx, builder);
+                }
+            }
             if jit_dot_trace_enabled() {
                 eprintln!(
                     "[jit-dot-trace] JIT_DOT_RESIDUAL member={} inner={:?} full_expr={:?}",

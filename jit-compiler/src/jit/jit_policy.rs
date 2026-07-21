@@ -415,10 +415,10 @@ fn fn_builtin() -> &'static FunctionBuiltinPolicy {
 }
 
 /// First matching named builtin rule for `func_name`, or None.
+///
+/// `RUSTMODLICA_JIT_POLICY_STRICT=function_builtin` must NOT disable matching:
+/// strict mode only rejects *unmatched* names on the unknown-import path (J14).
 pub fn match_function_builtin_rule(func_name: &str) -> Option<String> {
-    if strict_function_builtin() {
-        return None;
-    }
     for r in &fn_builtin().rules {
         if rule_matches_func(func_name, &r.op, &r.pattern) {
             return Some(r.handler_id.clone());
@@ -445,11 +445,10 @@ mod function_builtin_rules_reachability_tests {
     use super::match_function_builtin_rule;
 
     /// Sampling: default `default_function_builtin_rules.json` must map these names to dispatch arms.
-    /// Skips assertions when `RUSTMODLICA_JIT_POLICY_STRICT` disables `function_builtin` matching.
     #[test]
     fn default_rules_sample_names_hit_expected_handlers() {
         if match_function_builtin_rule("inStream").as_deref() != Some("instream") {
-            // Strict `function_builtin`, custom policy, or unloaded rules; skip in non-default env.
+            // Custom policy overlay or unloaded rules; skip in non-default env.
             return;
         }
         let cases: &[(&str, &str)] = &[
@@ -464,11 +463,25 @@ mod function_builtin_rules_reachability_tests {
             ("Lib.spliceFunction", "splice_blend"),
             ("valveCharacteristic", "valve_char_1"),
             ("pkg.valveCharacteristic", "valve_char_1"),
+            ("zeros", "zeros_fn"),
+            ("cat", "cat"),
+            ("sample", "sample_interval"),
+            ("Clock", "clock_ctor"),
+            ("Modelica.Mechanics.MultiBody.Frames.nullRotation", "frames_orient"),
+            ("MultiBody.Frames.planarRotation", "frames_orient"),
+            ("Frames.planarRotation", "frames_orient"),
+            ("Frames.from_Q", "frames_orient"),
+            ("Pkg.Frames.absoluteRotation", "frames_orient"),
             ("subSample", "clock_derived"),
             ("superSample", "clock_derived"),
             ("shiftSample", "clock_derived"),
             ("backSample", "clock_derived"),
-            ("clk.subSample", "clock_derived"),
+            ("atan2", "atan2_fn"),
+            ("Functions.atan2", "atan2_fn"),
+            ("Modelica.Math.atan2", "atan2_fn"),
+            ("Functions.state2", "passthrough_first_empty0"),
+            ("Modelica.ComplexMath.conj", "conj_fn"),
+            ("Modelica.ComplexMath.exp", "complex_math"),
         ];
         for (fname, want) in cases {
             let got = match_function_builtin_rule(fname)

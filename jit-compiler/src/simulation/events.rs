@@ -9,8 +9,10 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::newton_recovery::{
-    allow_algebraic_newton_fallback, allow_zero_residual_newton, fail_if_assert_storm,
-    print_newton_diag, recover_newton_at_t0,
+    allow_algebraic_newton_fallback, allow_zero_residual_newton, decide_switch_force_s0,
+    fail_if_assert_storm, print_newton_diag, recover_newton_at_t0, recover_newton_ideal_switch,
+    report_switch_fail_open_degraded, report_switch_force_s0_rejected,
+    sanitize_extreme_algebraic_outputs, try_switch_mode_seed_newton, SwitchForceS0Decision,
 };
 use super::sim_io::flush_writer;
 use super::types::{EventQueue, QueuedEvent, QueuedEventKind};
@@ -404,6 +406,134 @@ pub(crate) fn run_event_iteration_at_time(
                             }
                         }
                         break;
+                    }
+                }
+                if status == 2 {
+                    let recovered = recover_newton_ideal_switch(
+                        calc_derivs,
+                        time,
+                        t_end,
+                        params,
+                        pre_states,
+                        pre_discrete_vals,
+                        output_vars,
+                        states,
+                        discrete_vals,
+                        derivs,
+                        outputs,
+                        when_states,
+                        crossings,
+                        diag_res_ptr,
+                        diag_x_ptr,
+                        diag_residual,
+                        homotopy_lambda,
+                        homotopy_lambda_ptr,
+                    );
+                    if recovered {
+                        break;
+                    }
+                    // Force complementarity unknowns to the switching boundary and re-eval once.
+                    let mut forced = 0usize;
+                    for (i, name) in output_vars.iter().enumerate() {
+                        if i < outputs.len()
+                            && crate::newton_policy::is_ideal_switch_complementarity_name(name)
+                        {
+                            outputs[i] = 0.0;
+                            forced += 1;
+                        }
+                    }
+                    if forced > 0 {
+                        *homotopy_lambda = 1.0;
+                        native::suppress_assert_begin();
+                        let rs = unsafe {
+                            (calc_derivs)(
+                                time,
+                                states.as_mut_ptr(),
+                                discrete_vals.as_mut_ptr(),
+                                derivs.as_mut_ptr(),
+                                params.as_ptr(),
+                                outputs.as_mut_ptr(),
+                                when_states.as_mut_ptr(),
+                                crossings.as_mut_ptr(),
+                                pre_states.as_ptr(),
+                                pre_discrete_vals.as_ptr(),
+                                t_end,
+                                diag_res_ptr,
+                                diag_x_ptr,
+                                homotopy_lambda_ptr,
+                            )
+                        };
+                        native::suppress_assert_end();
+                        match decide_switch_force_s0(rs, *diag_residual) {
+                            SwitchForceS0Decision::AcceptConverged => {
+                                eprintln!(
+                                    "[newton-switch-recover] event-iteration force-s0 accepted (forced={}, residual={:.6e}, status={})",
+                                    forced, *diag_residual, rs
+                                );
+                                break;
+                            }
+                            SwitchForceS0Decision::AcceptDegraded => {
+                                fallback_counter::inc_newton_event_accept();
+                                fallback_counter::inc_switch_fail_open();
+                                report_switch_fail_open_degraded(
+                                    "event-iteration",
+                                    time,
+                                    *diag_residual,
+                                    &format!("force-s0 forced={}", forced),
+                                );
+                                for (i, name) in output_vars.iter().enumerate() {
+                                    if i < outputs.len()
+                                        && crate::newton_policy::is_ideal_switch_complementarity_name(
+                                            name,
+                                        )
+                                    {
+                                        outputs[i] = 0.0;
+                                    }
+                                }
+                                // Failed Newton may still have written |x|~1e8 into non-switch
+                                // algebraics; scrub before the next solver trial-eval.
+                                let extreme = sanitize_extreme_algebraic_outputs(outputs);
+                                if extreme > 0 {
+                                    eprintln!(
+                                        "[newton-switch-recover] event-iteration sanitized {} extreme algebraic outputs after force-s0 fail-open",
+                                        extreme
+                                    );
+                                }
+                                break;
+                            }
+                            SwitchForceS0Decision::Reject => {
+                                // Clean s=0 baseline then re-try region seeds (JIT now
+                                // warm-starts from outputs, so seeds can converge).
+                                if try_switch_mode_seed_newton(
+                                    calc_derivs,
+                                    time,
+                                    t_end,
+                                    params,
+                                    pre_states,
+                                    pre_discrete_vals,
+                                    output_vars,
+                                    states,
+                                    discrete_vals,
+                                    derivs,
+                                    outputs,
+                                    when_states,
+                                    crossings,
+                                    diag_res_ptr,
+                                    diag_x_ptr,
+                                    diag_residual,
+                                    homotopy_lambda,
+                                    homotopy_lambda_ptr,
+                                ) {
+                                    break;
+                                }
+                                report_switch_force_s0_rejected(
+                                    "event-iteration",
+                                    time,
+                                    *diag_residual,
+                                    rs,
+                                );
+                            }
+                        }
                     }
                 }
                 if allow_algebraic_newton_fallback(status, states.len()) {

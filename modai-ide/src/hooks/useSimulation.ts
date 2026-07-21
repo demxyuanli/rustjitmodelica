@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { JitValidateOptions, JitValidateResult, SimulationResult } from "../types";
 import {
+  cancelSimulationRun,
   formatMonitorReplayLine,
   getMonitorEvents,
   jitValidateV2,
@@ -25,6 +26,14 @@ export interface SimulationParams {
   outputInterval: number;
   atol: number;
   rtol: number;
+}
+
+/** Live cooperative sim progress from `modai-jit-progress` (simulation time, not wall clock). */
+export interface SimLiveProgress {
+  runId: string | null;
+  simTime: number | null;
+  tEnd: number | null;
+  step: number | null;
 }
 
 export interface TableState {
@@ -57,11 +66,21 @@ export function useSimulation(
     };
   }, [log]);
 
+  const activeSimRunIdRef = useRef<string | null>(null);
+  const [activeSimRunId, setActiveSimRunId] = useState<string | null>(null);
+  const [simLiveProgress, setSimLiveProgress] = useState<SimLiveProgress>({
+    runId: null,
+    simTime: null,
+    tEnd: null,
+    step: null,
+  });
+
   useEffect(() => {
     let isDisposed = false;
     let unlisten: (() => void) | null = null;
     void listen<{
       category?: "control" | "progress" | "error";
+      sessionId?: string;
       task?: string;
       stage?: string;
       elapsedSec?: number;
@@ -69,6 +88,8 @@ export function useSimulation(
       currentStep?: number;
       totalSteps?: number;
       reason?: string;
+      simTime?: number;
+      tEnd?: number;
     }>("modai-jit-progress", (event) => {
       if (isDisposed) return;
       const payload = event.payload ?? {};
@@ -81,8 +102,38 @@ export function useSimulation(
         payload.currentStep != null && payload.totalSteps != null
           ? ` step=${payload.currentStep}/${payload.totalSteps}`
           : "";
-      const msg = payload.message?.trim() || `${task} ${stage}${elapsed}${stepPart}${reason}`;
+      const simPart =
+        payload.simTime != null && payload.tEnd != null
+          ? ` t=${payload.simTime.toFixed(4)}/${payload.tEnd}`
+          : "";
+      const msg =
+        payload.message?.trim() ||
+        `${task} ${stage}${elapsed}${stepPart}${simPart}${reason}`;
       log(`[${category}] [backend:${task}] ${msg}`);
+
+      if (task === "simulate" && payload.sessionId) {
+        if (stage === "started" || !activeSimRunIdRef.current) {
+          activeSimRunIdRef.current = payload.sessionId;
+          setActiveSimRunId(payload.sessionId);
+        }
+        if (
+          activeSimRunIdRef.current === payload.sessionId &&
+          (payload.simTime != null || payload.tEnd != null || payload.currentStep != null)
+        ) {
+          setSimLiveProgress({
+            runId: payload.sessionId,
+            simTime: payload.simTime ?? null,
+            tEnd: payload.tEnd ?? null,
+            step: payload.currentStep ?? null,
+          });
+        }
+        if (stage === "completed" || stage === "cancelled" || stage === "failed") {
+          if (activeSimRunIdRef.current === payload.sessionId) {
+            activeSimRunIdRef.current = null;
+            setActiveSimRunId(null);
+          }
+        }
+      }
     }).then((off) => {
       if (isDisposed) off();
       else unlisten = off;
@@ -224,6 +275,7 @@ export function useSimulation(
   const runSimulation = useCallback(async (code: string, modelName: string, projectDir: string | null) => {
     setSimLoading(true);
     setSimResult(null);
+    setSimLiveProgress({ runId: null, simTime: null, tEnd: null, step: null });
     log(`eqExpandParallelMode(simulate): ${eqMode}`);
     const finishHeartbeat = beginHeartbeat("Simulation");
     try {
@@ -234,7 +286,14 @@ export function useSimulation(
         projectDir: projectDir ?? undefined,
       });
       if (!result.ok || !result.data) {
+        const cancelled = result.errors.some((e) => e.code === "SIM_CANCELLED");
         const errorText = result.errors.map((e) => `${e.code}: ${e.message}`).join("; ");
+        if (cancelled) {
+          log(t("stopSim") + ": " + (errorText || "SIM_CANCELLED"));
+          const elapsedSec = finishHeartbeat();
+          log(`Simulation cancelled after ${elapsedSec}s.`);
+          return;
+        }
         throw new Error(errorText || "Simulation failed");
       }
       const sim = result.data;
@@ -248,9 +307,27 @@ export function useSimulation(
       log("Simulation error: " + String(e));
       log(`Simulation failed after ${elapsedSec}s.`);
     } finally {
+      activeSimRunIdRef.current = null;
+      setActiveSimRunId(null);
       setSimLoading(false);
     }
   }, [beginHeartbeat, buildOptions, eqMode, log]);
+
+  const cancelSimulation = useCallback(async () => {
+    const runId = activeSimRunIdRef.current;
+    if (!runId) {
+      log("No active simulation run to cancel.");
+      return false;
+    }
+    try {
+      const ok = await cancelSimulationRun(runId);
+      log(ok ? `Cancel requested for ${runId}` : `Cancel ignored (unknown run ${runId})`);
+      return ok;
+    } catch (e) {
+      log("Cancel error: " + String(e));
+      return false;
+    }
+  }, [log]);
 
   const testAllMoFiles = useCallback(async (
     projectDir: string,
@@ -364,11 +441,13 @@ export function useSimulation(
     selectedPlotVars, setSelectedPlotVars,
     validateLoading,
     simLoading,
+    activeSimRunId,
+    simLiveProgress,
     testAllLoading, testAllResults,
     tableState, setTable,
     tableColumns, sortedTableRows,
     plotSeries, chartMeta, allPlotVarNames,
-    validate, runSimulation, testAllMoFiles,
+    validate, runSimulation, cancelSimulation, testAllMoFiles,
     exportCSV, exportJSON,
   };
 }

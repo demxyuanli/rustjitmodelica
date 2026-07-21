@@ -31,6 +31,19 @@ fn equation_nonlinear_for_var(eq: &Equation, var: &str) -> bool {
     }
 }
 
+/// Never tear simulation time or frozen start/parameter-like names: Newton on
+/// these yields constant residuals (e.g. |r|~1) and poisons PWM/switch models.
+pub(crate) fn is_forbidden_tearing_var(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    if n == "time" || n == "t" {
+        return true;
+    }
+    n.ends_with("_t_start")
+        || n.ends_with(".t_start")
+        || n.ends_with("_start")
+        || (n.contains("pwm_") && n.contains("start"))
+}
+
 pub(super) fn select_tearing_variable(
     block_unknowns: &[String],
     block_eqs: &[Equation],
@@ -43,6 +56,14 @@ pub(super) fn select_tearing_variable(
             .and_then(|v| v.trim().parse::<f64>().ok())
             .filter(|v| v.is_finite())
             .unwrap_or(default_v)
+    }
+
+    fn prefer_candidates<'a>(block_unknowns: &'a [String]) -> Vec<&'a String> {
+        // Never fall back to forbidden names: empty means "no tearable unknown".
+        block_unknowns
+            .iter()
+            .filter(|u| !is_forbidden_tearing_var(u))
+            .collect()
     }
 
     fn candidate_score(block_eqs: &[Equation], u: &str) -> f64 {
@@ -64,7 +85,17 @@ pub(super) fn select_tearing_variable(
         let w_nonlin = env_weight("RUSTMODLICA_TEAR_W_NONLINEAR", 3.0);
         let w_solve = env_weight("RUSTMODLICA_TEAR_W_SOLVABLE", 0.75);
         let w_residual = env_weight("RUSTMODLICA_TEAR_W_RESIDUAL", 0.5);
-        occ * w_occ + nonlinear_hits * w_nonlin - solve_bias * w_solve + residual_size_bias * w_residual
+        // Prefer ideal-switch complementarity unknowns for hybrid DAEs.
+        let switch_bonus = if crate::newton_policy::is_ideal_switch_complementarity_name(u) {
+            -5.0
+        } else {
+            0.0
+        };
+        occ * w_occ
+            + nonlinear_hits * w_nonlin
+            - solve_bias * w_solve
+            + residual_size_bias * w_residual
+            + switch_bonus
     }
     fn dm_candidate_score(block_eqs: &[Equation], u: &str) -> f64 {
         let mut occ = 0.0_f64;
@@ -87,68 +118,81 @@ pub(super) fn select_tearing_variable(
         let w_nonlin = env_weight("RUSTMODLICA_TEAR_DM_W_NONLINEAR", 2.0);
         let w_front = env_weight("RUSTMODLICA_TEAR_DM_W_FRONTLOAD", 0.5);
         let w_solve = env_weight("RUSTMODLICA_TEAR_DM_W_SOLVABLE", 0.8);
-        occ * w_occ + nonlinear * w_nonlin + weighted_pos * w_front - solvable * w_solve
+        let switch_bonus = if crate::newton_policy::is_ideal_switch_complementarity_name(u) {
+            -5.0
+        } else {
+            0.0
+        };
+        occ * w_occ
+            + nonlinear * w_nonlin
+            + weighted_pos * w_front
+            - solvable * w_solve
+            + switch_bonus
     }
 
     if block_unknowns.is_empty() {
         return None;
     }
+    let candidates = prefer_candidates(block_unknowns);
+    if candidates.is_empty() {
+        return None;
+    }
     match method {
         "maxEquation" => {
-            let mut best = block_unknowns[0].clone();
+            let mut best = candidates[0].clone();
             let mut best_count = 0usize;
-            for u in block_unknowns {
+            for u in &candidates {
                 let count = block_eqs
                     .iter()
                     .filter(|eq| equation_contains_var(eq, u))
                     .count();
                 if count > best_count {
                     best_count = count;
-                    best = u.clone();
+                    best = (*u).clone();
                 }
             }
             Some(best)
         }
         "minCellier" | "leastOccurrence" => {
-            let mut best = block_unknowns[0].clone();
+            let mut best = candidates[0].clone();
             let mut best_score = usize::MAX;
-            for u in block_unknowns {
+            for u in &candidates {
                 let count = block_eqs
                     .iter()
                     .filter(|eq| equation_contains_var(eq, u))
                     .count();
                 if count < best_score {
                     best_score = count;
-                    best = u.clone();
+                    best = (*u).clone();
                 }
             }
             Some(best)
         }
         "smart" | "hybrid" | "smartBlock" => {
-            let mut best = block_unknowns[0].clone();
+            let mut best = candidates[0].clone();
             let mut best_score = f64::INFINITY;
-            for u in block_unknowns {
+            for u in &candidates {
                 let score = candidate_score(block_eqs, u);
                 if score < best_score {
                     best_score = score;
-                    best = u.clone();
+                    best = (*u).clone();
                 }
             }
             Some(best)
         }
         "dm" | "dulmageMendelsohn" | "dulmage-mendelsohn" => {
-            let mut best = block_unknowns[0].clone();
+            let mut best = candidates[0].clone();
             let mut best_score = f64::INFINITY;
-            for u in block_unknowns {
+            for u in &candidates {
                 let score = dm_candidate_score(block_eqs, u);
                 if score < best_score {
                     best_score = score;
-                    best = u.clone();
+                    best = (*u).clone();
                 }
             }
             Some(best)
         }
-        _ => block_unknowns.first().cloned(),
+        _ => candidates.first().map(|s| (*s).clone()),
     }
 }
 

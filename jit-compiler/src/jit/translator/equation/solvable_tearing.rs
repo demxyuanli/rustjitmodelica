@@ -67,6 +67,9 @@ fn emit_bad_jacobian_retry_or_exit(
     builder.ins().jump(header_block, &[]);
     builder.seal_block(retry_block);
     builder.switch_to_block(hard_fail_block);
+    // Avoid writing a blown-up iterate back into outputs (poisons later Newton warm-starts).
+    let zero_fail = builder.ins().f64const(0.0);
+    builder.ins().stack_store(zero_fail, t_slot, 0);
     builder.ins().jump(exit_block, &[]);
     builder.seal_block(hard_fail_block);
 }
@@ -244,7 +247,27 @@ pub(crate) fn compile_single_unknown_or_tearing_solvable_block(
             0,
         ))
     });
-    if let Some(idx) = ctx.output_index(&t_var) {
+    // Ideal-switch complementarity `s`: warm-start from outputs when the guess is
+    // finite and not blown (|s|<=10). Always forcing 0 made PWM mode-seeding useless.
+    if crate::newton_policy::is_ideal_switch_complementarity_name(&t_var) {
+        if let Some(idx) = ctx.output_index(&t_var) {
+            let offset = (idx * 8) as i32;
+            let init_val = builder
+                .ins()
+                .load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset);
+            let abs_init = builder.ins().fabs(init_val);
+            let lim = builder.ins().f64const(10.0);
+            let ok = builder
+                .ins()
+                .fcmp(FloatCC::LessThanOrEqual, abs_init, lim);
+            let zero_sw = builder.ins().f64const(0.0);
+            let chosen = builder.ins().select(ok, init_val, zero_sw);
+            builder.ins().stack_store(chosen, t_slot, 0);
+        } else {
+            let zero_sw = builder.ins().f64const(0.0);
+            builder.ins().stack_store(zero_sw, t_slot, 0);
+        }
+    } else if let Some(idx) = ctx.output_index(&t_var) {
         let offset = (idx * 8) as i32;
         let init_val = builder
             .ins()
@@ -290,6 +313,9 @@ pub(crate) fn compile_single_unknown_or_tearing_solvable_block(
         let neg_one = builder.ins().f64const(-1.0);
         builder.ins().store(MemFlags::new(), neg_one, pr, 0);
     }
+    // Reset tearing unknown so write_back does not poison outputs with |x|~1e8.
+    let zero_err = builder.ins().f64const(0.0);
+    builder.ins().stack_store(zero_err, t_slot, 0);
     builder.ins().jump(exit_block, &[]);
     builder.seal_block(error_block);
     builder.switch_to_block(body_block);

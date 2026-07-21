@@ -6,6 +6,68 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Media.Examples loader + Noise/ComplexBlocks (2026-07-21)
+
+- **Parser**: `redeclare_class_definition` / `redeclare_short_class_definition`; `redeclare_*_extends` accepts `replaceable`/`partial` and `record|package|block|connector` (unblocks giant `Modelica/Media/package.mo`).
+- **Strict gate**: Media.Examples **20/20** (incl. Utilities.*); Clocked/Blocks Noise **7/7**; ComplexBlocks+ComplexMath **4/4**. Short-sim samples `fallback_total=0`.
+- **Fluid Examples**: bare Medium helpers (`specificEnthalpy_pTX`, `setState_*`, …) mapped to `medium_props`; Fluid Examples leaf models **19/19** strict green.
+- **MultiBody Examples**: **63/63** strict green. Electrical `MeasureRiseTime` absent from OM MSL 4.1.0 tree (present in bundled Modelica) — version skew, not a loader defect.
+- **Machines/Power**: Machines+PowerConverters+Polyphase Examples **125/125**; QuasiStatic+Batteries **19/19**; short-sim samples `fallback_total=0`.
+- **Thermal**: HeatTransfer+FluidHeatFlow Examples **20/20** strict; short-sim `fallback_total=0`.
+- **MSL full-green board**: `build/msl_full_green/` — Clocked 87/87, Blocks/Noise 31/31, Complex/Utilities 3/3; ModelicaTest **95/95** after `positiveMax`/`Fluid.Dissipation` builtins + cardinality missing-degree strict0.
+
+### Mechanics + Media strict domain (2026-07-21)
+
+- **Strict gate**: Rotational 30/30, Translational 25/25, Media (resolvable FQNs) 15/15; short-sim samples `fallback_total=0`.
+- **Builtins**: `is_equal_fn`, `move_position`, `linearTemperatureDependency` (via `thermal_convert`), `stribeck_table_f0`; `convertAlpha` aligned to MSL `(alpha1, T2, T1=293.15)`.
+
+### Discrete/Tables domain + table fallback tighten (2026-07-21)
+
+- **Strict gate**: Blocks.Discrete / Tables / Noise sample — 98/98 resolvable models pass under `STRICT_PLACEHOLDERS` + `POLICY_STRICT`; short-sim `fallback_total=0`.
+- **Table builtins**: `ext_combitable_lookup` replaces warn0 for ExternalCombi*; real `rustmodlica_table_get_value` path no longer increments `jit_builtin` fallback; pre() table placeholders fail-closed under strict.
+- **Clock()**: empty-arg legitimate ctor no longer emits false `[fallback:jit-builtin] empty-args` (JSON handler before empty-args warn).
+
+### SimControl cancel + progress (2026-07-21)
+
+- **Engine**: `simulation/control.rs` — `SimControl` cooperative cancel (`AtomicBool`) + throttled `time/t_end` progress; wired through `run_simulation` / `run_simulation_collect` / `simulate_from_source_with_control`.
+- **IDE**: `cancel_simulation_run` + `modai-jit-progress.simTime/tEnd`; SimulationPanel Stop; `useSimulation.cancelSimulation`.
+- **Product constraints (confirmed)**: full MSL not green; fallbacks remain; no true pause/step; emit-c/FMU ≠ Embedded Coder — Coder stays Out; Pause/Step stays P3.
+- **Docs**: `07-compiler-feasibility.md` cancel/progress moved off Blocked.
+
+### Modai Studio specs (2026-07-21)
+
+- **Docs**: `docs/modai-studio/` requirements, design, data structures, features, implementation rationale for a Simulink-like Modelica desktop app (independent of `modai-ide`, XYFlow, dual-file `*.mo` + `*.diagram.json`, path-dep `rustmodlica`).
+- **Simulink map**: `docs/modai-studio/06-simulink-capability-map.md`; requirements/features expanded to P0 MVP / P1 Core / P2 Pro / P3 Future; data model reserves subsystem/run/annotation fields.
+- **Compiler feasibility**: `docs/modai-studio/07-compiler-feasibility.md` — P0 viable vs jit-compiler; full Simulink parity not feasible (product family / semantics / runtime / compiler maturity); P1 cancel/progress via `SimControl` (true pause still P3).
+- **Pointer**: `docs/superpowers/specs/2026-07-21-modai-studio-design.md`.
+
+### Ideal-switch Newton warm-start (2026-07-20)
+
+- **Event-step algebraic guess**: restore pre-trial `outputs` and clamp IdealDiode/transistor complementarity `s` to 0 before the refined step (`prepare_event_step_algebraic_guess`).
+- **JIT Newton init**: tearing and dense solvable blocks start ideal-switch `s` at 0; failed Newton no longer write_backs blown-up iterates into `outputs`.
+- **Solver recovery**: on status 2 with switch unknowns — homotopy retry, **Backward-Euler micro-steps first**, dt bisection, sticky `dt_active`, short `prefer_implicit_near_switch` window, bounded discontinuity nudge, event-iteration force-`s=0` / fail-open, assert-counter reset.
+- **Gate**: DCPM_Drive / SinglePhaseTwoLevel / HBridge / Chopper ExampleTemplates / `ChopperBuckBoost_DutyCycle` short-sim green on **strict** path (`--solver=implicit`, no fail-open).
+- **Chopper PWM follow-up**: sync scratch algebraics into `outputs` before trial-eval; reset discontinuity-nudge budget when time advances; floor zero-crossing `dt_event` to avoid PWM edge livelock; prefer BE near ideal switches.
+- **Fail-open tightened**: default OFF; continue with `|r|>tol` only when `RUSTMODLICA_SWITCH_FAIL_OPEN=1`, always emitting `[degraded:switch-fail-open]` (+ fallback counter). Accept tol via `RUSTMODLICA_SWITCH_ACCEPT_TOL` (default 1e-5). `STRICT_NEWTON` disables fail-open.
+- **BLT tear hygiene**: never Newton on `time` / `*_start` / PWM clock start params; residual-only frozen eqs skipped (fixes DutyCycle `|r|~1` poison path).
+- **Simulation split**: `run_simulation` → `simulation/driver/` (`run`, `crossing`, `sched`, `sundials_dispatch`); switch recovery → `switch_drive.rs`; Newton recovery → `newton_recovery/` (`algebraic`, `t0`, `ideal_switch`, …).
+- **`compare_omc.ps1`**: `-LibPath`, `-OutDir`, `-CrossSolverSelfGate` (rk4 vs rk45 last-row when no OMC); `-OmcOut` / `*.omc.csv` when reference CSV exists.
+- **Docs**: `docs/Ideal_Switch_Simulation.md` (ideal-switch / PWM / `--solver=implicit` / recovery / fail-open policy).
+
+### JIT strict builtin dispatch (2026-07-19)
+
+- **`strict function-builtin` ordering**: hard-fail only on the unknown-import passthrough path so hand-coded handlers (`fill`, `assert`, …) and `try_compile_builtin_call` run first under `RUSTMODLICA_JIT_POLICY_STRICT=function_builtin`.
+- **`not(e)`**: compile Modelica boolean `not` Call to Cranelift select (0→1, nonzero→0).
+- **Fix `default_function_builtin_rules.json`**: missing comma after `MultiBody.Frames` rule emptied the entire rule table at load time (`unwrap_or_default`).
+- **`match_function_builtin_rule`**: still matches under `POLICY_STRICT=function_builtin` (strict only rejects unmatched unknown-import); namespace/capitalized helper passthrough disabled in that mode.
+- **Wired builtins**: `zeros`/`ones`/`cat`, `Clock`/`sample`/`interval`/`shiftSample`/`superSample`/`subSample`/`backSample`, `Frames.*` (`frames_orient`), `cross`, `from_deg`/`to_deg`, `gravityAcceleration`, `normalize`/`normalizeWithAssert`, `getNextTimeEvent` (inf-scale, matched before `.Internal.`).
+- Strict smoke (OM MSL): Pendulum / DoublePendulum / ForceAndTorque / TanksWithOverflow / Sample1 / AbsoluteClocks / ShiftSample / SuperSample → success.
+- Fluid follow-ups: `Medium.*` props, `regRoot2`/`regSquare*`, `*Characteristic`, Dot(`ArrayLiteral`, member).
+- **HeatingSystem Cranelift SSA**: `compile_if_stmt` / `compile_when_stmt` snapshot+restore `var_map` per branch so then-arm SSA Values cannot be `stack_store`d in else (verifier non-dominating).
+- Follow-on builtins: `Vectors.length`, `anyTrue`/`allTrue`, `maxWithoutEvent`, `WallFriction.*`, table `get*Value*`, `Strings.findLast`, `BaseClasses` passthrough, `from_degC`/`to_degC`.
+- Strict subset gate: clocked 87/87, fluid 13/13, multibody 63/63 under `STRICT_PLACEHOLDERS` + `POLICY_STRICT`.
+- **Electrical/magnetic strict expand**: JSON builtin rules win over external-import short-circuit; unmatched externals with a rule skip "not linked". Wired Complex/ComplexMath/thermal/space-phasor/`Functions.state*`, conj/transpose/wrapAngle/brushVoltageDrop/quasiRMS/`from_rpm`. Gate: electrical **212/213** (1× model_not_found), magnetic **79/79**.
+
 ### P5 simulation numerical kernel (2026-07-14)
 
 - **Newton sparse `auto` production calibration**: `NEWTON_SPARSE_AUTO_MAX_DENSITY=0.35`, `NEWTON_SPARSE_AUTO_MIN_N=8` (overridable via `RUSTMODLICA_SPARSE_DENSITY_THRESHOLD` / `RUSTMODLICA_SPARSE_MIN_SIZE`); unified `RUSTMODLICA_NEWTON_PATH` + `RUSTMODLICA_NEWTON_SPARSE_POLICY` preference.

@@ -51,10 +51,25 @@ short_class_definition_rhs = { function_call | component_ref | ((input_kw | outp
 constrainedby_clause = { "constrainedby" ~ WHITESPACE? ~ type_name ~ string_comment? }
 short_class_definition = { class_prefixes ~ identifier ~ "=" ~ short_class_definition_rhs ~ array_subscript? ~ modification_part? ~ constrainedby_clause? ~ string_comment? ~ annotation? ~ ";"? }
 connector_alias_definition = { "expandable"? ~ "connector" ~ identifier ~ "=" ~ (input_kw | output_kw)? ~ type_name ~ string_comment? ~ annotation? ~ ";"? }
-declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | redeclare_model_extends | model_definition | type_definition | declaration | annotation_clause)* }
+declaration_section = { (extends_clause | import_clause | visibility_clause | connector_alias_definition | short_class_definition | redeclare_function_extends | redeclare_model_extends | redeclare_short_class_definition | redeclare_class_definition | model_definition | type_definition | declaration | annotation_clause)* }
+// e.g. `redeclare replaceable record ThermodynamicState ... end ThermodynamicState;`
+// inside PartialMedium specializations (Modelica.Media.package.mo Examples).
+redeclare_class_definition = {
+    "redeclare"
+    ~ WHITESPACE?
+    ~ model_definition
+}
+// e.g. `redeclare replaceable record FluidConstants = ...;`
+redeclare_short_class_definition = {
+    "redeclare"
+    ~ WHITESPACE?
+    ~ short_class_definition
+}
 redeclare_function_extends = {
     "redeclare"
     ~ WHITESPACE?
+    ~ ("replaceable" ~ WHITESPACE?)?
+    ~ ("partial" ~ WHITESPACE?)?
     ~ "operator"?
     ~ WHITESPACE?
     ~ "function"
@@ -74,10 +89,13 @@ redeclare_function_extends = {
     ~ WHITESPACE?
     ~ end_part
 }
+// model/record/package/block/connector extends (Media: redeclare replaceable partial model extends BaseProperties)
 redeclare_model_extends = {
     "redeclare"
     ~ WHITESPACE?
-    ~ "model"
+    ~ ("replaceable" ~ WHITESPACE?)?
+    ~ ("partial" ~ WHITESPACE?)?
+    ~ ("model" | "record" | "package" | "block" | "connector")
     ~ WHITESPACE?
     ~ "extends"
     ~ WHITESPACE?

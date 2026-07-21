@@ -421,12 +421,23 @@ pub fn parse_declaration_section(
                     type_aliases.push((type_id, base));
                 }
             }
-            Rule::short_class_definition => {
+            Rule::short_class_definition | Rule::redeclare_short_class_definition => {
+                let short_pair = if decl_pair.as_rule() == Rule::redeclare_short_class_definition {
+                    match decl_pair
+                        .into_inner()
+                        .find(|p| p.as_rule() == Rule::short_class_definition)
+                    {
+                        Some(p) => p,
+                        None => continue,
+                    }
+                } else {
+                    decl_pair
+                };
                 let mut prefixes = String::new();
                 let mut alias = String::new();
                 let mut base = String::new();
                 let mut rhs_is_type_name = false;
-                for p in decl_pair.into_inner() {
+                for p in short_pair.into_inner() {
                     match p.as_rule() {
                         Rule::class_prefixes => {
                             if prefixes.is_empty() {
@@ -571,11 +582,26 @@ pub fn parse_declaration_section(
                     type_aliases.push((alias, base));
                 }
             }
-            Rule::model_definition => match parse_model_fn(decl_pair) {
-                Ok(crate::ast::ClassItem::Model(m)) => inner_classes.push(m),
-                Ok(crate::ast::ClassItem::Function(f)) => inner_classes.push(crate::ast::Model::from(f)),
-                Err(e) => return Err(e),
-            },
+            Rule::model_definition | Rule::redeclare_class_definition => {
+                let model_pair = if decl_pair.as_rule() == Rule::redeclare_class_definition {
+                    match decl_pair
+                        .into_inner()
+                        .find(|p| p.as_rule() == Rule::model_definition)
+                    {
+                        Some(p) => p,
+                        None => continue,
+                    }
+                } else {
+                    decl_pair
+                };
+                match parse_model_fn(model_pair) {
+                    Ok(crate::ast::ClassItem::Model(m)) => inner_classes.push(m),
+                    Ok(crate::ast::ClassItem::Function(f)) => {
+                        inner_classes.push(crate::ast::Model::from(f))
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
             Rule::extends_clause => {
                 let ext_inner = decl_pair.into_inner();
                 let mut full_name = String::new();

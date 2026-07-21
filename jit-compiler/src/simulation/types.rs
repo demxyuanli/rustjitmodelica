@@ -158,6 +158,7 @@ pub fn run_simulation_collect(
     deopt_sim_perf: Option<&mut DeoptSimPerfSummary>,
     model_name: &str,
     lib_paths: Vec<std::path::PathBuf>,
+    control: Option<&mut super::control::SimControl>,
 ) -> Result<SimulationResult, String> {
     let estimated_rows = if output_interval > 0.0 {
         (t_end / output_interval) as usize + 2
@@ -194,6 +195,7 @@ pub fn run_simulation_collect(
         deopt_sim_perf,
         model_name,
         lib_paths,
+        control,
     )?;
     let mut time = Vec::with_capacity(collector.len());
     let mut series: HashMap<String, Vec<f64>> = HashMap::new();

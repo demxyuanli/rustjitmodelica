@@ -176,6 +176,63 @@ pub fn simulate_from_source(
         None,
         model_name,
         compiler.loader.library_paths.clone(),
+        None,
+    )?;
+    Ok(result)
+}
+
+/// Like [`simulate_from_source`], but accepts cooperative cancel / progress control.
+pub fn simulate_from_source_with_control(
+    code: &str,
+    model_name: &str,
+    options: Option<CompilerOptions>,
+    control: Option<&mut crate::simulation::SimControl>,
+) -> Result<SimulationResult, BoxError> {
+    let mut compiler = build_compiler_with_options(options);
+    compiler.options.compile_stop = CompileStopPhase::Full;
+    let out = compiler.compile_from_source(model_name, code)?;
+    let artifacts = match out {
+        CompileOutput::FunctionRun(_) => {
+            return Err("simulation requested but entry is a function, not a model".into());
+        }
+        CompileOutput::FlatSnapshotDone => {
+            return Err("simulation not available for flat-snapshot-only compile".into());
+        }
+        CompileOutput::ValidationParseOk
+        | CompileOutput::ValidationFlattenOk { .. }
+        | CompileOutput::ValidationAnalyzed(_) => {
+            return Err("simulation requires full compile (tiered validation stopped early)".into());
+        }
+        CompileOutput::Simulation(artifacts) => artifacts,
+    };
+    let result = run_simulation_collect(
+        artifacts.calc_derivs,
+        artifacts.when_count,
+        artifacts.crossings_count,
+        artifacts.states,
+        artifacts.discrete_vals,
+        artifacts.params,
+        &artifacts.state_vars,
+        &artifacts.discrete_vars,
+        &artifacts.output_vars,
+        &artifacts.output_start_vals,
+        &artifacts.state_var_index,
+        artifacts.t_end,
+        artifacts.dt,
+        artifacts.numeric_ode_jacobian,
+        artifacts.symbolic_ode_jacobian.as_ref(),
+        &artifacts.newton_tearing_var_names,
+        artifacts.atol,
+        artifacts.rtol,
+        artifacts.differential_index,
+        artifacts.ida_component_id.as_slice(),
+        &artifacts.solver,
+        artifacts.output_interval,
+        &artifacts.clock_partition_schedule,
+        None,
+        model_name,
+        compiler.loader.library_paths.clone(),
+        control,
     )?;
     Ok(result)
 }

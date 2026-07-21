@@ -56,6 +56,7 @@ pub(crate) fn run_repl_loop(artifacts: Artifacts, model_name: &str, lib_paths: V
                 None,
                 model_name,
                 lib_paths.clone(),
+                None,
             )?;
             println!("{}", i18n::msg0("simulation_completed"));
             continue;

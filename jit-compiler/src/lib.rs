@@ -44,7 +44,10 @@ pub use string_intern::{StringInterner, VarId};
 pub use equation_graph::{EquationGraph, EquationGraphEdge, EquationGraphNode};
 pub use equation_graph_inc::{build_or_update_equation_graph, DirtySet, NodeKey};
 pub use loader::{LoadError, ModelLoader};
-pub use simulation::{run_simulation, run_simulation_collect, runtime_perf_counters, SimulationResult};
+pub use simulation::{
+    is_sim_cancelled_error, run_simulation, run_simulation_collect, runtime_perf_counters,
+    SimControl, SimProgress, SimulationResult, SIM_CANCELLED_MSG,
+};
 pub use api::{
     affected_models_for_changed_files, analyze_change_impact, analyze_instance_change_impact,
     incremental_codegen_worthwhile_hint, provenance_index_for_flat_model,

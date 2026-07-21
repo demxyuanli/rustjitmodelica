@@ -5,10 +5,10 @@ use std::time::Instant;
 
 use crate::analysis::derivative::collect_states_from_eq;
 use crate::analysis::expression_utils::time_derivative;
-use crate::analysis::variable_collection::{collect_vars_expr, extract_unknowns};
+use crate::analysis::variable_collection::{collect_vars_eq, collect_vars_expr, extract_unknowns};
 use crate::analysis::AnalysisOptions;
 
-use super::blt_expr::{make_residual, select_tearing_variable, solve_for_variable};
+use super::blt_expr::{is_forbidden_tearing_var, make_residual, select_tearing_variable, solve_for_variable};
 use super::helpers::{eval_const_expr, try_index_reduction};
 use super::types::{BlockCausalityInfo, SortAlgebraicResult};
 use super::eliminate_aliases;
@@ -95,6 +95,17 @@ pub fn sort_algebraic_equations(
     let (equations, alias_map): (Vec<Equation>, HashMap<String, Expression>) =
         eliminate_aliases(equations);
 
+    // Freeze time/start/PWM clock params that must never become Newton unknowns.
+    for eq in &equations {
+        let mut vars = HashSet::new();
+        collect_vars_eq(eq, &mut vars);
+        for v in vars {
+            if is_forbidden_tearing_var(&v) {
+                current_known.insert(v);
+            }
+        }
+    }
+
     let n_aliases = alias_map.len();
     let n_eqs = equations.len();
     if !options.quiet {
@@ -118,53 +129,69 @@ pub fn sort_algebraic_equations(
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
         .unwrap_or(256);
-    if equations.len() > max_eq_for_full_sort {
+    let mut equations = equations;
+    let mut take_degrade_guard = equations.len() > max_eq_for_full_sort;
+    if take_degrade_guard {
         let mut unknown_set: HashSet<String> = HashSet::new();
         for eq in &equations {
             for u in extract_unknowns(eq, &current_known) {
-                unknown_set.insert(u);
+                if !is_forbidden_tearing_var(&u) {
+                    unknown_set.insert(u);
+                }
             }
         }
         let mut unknowns: Vec<String> = unknown_set.into_iter().collect();
         unknowns.sort();
-        let tearing_var = unknowns.first().cloned();
-        if blt_trace {
-            eprintln!(
-                "[blt] degrade_guard full_sort_skipped eqs={} limit={} unknowns={} elapsed_ms={}",
-                equations.len(),
-                max_eq_for_full_sort,
-                unknowns.len(),
-                sort_started_at.elapsed().as_millis()
-            );
+        let tearing_var =
+            select_tearing_variable(&unknowns, &equations, &HashMap::new(), &options.tearing_method);
+        if unknowns.is_empty() || tearing_var.is_none() {
+            // Do not emit a poison Newton block on time/start-only systems.
+            take_degrade_guard = false;
+            if blt_trace {
+                eprintln!(
+                    "[blt] degrade_guard skipped (no tearable unknowns) eqs={} limit={}",
+                    equations.len(),
+                    max_eq_for_full_sort
+                );
+            }
+        } else {
+            if blt_trace {
+                eprintln!(
+                    "[blt] degrade_guard full_sort_skipped eqs={} limit={} unknowns={} elapsed_ms={}",
+                    equations.len(),
+                    max_eq_for_full_sort,
+                    unknowns.len(),
+                    sort_started_at.elapsed().as_millis()
+                );
+            }
+            return SortAlgebraicResult {
+                sorted_equations: vec![Equation::SolvableBlock {
+                    unknowns,
+                    tearing_var: tearing_var.clone(),
+                    equations: vec![],
+                    residuals: equations.iter().map(make_residual).collect(),
+                }],
+                differential_index: 1,
+                constraint_equation_count: 0,
+                constant_conflict_count: 0,
+                alias_map,
+                index_reduction_rounds: 0,
+                dummy_derivative_equation_count: 0,
+                tearing_block_count: 1,
+                tearing_residual_equation_count: equations.len(),
+                block_causality: vec![BlockCausalityInfo {
+                    diff_index: 1,
+                    tearing_vars: tearing_var.clone().into_iter().collect(),
+                    strongly_connected: true,
+                    is_nonlinear: true,
+                }],
+                blt_degrade_guard_triggered: true,
+                blt_degrade_guard_limit: Some(max_eq_for_full_sort),
+                blt_degrade_guard_equation_count: Some(equations.len()),
+            };
         }
-        return SortAlgebraicResult {
-            sorted_equations: vec![Equation::SolvableBlock {
-                unknowns,
-                tearing_var: tearing_var.clone(),
-                equations: vec![],
-                residuals: equations.iter().map(make_residual).collect(),
-            }],
-            differential_index: 1,
-            constraint_equation_count: 0,
-            constant_conflict_count: 0,
-            alias_map,
-            index_reduction_rounds: 0,
-            dummy_derivative_equation_count: 0,
-            tearing_block_count: 1,
-            tearing_residual_equation_count: equations.len(),
-            block_causality: vec![BlockCausalityInfo {
-                diff_index: 1,
-                tearing_vars: tearing_var.clone().into_iter().collect(),
-                strongly_connected: true,
-                is_nonlinear: true,
-            }],
-            blt_degrade_guard_triggered: true,
-            blt_degrade_guard_limit: Some(max_eq_for_full_sort),
-            blt_degrade_guard_equation_count: Some(equations.len()),
-        };
     }
-
-    let mut equations = equations;
+    let _ = take_degrade_guard;
 
     let mut state_set = HashSet::new();
     for eq in equations.iter() {
@@ -275,7 +302,8 @@ pub fn sort_algebraic_equations(
         eq_infos.clear();
         let mut all_unknowns: HashSet<String> = HashSet::new();
         for (i, eq) in equations.iter().enumerate() {
-            let unknowns = extract_unknowns(eq, &current_known);
+            let mut unknowns = extract_unknowns(eq, &current_known);
+            unknowns.retain(|u| !is_forbidden_tearing_var(u));
             for u in &unknowns {
                 all_unknowns.insert(u.clone());
             }
@@ -416,31 +444,33 @@ pub fn sort_algebraic_equations(
     {
         let tearing_var =
             select_tearing_variable(&unknown_list, &equations, &unknown_map, &options.tearing_method);
-        return SortAlgebraicResult {
-            sorted_equations: vec![Equation::SolvableBlock {
-                unknowns: unknown_list.clone(),
-                tearing_var: tearing_var.clone(),
-                equations: vec![],
-                residuals: equations.iter().map(|eq| make_residual(eq)).collect(),
-            }],
-            differential_index: 1,
-            constraint_equation_count: 0,
-            constant_conflict_count,
-            alias_map,
-            index_reduction_rounds,
-            dummy_derivative_equation_count,
-            tearing_block_count: 1,
-            tearing_residual_equation_count: equations.len(),
-            block_causality: vec![BlockCausalityInfo {
-                diff_index: 1,
-                tearing_vars: tearing_var.clone().into_iter().collect(),
-                strongly_connected: true,
-                is_nonlinear: true,
-            }],
-            blt_degrade_guard_triggered: false,
-            blt_degrade_guard_limit: Some(max_eq_for_full_sort),
-            blt_degrade_guard_equation_count: Some(equations.len()),
-        };
+        if tearing_var.is_some() {
+            return SortAlgebraicResult {
+                sorted_equations: vec![Equation::SolvableBlock {
+                    unknowns: unknown_list.clone(),
+                    tearing_var: tearing_var.clone(),
+                    equations: vec![],
+                    residuals: equations.iter().map(|eq| make_residual(eq)).collect(),
+                }],
+                differential_index: 1,
+                constraint_equation_count: 0,
+                constant_conflict_count,
+                alias_map,
+                index_reduction_rounds,
+                dummy_derivative_equation_count,
+                tearing_block_count: 1,
+                tearing_residual_equation_count: equations.len(),
+                block_causality: vec![BlockCausalityInfo {
+                    diff_index: 1,
+                    tearing_vars: tearing_var.clone().into_iter().collect(),
+                    strongly_connected: true,
+                    is_nonlinear: true,
+                }],
+                blt_degrade_guard_triggered: false,
+                blt_degrade_guard_limit: Some(max_eq_for_full_sort),
+                blt_degrade_guard_equation_count: Some(equations.len()),
+            };
+        }
     }
 
     if blt_trace {
@@ -566,6 +596,17 @@ pub fn sort_algebraic_equations(
 
             if let Some(var_idx) = assigned_var[idx] {
                 let var_name = &unknown_list[var_idx];
+                if is_forbidden_tearing_var(var_name) {
+                    // Should not happen after filtering; keep as known, skip Newton.
+                    current_known.insert(var_name.clone());
+                    if blt_trace {
+                        eprintln!(
+                            "[blt] skip forbidden assigned unknown {}",
+                            var_name
+                        );
+                    }
+                    continue;
+                }
                 if let Some(expr) = solve_for_variable(eq, var_name) {
                     current_known.insert(var_name.clone());
                     sorted_equations.push(Equation::Simple(
@@ -585,6 +626,16 @@ pub fn sort_algebraic_equations(
                         &unknown_map,
                         &options.tearing_method,
                     );
+                    if tearing_var.is_none() {
+                        current_known.insert(var_name.clone());
+                        if blt_trace {
+                            eprintln!(
+                                "[blt] skip non-tearable single unknown {}",
+                                var_name
+                            );
+                        }
+                        continue;
+                    }
                     sorted_equations.push(Equation::SolvableBlock {
                         unknowns: vec![var_name.clone()],
                         tearing_var: tearing_var.clone(),
@@ -602,16 +653,30 @@ pub fn sort_algebraic_equations(
                     current_known.insert(var_name.clone());
                 }
             } else {
-                let unknowns_from_eq = &eq_infos[idx].unknowns;
-                if let Some(unk) = unknowns_from_eq.first().cloned() {
+                let unknowns_from_eq: Vec<String> = eq_infos[idx]
+                    .unknowns
+                    .iter()
+                    .filter(|u| !is_forbidden_tearing_var(u))
+                    .cloned()
+                    .collect();
+                if let Some(_unk) = unknowns_from_eq.first().cloned() {
                     let tearing_var = select_tearing_variable(
-                        &[unk.clone()],
+                        &unknowns_from_eq,
                         &[eq.clone()],
                         &unknown_map,
                         &options.tearing_method,
                     );
+                    if tearing_var.is_none() {
+                        if blt_trace {
+                            eprintln!(
+                                "[blt] skip unassigned non-tearable equation unknowns={:?}",
+                                unknowns_from_eq
+                            );
+                        }
+                        continue;
+                    }
                     sorted_equations.push(Equation::SolvableBlock {
-                        unknowns: vec![unk],
+                        unknowns: unknowns_from_eq,
                         tearing_var: tearing_var.clone(),
                         equations: vec![],
                         residuals: vec![make_residual(eq)],
@@ -625,34 +690,14 @@ pub fn sort_algebraic_equations(
                         is_nonlinear: true,
                     });
                 } else {
-                    // Keep residual equation without introducing synthetic "__dummy" unknowns.
-                    // Pick a real variable from the residual as tearing variable so JIT can
-                    // execute the single-residual Newton path.
-                    let residual = make_residual(eq);
-                    let mut residual_vars: HashSet<String> = HashSet::new();
-                    collect_vars_expr(&residual, &mut residual_vars);
-                    let mut vars_vec: Vec<String> = residual_vars.into_iter().collect();
-                    vars_vec.sort();
-                    let tearing_var = vars_vec
-                        .iter()
-                        .find(|v| !v.starts_with("__dummy"))
-                        .cloned()
-                        .or_else(|| vars_vec.first().cloned());
-                    let unknowns_block = tearing_var.clone().into_iter().collect::<Vec<_>>();
-                    sorted_equations.push(Equation::SolvableBlock {
-                        unknowns: unknowns_block,
-                        tearing_var: tearing_var.clone(),
-                        equations: vec![],
-                        residuals: vec![residual],
-                    });
-                    tearing_block_count += 1;
-                    tearing_residual_equation_count += 1;
-                    block_causality.push(BlockCausalityInfo {
-                        diff_index: differential_index,
-                        tearing_vars: tearing_var.clone().into_iter().collect(),
-                        strongly_connected: false,
-                        is_nonlinear: true,
-                    });
+                    // Residual with no algebraic unknowns (only time/start/knowns):
+                    // consistency check only — never invent Newton on time/start.
+                    if blt_trace {
+                        eprintln!(
+                            "[blt] skip residual-only frozen equation idx={}",
+                            eq_infos[idx].original_idx
+                        );
+                    }
                 }
             }
         } else {
@@ -664,12 +709,16 @@ pub fn sort_algebraic_equations(
             let mut block_unknowns: Vec<String> = block_indices
                 .iter()
                 .filter_map(|&idx| assigned_var[idx].map(|v_idx| unknown_list[v_idx].clone()))
+                .filter(|u| !is_forbidden_tearing_var(u))
                 .collect();
 
             if block_unknowns.is_empty() && !block_eqs.is_empty() {
                 for &idx in &block_indices {
                     for u in &eq_infos[idx].unknowns {
-                        if unknown_map.contains_key(u) && !block_unknowns.contains(u) {
+                        if unknown_map.contains_key(u)
+                            && !is_forbidden_tearing_var(u)
+                            && !block_unknowns.contains(u)
+                        {
                             block_unknowns.push(u.clone());
                         }
                     }
@@ -681,6 +730,15 @@ pub fn sort_algebraic_equations(
                 &unknown_map,
                 &options.tearing_method,
             );
+            if block_unknowns.is_empty() || tearing_var.is_none() {
+                if blt_trace {
+                    eprintln!(
+                        "[blt] skip SCC with no tearable unknowns size={}",
+                        block_indices.len()
+                    );
+                }
+                continue;
+            }
 
             sorted_equations.push(Equation::SolvableBlock {
                 unknowns: block_unknowns.clone(),

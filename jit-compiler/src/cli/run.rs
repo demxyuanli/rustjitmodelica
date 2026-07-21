@@ -845,6 +845,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                     Some(&mut deopt_perf_summary),
                     &effective_model,
                     lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect(),
+                    None,
                 )?;
                 let (sim_ms, sim_us) = sim_t0
                     .as_ref()
@@ -921,6 +922,7 @@ pub fn run(args: Vec<String>) -> Result<(), RunError> {
                 Some(&mut deopt_perf_summary),
                 &effective_model,
                 lib_paths.iter().map(|s| std::path::PathBuf::from(s)).collect(),
+                None,
             )?;
             let (sim_ms, sim_us) = sim_t0
                 .as_ref()

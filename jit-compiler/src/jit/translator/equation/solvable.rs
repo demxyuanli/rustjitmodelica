@@ -113,7 +113,27 @@ pub(crate) fn compile_solvable_block_general_n(
         ctx.var_map.remove(v);
     }
     for (var, slot) in unknowns.iter().take(n).zip(slots.iter()) {
-        if let Some(idx) = ctx.output_index(var) {
+        if crate::newton_policy::is_ideal_switch_complementarity_name(var) {
+            // Warm-start from outputs when |s|<=10; otherwise boundary s=0 (avoids |x|~1e8 poison).
+            if let Some(idx) = ctx.output_index(var) {
+                let offset = (idx * 8) as i32;
+                let init_val =
+                    builder
+                        .ins()
+                        .load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset);
+                let abs_init = builder.ins().fabs(init_val);
+                let lim = builder.ins().f64const(10.0);
+                let ok = builder
+                    .ins()
+                    .fcmp(FloatCC::LessThanOrEqual, abs_init, lim);
+                let zero_sw = builder.ins().f64const(0.0);
+                let chosen = builder.ins().select(ok, init_val, zero_sw);
+                builder.ins().stack_store(chosen, *slot, 0);
+            } else {
+                let zero_sw = builder.ins().f64const(0.0);
+                builder.ins().stack_store(zero_sw, *slot, 0);
+            }
+        } else if let Some(idx) = ctx.output_index(var) {
             let offset = (idx * 8) as i32;
             let init_val =
                 builder

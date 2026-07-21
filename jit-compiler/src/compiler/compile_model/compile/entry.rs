@@ -1957,6 +1957,11 @@ pub(crate) fn compile(
             if builtins.contains(name.as_str()) || all_symbols.contains_key(name) {
                 continue;
             }
+            // Named JIT builtin policy handlers cover validate-mode placeholders
+            // (e.g. Modelica.Utilities.Strings.substring) without a shared library.
+            if crate::jit::jit_policy::match_function_builtin_rule(name).is_some() {
+                continue;
+            }
             return Err(format!(
                 "External function '{}' is not linked. Provide a shared library with this symbol (e.g. --external-lib=<path> or Library annotation).",
                 name

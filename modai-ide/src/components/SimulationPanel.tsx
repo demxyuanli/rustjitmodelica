@@ -48,6 +48,7 @@ export interface SimTableState {
 export interface SimActions {
   onValidate: () => void;
   onRunSimulation: () => void;
+  onCancelSimulation?: () => void;
   onTestAll: () => void;
   onExportCSV: () => void;
   onExportJSON: () => void;
@@ -62,6 +63,12 @@ export interface SimResultData {
   simResult: SimulationResult | null;
   validateLoading: boolean;
   simLoading: boolean;
+  /** Simulation-time progress from cooperative driver (optional). */
+  simLiveProgress?: {
+    simTime: number | null;
+    tEnd: number | null;
+    step: number | null;
+  } | null;
   testAllLoading: boolean;
   testAllResults: TestAllResultItem[] | null;
   moFilesCount: number;
@@ -208,13 +215,18 @@ export function SimulationPanel({
 
   function renderStatusBadge() {
     if (data.validateLoading || data.simLoading || data.testAllLoading) {
+      const live = data.simLoading ? data.simLiveProgress : null;
+      const liveLabel =
+        live?.simTime != null && live?.tEnd != null
+          ? ` t=${live.simTime.toFixed(3)}/${live.tEnd}`
+          : "";
       return (
         <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
           <AppIcon name="spinner" className="!h-3.5 !w-3.5 animate-spin" />
           <span>
             {data.validateLoading ? t("jitValidate")
             : data.simLoading ? t("run")
-            : t("testAllMoFiles")} {t("running")}
+            : t("testAllMoFiles")} {t("running")}{liveLabel}
           </span>
         </div>
       );
@@ -278,6 +290,13 @@ export function SimulationPanel({
           disabled={data.simLoading || data.validateLoading}
           title={t("run")}
           aria-label={t("run")}
+        />
+        <IconButton
+          icon={<AppIcon name="stop" aria-hidden="true" />}
+          onClick={() => actions.onCancelSimulation?.()}
+          disabled={!data.simLoading || !actions.onCancelSimulation}
+          title={t("stopSim")}
+          aria-label={t("stopSim")}
         />
         <div className="mx-1 h-5 w-px bg-border" />
         <IconButton

@@ -8,7 +8,7 @@ mod connector_degree;
 pub mod context;
 pub mod deopt;
 pub mod interpreter;
-mod jit_policy;
+pub(crate) mod jit_policy;
 pub mod native;
 mod object_emit;
 pub mod speculation;

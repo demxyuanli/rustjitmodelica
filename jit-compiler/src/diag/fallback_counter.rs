@@ -9,6 +9,7 @@ pub struct FallbackCounterSnapshot {
     pub jit_multi_assign: u64,
     pub newton_init_accept: u64,
     pub newton_event_accept: u64,
+    pub switch_fail_open: u64,
     pub clock_degrade: u64,
 }
 
@@ -19,6 +20,7 @@ static JIT_EQUATION_SKIP: AtomicU64 = AtomicU64::new(0);
 static JIT_MULTI_ASSIGN: AtomicU64 = AtomicU64::new(0);
 static NEWTON_INIT_ACCEPT: AtomicU64 = AtomicU64::new(0);
 static NEWTON_EVENT_ACCEPT: AtomicU64 = AtomicU64::new(0);
+static SWITCH_FAIL_OPEN: AtomicU64 = AtomicU64::new(0);
 static CLOCK_DEGRADE: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
@@ -57,6 +59,11 @@ pub fn inc_newton_event_accept() {
 }
 
 #[inline]
+pub fn inc_switch_fail_open() {
+    SWITCH_FAIL_OPEN.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
 pub fn inc_clock_degrade() {
     CLOCK_DEGRADE.fetch_add(1, Ordering::Relaxed);
 }
@@ -70,6 +77,7 @@ pub fn snapshot() -> FallbackCounterSnapshot {
         jit_multi_assign: JIT_MULTI_ASSIGN.load(Ordering::Relaxed),
         newton_init_accept: NEWTON_INIT_ACCEPT.load(Ordering::Relaxed),
         newton_event_accept: NEWTON_EVENT_ACCEPT.load(Ordering::Relaxed),
+        switch_fail_open: SWITCH_FAIL_OPEN.load(Ordering::Relaxed),
         clock_degrade: CLOCK_DEGRADE.load(Ordering::Relaxed),
     }
 }
@@ -82,5 +90,6 @@ pub fn total(snapshot: &FallbackCounterSnapshot) -> u64 {
         + snapshot.jit_multi_assign
         + snapshot.newton_init_accept
         + snapshot.newton_event_accept
+        + snapshot.switch_fail_open
         + snapshot.clock_degrade
 }

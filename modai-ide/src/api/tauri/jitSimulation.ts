@@ -49,6 +49,11 @@ export async function runSimulationV2(
   return invoke<JitApiEnvelope<SimulationResult>>("run_simulation_cmd_v2", { request });
 }
 
+/** Cooperative cancel for an in-flight `run_simulation_cmd_v2` (sessionId / run_id). */
+export async function cancelSimulationRun(runId: string): Promise<boolean> {
+  return invoke<boolean>("cancel_simulation_run", { runId });
+}
+
 export async function getEquationGraph(
   code: string,
   modelName: string,
