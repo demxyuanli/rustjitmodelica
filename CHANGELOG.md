@@ -6,6 +6,11 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### JIT StateGraph fire path (2026-08-16)
+
+- Bind `extends PartialTransition(final localCondition=condition)`; bound Boolean inputs drop `is_input`, copy a numeric start, and keep a real assignment so `enableFire` sees `condition`; unassigned inputs with a numeric start (`condition=true`) are BLT knowns; fold `if 1 then condition else 0` to the numeric start; seed algebraic stack slots from live outputs (not 0) so `condition=true` is not read as 0; expand `BooleanVectors.anyTrue(inPort.set)` to `inPort_1_set or ...`; register `time >= waitTime` as a zero-crossing; expand instance `initial equation`; treat `localActive = pre(newActive)` as a discrete register so InitialStep starts active and steps alternate every `waitTime`. After event iteration, commit `pre(x):=x` and re-evaluate so `active = pre(newActive)` is the right-limit at the event-time sample. JIT emits `when enableFire then t_start=time` before re-emitting algebraics so `fire` uses the new `t_start` in the same eval. Empty-state time advances as `n*dt` and snaps to the output grid so `time >= t_start + waitTime` matches printed whole seconds.
+- Split over-800-line compiler/flatten/JIT modules (BLT sort, frames, classify demote, compile entry, connections, FMI CS/ME, event order) without changing those algorithms.
+
 ### Modai Studio P0 MVP (2026-07-21)
 
 - **App**: new workspace member `modai-studio` (Tauri 2 + React + XYFlow) — Library | Canvas | Properties | Results shell.

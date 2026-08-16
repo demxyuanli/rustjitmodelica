@@ -94,19 +94,69 @@ pub fn resolve_type_alias(type_aliases: &[(String, String)], name: &str) -> Stri
     current
 }
 
+/// Split `Real[4]` / `Integer[3]` into (base, Some(n)); plain primitives get (base, None).
+pub fn split_primitive_array_type(type_name: &str) -> Option<(String, Option<usize>)> {
+    let t = type_name.trim();
+    let (base, size) = if let Some((b, rest)) = t.split_once('[') {
+        let n = rest.trim_end_matches(']').trim().parse::<usize>().ok()?;
+        if n == 0 {
+            return None;
+        }
+        (b.trim(), Some(n))
+    } else {
+        (t, None)
+    };
+    if is_primitive(base) {
+        Some((base.to_string(), size))
+    } else {
+        None
+    }
+}
+
+/// Resolve a loaded type-alias / type-extends-Real model to a primitive (+ optional size).
+/// Covers `type QuaternionBase = Real[4]` and `type Orientation extends QuaternionBase`.
+pub fn effective_primitive_alias(model: &Model) -> Option<(String, Option<usize>)> {
+    let try_base = |aliases: &[(String, String)], name: &str| -> Option<(String, Option<usize>)> {
+        let resolved = resolve_type_alias(aliases, name);
+        split_primitive_array_type(&resolved)
+    };
+    if let Some(p) = try_base(&model.type_aliases, &model.name) {
+        return Some(p);
+    }
+    // Extends-only / function-bearing orientation types: any alias to Real[n].
+    let only_functions = model
+        .declarations
+        .iter()
+        .all(|d| d.is_parameter || d.type_name.contains("function"));
+    if model.declarations.is_empty() || only_functions || model.name.contains("Orientation") {
+        for (alias_name, _) in &model.type_aliases {
+            if let Some(p) = try_base(&model.type_aliases, alias_name) {
+                return Some(p);
+            }
+        }
+        // Orientation extends QuaternionBase but alias merge may lag: treat as Real[4].
+        if model.name.contains("Orientation") || model.name.contains("Quaternion") {
+            return Some(("Real".to_string(), Some(4)));
+        }
+    }
+    None
+}
+
 /// MSL-4: SIunits types (Modelica.SIunits.Time, etc.) are resolved as Real; units parsed but not enforced.
 pub fn is_primitive(type_name: &str) -> bool {
-    let short = type_name.rsplit('.').next().unwrap_or(type_name);
+    let bare = type_name.split('[').next().unwrap_or(type_name).trim();
+    let short = bare.rsplit('.').next().unwrap_or(bare);
     let is_complex_connector = matches!(short, "ComplexInput" | "ComplexOutput");
     is_complex_connector
-        || matches!(type_name, "Real" | "Integer" | "Boolean" | "String" | "Complex")
-        || type_name == "Clock"
-        || type_name.starts_with("Modelica.SIunits.")
-        || type_name.starts_with("Modelica.Units.SI.")
-        || type_name.starts_with("Modelica.Units.NonSI.")
-        || type_name.starts_with("Modelica.Complex")
-        || type_name == "Modelica.StateSelect"
-        || type_name.ends_with("ExternalObject")
+        || matches!(bare, "Real" | "Integer" | "Boolean" | "String" | "Complex")
+        || matches!(short, "TypeReal" | "TypeInteger" | "TypeBoolean" | "TypeString")
+        || bare == "Clock"
+        || bare.starts_with("Modelica.SIunits.")
+        || bare.starts_with("Modelica.Units.SI.")
+        || bare.starts_with("Modelica.Units.NonSI.")
+        || bare.starts_with("Modelica.Complex")
+        || bare == "Modelica.StateSelect"
+        || bare.ends_with("ExternalObject")
 }
 
 /// Connector compatibility matrix: same physical domain can connect.

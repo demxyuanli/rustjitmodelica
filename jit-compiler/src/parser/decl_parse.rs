@@ -192,6 +192,7 @@ pub fn parse_declaration_pair(decl_pair: pest::iterators::Pair<Rule>, declaratio
             });
         let mut modifications = global_modifications.clone();
         modifications.extend(item_mods);
+        let state_select = crate::state_select::state_select_from_mods(&modifications);
         declarations.push(Declaration {
             type_name: type_name.clone(),
             name: var_name,
@@ -213,6 +214,7 @@ pub fn parse_declaration_pair(decl_pair: pest::iterators::Pair<Rule>, declaratio
             is_rest,
             annotation: decl_annotation.clone(),
             condition: decl_condition.clone(),
+            state_select,
         });
     }
 }
@@ -369,6 +371,7 @@ pub fn parse_declaration_section(
             Rule::type_definition => {
                 let mut type_id = String::new();
                 let mut base = String::new();
+                let mut array_dim: Option<String> = None;
                 let mut enum_lits: Vec<String> = Vec::new();
                 for p in decl_pair.into_inner() {
                     match p.as_rule() {
@@ -380,6 +383,24 @@ pub fn parse_declaration_section(
                         Rule::type_name => {
                             if base.is_empty() {
                                 base = p.as_str().trim().to_string();
+                            }
+                        }
+                        Rule::array_subscript => {
+                            if array_dim.is_none() {
+                                let mut sub_inner = p.into_inner();
+                                if let Some(dim_inner) = sub_inner.next() {
+                                    let dim_expr = if dim_inner.as_rule() == Rule::subscript_item {
+                                        dim_inner.into_inner().next()
+                                    } else {
+                                        Some(dim_inner)
+                                    };
+                                    if let Some(dim_expr) = dim_expr {
+                                        let raw = dim_expr.as_str().trim();
+                                        if !raw.is_empty() {
+                                            array_dim = Some(raw.to_string());
+                                        }
+                                    }
+                                }
                             }
                         }
                         Rule::function_call => {
@@ -417,6 +438,9 @@ pub fn parse_declaration_section(
                         base = "String".to_string();
                     } else if base.contains("TypeReal") {
                         base = "Real".to_string();
+                    }
+                    if let Some(dim) = array_dim {
+                        base = format!("{base}[{dim}]");
                     }
                     type_aliases.push((type_id, base));
                 }

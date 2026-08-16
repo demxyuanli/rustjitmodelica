@@ -205,23 +205,26 @@ impl Flattener {
             for stmt in stmts {
                 match stmt {
                     AlgorithmStatement::Assignment(lhs, rhs) => {
-                        let rhs_clocked = expr_contains_clock(rhs);
-                        if in_clocked || rhs_clocked {
+                        // Same rule as equations: only assignments inside when sample(...) are clocked.
+                        if in_clocked {
                             let mut vs = std::collections::HashSet::new();
                             collect_lhs_vars(lhs, &mut vs);
                             let pid = inherited_part.unwrap_or("default");
                             add_clocks(&mut vs, partmap, union, pid);
+                        } else {
+                            let _ = rhs;
                         }
                     }
                     AlgorithmStatement::MultiAssign(lhss, rhs) => {
-                        let rhs_clocked = expr_contains_clock(rhs);
-                        if in_clocked || rhs_clocked {
+                        if in_clocked {
                             let mut vs = std::collections::HashSet::new();
                             for lhs in lhss {
                                 collect_lhs_vars(lhs, &mut vs);
                             }
                             let pid = inherited_part.unwrap_or("default");
                             add_clocks(&mut vs, partmap, union, pid);
+                        } else {
+                            let _ = rhs;
                         }
                     }
                     AlgorithmStatement::CallStmt(_) => {}
@@ -278,34 +281,30 @@ impl Flattener {
             for eq in eqs {
                 match eq {
                     Equation::Simple(lhs, rhs) => {
-                        let is_clock = expr_contains_clock(lhs) || expr_contains_clock(rhs);
-                        if in_clocked || is_clock {
+                        // Only variables assigned *inside* `when sample(...)` are clocked.
+                        // Continuous bindings such as DiscreteBlock's
+                        // `sampleTrigger = sample(start, interval)` must stay non-clocked so the
+                        // Boolean falls to 0 between sample instants (otherwise when-edges fire
+                        // once and ZeroOrderHold/UnitDelay hold forever at the t=0 sample).
+                        if in_clocked {
                             let mut vs = std::collections::HashSet::new();
                             collect_lhs_vars(lhs, &mut vs);
-                            let pid = if in_clocked {
-                                inherited_part.unwrap_or("default").to_string()
-                            } else if expr_contains_clock(lhs) {
-                                clock_partition_key_from_condition(lhs)
-                            } else {
-                                clock_partition_key_from_condition(rhs)
-                            };
-                            add_clocks(&mut vs, partmap, union, &pid);
+                            let pid = inherited_part.unwrap_or("default");
+                            add_clocks(&mut vs, partmap, union, pid);
+                        } else {
+                            let _ = rhs;
                         }
                     }
                     Equation::MultiAssign(lhss, rhs) => {
-                        let is_clock = expr_contains_clock(rhs)
-                            || lhss.iter().any(|e| expr_contains_clock(e));
-                        if in_clocked || is_clock {
+                        if in_clocked {
                             let mut vs = std::collections::HashSet::new();
                             for lhs in lhss {
                                 collect_lhs_vars(lhs, &mut vs);
                             }
-                            let pid = if in_clocked {
-                                inherited_part.unwrap_or("default").to_string()
-                            } else {
-                                clock_partition_key_from_condition(rhs)
-                            };
-                            add_clocks(&mut vs, partmap, union, &pid);
+                            let pid = inherited_part.unwrap_or("default");
+                            add_clocks(&mut vs, partmap, union, pid);
+                        } else {
+                            let _ = rhs;
                         }
                     }
                     Equation::For(_, _, _, body) => {
@@ -390,6 +389,8 @@ impl Flattener {
             &mut partitions,
             &mut union_all,
         );
+
+        crate::flatten::expressions::expand_boolean_vector_reductions(flat);
 
         flat.clocked_var_names = union_all;
         flat.clock_partitions.clear();

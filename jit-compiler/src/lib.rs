@@ -8,6 +8,7 @@ pub mod cache;
 pub mod codegen;
 pub mod backend_dae;
 pub mod compiler;
+pub use compiler::{write_coder_package, CoderPackageInfo};
 pub mod condenser;
 pub mod diag;
 pub mod equation_graph;
@@ -32,6 +33,7 @@ pub mod solver;
 pub mod solvable_limits;
 pub mod sparse_solve;
 pub mod string_intern;
+pub mod state_select;
 pub mod query_db;
 pub mod unparse;
 
@@ -46,7 +48,7 @@ pub use equation_graph_inc::{build_or_update_equation_graph, DirtySet, NodeKey};
 pub use loader::{LoadError, ModelLoader};
 pub use simulation::{
     is_sim_cancelled_error, run_simulation, run_simulation_collect, runtime_perf_counters,
-    SimControl, SimProgress, SimulationResult, SIM_CANCELLED_MSG,
+    LiveSeriesDelta, LiveSeriesHandle, SimControl, SimProgress, SimulationResult, SIM_CANCELLED_MSG,
 };
 pub use api::{
     affected_models_for_changed_files, analyze_change_impact, analyze_instance_change_impact,

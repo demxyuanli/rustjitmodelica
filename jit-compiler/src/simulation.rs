@@ -21,7 +21,10 @@ pub use sundials::{
 };
 
 pub type SimulationResult = types::SimulationResult;
-pub use self::control::{is_sim_cancelled_error, SimControl, SimProgress, SIM_CANCELLED_MSG};
+pub use self::control::{
+    is_sim_cancelled_error, LiveSeriesDelta, LiveSeriesHandle, SimControl, SimProgress,
+    SIM_CANCELLED_MSG,
+};
 pub use self::types::run_simulation_collect;
 pub use self::driver::run_simulation;
 

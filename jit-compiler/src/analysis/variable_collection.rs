@@ -15,6 +15,60 @@ pub fn extract_unknowns(eq: &Equation, knowns: &HashSet<String>) -> Vec<String> 
     unknowns
 }
 
+/// Names assigned on the left of `Simple` equations (`q_1`, `frame_b_R_4`, ...).
+pub(crate) fn collect_simple_lhs_names(equations: &[Equation]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for eq in equations {
+        if let Equation::Simple(Expression::Variable(id), _) = eq {
+            out.insert(resolve_id(*id));
+        }
+    }
+    out
+}
+
+/// `resolve1(frame_b.R, r)` / `absoluteRotation(R1, R2)` mention the array base
+/// while producers assign `R_1..R_4`. Replace the base with those scalars so
+/// BLT can order orientation before `r_0`.
+pub(crate) fn expand_array_base_unknowns(
+    unknowns: &mut Vec<String>,
+    scalar_lhs: &HashSet<String>,
+    knowns: &HashSet<String>,
+) {
+    let mut extra = Vec::new();
+    let mut remove = Vec::new();
+    for base in unknowns.iter() {
+        if scalar_lhs.contains(base) || knowns.contains(base) {
+            continue;
+        }
+        let mut n = 0usize;
+        for i in 1..=8 {
+            let c = format!("{base}_{i}");
+            if scalar_lhs.contains(&c) || knowns.contains(&c) {
+                n = i;
+            } else {
+                break;
+            }
+        }
+        if n >= 3 {
+            remove.push(base.clone());
+            for i in 1..=n {
+                extra.push(format!("{base}_{i}"));
+            }
+        }
+    }
+    if remove.is_empty() {
+        return;
+    }
+    unknowns.retain(|v| !remove.iter().any(|r| r == v));
+    for e in extra {
+        if !unknowns.contains(&e) && !knowns.contains(&e) {
+            unknowns.push(e);
+        }
+    }
+    unknowns.sort();
+    unknowns.dedup();
+}
+
 pub(crate) fn collect_vars_eq(eq: &Equation, vars: &mut HashSet<String>) {
     match eq {
         Equation::Simple(l, r) => {

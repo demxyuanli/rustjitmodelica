@@ -1,13 +1,18 @@
+mod expand;
+mod stream;
+
+pub(crate) use stream::rebuild_stream_flow_map;
+
 use super::structures::FlattenedModel;
 use super::utils::are_types_compatible;
 use super::FlattenError;
 use crate::ast::{Equation, Expression, Operator};
 use crate::diag::SourceLocation;
 use crate::loader::ModelLoader;
+use expand::{expand_connect_pair, ensure_connector_member_decls, has_connector_members};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
-
 static CONNECT_WARN_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn connect_warn_enabled() -> bool {
@@ -20,183 +25,6 @@ fn connect_warn_enabled() -> bool {
             })
             .unwrap_or(false)
     })
-}
-
-fn has_connector_members(path: &str, flat: &FlattenedModel) -> bool {
-    let prefix = format!("{}_", path);
-    flat.declarations.iter().any(|decl| decl.name.starts_with(&prefix))
-}
-
-/// All (parent, leaf) splits of a flattened connector-member suffix at each `_` boundary.
-/// Modelica identifiers may contain `_`; this uses the same flat naming join as the flattener.
-fn parent_leaf_splits(s: &str) -> Vec<(&str, &str)> {
-    let mut out = vec![("", s)];
-    for (i, b) in s.as_bytes().iter().enumerate() {
-        if *b == b'_' {
-            out.push((&s[..i], &s[i + 1..]));
-        }
-    }
-    out
-}
-
-fn longest_matching_parent_len(stream_suffix: &str, flow_suffix: &str) -> Option<usize> {
-    let ss = parent_leaf_splits(stream_suffix);
-    let sf = parent_leaf_splits(flow_suffix);
-    let mut best: Option<usize> = None;
-    for (p1, l1) in &ss {
-        for (p2, l2) in &sf {
-            if p1 == p2 && l1 != l2 {
-                let plen = p1.len();
-                if best.map_or(true, |b| plen > b) {
-                    best = Some(plen);
-                }
-            }
-        }
-    }
-    best
-}
-
-fn resolve_stream_to_flow_under_prefix(
-    stream_suffix: &str,
-    flows: &[(String, String)],
-) -> Option<String> {
-    let mut scored: Vec<(usize, String)> = Vec::new();
-    for (sf, full) in flows {
-        if let Some(plen) = longest_matching_parent_len(stream_suffix, sf) {
-            scored.push((plen, full.clone()));
-        }
-    }
-    if scored.is_empty() {
-        return None;
-    }
-    let max_plen = scored.iter().map(|(p, _)| *p).max()?;
-    let at_max: Vec<&String> = scored
-        .iter()
-        .filter(|(p, _)| *p == max_plen)
-        .map(|(_, f)| f)
-        .collect();
-    if at_max.len() != 1 {
-        return None;
-    }
-    Some(at_max[0].clone())
-}
-
-fn instance_prefix_matches(var_name: &str, path: &str) -> bool {
-    if var_name.len() <= path.len() {
-        return false;
-    }
-    if !var_name.starts_with(path) {
-        return false;
-    }
-    var_name.as_bytes().get(path.len()) == Some(&b'_')
-}
-
-fn declaration_underscore_prefixes(decl_name: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for (i, b) in decl_name.as_bytes().iter().enumerate() {
-        if *b == b'_' && i > 0 {
-            out.push(decl_name[..i].to_string());
-        }
-    }
-    out
-}
-
-fn preferred_connector_roots(flat: &FlattenedModel) -> HashSet<String> {
-    let mut preferred: HashSet<String> = flat.instances.keys().cloned().collect();
-    for p in flat.path_to_inst.keys() {
-        preferred.insert(p.clone());
-    }
-    for (a, b) in &flat.connections {
-        preferred.insert(a.clone());
-        preferred.insert(b.clone());
-    }
-    for (_cond, (a, b)) in &flat.conditional_connections {
-        preferred.insert(a.clone());
-        preferred.insert(b.clone());
-    }
-    preferred
-}
-
-/// `(preferred_paths, fallback_paths)` sorted by descending length. Preferred roots come from
-/// `instances`, `path_to_inst`, and `connect()` paths; fallback adds `has_connector_members` roots
-/// not in preferred (avoids picking spurious longer prefixes from flat-name `_` ambiguity).
-fn connector_path_lists(flat: &FlattenedModel) -> (Vec<String>, Vec<String>) {
-    let preferred_set = preferred_connector_roots(flat);
-    let mut prefix_candidates: HashSet<String> = HashSet::new();
-    for decl in &flat.declarations {
-        for p in declaration_underscore_prefixes(&decl.name) {
-            prefix_candidates.insert(p);
-        }
-    }
-    let mut fallback_set: HashSet<String> = HashSet::new();
-    for p in prefix_candidates {
-        if has_connector_members(&p, flat) && !preferred_set.contains(&p) {
-            fallback_set.insert(p);
-        }
-    }
-    let mut preferred_paths: Vec<String> = preferred_set.into_iter().collect();
-    preferred_paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
-    let mut fallback_paths: Vec<String> = fallback_set.into_iter().collect();
-    fallback_paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
-    (preferred_paths, fallback_paths)
-}
-
-fn longest_connector_instance_prefix<'a>(
-    var_name: &str,
-    preferred: &'a [String],
-    fallback: &'a [String],
-) -> Option<&'a str> {
-    for p in preferred {
-        if instance_prefix_matches(var_name, p) {
-            return Some(p.as_str());
-        }
-    }
-    for p in fallback {
-        if instance_prefix_matches(var_name, p) {
-            return Some(p.as_str());
-        }
-    }
-    None
-}
-
-/// Rebuild explicit stream->flow pairing from `is_stream` / `is_flow` declarations under each
-/// connector root (longest preferred match, else longest fallback among `has_connector_members` roots).
-/// Ambiguous pairings are skipped.
-pub(crate) fn rebuild_stream_flow_map(flat: &mut FlattenedModel) {
-    flat.stream_flow_map.clear();
-    let (preferred_paths, fallback_paths) = connector_path_lists(flat);
-    if preferred_paths.is_empty() && fallback_paths.is_empty() {
-        return;
-    }
-    for decl in &flat.declarations {
-        if !decl.is_stream {
-            continue;
-        }
-        let Some(inst) =
-            longest_connector_instance_prefix(decl.name.as_str(), &preferred_paths, &fallback_paths)
-        else {
-            continue;
-        };
-        let prefix = format!("{}_", inst);
-        let Some(suffix_s) = decl.name.strip_prefix(&prefix) else {
-            continue;
-        };
-        let flows: Vec<(String, String)> = flat
-            .declarations
-            .iter()
-            .filter(|d| d.is_flow && d.name.starts_with(&prefix))
-            .map(|d| {
-                let sf = d.name.strip_prefix(&prefix).unwrap_or("").to_string();
-                (sf, d.name.clone())
-            })
-            .collect();
-        if flows.is_empty() {
-            continue;
-        }
-        if let Some(flow_full) = resolve_stream_to_flow_under_prefix(suffix_s, &flows) {
-            flat.stream_flow_map.insert(decl.name.clone(), flow_full);
-        }
-    }
 }
 
 fn connector_debug_candidates(path: &str, flat: &FlattenedModel) -> Vec<String> {
@@ -237,64 +65,27 @@ fn equations_for_connections(
     let mut flow_adj: HashMap<String, Vec<String>> = HashMap::new();
     let mut flow_vars = HashSet::new();
     for (a_path, b_path) in connections {
-        if flat.instances.contains_key(a_path) || has_connector_members(a_path, flat) {
-            let prefix_a = format!("{}_", a_path);
-            let prefix_b = format!("{}_", b_path);
-            for decl in &flat.declarations {
-                if decl.name.starts_with(&prefix_a) {
-                    if let Some(suffix) = decl.name.strip_prefix(&prefix_a) {
-                        let target_name = format!("{}{}", prefix_b, suffix);
-                        if decl.is_flow {
-                            flow_adj
-                                .entry(decl.name.clone())
-                                .or_default()
-                                .push(target_name.clone());
-                            flow_adj
-                                .entry(target_name.clone())
-                                .or_default()
-                                .push(decl.name.clone());
-                            flow_vars.insert(decl.name.clone());
-                            flow_vars.insert(target_name);
-                        } else {
-                            potential_eqs.push(Equation::Simple(
-                                Expression::var(&decl.name),
-                                Expression::Variable(crate::string_intern::intern(&target_name)),
-                            ));
-                        }
-                    }
-                }
-            }
-        } else {
-            let mut found = false;
-            for decl in &flat.declarations {
-                if decl.name == *a_path {
-                    found = true;
-                    if decl.is_flow {
-                        flow_adj
-                            .entry(a_path.clone())
-                            .or_default()
-                            .push(b_path.clone());
-                        flow_adj
-                            .entry(b_path.clone())
-                            .or_default()
-                            .push(a_path.clone());
-                        flow_vars.insert(a_path.clone());
-                        flow_vars.insert(b_path.clone());
-                    } else {
-                        potential_eqs.push(Equation::Simple(
-                            Expression::var(a_path),
-                            Expression::var(b_path),
-                        ));
-                    }
-                    break;
-                }
-            }
-            if !found {
-                potential_eqs.push(Equation::Simple(
-                    Expression::var(a_path),
-                    Expression::var(b_path),
-                ));
-            }
+        let type_a = find_connector_type(a_path, flat);
+        let type_b = find_connector_type(b_path, flat);
+        let (pots, flows, _streams) = expand_connect_pair(
+            flat,
+            a_path,
+            b_path,
+            type_a.as_deref(),
+            type_b.as_deref(),
+        );
+        potential_eqs.extend(pots);
+        for (a, b) in flows {
+            flow_adj
+                .entry(a.clone())
+                .or_default()
+                .push(b.clone());
+            flow_adj
+                .entry(b.clone())
+                .or_default()
+                .push(a.clone());
+            flow_vars.insert(a);
+            flow_vars.insert(b);
         }
     }
     // Expandable connector: inject members from non-expandable side
@@ -446,60 +237,16 @@ fn process_connection_pair(
         }
     }
 
-    if flat.instances.contains_key(a_path) || has_connector_members(a_path, flat) {
-        let prefix_a = format!("{}_", a_path);
-        let prefix_b = format!("{}_", b_path);
-        for decl in &flat.declarations {
-            if decl.name.starts_with(&prefix_a) {
-                if let Some(suffix) = decl.name.strip_prefix(&prefix_a) {
-                    let target_name = format!("{}{}", prefix_b, suffix);
-                    if decl.is_flow {
-                        out.flow_pairs.push((decl.name.clone(), target_name));
-                    } else if decl.is_stream {
-                        out.stream_pairs
-                            .push((decl.name.clone(), target_name.clone()));
-                        out.stream_pairs.push((target_name, decl.name.clone()));
-                    } else {
-                        out.potential_eqs.push(Equation::Simple(
-                            Expression::var(&decl.name),
-                            Expression::Variable(crate::string_intern::intern(&target_name)),
-                        ));
-                    }
-                }
-            }
-        }
-    } else {
-        let mut found = false;
-        for decl in &flat.declarations {
-            if decl.name == a_path {
-                found = true;
-                if decl.is_flow {
-                    out.flow_pairs.push((a_path.to_string(), b_path.to_string()));
-                } else if decl.is_stream {
-                    out.stream_pairs.push((a_path.to_string(), b_path.to_string()));
-                    out.stream_pairs.push((b_path.to_string(), a_path.to_string()));
-                } else {
-                    out.potential_eqs
-                        .push(Equation::Simple(Expression::var(a_path), Expression::var(b_path)));
-                }
-                break;
-            }
-        }
-        if !found {
-            if !loader.quiet && connect_warn_enabled() {
-                let cands = connector_debug_candidates(a_path, flat);
-                eprintln!(
-                    "Warning: Connect involving unknown variable '{}'. Assuming potential equality.",
-                    a_path
-                );
-                if !cands.is_empty() {
-                    eprintln!("  Nearby connector candidates: {}", cands.join(", "));
-                }
-            }
-            out.potential_eqs
-                .push(Equation::Simple(Expression::var(a_path), Expression::var(b_path)));
-        }
-    }
+    let (pots, flows, streams) = expand_connect_pair(
+        flat,
+        a_path,
+        b_path,
+        type_a.as_deref(),
+        type_b.as_deref(),
+    );
+    out.potential_eqs.extend(pots);
+    out.flow_pairs.extend(flows);
+    out.stream_pairs.extend(streams);
     Ok(out)
 }
 
@@ -508,6 +255,7 @@ pub fn resolve_connections(
     root_model_name: Option<&str>,
     loader: &ModelLoader,
 ) -> Result<(), FlattenError> {
+    ensure_connector_member_decls(flat);
     let mut potential_eqs = Vec::new();
     let mut flow_adj: HashMap<String, Vec<String>> = HashMap::new();
     let mut flow_vars = HashSet::new();
@@ -602,80 +350,28 @@ pub fn resolve_connections(
             }
         }
 
-        if flat.instances.contains_key(a_path) || has_connector_members(a_path, flat) {
-            let prefix_a = format!("{}_", a_path);
-            let prefix_b = format!("{}_", b_path);
-
-            for decl in &flat.declarations {
-                if decl.name.starts_with(&prefix_a) {
-                    if let Some(suffix) = decl.name.strip_prefix(&prefix_a) {
-                        let target_name = format!("{}{}", prefix_b, suffix);
-                        if decl.is_flow {
-                            flow_adj
-                                .entry(decl.name.clone())
-                                .or_default()
-                                .push(target_name.clone());
-                            flow_adj
-                                .entry(target_name.clone())
-                                .or_default()
-                                .push(decl.name.clone());
-                            flow_vars.insert(decl.name.clone());
-                            flow_vars.insert(target_name);
-                        } else if decl.is_stream {
-                            flat.stream_peer_map
-                                .insert(decl.name.clone(), target_name.clone());
-                            flat.stream_peer_map
-                                .insert(target_name.clone(), decl.name.clone());
-                        } else {
-                            potential_eqs.push(Equation::Simple(
-                                Expression::var(&decl.name),
-                                Expression::Variable(crate::string_intern::intern(&target_name)),
-                            ));
-                        }
-                    }
-                }
-            }
-        } else {
-            let mut found = false;
-            for decl in &flat.declarations {
-                if decl.name == *a_path {
-                    found = true;
-                    if decl.is_flow {
-                        flow_adj
-                            .entry(a_path.clone())
-                            .or_default()
-                            .push(b_path.clone());
-                        flow_adj
-                            .entry(b_path.clone())
-                            .or_default()
-                            .push(a_path.clone());
-                        flow_vars.insert(a_path.clone());
-                        flow_vars.insert(b_path.clone());
-                    } else if decl.is_stream {
-                        flat.stream_peer_map.insert(a_path.clone(), b_path.clone());
-                        flat.stream_peer_map.insert(b_path.clone(), a_path.clone());
-                    } else {
-                        potential_eqs.push(Equation::Simple(
-                            Expression::var(a_path),
-                            Expression::var(b_path),
-                        ));
-                    }
-                    break;
-                }
-            }
-            if !found {
-                if !loader.quiet && connect_warn_enabled() {
-                    let cands = connector_debug_candidates(a_path, flat);
-                    eprintln!("Warning: Connect involving unknown variable '{}'. Assuming potential equality.", a_path);
-                    if !cands.is_empty() {
-                        eprintln!("  Nearby connector candidates: {}", cands.join(", "));
-                    }
-                }
-                potential_eqs.push(Equation::Simple(
-                    Expression::var(a_path),
-                    Expression::var(b_path),
-                ));
-            }
+        let (pots, flows, streams) = expand_connect_pair(
+            flat,
+            a_path,
+            b_path,
+            type_a.as_deref(),
+            type_b.as_deref(),
+        );
+        potential_eqs.extend(pots);
+        for (a, b) in flows {
+            flow_adj
+                .entry(a.clone())
+                .or_default()
+                .push(b.clone());
+            flow_adj
+                .entry(b.clone())
+                .or_default()
+                .push(a.clone());
+            flow_vars.insert(a);
+            flow_vars.insert(b);
+        }
+        for (a, b) in streams {
+            flat.stream_peer_map.insert(a, b);
         }
     }
     }
@@ -819,6 +515,9 @@ pub fn resolve_connections(
     }
 
     rebuild_stream_flow_map(flat);
+    flat.equations = crate::flatten::expressions::expand_fill_lhs_equations(std::mem::take(&mut flat.equations));
+    flat.initial_equations =
+        crate::flatten::expressions::expand_fill_lhs_equations(std::mem::take(&mut flat.initial_equations));
     Ok(())
 }
 

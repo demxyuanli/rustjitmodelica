@@ -151,9 +151,12 @@ impl Flattener {
         }
         if resolved_type.starts_with("Modelica.Fluid.Types.")
             || resolved_type.ends_with(".Types.AxisLabel")
-            || resolved_type.ends_with(".Types.Axis")
         {
             return "Real".to_string();
+        }
+        // Types.Axis = TypeReal[3]. Do not collapse to scalar Real (kills n={0,0,1}).
+        if resolved_type.ends_with(".Types.Axis") || resolved_type == "Types.Axis" {
+            return "Real[3]".to_string();
         }
         if resolved_type.contains("Modelica.Fluid")
             && (resolved_type.contains("flowCharacteristic")

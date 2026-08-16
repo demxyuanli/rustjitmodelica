@@ -26,7 +26,7 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
     let deps_scope = super::DepScope::begin();
     let libs = db.library_paths();
     let coarse = db.coarse_constrainedby_only();
-    let compile_stop = db.compile_stop();
+    let _compile_stop = db.compile_stop();
     let (cache_enabled, key, scope) = super::flat_model_q_cache_key(db, model_name.clone());
 
     if cache_enabled {
@@ -214,9 +214,9 @@ pub fn flattened_model_q(db: &dyn QueryDb, model_name: String) -> super::FlatMod
         }));
     }
 
-    // Connections + clock inference are analysis-relevant but can be skipped if caller stops at flatten tier.
+    // Connections are part of flatten (Frame.R / r_0 equalities). Do not skip at flatten tier.
     let mut loaded_paths: Vec<std::path::PathBuf> = Vec::new();
-    if compile_stop.as_str() != "flatten" {
+    {
         let mut flattener = crate::flatten::Flattener::new();
         flattener.coarse_constrainedby_only = coarse;
         flattener.validation_mode = ValidationMode::parse(db.validation_mode().as_str());

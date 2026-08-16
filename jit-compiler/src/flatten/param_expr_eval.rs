@@ -140,8 +140,10 @@ fn eval_pe_inner(
                 }
             }
             match name.as_str() {
-                "Modelica.Constants.pi" | "Modelica_Constants_pi" => Some(std::f64::consts::PI),
-                "Modelica.Constants.eps" | "Modelica_Constants_eps" => Some(f64::EPSILON),
+                "pi" | "Modelica.Constants.pi" | "Modelica_Constants_pi" => {
+                    Some(std::f64::consts::PI)
+                }
+                "eps" | "Modelica.Constants.eps" | "Modelica_Constants_eps" => Some(f64::EPSILON),
                 "Modelica.Constants.small" | "Modelica_Constants_small" => Some(1.0e-60),
                 "Modelica.Constants.inf" | "Modelica_Constants_inf" => Some(f64::INFINITY),
                 "Modelica.Constants.g_n" | "Modelica_Constants_g_n" => Some(9.80665),
@@ -323,8 +325,6 @@ fn eval_pe_inner(
         }
         Expression::ArrayLiteral(items) => {
             if items.len() == 1 {
-                eval_pe_inner(&items[0], bindings, array_sizes, visiting, depth + 1)
-            } else if !items.is_empty() {
                 eval_pe_inner(&items[0], bindings, array_sizes, visiting, depth + 1)
             } else {
                 None

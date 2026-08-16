@@ -5,13 +5,20 @@ use std::time::Instant;
 
 use crate::analysis::derivative::collect_states_from_eq;
 use crate::analysis::expression_utils::time_derivative;
-use crate::analysis::variable_collection::{collect_vars_eq, collect_vars_expr, extract_unknowns};
+use crate::analysis::variable_collection::{
+    collect_simple_lhs_names, collect_vars_eq, collect_vars_expr, expand_array_base_unknowns,
+    extract_unknowns,
+};
 use crate::analysis::AnalysisOptions;
 
-use super::blt_expr::{is_forbidden_tearing_var, make_residual, select_tearing_variable, solve_for_variable};
+use super::blt_expr::{
+    is_forbidden_tearing_var, make_residual, select_tearing_variable, simplify_expr,
+};
 use super::helpers::{eval_const_expr, try_index_reduction};
+use super::sort_graph::{emit_scc_blocks, kosaraju_sccs};
+use super::sort_match::{assign_equation_variables, EqInfo};
+use super::sort_reorder::reorder_simple_variable_equations;
 use super::types::{BlockCausalityInfo, SortAlgebraicResult};
-use super::eliminate_aliases;
 
 pub fn sort_algebraic_equations(
     equations: Vec<Equation>,
@@ -19,55 +26,6 @@ pub fn sort_algebraic_equations(
     params: &[String],
     options: &AnalysisOptions,
 ) -> SortAlgebraicResult {
-    fn reorder_simple_variable_equations(
-        equations: Vec<Equation>,
-        known_vars: &HashSet<String>,
-        params: &[String],
-    ) -> Vec<Equation> {
-        if !equations.iter().all(|eq| matches!(eq, Equation::Simple(Expression::Variable(_), _))) {
-            return equations;
-        }
-        let mut ready_known = known_vars.clone();
-        for p in params {
-            ready_known.insert(p.clone());
-        }
-        ready_known.insert("time".to_string());
-
-        let mut pending = equations;
-        let mut reordered = Vec::new();
-        loop {
-            let mut progressed = false;
-            let mut remaining = Vec::new();
-            for eq in pending {
-                match &eq {
-                    Equation::Simple(Expression::Variable(id), rhs) => {
-                        let lhs_name = resolve_id(*id);
-                        let mut rhs_vars = HashSet::new();
-                        collect_vars_expr(rhs, &mut rhs_vars);
-                        rhs_vars.remove(&lhs_name);
-                        if rhs_vars.iter().all(|v| ready_known.contains(v)) {
-                            ready_known.insert(lhs_name);
-                            reordered.push(eq);
-                            progressed = true;
-                        } else {
-                            remaining.push(eq);
-                        }
-                    }
-                    _ => remaining.push(eq),
-                }
-            }
-            if !progressed {
-                reordered.extend(remaining);
-                break;
-            }
-            pending = remaining;
-            if pending.is_empty() {
-                break;
-            }
-        }
-        reordered
-    }
-
     let blt_trace = std::env::var("RUSTMODLICA_BLT_TRACE")
         .ok()
         .map(|v| {
@@ -93,7 +51,12 @@ pub fn sort_algebraic_equations(
         eprintln!("[blt] eliminate_aliases");
     }
     let (equations, alias_map): (Vec<Equation>, HashMap<String, Expression>) =
-        eliminate_aliases(equations);
+        super::eliminate_aliases_protected(equations, &current_known);
+    let equations = crate::analysis::expand_frames_time_derivatives(
+        equations,
+        known_vars,
+        &current_known,
+    );
 
     // Freeze time/start/PWM clock params that must never become Newton unknowns.
     for eq in &equations {
@@ -108,6 +71,31 @@ pub fn sort_algebraic_equations(
 
     let n_aliases = alias_map.len();
     let n_eqs = equations.len();
+    if blt_trace {
+        for (k, v) in &alias_map {
+            if k.contains("_R_") || k.contains("_r_0_") {
+                eprintln!(
+                    "[blt] alias {} -> {}",
+                    k,
+                    crate::unparse::equation_to_string(&Equation::Simple(
+                        Expression::var(k),
+                        v.clone()
+                    ))
+                );
+            }
+        }
+        for eq in &equations {
+            let s = crate::unparse::equation_to_string(eq);
+            if s.contains("resolve1")
+                || s.contains("absoluteRotation")
+                || s.contains("angularVelocity")
+                || s.contains("cross(")
+                || s.contains("rod_frame_a_R")
+            {
+                eprintln!("[blt] remain {}", s.replace('\n', " | "));
+            }
+        }
+    }
     if !options.quiet {
         println!(
             "{}",
@@ -133,10 +121,13 @@ pub fn sort_algebraic_equations(
     let mut take_degrade_guard = equations.len() > max_eq_for_full_sort;
     if take_degrade_guard {
         let mut unknown_set: HashSet<String> = HashSet::new();
+        let scalar_lhs = collect_simple_lhs_names(&equations);
         for eq in &equations {
-            for u in extract_unknowns(eq, &current_known) {
-                if !is_forbidden_tearing_var(&u) {
-                    unknown_set.insert(u);
+            let mut u = extract_unknowns(eq, &current_known);
+            expand_array_base_unknowns(&mut u, &scalar_lhs, &current_known);
+            for name in u {
+                if !is_forbidden_tearing_var(&name) {
+                    unknown_set.insert(name);
                 }
             }
         }
@@ -177,6 +168,7 @@ pub fn sort_algebraic_equations(
                 alias_map,
                 index_reduction_rounds: 0,
                 dummy_derivative_equation_count: 0,
+                demoted_states: Vec::new(),
                 tearing_block_count: 1,
                 tearing_residual_equation_count: equations.len(),
                 block_causality: vec![BlockCausalityInfo {
@@ -199,6 +191,7 @@ pub fn sort_algebraic_equations(
     }
     let mut state_vars: Vec<String> = state_set.into_iter().collect();
     state_vars.sort();
+    let initial_state_vars = state_vars.clone();
     if blt_trace {
         eprintln!("[blt] build_eq_info");
     }
@@ -223,62 +216,15 @@ pub fn sort_algebraic_equations(
         }
     }
 
-    struct EqInfo {
-        original_idx: usize,
-        unknowns: Vec<String>,
-    }
-
-    fn dfs_iter(
-        u_start: usize,
-        adj: &[Vec<usize>],
-        assigned_eq: &mut [Option<usize>],
-        visited: &mut [bool],
-    ) -> bool {
-        // Iterative Kuhn augmenting-path search. Each stack frame carries the
-        // reassignment to apply on success as (variable, parent equation): when
-        // we descend into frame `child` through variable `v` (currently held by
-        // `child`), on success `v` must be rematched to the PARENT equation that
-        // reached it, not to `child`. Binding `v` to the current frame's own
-        // equation (the previous bug) double-bound the child and left the start
-        // equation unmatched, reporting a spurious high differential index.
-        let mut stack: Vec<(usize, usize, Option<(usize, usize)>)> =
-            vec![(u_start, 0, None)];
-        while let Some((u, idx, reassign)) = stack.last_mut() {
-            if *idx >= adj[*u].len() {
-                if let Some((v, _)) = *reassign {
-                    visited[v] = false;
-                }
-                stack.pop();
-                continue;
-            }
-            let cur_eq = *u;
-            let v = adj[cur_eq][*idx];
-            *idx += 1;
-            if visited[v] {
-                continue;
-            }
-            visited[v] = true;
-            if assigned_eq[v].is_none() {
-                assigned_eq[v] = Some(cur_eq);
-                while let Some((_eq, _, reassign)) = stack.pop() {
-                    if let Some((var, parent_eq)) = reassign {
-                        assigned_eq[var] = Some(parent_eq);
-                    }
-                }
-                return true;
-            }
-            let next_eq = assigned_eq[v].unwrap();
-            stack.push((next_eq, 0, Some((v, cur_eq))));
-        }
-        false
-    }
-
     let mut differential_index: u32 = 2;
     let mut eq_infos = Vec::new();
     let mut unknown_list: Vec<String> = Vec::new();
     let mut unknown_map: HashMap<String, usize> = HashMap::new();
     let mut assigned_var: Vec<Option<usize>> = Vec::new();
     let mut assigned_eq: Vec<Option<usize>> = Vec::new();
+    let mut last_good_equations: Option<Vec<Equation>> = None;
+    let mut last_good_state_vars: Option<Vec<String>> = None;
+    let mut restore_and_stop = false;
 
     let max_index_reduction_rounds = std::env::var("RUSTMODLICA_INDEX_REDUCTION_MAX_ROUNDS")
         .ok()
@@ -301,8 +247,10 @@ pub fn sort_algebraic_equations(
         }
         eq_infos.clear();
         let mut all_unknowns: HashSet<String> = HashSet::new();
+        let scalar_lhs = collect_simple_lhs_names(&equations);
         for (i, eq) in equations.iter().enumerate() {
             let mut unknowns = extract_unknowns(eq, &current_known);
+            expand_array_base_unknowns(&mut unknowns, &scalar_lhs, &current_known);
             unknowns.retain(|u| !is_forbidden_tearing_var(u));
             for u in &unknowns {
                 all_unknowns.insert(u.clone());
@@ -321,9 +269,6 @@ pub fn sort_algebraic_equations(
             .map(|(i, u)| (u.clone(), i))
             .collect();
 
-        assigned_var = vec![None; eq_infos.len()];
-        assigned_eq = vec![None; unknown_list.len()];
-
         if blt_trace {
             eprintln!(
                 "[blt] matching setup eqs={} unknowns={}",
@@ -331,82 +276,111 @@ pub fn sort_algebraic_equations(
                 unknown_list.len()
             );
         }
-        for (i, info) in eq_infos.iter().enumerate() {
-            let eq = &equations[info.original_idx];
-            if let Equation::Simple(lhs, _) = eq {
-                let mut target_var = None;
-                if let Expression::Variable(id) = lhs {
-                    target_var = Some(resolve_id(*id));
-                } else if let Expression::Der(inner) = lhs {
-                    if let Expression::Variable(id) = inner.as_ref() {
-                        target_var = Some(format!("der_{}", resolve_id(*id)));
-                    }
+
+        let (av, ae) =
+            assign_equation_variables(&equations, &eq_infos, &unknown_map, &unknown_list);
+        assigned_var = av;
+        assigned_eq = ae;
+
+        let unassigned_count = assigned_var
+            .iter()
+            .enumerate()
+            .filter(|(i, assigned)| {
+                if assigned.is_some() {
+                    return false;
                 }
-                if let Some(v) = target_var {
-                    if let Some(&v_idx) = unknown_map.get(&v) {
-                        if assigned_eq[v_idx].is_none() {
-                            assigned_eq[v_idx] = Some(i);
-                            assigned_var[i] = Some(v_idx);
+                let residual =
+                    simplify_expr(&make_residual(&equations[eq_infos[*i].original_idx]));
+                !matches!(&residual, Expression::Number(n) if n.abs() < 1e-15)
+            })
+            .count();
+        if blt_trace && unassigned_count > 0 {
+            for (i, assigned) in assigned_var.iter().enumerate() {
+                if assigned.is_some() {
+                    continue;
+                }
+                let residual = make_residual(&equations[eq_infos[i].original_idx]);
+                let mut res_vars = HashSet::new();
+                collect_vars_expr(&residual, &mut res_vars);
+                let mut names: Vec<&str> = res_vars.iter().map(String::as_str).collect();
+                names.sort_unstable();
+                eprintln!(
+                    "[blt] unmatched eq{} info_unknowns={:?} res_vars={}",
+                    eq_infos[i].original_idx,
+                    eq_infos[i].unknowns,
+                    names.join(",")
+                );
+            }
+        }
+        // Dummy-derivative can temporarily worsen structural matching; keep the
+        // best prior equation set instead of adopting the regressing round.
+        if !restore_and_stop {
+            if let Some(prev) = prev_unassigned_count {
+                if unassigned_count > prev {
+                    if blt_trace {
+                        eprintln!(
+                            "[blt] index reduction regressing (unassigned: {} -> {}), restore prior",
+                            prev, unassigned_count
+                        );
+                    }
+                    if let (Some(eqs), Some(sv)) =
+                        (last_good_equations.take(), last_good_state_vars.take())
+                    {
+                        equations = eqs;
+                        state_vars = sv;
+                        let remaining: HashSet<&str> =
+                            state_vars.iter().map(String::as_str).collect();
+                        current_known.retain(|k| {
+                            remaining.contains(k.as_str())
+                                || k == "time"
+                                || params.iter().any(|p| p == k)
+                        });
+                        for s in &state_vars {
+                            current_known.insert(s.clone());
                         }
+                        restore_and_stop = true;
+                        continue;
                     }
+                    break;
                 }
             }
         }
-
-        let mut adj = vec![Vec::new(); eq_infos.len()];
-        for (i, info) in eq_infos.iter().enumerate() {
-            for u in &info.unknowns {
-                if let Some(&v_idx) = unknown_map.get(u) {
-                    adj[i].push(v_idx);
-                }
-            }
-        }
-
-        for i in 0..eq_infos.len() {
-            if assigned_var[i].is_some() {
-                continue;
-            }
-            let mut visited = vec![false; unknown_list.len()];
-            if dfs_iter(i, &adj, &mut assigned_eq, &mut visited) {}
-        }
-
-        for (v_idx, eq_opt) in assigned_eq.iter().enumerate() {
-            if let Some(eq_idx) = eq_opt {
-                assigned_var[*eq_idx] = Some(v_idx);
-            }
-        }
-
-        let unassigned_count = assigned_var.iter().filter(|o| o.is_none()).count();
         differential_index = if unassigned_count > 0 { 2 } else { 1 };
-        if differential_index == 1 {
+        last_good_equations = Some(equations.clone());
+        last_good_state_vars = Some(state_vars.clone());
+        if differential_index == 1 || restore_and_stop {
             break;
         }
         let index_method = options.index_reduction_method.trim();
         if index_method.eq_ignore_ascii_case("none") {
             break;
         }
-        if let Some(prev) = prev_unassigned_count {
-            if unassigned_count >= prev {
-                if blt_trace {
-                    eprintln!(
-                        "[blt] index reduction not making progress (unassigned: {} -> {}), stopping",
-                        prev, unassigned_count
-                    );
-                }
-                break;
-            }
-        }
+        // Continue index reduction while it yields new equations. Dummy-derivative
+        // may keep the same unassigned count for a round while demoting a state.
         prev_unassigned_count = Some(unassigned_count);
+        let states_before = state_vars.len();
         if let Some(new_eqs) = try_index_reduction(
             &equations,
             &assigned_var,
             &assigned_eq,
             &unknown_list,
-            &state_vars,
+            &mut state_vars,
             options,
         ) {
             equations = new_eqs;
             index_reduction_rounds = round;
+            if state_vars.len() >= states_before {
+                if blt_trace {
+                    eprintln!("[blt] index reduction did not demote a state, stopping");
+                }
+                break;
+            }
+            // Demoted states leave the independent-integrator set and become algebraics.
+            let remaining: HashSet<&str> = state_vars.iter().map(String::as_str).collect();
+            current_known.retain(|k| remaining.contains(k.as_str()) || k == "time" || params.iter().any(|p| p == k));
+            for s in &state_vars {
+                current_known.insert(s.clone());
+            }
         } else {
             break;
         }
@@ -423,7 +397,7 @@ pub fn sort_algebraic_equations(
         })
         .count();
 
-    let constraint_equation_count = assigned_var.iter().filter(|o| o.is_none()).count();
+    let mut constraint_equation_count = assigned_var.iter().filter(|o| o.is_none()).count();
     let constant_conflict_count = eq_infos
         .iter()
         .filter(|info| info.unknowns.is_empty())
@@ -434,6 +408,49 @@ pub fn sort_algebraic_equations(
                 .unwrap_or(false)
         })
         .count();
+
+    // Unmatched residuals are differential index-2 only when they are holonomic
+    // constraints on states: g(x)=0 with no algebraic unknown. Residuals that
+    // also mention algebraic unknowns are torn kinematic loops (index-1).
+    if differential_index == 2 && constraint_equation_count > 0 {
+        let state_set: HashSet<&str> = state_vars.iter().map(String::as_str).collect();
+        let mut any_pure_state_constraint = false;
+        for (i, assigned) in assigned_var.iter().enumerate() {
+            if assigned.is_some() {
+                continue;
+            }
+            let residual = simplify_expr(&make_residual(&equations[eq_infos[i].original_idx]));
+            if matches!(&residual, Expression::Number(n) if n.abs() < 1e-15) {
+                continue;
+            }
+            let mut res_vars = HashSet::new();
+            collect_vars_expr(&residual, &mut res_vars);
+            let mentions_state = res_vars.iter().any(|v| {
+                state_set.contains(v.as_str())
+                    || v.strip_prefix("der_")
+                        .is_some_and(|s| state_set.contains(s))
+            });
+            let has_algebraic_unknown = res_vars.iter().any(|v| {
+                if state_set.contains(v.as_str()) || v.starts_with("der_") || v == "time" {
+                    return false;
+                }
+                unknown_map.contains_key(v)
+            });
+            if mentions_state && !has_algebraic_unknown {
+                any_pure_state_constraint = true;
+                break;
+            }
+        }
+        if !any_pure_state_constraint {
+            if blt_trace {
+                eprintln!(
+                    "[blt] unmatched constraints are algebraic (loop/tearing); index -> 1"
+                );
+            }
+            differential_index = 1;
+            constraint_equation_count = 0;
+        }
+    }
 
     if differential_index == 2
         && state_vars.is_empty()
@@ -458,6 +475,7 @@ pub fn sort_algebraic_equations(
                 alias_map,
                 index_reduction_rounds,
                 dummy_derivative_equation_count,
+                demoted_states: Vec::new(),
                 tearing_block_count: 1,
                 tearing_residual_equation_count: equations.len(),
                 block_causality: vec![BlockCausalityInfo {
@@ -488,8 +506,10 @@ pub fn sort_algebraic_equations(
                 }
                 if let Some(solver_eq_idx) = assigned_eq[v_idx] {
                     if i < n_nodes && solver_eq_idx < n_nodes {
-                        adj[i].push(solver_eq_idx);
-                        radj[solver_eq_idx].push(i);
+                        // Edge producer -> consumer so SCC topo emits producers first.
+                        // (Was consumer -> producer, which scheduled der_w = a before a = tau/J.)
+                        adj[solver_eq_idx].push(i);
+                        radj[i].push(solver_eq_idx);
                     }
                 }
             }
@@ -529,239 +549,29 @@ pub fn sort_algebraic_equations(
     if blt_trace {
         eprintln!("[blt] scc");
     }
-    // Iterative SCC to avoid stack overflow on large graphs.
-    // Kosaraju: order by finish time on adj, then DFS on reversed graph.
-    let mut visited = vec![false; n_nodes];
-    let mut order: Vec<usize> = Vec::with_capacity(n_nodes);
-    for start in 0..n_nodes {
-        if visited[start] {
-            continue;
-        }
-        visited[start] = true;
-        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
-        while let Some((v, next_i)) = stack.pop() {
-            if next_i < adj[v].len() {
-                // Put back current with advanced iterator
-                stack.push((v, next_i + 1));
-                let to = adj[v][next_i];
-                if !visited[to] {
-                    visited[to] = true;
-                    stack.push((to, 0));
-                }
-            } else {
-                order.push(v);
-            }
-        }
-    }
-
-    let mut visited2 = vec![false; n_nodes];
-    let mut sccs: Vec<Vec<usize>> = Vec::new();
-    for &v in order.iter().rev() {
-        if visited2[v] {
-            continue;
-        }
-        visited2[v] = true;
-        let mut comp: Vec<usize> = Vec::new();
-        let mut stack: Vec<usize> = vec![v];
-        while let Some(x) = stack.pop() {
-            comp.push(x);
-            for &to in &radj[x] {
-                if !visited2[to] {
-                    visited2[to] = true;
-                    stack.push(to);
-                }
-            }
-        }
-        sccs.push(comp);
-    }
-
-    let mut sorted_equations = Vec::new();
-    let mut tearing_block_count = 0usize;
-    let mut tearing_residual_equation_count = 0usize;
-    let mut block_causality: Vec<BlockCausalityInfo> = Vec::new();
+    let sccs = kosaraju_sccs(&adj, &radj);
 
     if blt_trace {
         eprintln!("[blt] solve_blocks");
     }
-    for scc in sccs {
-        let block_indices: Vec<usize> = scc;
+    let emitted = emit_scc_blocks(
+        sccs,
+        &equations,
+        &eq_infos,
+        &assigned_var,
+        &unknown_list,
+        &unknown_map,
+        &mut current_known,
+        differential_index,
+        &options.tearing_method,
+        blt_trace,
+    );
+    let tearing_block_count = emitted.tearing_block_count;
+    let tearing_residual_equation_count = emitted.tearing_residual_equation_count;
+    let block_causality = emitted.block_causality;
 
-        if block_indices.is_empty() {
-            continue;
-        }
-
-        if block_indices.len() == 1 {
-            let idx = block_indices[0];
-            let eq = &equations[eq_infos[idx].original_idx];
-
-            if let Some(var_idx) = assigned_var[idx] {
-                let var_name = &unknown_list[var_idx];
-                if is_forbidden_tearing_var(var_name) {
-                    // Should not happen after filtering; keep as known, skip Newton.
-                    current_known.insert(var_name.clone());
-                    if blt_trace {
-                        eprintln!(
-                            "[blt] skip forbidden assigned unknown {}",
-                            var_name
-                        );
-                    }
-                    continue;
-                }
-                if let Some(expr) = solve_for_variable(eq, var_name) {
-                    current_known.insert(var_name.clone());
-                    sorted_equations.push(Equation::Simple(
-                        Expression::var(var_name),
-                        expr,
-                    ));
-                    block_causality.push(BlockCausalityInfo {
-                        diff_index: differential_index,
-                        tearing_vars: Vec::new(),
-                        strongly_connected: false,
-                        is_nonlinear: false,
-                    });
-                } else {
-                    let tearing_var = select_tearing_variable(
-                        &[var_name.clone()],
-                        &[eq.clone()],
-                        &unknown_map,
-                        &options.tearing_method,
-                    );
-                    if tearing_var.is_none() {
-                        current_known.insert(var_name.clone());
-                        if blt_trace {
-                            eprintln!(
-                                "[blt] skip non-tearable single unknown {}",
-                                var_name
-                            );
-                        }
-                        continue;
-                    }
-                    sorted_equations.push(Equation::SolvableBlock {
-                        unknowns: vec![var_name.clone()],
-                        tearing_var: tearing_var.clone(),
-                        equations: vec![],
-                        residuals: vec![make_residual(eq)],
-                    });
-                    tearing_block_count += 1;
-                    tearing_residual_equation_count += 1;
-                    block_causality.push(BlockCausalityInfo {
-                        diff_index: differential_index,
-                        tearing_vars: tearing_var.clone().into_iter().collect(),
-                        strongly_connected: false,
-                        is_nonlinear: true,
-                    });
-                    current_known.insert(var_name.clone());
-                }
-            } else {
-                let unknowns_from_eq: Vec<String> = eq_infos[idx]
-                    .unknowns
-                    .iter()
-                    .filter(|u| !is_forbidden_tearing_var(u))
-                    .cloned()
-                    .collect();
-                if let Some(_unk) = unknowns_from_eq.first().cloned() {
-                    let tearing_var = select_tearing_variable(
-                        &unknowns_from_eq,
-                        &[eq.clone()],
-                        &unknown_map,
-                        &options.tearing_method,
-                    );
-                    if tearing_var.is_none() {
-                        if blt_trace {
-                            eprintln!(
-                                "[blt] skip unassigned non-tearable equation unknowns={:?}",
-                                unknowns_from_eq
-                            );
-                        }
-                        continue;
-                    }
-                    sorted_equations.push(Equation::SolvableBlock {
-                        unknowns: unknowns_from_eq,
-                        tearing_var: tearing_var.clone(),
-                        equations: vec![],
-                        residuals: vec![make_residual(eq)],
-                    });
-                    tearing_block_count += 1;
-                    tearing_residual_equation_count += 1;
-                    block_causality.push(BlockCausalityInfo {
-                        diff_index: differential_index,
-                        tearing_vars: tearing_var.clone().into_iter().collect(),
-                        strongly_connected: false,
-                        is_nonlinear: true,
-                    });
-                } else {
-                    // Residual with no algebraic unknowns (only time/start/knowns):
-                    // consistency check only — never invent Newton on time/start.
-                    if blt_trace {
-                        eprintln!(
-                            "[blt] skip residual-only frozen equation idx={}",
-                            eq_infos[idx].original_idx
-                        );
-                    }
-                }
-            }
-        } else {
-            let block_eqs: Vec<Equation> = block_indices
-                .iter()
-                .map(|&idx| equations[eq_infos[idx].original_idx].clone())
-                .collect();
-
-            let mut block_unknowns: Vec<String> = block_indices
-                .iter()
-                .filter_map(|&idx| assigned_var[idx].map(|v_idx| unknown_list[v_idx].clone()))
-                .filter(|u| !is_forbidden_tearing_var(u))
-                .collect();
-
-            if block_unknowns.is_empty() && !block_eqs.is_empty() {
-                for &idx in &block_indices {
-                    for u in &eq_infos[idx].unknowns {
-                        if unknown_map.contains_key(u)
-                            && !is_forbidden_tearing_var(u)
-                            && !block_unknowns.contains(u)
-                        {
-                            block_unknowns.push(u.clone());
-                        }
-                    }
-                }
-            }
-            let tearing_var = select_tearing_variable(
-                &block_unknowns,
-                &block_eqs,
-                &unknown_map,
-                &options.tearing_method,
-            );
-            if block_unknowns.is_empty() || tearing_var.is_none() {
-                if blt_trace {
-                    eprintln!(
-                        "[blt] skip SCC with no tearable unknowns size={}",
-                        block_indices.len()
-                    );
-                }
-                continue;
-            }
-
-            sorted_equations.push(Equation::SolvableBlock {
-                unknowns: block_unknowns.clone(),
-                tearing_var: tearing_var.clone(),
-                equations: vec![],
-                residuals: block_eqs.iter().map(|eq| make_residual(eq)).collect(),
-            });
-            tearing_block_count += 1;
-            tearing_residual_equation_count += block_eqs.len();
-            block_causality.push(BlockCausalityInfo {
-                diff_index: differential_index,
-                tearing_vars: tearing_var.clone().into_iter().collect(),
-                strongly_connected: true,
-                is_nonlinear: true,
-            });
-
-            for u in block_unknowns {
-                current_known.insert(u);
-            }
-        }
-    }
-
-    let sorted_equations = reorder_simple_variable_equations(sorted_equations, known_vars, params);
+    let sorted_equations =
+        reorder_simple_variable_equations(emitted.sorted_equations, known_vars, params);
 
     SortAlgebraicResult {
         sorted_equations,
@@ -771,6 +581,13 @@ pub fn sort_algebraic_equations(
         alias_map,
         index_reduction_rounds,
         dummy_derivative_equation_count,
+        demoted_states: {
+            let remaining: HashSet<&str> = state_vars.iter().map(String::as_str).collect();
+            initial_state_vars
+                .into_iter()
+                .filter(|s| !remaining.contains(s.as_str()))
+                .collect()
+        },
         tearing_block_count,
         tearing_residual_equation_count,
         block_causality,

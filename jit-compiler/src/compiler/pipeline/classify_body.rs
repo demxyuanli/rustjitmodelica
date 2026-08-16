@@ -1,3 +1,55 @@
+/// `y = pre(x)` plus `x = f(y, ...)` is a discrete delay register (StateGraph newActive).
+/// Connect aliases `u = other.y` with `pre(u)` (UnitDelay) are not registers.
+fn previous_arg_name(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Previous(inner) => match inner.as_ref() {
+            Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
+            other => previous_arg_name(other),
+        },
+        Expression::Call(name, args) if name == "pre" && args.len() == 1 => {
+            previous_arg_name(&args[0])
+        }
+        _ => None,
+    }
+}
+
+fn expr_mentions_any(expr: &Expression, names: &[String]) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    let mut vars = HashSet::new();
+    collect_vars_expr(expr, &mut vars);
+    names.iter().any(|n| vars.contains(n))
+}
+
+fn collect_pre_register_discrete(equations: &[Equation]) -> HashSet<String> {
+    let mut holders: HashMap<String, Vec<String>> = HashMap::new();
+    let mut assignments: Vec<(String, Expression)> = Vec::new();
+    for eq in equations {
+        let Equation::Simple(lhs, rhs) = eq else {
+            continue;
+        };
+        let Expression::Variable(id) = lhs else {
+            continue;
+        };
+        let lhs_name = crate::string_intern::resolve_id(*id);
+        if let Some(src) = previous_arg_name(rhs) {
+            holders.entry(src).or_default().push(lhs_name.clone());
+        }
+        assignments.push((lhs_name, rhs.clone()));
+    }
+    let mut out = HashSet::new();
+    for (lhs, rhs) in &assignments {
+        let Some(hs) = holders.get(lhs) else {
+            continue;
+        };
+        if expr_mentions_any(rhs, hs) || previous_arg_name(rhs).as_ref() == Some(lhs) {
+            out.insert(lhs.clone());
+        }
+    }
+    out
+}
+
 pub(crate) fn classify_variables(
     flat_model: &FlattenedModel,
     quiet: bool,
@@ -212,6 +264,109 @@ pub(crate) fn classify_variables(
         }
     }
 
+    fn collect_simple_lhs_vars(eq: &Equation, out: &mut HashSet<String>) {
+        match eq {
+            Equation::Simple(lhs, _) => collect_ref_root_vars(lhs, out),
+            Equation::MultiAssign(lhss, _) => {
+                for lhs in lhss {
+                    collect_ref_root_vars(lhs, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_alg_lhs_vars(stmt: &AlgorithmStatement, out: &mut HashSet<String>) {
+        match stmt {
+            AlgorithmStatement::Assignment(lhs, _) => collect_ref_root_vars(lhs, out),
+            AlgorithmStatement::MultiAssign(lhss, _) => {
+                for l in lhss {
+                    collect_ref_root_vars(l, out);
+                }
+            }
+            AlgorithmStatement::Reinit(var, _) => {
+                out.insert(var.clone());
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_when_assigned_eq(eq: &Equation, out: &mut HashSet<String>) {
+        match eq {
+            Equation::When(_, body, else_whens) => {
+                for e in body {
+                    collect_simple_lhs_vars(e, out);
+                    collect_when_assigned_eq(e, out);
+                }
+                for (_, branch) in else_whens {
+                    for e in branch {
+                        collect_simple_lhs_vars(e, out);
+                        collect_when_assigned_eq(e, out);
+                    }
+                }
+            }
+            Equation::For(_, _, _, body) => {
+                for e in body {
+                    collect_when_assigned_eq(e, out);
+                }
+            }
+            Equation::If(_, then_eqs, else_ifs, else_eqs) => {
+                for e in then_eqs {
+                    collect_when_assigned_eq(e, out);
+                }
+                for (_, branch) in else_ifs {
+                    for e in branch {
+                        collect_when_assigned_eq(e, out);
+                    }
+                }
+                if let Some(branch) = else_eqs {
+                    for e in branch {
+                        collect_when_assigned_eq(e, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_when_assigned_alg(stmt: &AlgorithmStatement, out: &mut HashSet<String>) {
+        match stmt {
+            AlgorithmStatement::When(_, body, else_whens) => {
+                for s in body {
+                    collect_alg_lhs_vars(s, out);
+                    collect_when_assigned_alg(s, out);
+                }
+                for (_, branch) in else_whens {
+                    for s in branch {
+                        collect_alg_lhs_vars(s, out);
+                        collect_when_assigned_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::If(_, then_stmts, else_ifs, else_stmts) => {
+                for s in then_stmts {
+                    collect_when_assigned_alg(s, out);
+                }
+                for (_, branch) in else_ifs {
+                    for s in branch {
+                        collect_when_assigned_alg(s, out);
+                    }
+                }
+                if let Some(branch) = else_stmts {
+                    for s in branch {
+                        collect_when_assigned_alg(s, out);
+                    }
+                }
+            }
+            AlgorithmStatement::While(_, body) | AlgorithmStatement::For(_, _, body) => {
+                for s in body {
+                    collect_when_assigned_alg(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     let mut param_vars = Vec::new();
     let mut output_vars = Vec::new();
     let mut params = Vec::new();
@@ -221,6 +376,26 @@ pub(crate) fn classify_variables(
     for eq in &flat_model.equations {
         collect_states_from_eq(eq, &mut state_vars);
     }
+    let state_select_ranks =
+        crate::state_select::build_state_select_map(&flat_model.declarations);
+    demote_equated_connector_states(
+        &flat_model.equations,
+        &mut state_vars,
+        &state_select_ranks,
+    );
+    demote_dependent_relative_states(&flat_model.equations, &mut state_vars);
+    demote_scaled_absolute_pairs(
+        &flat_model.equations,
+        &mut state_vars,
+        &state_select_ranks,
+    );
+    demote_redundant_sensor_velocity_states(&flat_model.equations, &mut state_vars);
+    let mb_demoted_states = demote_multibody_absolute_body_states(
+        &flat_model.equations,
+        &flat_model.declarations,
+        &flat_model.instances,
+        &mut state_vars,
+    );
 
     let mut param_value_map: HashMap<String, f64> = HashMap::new();
 
@@ -276,7 +451,22 @@ pub(crate) fn classify_variables(
     for stmt in &flat_model.algorithms {
         collect_previous_vars_alg(stmt, &mut previous_vars);
     }
-    for name in previous_vars {
+    // Variables assigned inside `when` are discrete. `pre(x)` / `previous(x)` alone must
+    // NOT mark continuous inputs as discrete (UnitDelay `y = pre(u)` would otherwise
+    // freeze `u` at 0 and break connect(gain.y, ud.u)).
+    let mut when_assigned = HashSet::new();
+    for eq in &flat_model.equations {
+        collect_when_assigned_eq(eq, &mut when_assigned);
+    }
+    for stmt in &flat_model.algorithms {
+        collect_when_assigned_alg(stmt, &mut when_assigned);
+    }
+    for name in when_assigned.iter().chain(previous_vars.iter().filter(|n| when_assigned.contains(*n))) {
+        if !state_vars.contains(name) {
+            discrete_vars.insert(name.clone());
+        }
+    }
+    for name in collect_pre_register_discrete(&flat_model.equations) {
         if !state_vars.contains(&name) {
             discrete_vars.insert(name);
         }
@@ -309,25 +499,26 @@ pub(crate) fn classify_variables(
     }
 
     let mut param_set: HashSet<String> = param_vars.iter().cloned().collect();
-    for var in referenced_in_equations {
-        if state_vars.contains(&var)
-            || discrete_vars.contains(&var)
-            || param_set.contains(&var)
+    // Connector pins / expand artifacts may appear in equations without a matching
+    // declaration. Promoting them to parameters freezes them at 0 and makes BLT skip
+    // the driving equations (e.g. SineVoltage: vsine_p_v / vsine_n_v). Keep them as
+    // algebraic outputs instead so the circuit can be solved.
+    let mut undeclared_algebraic: Vec<String> = Vec::new();
+    for var in &referenced_in_equations {
+        if state_vars.contains(var)
+            || discrete_vars.contains(var)
+            || param_set.contains(var)
             || var.starts_with("der_")
-            || decl_index.contains_key(&var)
+            || decl_index.contains_key(var)
+            || var == "time"
+            || var == "t"
         {
             continue;
         }
-        param_set.insert(var.clone());
-        param_vars.push(var.clone());
-        let val = decl_index
-            .get(&var)
-            .and_then(|&idx| flat_model.declarations[idx].start_value.as_ref())
-            .and_then(|e| eval_const_expr_with_params(e, &param_value_map))
-            .unwrap_or(0.0);
-        param_value_map.insert(var.clone(), val);
-        params.push(val);
+        undeclared_algebraic.push(var.clone());
     }
+    undeclared_algebraic.sort();
+    undeclared_algebraic.dedup();
 
     let mut state_vars_sorted: Vec<String> = state_vars.into_iter().collect();
     state_vars_sorted.sort();
@@ -370,7 +561,41 @@ pub(crate) fn classify_variables(
         output_vars.push(decl.name.clone());
         output_start_vals.push(start_value_for(&decl.name));
     }
+    for var in &undeclared_algebraic {
+        if output_var_index.contains_key(var)
+            || state_set.contains(var)
+            || discrete_set.contains(var)
+            || param_set.contains(var)
+        {
+            continue;
+        }
+        let idx = output_vars.len();
+        output_var_index.insert(var.clone(), idx);
+        output_vars.push(var.clone());
+        output_start_vals.push(start_value_for(var));
+    }
     for var in &state_vars_sorted {
+        let der_var = format!("der_{}", var);
+        if !output_var_index.contains_key(&der_var) {
+            let idx = output_vars.len();
+            output_var_index.insert(der_var.clone(), idx);
+            output_vars.push(der_var);
+            output_start_vals.push(0.0);
+        }
+    }
+    // Multibody body states demoted to algebraics still appear under der(...);
+    // keep the variable and der_* as outputs so JIT/BLT can resolve them.
+    for var in &mb_demoted_states {
+        if !output_var_index.contains_key(var)
+            && !state_set.contains(var)
+            && !discrete_set.contains(var)
+            && !param_set.contains(var)
+        {
+            let idx = output_vars.len();
+            output_var_index.insert(var.clone(), idx);
+            output_vars.push(var.clone());
+            output_start_vals.push(start_value_for(var));
+        }
         let der_var = format!("der_{}", var);
         if !output_var_index.contains_key(&der_var) {
             let idx = output_vars.len();
