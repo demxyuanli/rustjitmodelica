@@ -36,6 +36,7 @@ const menuLabelKey: Record<MenuItemId, MessageKey> = {
   emitCoder: "emitCoder",
   emitFmu: "emitFmu",
   importFmu: "importFmu",
+  importIde: "importIde",
   wrapMo: "wrapMo",
   importPack: "importPack",
   exportPack: "exportPack",

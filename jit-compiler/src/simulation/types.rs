@@ -158,7 +158,7 @@ pub fn run_simulation_collect(
     deopt_sim_perf: Option<&mut DeoptSimPerfSummary>,
     model_name: &str,
     lib_paths: Vec<std::path::PathBuf>,
-    control: Option<&mut super::control::SimControl>,
+    mut control: Option<&mut super::control::SimControl>,
 ) -> Result<SimulationResult, String> {
     let estimated_rows = if output_interval > 0.0 {
         (t_end / output_interval) as usize + 2
@@ -166,6 +166,9 @@ pub fn run_simulation_collect(
         (t_end / dt) as usize + 2
     };
     let mut collector = ResultCollector::with_capacity(estimated_rows);
+    if let Some(ctrl) = control.as_mut() {
+        ctrl.bind_live_names(state_vars, discrete_vars, output_vars);
+    }
     super::run_simulation(
         calc_derivs,
         when_count,

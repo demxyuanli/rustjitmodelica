@@ -317,6 +317,25 @@ pub(super) unsafe fn drive_print_loop(
             EventIterationOutcome::TerminatedOk => return Ok(()),
             EventIterationOutcome::Completed => {}
         }
+        commit_pre_after_event_and_reeval(
+            time,
+            t_end,
+            calc_derivs,
+            when_count,
+            states,
+            discrete_vals,
+            derivs,
+            params,
+            outputs,
+            when_states,
+            crossings,
+            pre_states,
+            pre_discrete_vals,
+            homotopy_lambda_ptr,
+            diag_residual,
+            diag_res_ptr,
+            diag_x_ptr,
+        )?;
         let _dispatched_events = event_queue.drain_sorted();
 
         maybe_print_numeric_jacobian(

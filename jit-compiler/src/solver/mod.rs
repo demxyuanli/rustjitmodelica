@@ -326,15 +326,18 @@ impl Solver for EulerSolver {
         dt: f64,
         states: &mut [f64],
     ) -> Result<(), i32> {
-        if states.is_empty() {
-            return Ok(());
-        }
         if !system.eval_call_index.is_null() {
             // SAFETY: eval_call_index is a valid u64 pointer owned by the simulation
             // driver. Reset to 0 before a new solver step starts.
             unsafe {
                 *system.eval_call_index = 0;
             }
+        }
+        // Empty state vector: still evaluate so algebraic outputs advance with time.
+        if states.is_empty() {
+            system.record_eval(time, states);
+            system.evaluate(time, states, &mut self.derivs)?;
+            return Ok(());
         }
         system.record_eval(time, states);
         system.evaluate(time, states, &mut self.derivs)?;
@@ -382,15 +385,17 @@ impl Solver for BackwardEulerSolver {
         states: &mut [f64],
     ) -> Result<(), i32> {
         let n = states.len();
-        if n == 0 {
-            return Ok(());
-        }
         if !system.eval_call_index.is_null() {
             // SAFETY: eval_call_index is a valid u64 pointer owned by the simulation
             // driver. Reset to 0 before a new solver step starts.
             unsafe {
                 *system.eval_call_index = 0;
             }
+        }
+        if n == 0 {
+            system.record_eval(time + dt, states);
+            system.evaluate(time + dt, states, &mut self.derivs)?;
+            return Ok(());
         }
         self.y_n.copy_from_slice(states);
         self.tmp.copy_from_slice(&self.y_n);
@@ -449,15 +454,17 @@ impl Solver for RungeKutta4Solver {
         states: &mut [f64],
     ) -> Result<(), i32> {
         let n = states.len();
-        if n == 0 {
-            return Ok(());
-        }
         if !system.eval_call_index.is_null() {
             // SAFETY: eval_call_index is a valid u64 pointer owned by the simulation
             // driver. Reset to 0 before a new solver step starts.
             unsafe {
                 *system.eval_call_index = 0;
             }
+        }
+        if n == 0 {
+            system.record_eval(time, states);
+            system.evaluate_scratch(time, states, &mut self.k1)?;
+            return Ok(());
         }
 
         system.record_eval(time, states);
@@ -571,6 +578,14 @@ impl Solver for AdaptiveRK45Solver {
         // still advanced time by the full dt -> state/time desync.
         let n = states.len();
         if n == 0 {
+            if !system.eval_call_index.is_null() {
+                unsafe {
+                    *system.eval_call_index = 0;
+                }
+            }
+            system.record_eval(time, states);
+            // k1 doubles as scratch deriv buffer for algebraic-only eval.
+            system.evaluate(time, states, &mut self.k1)?;
             return Ok(());
         }
 

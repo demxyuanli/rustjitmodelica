@@ -64,6 +64,33 @@ impl Compiler {
         self.compile(model_name)
     }
 
+    /// Compile from in-memory Modelica source into a `CompiledModel` for Fast Restart /
+    /// parameter sweeps (`with_params` without recompiling native code).
+    pub fn compile_from_source_to_model(
+        &mut self,
+        model_name: &str,
+        code: &str,
+    ) -> Result<crate::compiler::CompiledModel, Box<dyn std::error::Error + Send + Sync>> {
+        match self.compile_from_source(model_name, code)? {
+            CompileOutput::Simulation(artifacts) => Ok(crate::compiler::CompiledModel {
+                model_name: model_name.to_string(),
+                artifacts,
+            }),
+            other => Err(format!(
+                "compile_from_source_to_model requires a simulation model, got {:?}",
+                match other {
+                    CompileOutput::FunctionRun(_) => "FunctionRun",
+                    CompileOutput::FlatSnapshotDone => "FlatSnapshotDone",
+                    CompileOutput::ValidationParseOk => "ValidationParseOk",
+                    CompileOutput::ValidationFlattenOk { .. } => "ValidationFlattenOk",
+                    CompileOutput::ValidationAnalyzed(_) => "ValidationAnalyzed",
+                    _ => "unknown",
+                }
+            )
+            .into()),
+        }
+    }
+
     /// Build equation/variable dependency graph from source (for analysis/debug). Does not run full compile.
     pub fn get_equation_graph_from_source(
         &mut self,

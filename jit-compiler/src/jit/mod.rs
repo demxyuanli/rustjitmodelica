@@ -3,6 +3,8 @@ pub mod aot_archive;
 pub mod codegen_cache;
 mod clock_lowering;
 mod compile;
+mod compile_blocks;
+mod compile_event_order;
 mod config;
 mod connector_degree;
 pub mod context;

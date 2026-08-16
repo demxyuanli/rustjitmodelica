@@ -23,22 +23,8 @@ impl crate::flatten::Flattener {
         current_model_name: Option<&str>,
         mode: ExpandDeclMode,
     ) -> Result<(), FlattenError> {
-        #[derive(Clone)]
-        enum Task {
-            Process {
-                model: Arc<Model>,
-                prefix: String,
-                current_model_name: Option<String>,
-                msl_import_context: String,
-            },
-            ExpandEquations {
-                model: Arc<Model>,
-                prefix: String,
-            },
-        }
-
         let msl_ctx = current_model_name.unwrap_or("").to_string();
-        let mut stack: Vec<Task> = vec![Task::Process {
+        let mut stack: Vec<ExpandDeclTask> = vec![ExpandDeclTask::Process {
             model,
             prefix: prefix.to_string(),
             current_model_name: current_model_name.map(|s| s.to_string()),
@@ -49,10 +35,13 @@ impl crate::flatten::Flattener {
 
         while let Some(task) = stack.pop() {
             match task {
-                Task::ExpandEquations { model, prefix } => {
+                ExpandDeclTask::ExpandEquations { model, prefix } => {
                     self.expand_equations(model.as_ref(), &prefix, flat);
+                    self.expand_algorithms(model.as_ref(), &prefix, flat);
+                    self.expand_initial_equations(model.as_ref(), &prefix, flat);
+                    self.expand_initial_algorithms(model.as_ref(), &prefix, flat);
                 }
-                Task::Process {
+                ExpandDeclTask::Process {
                     model,
                     prefix,
                     current_model_name,
@@ -103,6 +92,7 @@ impl crate::flatten::Flattener {
                                             let update = match context.get(&decl.name) {
                                                 None => true,
                                                 Some(Expression::Number(p)) => (n - p).abs() > 1e-12,
+                                                Some(Expression::ArrayLiteral(items)) if items.len() != 1 => false,
                                                 Some(_) => true,
                                             };
                                             if update {
@@ -243,11 +233,25 @@ impl crate::flatten::Flattener {
                         let is_array = array_len.is_some();
 
                         let mut each_start: Option<Expression> = None;
+                        let mut each_state_select: Option<Expression> = None;
                         for m in &decl.modifications {
                             if m.each && m.name == "start" {
                                 each_start = m.value.clone();
                             }
+                            if m.each && m.name == "stateSelect" {
+                                each_state_select = m.value.clone();
+                            }
                         }
+                        let resolved_state_select: Option<crate::ast::StateSelect> = {
+                            let raw = each_state_select
+                                .as_ref()
+                                .or_else(|| {
+                                    crate::state_select::state_select_mod_value(&decl.modifications)
+                                });
+                            raw.map(|e| self.substitute(e, &context))
+                                .and_then(|e| crate::state_select::parse_state_select_expr(&e))
+                                .or(decl.state_select)
+                        };
 
                         if is_array {
                             flat.array_sizes.insert(base_name.clone(), count);
@@ -343,6 +347,7 @@ impl crate::flatten::Flattener {
                                     None
                                 };
                                 let resolved_type_clone = resolved_type.clone();
+                                let state_select_template = resolved_state_select;
                                 let entries: Vec<(Declaration, String, usize)> = (1..=count)
                                     .into_par_iter()
                                     .map(|idx| {
@@ -377,6 +382,7 @@ impl crate::flatten::Flattener {
                                             is_rest: decl.is_rest,
                                             annotation: None,
                                             condition: None,
+                                            state_select: state_select_template,
                                         };
                                         (d, idx_full_path, idx)
                                     })
@@ -404,494 +410,119 @@ impl crate::flatten::Flattener {
                                 continue;
                             }
 
-                            if is_primitive(&resolved_type) {
-                                flat.declarations.push(Declaration {
-                                    type_name: resolved_type.clone(),
-                                    name: full_path.clone(),
-                                    replaceable: decl.replaceable,
-                                    constrainedby_type: decl.constrainedby_type.clone(),
-                                    is_parameter: decl.is_parameter,
-                                    is_flow: decl.is_flow,
-                                    is_stream: decl.is_stream,
-                                    is_discrete: decl.is_discrete,
-                                    is_input: decl.is_input,
-                                    is_output: decl.is_output,
-                                    is_inner: decl.is_inner,
-                                    is_outer: decl.is_outer,
-                                    is_public: decl.is_public,
-                                    is_protected: decl.is_protected,
-                                    start_value: if let Some(ev) = &each_start {
-                                        let sub = self.substitute(ev, &context);
-                                        if is_array {
-                                            Some(index_expression(&sub, i))
-                                        } else {
-                                            Some(sub)
-                                        }
-                                    } else if let Some(val) = &decl.start_value {
-                                        let sub = self.substitute(val, &context);
-                                        if is_array { Some(index_expression(&sub, i)) } else { Some(sub) }
-                                    } else {
-                                        None
-                                    },
-                                    array_size: None,
-                                    modifications: Vec::new(),
-                                    is_rest: decl.is_rest,
-                                    annotation: None,
-                                    condition: None,
-                                });
-                                flat.register_inst_path(
-                                    full_path.clone(),
-                                    resolved_type.clone(),
+                            if let Some((prim, arr_n @ Some(_))) =
+                                split_primitive_array_type(&resolved_type)
+                            {
+                                let start_value = self.elem_start_value(
+                                    &each_start,
+                                    &decl.start_value,
+                                    &context,
+                                    is_array,
+                                    i,
+                                );
+                                push_primitive_alias_components(
+                                    flat,
+                                    &full_path,
+                                    &prim,
+                                    arr_n,
+                                    decl,
+                                    start_value,
+                                    resolved_state_select,
                                     if is_array { Some(i as usize) } else { None },
                                 );
                                 continue;
                             }
 
-                            // Use lexical scope for candidate qualification.
-                            // Some MSL libraries reference siblings via relative prefixes (e.g. `Utilities.*`,
-                            // `Analog.*`) and the loader may report `current_qualified` as a relative name.
-                            // When that happens, prefer the root import context as the scope anchor so
-                            // upward qualification can reach `Modelica.*`.
-                            let scope_for_candidates = if current_qualified.is_empty() {
-                                msl_import_context.as_str()
-                            } else if !msl_import_context.is_empty()
-                                && msl_import_context.starts_with("Modelica.")
-                                && !current_qualified.starts_with("Modelica.")
-                            {
-                                msl_import_context.as_str()
-                            } else {
-                                current_qualified
-                            };
-                            let load_candidates =
-                                Self::build_load_candidates(&resolved_type, scope_for_candidates);
-                            if env::perf_trace_enabled()
-                                && (resolved_type == "Analog.Interfaces.NegativePin"
-                                    || resolved_type.ends_with(".Analog.Interfaces.NegativePin"))
-                            {
-                                eprintln!(
-                                    "[perf] type_load_probe resolved_type={} current={} msl_ctx={} scope={} candidates={:?}",
-                                    resolved_type,
-                                    current_qualified,
-                                    msl_import_context,
-                                    scope_for_candidates,
-                                    load_candidates
+                            if is_primitive(&resolved_type) {
+                                let start_value = initial_step_start(
+                                    current_model_name.as_deref(),
+                                    &decl.name,
+                                    self.elem_start_value(
+                                        &each_start,
+                                        &decl.start_value,
+                                        &context,
+                                        is_array,
+                                        i,
+                                    ),
                                 );
+                                push_primitive_leaf(
+                                    flat,
+                                    &full_path,
+                                    &prefix,
+                                    &resolved_type,
+                                    decl,
+                                    start_value,
+                                    resolved_state_select,
+                                    if is_array { Some(i as usize) } else { None },
+                                );
+                                continue;
                             }
-                            let decl_expand_try_load_sub_model_t0 = std::time::Instant::now();
-                            let (loaded_type, last_err) = self.try_load_sub_model(
+
+                            let Some((resolved_type, sub_model)) = self.load_or_recover_sub_model(
                                 model.as_ref(),
-                                &resolved_type,
-                                scope_for_candidates,
-                                &load_candidates,
-                            );
-                            crate::query_db::perf_record_us(
-                                "decl_expand_try_load_sub_model_us",
-                                decl_expand_try_load_sub_model_t0.elapsed().as_micros() as u64,
-                            );
-
-                            let mut sub_model = match loaded_type {
-                                Some((resolved_candidate, m)) => {
-                                    // Replaceable components may declare a partial default type;
-                                    // they are legal as long as usage stays within the declared
-                                    // interface (redeclare supplies the concrete type).
-                                    if m.is_partial && !decl.replaceable {
-                                        return Err(FlattenError::PartialModelInstantiated {
-                                            partial_type: resolved_candidate.clone(),
-                                            instance_path: full_path.clone(),
-                                        });
-                                    }
-                                    resolved_type = resolved_candidate;
-                                    m
-                                }
-                                None => {
-                                    let e = last_err.unwrap_or_else(|| LoadError::NotFound(resolved_type.clone()));
-                                    if matches!(&e, LoadError::NotFound(_)) {
-                                        // Try every scope candidate, not just the literal prefix:
-                                        // `Types.PortFlowDirection` inside Fluid must find the
-                                        // alias on owner `Modelica.Fluid.Types` even though the
-                                        // bare prefix `Types` is not loadable on its own.
-                                        let mut alias_base: Option<String> = None;
-                                        for cand in load_candidates.iter() {
-                                            let Some((prefix_type, suffix_type)) = cand.rsplit_once('.') else {
-                                                continue;
-                                            };
-                                            if let Ok(owner) = self.loader.load_model_silent(prefix_type, true) {
-                                                if let Some((_, base)) =
-                                                    owner.type_aliases.iter().find(|(a, _)| a == suffix_type)
-                                                {
-                                                    let base = resolve_type_alias(&owner.type_aliases, base);
-                                                    if is_primitive(&base) {
-                                                        alias_base = Some(base);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let Some(base) = alias_base {
-                                                        flat.declarations.push(Declaration {
-                                                            type_name: base.clone(),
-                                                            name: full_path.clone(),
-                                                            replaceable: decl.replaceable,
-                                                            constrainedby_type: decl.constrainedby_type.clone(),
-                                                            is_parameter: decl.is_parameter,
-                                                            is_flow: decl.is_flow,
-                                                            is_stream: decl.is_stream,
-                                                            is_discrete: decl.is_discrete,
-                                                            is_input: decl.is_input,
-                                                            is_output: decl.is_output,
-                                                            is_inner: decl.is_inner,
-                                                            is_outer: decl.is_outer,
-                                                            is_public: decl.is_public,
-                                                            is_protected: decl.is_protected,
-                                                            start_value: if let Some(val) = &decl.start_value {
-                                                                let sub = self.substitute(val, &context);
-                                                                if is_array {
-                                                                    Some(index_expression(&sub, i))
-                                                                } else {
-                                                                    Some(sub)
-                                                                }
-                                                            } else {
-                                                                None
-                                                            },
-                                                            array_size: None,
-                                                            modifications: Vec::new(),
-                                                            is_rest: decl.is_rest,
-                                                            annotation: None,
-                                                            condition: None,
-                                                        });
-                                                        flat.register_inst_path(
-                                                            full_path.clone(),
-                                                            base,
-                                                            if is_array { Some(i as usize) } else { None },
-                                                        );
-                                                        continue;
-                                        }
-                                        if !resolved_type.contains('.') {
-                                            for (_alias, qual) in &model.imports {
-                                                if qual.is_empty() {
-                                                    continue;
-                                                }
-                                                let candidate = format!("{}.{}", qual, resolved_type);
-                                                if let Some((prefix_type, suffix_type)) = candidate.rsplit_once('.')
-                                                {
-                                                    if let Ok(owner) = self.loader.load_model(prefix_type) {
-                                                        if let Some((_, base)) = owner
-                                                            .type_aliases
-                                                            .iter()
-                                                            .find(|(a, _)| a == suffix_type)
-                                                        {
-                                                            let base =
-                                                                resolve_type_alias(&owner.type_aliases, base);
-                                                            if is_primitive(&base) {
-                                                                flat.declarations.push(Declaration {
-                                                                    type_name: base.clone(),
-                                                                    name: full_path.clone(),
-                                                                    replaceable: decl.replaceable,
-                                                                    constrainedby_type: decl.constrainedby_type.clone(),
-                                                                    is_parameter: decl.is_parameter,
-                                                                    is_flow: decl.is_flow,
-                                                                    is_stream: decl.is_stream,
-                                                                    is_discrete: decl.is_discrete,
-                                                                    is_input: decl.is_input,
-                                                                    is_output: decl.is_output,
-                                                                    is_inner: decl.is_inner,
-                                                                    is_outer: decl.is_outer,
-                                                                    is_public: decl.is_public,
-                                                                    is_protected: decl.is_protected,
-                                                                    start_value: if let Some(val) = &decl.start_value {
-                                                                        let sub = self.substitute(val, &context);
-                                                                        if is_array {
-                                                                            Some(index_expression(&sub, i))
-                                                                        } else {
-                                                                            Some(sub)
-                                                                        }
-                                                                    } else {
-                                                                        None
-                                                                    },
-                                                                    array_size: None,
-                                                                    modifications: Vec::new(),
-                                                                    is_rest: decl.is_rest,
-                                                                    annotation: None,
-                                                                    condition: None,
-                                                                });
-                                                                flat.register_inst_path(
-                                                                    full_path.clone(),
-                                                                    base,
-                                                                    if is_array { Some(i as usize) } else { None },
-                                                                );
-                                                                continue;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if decl.is_parameter
-                                        && (resolved_type.eq_ignore_ascii_case("distribution")
-                                            || resolved_type.contains("PartialDistribution")
-                                            || resolved_type.contains(".Distributions.Interfaces.")
-                                            || resolved_type.ends_with(".Distribution")
-                                            || resolved_type == "Types.Dynamics"
-                                            || resolved_type.ends_with(".Types.Dynamics"))
-                                    {
-                                        let fallback_type_name = if resolved_type == "Types.Dynamics"
-                                            || resolved_type.ends_with(".Types.Dynamics")
-                                        {
-                                            "Integer"
-                                        } else {
-                                            "Real"
-                                        };
-                                        flat.declarations.push(Declaration {
-                                            type_name: fallback_type_name.to_string(),
-                                            name: full_path.clone(),
-                                            replaceable: decl.replaceable,
-                                            constrainedby_type: decl.constrainedby_type.clone(),
-                                            is_parameter: decl.is_parameter,
-                                            is_flow: decl.is_flow,
-                                            is_stream: decl.is_stream,
-                                            is_discrete: decl.is_discrete,
-                                            is_input: decl.is_input,
-                                            is_output: decl.is_output,
-                                            is_inner: decl.is_inner,
-                                            is_outer: decl.is_outer,
-                                            is_public: decl.is_public,
-                                            is_protected: decl.is_protected,
-                                            start_value: if let Some(val) = &decl.start_value {
-                                                Some(self.substitute(val, &context))
-                                            } else {
-                                                Some(Expression::Number(0.0))
-                                            },
-                                            array_size: None,
-                                            modifications: Vec::new(),
-                                            is_rest: decl.is_rest,
-                                            annotation: None,
-                                            condition: None,
-                                        });
-                                        flat.register_inst_path(
-                                            full_path.clone(),
-                                            fallback_type_name.to_string(),
-                                            if is_array { Some(i as usize) } else { None },
-                                        );
-                                        continue;
-                                    }
-                                    if resolved_type == "Types.Dynamics"
-                                        || resolved_type.ends_with(".Types.Dynamics")
-                                    {
-                                        flat.declarations.push(Declaration {
-                                            type_name: "Integer".to_string(),
-                                            name: full_path.clone(),
-                                            replaceable: decl.replaceable,
-                                            constrainedby_type: decl.constrainedby_type.clone(),
-                                            is_parameter: decl.is_parameter,
-                                            is_flow: decl.is_flow,
-                                            is_stream: decl.is_stream,
-                                            is_discrete: true,
-                                            is_input: decl.is_input,
-                                            is_output: decl.is_output,
-                                            is_inner: decl.is_inner,
-                                            is_outer: decl.is_outer,
-                                            is_public: decl.is_public,
-                                            is_protected: decl.is_protected,
-                                            start_value: Some(Expression::Number(0.0)),
-                                            array_size: None,
-                                            modifications: Vec::new(),
-                                            is_rest: decl.is_rest,
-                                            annotation: None,
-                                            condition: None,
-                                        });
-                                        flat.register_inst_path(
-                                            full_path.clone(),
-                                            "Integer".to_string(),
-                                            if is_array { Some(i as usize) } else { None },
-                                        );
-                                        continue;
-                                    }
-                                    return match e {
-                                        LoadError::NotFound(_) => Err(FlattenError::UnknownType(
-                                            resolved_type.clone(),
-                                            full_path.clone(),
-                                            loc,
-                                        )),
-                                        _ => Err(FlattenError::Load(e)),
-                                    };
-                                }
-                            };
-
-                            if let Some((_, base)) = sub_model
-                                .type_aliases
-                                .iter()
-                                .find(|(a, _)| a == &sub_model.name)
-                            {
-                                let base = resolve_type_alias(&sub_model.type_aliases, base);
-                                if is_primitive(&base) {
-                                    flat.declarations.push(Declaration {
-                                        type_name: base.clone(),
-                                        name: full_path.clone(),
-                                        replaceable: decl.replaceable,
-                                        constrainedby_type: decl.constrainedby_type.clone(),
-                                        is_parameter: decl.is_parameter,
-                                        is_flow: decl.is_flow,
-                                        is_stream: decl.is_stream,
-                                        is_discrete: decl.is_discrete,
-                                        is_input: decl.is_input,
-                                        is_output: decl.is_output,
-                                        is_inner: decl.is_inner,
-                                        is_outer: decl.is_outer,
-                                        is_public: decl.is_public,
-                                        is_protected: decl.is_protected,
-                                        start_value: if let Some(val) = &decl.start_value {
-                                            let sub = self.substitute(val, &context);
-                                            if is_array {
-                                                Some(index_expression(&sub, i))
-                                            } else {
-                                                Some(sub)
-                                            }
-                                        } else {
-                                            None
-                                        },
-                                        array_size: None,
-                                        modifications: Vec::new(),
-                                        is_rest: decl.is_rest,
-                                        annotation: None,
-                                        condition: None,
-                                    });
-                                    flat.register_inst_path(
-                                        full_path.clone(),
-                                        base.clone(),
-                                        if is_array { Some(i as usize) } else { None },
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            if let Some(cached) =
-                                self.inheritance_flat_template_cache.get(resolved_type.as_str())
-                            {
-                                crate::query_db::perf_record_add(
-                                    "inherit_flat_template_cache_hit",
-                                    1,
-                                );
-                                sub_model = Arc::clone(cached);
-                            } else {
-                                crate::query_db::perf_record_add(
-                                    "inherit_flat_template_cache_miss",
-                                    1,
-                                );
-                                let decl_expand_flatten_inheritance_t0 = std::time::Instant::now();
-                                self.flatten_inheritance(&mut sub_model, &resolved_type)?;
-                                crate::query_db::perf_record_us(
-                                    "decl_expand_flatten_inheritance_us",
-                                    decl_expand_flatten_inheritance_t0.elapsed().as_micros() as u64,
-                                );
-                                self.inheritance_flat_template_cache.insert(
-                                    resolved_type.clone(),
-                                    Arc::clone(&sub_model),
-                                );
-                            }
-                            let mod_ctx = ModifyContext::for_declaration_expand(
+                                decl,
+                                resolved_type,
+                                &full_path,
                                 current_qualified,
                                 &msl_import_context,
-                                self.coarse_constrainedby_only,
-                                self.validation_mode,
-                                self.compile_stop_label.as_str(),
-                            );
-                            let decl_expand_apply_modification_t0 = std::time::Instant::now();
-                            for modification in &decl.modifications {
-                                apply_modification_to_model(
-                                    Arc::make_mut(&mut sub_model),
-                                    modification,
-                                    &mod_ctx,
-                                    Some(&mut self.loader),
-                                )?;
-                            }
-                            crate::query_db::perf_record_us(
-                                "decl_expand_apply_modification_us",
-                                decl_expand_apply_modification_t0.elapsed().as_micros() as u64,
-                            );
+                                loc,
+                                &context,
+                                is_array,
+                                i,
+                                resolved_state_select,
+                                flat,
+                            )?
+                            else {
+                                continue;
+                            };
 
-                            // Bindings like `PlugToPins_n plugToPins_n(final m=m)` store the RHS in the
-                            // child parameter `start_value` as a bare `m` that refers to the enclosing
-                            // component. Substitute in the parent's `context` so nested array sizes
-                            // (e.g. polyphase `pin[m]`) can be evaluated before the child Process task.
-                            // When the substituted expression is const-foldable (e.g. `mSystems` from
-                            // `numberOfSymmetricBaseSystems(m)`), replace with `Expression::Number`.
-                            let decl_expand_param_substitute_fold_t0 = std::time::Instant::now();
-                            for d in Arc::make_mut(&mut sub_model).declarations.iter_mut() {
-                                if d.is_parameter {
-                                    if let Some(v) = &d.start_value {
-                                        let subbed = self.substitute(v, &context);
-                                        let folded =
-                                            match eval_const_expr_with_param_exprs(
-                                                &subbed,
-                                                &context,
-                                                &local_array_sizes,
-                                            ) {
-                                                Some(n) if n.is_finite() => Expression::Number(n),
-                                                _ => subbed,
-                                            };
-                                        d.start_value = Some(folded);
-                                    }
-                                }
-                            }
-                            crate::query_db::perf_record_us(
-                                "decl_expand_param_substitute_fold_us",
-                                decl_expand_param_substitute_fold_t0.elapsed().as_micros() as u64,
-                            );
-
-                            flat.instances.insert(full_path.clone(), resolved_type.clone());
-                            flat.register_inst_path(
-                                full_path.clone(),
-                                resolved_type.clone(),
-                                if is_array { Some(i as usize) } else { None },
-                            );
-
-                            // Mark expandable connector instances for dynamic member injection.
-                            if sub_model.is_expandable {
-                                flat.expandable_instances.insert(full_path.clone());
-                            }
-
-                            // Reject instantiation of partial models (MLS 4.4.2).
-                            // Replaceable components are exempt: their partial default type is a
-                            // legal interface placeholder until redeclared.
-                            if sub_model.is_partial && !decl.replaceable {
-                                return Err(FlattenError::PartialModelInstantiated {
-                                    partial_type: resolved_type.clone(),
-                                    instance_path: full_path.clone(),
-                                });
-                            }
-
-                            // Register inner declarations so outer references can resolve.
-                            if decl.is_inner {
-                                let raw_type = resolve_type_alias(&model.type_aliases, &decl.type_name);
-                                self.inner_declarations.insert(
-                                    format!("__inner_{}_{}", raw_type, decl.name),
-                                    full_path.clone(),
+                            // type X = Real[n] (and name-matching aliases): expand as primitive.
+                            if let Some((prim, arr_n)) = effective_primitive_alias(sub_model.as_ref())
+                                .or_else(|| {
+                                    let resolved =
+                                        resolve_type_alias(&sub_model.type_aliases, &sub_model.name);
+                                    split_primitive_array_type(&resolved)
+                                })
+                            {
+                                let start_value = self.elem_start_value(
+                                    &each_start,
+                                    &decl.start_value,
+                                    &context,
+                                    is_array,
+                                    i,
                                 );
-                                self.inner_declarations.insert(
-                                    format!("__inner_type_{}", raw_type),
-                                    full_path.clone(),
+                                push_primitive_alias_components(
+                                    flat,
+                                    &full_path,
+                                    &prim,
+                                    arr_n,
+                                    decl,
+                                    start_value,
+                                    resolved_state_select,
+                                    if is_array { Some(i as usize) } else { None },
                                 );
+                                continue;
                             }
 
-                            if mode == ExpandDeclMode::DeclAndSubEq {
-                                stack.push(Task::ExpandEquations {
-                                    model: Arc::clone(&sub_model),
-                                    prefix: full_path.clone(),
-                                });
-                            }
-                            // Only expand each distinct type once per flatten pass.
-                            // Shared base classes (e.g. SISO for PID + TransferFunction)
-                            // are already flattened; re-expanding them on every instance
-                            // causes combinatorial task explosion.
-                            if expanded_types.insert(resolved_type.clone()) {
-                                stack.push(Task::Process {
-                                    model: sub_model,
-                                    prefix: full_path,
-                                    current_model_name: Some(resolved_type),
-                                    msl_import_context: msl_import_context.clone(),
-                                });
-                            }
+                            self.finish_composite_instance(
+                                &mut stack,
+                                flat,
+                                model.as_ref(),
+                                decl,
+                                sub_model,
+                                resolved_type,
+                                full_path,
+                                current_qualified,
+                                &msl_import_context,
+                                &each_start,
+                                &context,
+                                &local_array_sizes,
+                                is_array,
+                                i,
+                                resolved_state_select,
+                                mode,
+                                &mut expanded_types,
+                            )?;
                         }
                     }
                     crate::query_db::perf_record_us(
@@ -903,5 +534,22 @@ impl crate::flatten::Flattener {
         }
 
         Ok(())
+    }
+
+    fn elem_start_value(
+        &mut self,
+        preferred: &Option<Expression>,
+        fallback: &Option<Expression>,
+        context: &HashMap<String, Expression>,
+        is_array: bool,
+        i: usize,
+    ) -> Option<Expression> {
+        let raw = preferred.as_ref().or(fallback.as_ref())?;
+        let sub = self.substitute(raw, context);
+        Some(if is_array {
+            index_expression(&sub, i)
+        } else {
+            sub
+        })
     }
 }

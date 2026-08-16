@@ -16,6 +16,8 @@ import type { WelcomeIntent, WelcomeTab } from "../shell/WelcomeOverlay";
 import { useStudioEdit } from "./useStudioEdit";
 import { emptySession, useStudioProject } from "./useStudioProject";
 import { useStudioSim, type ResultsTab } from "./useStudioSim";
+import { pickJsonFile, readTextFile } from "../api/studio";
+import { importIdeDiagram } from "../import/ideDiagram";
 import {
   displayEndValues,
   seriesKeysForEdge,
@@ -313,6 +315,55 @@ export function useStudioSession() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const doImportIde = async () => {
+    const hasWork = edit.dirty || edit.diagram.nodes.length > 0;
+    if (hasWork) {
+      if (edit.dirty) {
+        if (!confirmDiscardUnsaved(true)) return;
+      } else if (!window.confirm(t("importReplaceConfirm"))) {
+        return;
+      }
+    }
+    const path = await pickJsonFile();
+    if (!path) return;
+    try {
+      const text = await readTextFile(path);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        setStatus(tf("errIdeImport", { error: String(e) }));
+        return;
+      }
+      const result = importIdeDiagram(parsed, project.catalog);
+      if (!result.ok) {
+        setStatus(tf("errIdeImport", { error: result.error }));
+        return;
+      }
+      edit.importRootDiagram(result.diagram);
+      project.setManifest({ ...project.manifest, modelName: result.diagram.modelName });
+      if (result.alreadyStudio) {
+        setStatus(
+          tf("statusIdeImportedStudio", {
+            nodes: result.diagram.nodes.length,
+            edges: result.diagram.edges.length,
+          }),
+        );
+      } else {
+        setStatus(
+          tf("statusIdeImported", {
+            nodes: result.diagram.nodes.length,
+            edges: result.diagram.edges.length,
+            unmatched: result.unmatchedTypes.length,
+            skipped: result.skippedEdges,
+          }),
+        );
+      }
+    } catch (e) {
+      setStatus(tf("errIdeImport", { error: String(e) }));
+    }
+  };
+
   const crumbLabels = edit.viewStack.map((id) => {
     if (id === "root") return project.manifest.modelName;
     return edit.subsystems[id]?.modelName ?? id;
@@ -340,6 +391,7 @@ export function useStudioSession() {
     onEmitCoder: () => sim.openExportWizard("coder"),
     onEmitFmu: () => sim.openExportWizard("fmu-cs"),
     onImportFmu: () => void project.doImportFmu(),
+    onImportIde: () => void doImportIde(),
     onWrapMo: () => void project.doWrapMo(),
     onImportPack: () => void project.doImportPack(),
     onExportPack: () => void project.doExportPack(),

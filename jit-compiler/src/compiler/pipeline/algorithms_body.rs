@@ -1,5 +1,6 @@
 pub(crate) fn build_runtime_algorithms(
     flat_model: &FlattenedModel,
+    discrete_vars: &[String],
     stage_trace: bool,
 ) -> Vec<AlgorithmStatement> {
     if stage_trace {
@@ -12,6 +13,7 @@ pub(crate) fn build_runtime_algorithms(
         .iter()
         .filter(|d| d.is_discrete || flat_model.clocked_var_names.contains(&d.name))
         .map(|d| d.name.clone())
+        .chain(discrete_vars.iter().cloned())
         .collect();
     let lhs_root_var = |e: &Expression| -> Option<String> {
         match e {
@@ -56,24 +58,28 @@ pub(crate) fn build_runtime_algorithms(
             Equation::Terminate(msg) => algorithms.push(equation_convert::convert_eq_to_alg_stmt(
                 Equation::Terminate(normalize_der(msg)),
             )),
-            Equation::If(cond, then_eqs, elseif_list, else_eqs) => algorithms.push(
-                equation_convert::convert_eq_to_alg_stmt(Equation::If(
-                    normalize_der(cond),
-                    then_eqs.iter().map(normalize_simple_equation).collect(),
-                    elseif_list
-                        .iter()
-                        .map(|(elseif_cond, body)| {
-                            (
-                                normalize_der(elseif_cond),
-                                body.iter().map(normalize_simple_equation).collect(),
-                            )
-                        })
-                        .collect(),
-                    else_eqs
-                        .as_ref()
-                        .map(|eqs| eqs.iter().map(normalize_simple_equation).collect()),
-                )),
-            ),
+            Equation::If(cond, then_eqs, elseif_list, else_eqs) => {
+                if crate::analysis::connection_if_is_static(cond, elseif_list) {
+                    // Taken branch already lowered into continuous_eqs for BLT.
+                } else {
+                    algorithms.push(equation_convert::convert_eq_to_alg_stmt(Equation::If(
+                        normalize_der(cond),
+                        then_eqs.iter().map(normalize_simple_equation).collect(),
+                        elseif_list
+                            .iter()
+                            .map(|(elseif_cond, body)| {
+                                (
+                                    normalize_der(elseif_cond),
+                                    body.iter().map(normalize_simple_equation).collect(),
+                                )
+                            })
+                            .collect(),
+                        else_eqs
+                            .as_ref()
+                            .map(|eqs| eqs.iter().map(normalize_simple_equation).collect()),
+                    )));
+                }
+            }
             _ => {}
         }
     }

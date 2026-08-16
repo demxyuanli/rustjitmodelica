@@ -1,6 +1,6 @@
 # Modai Studio × Simulink 能力对照
 
-日期：2026-07-21  
+日期：2026-07-21（修订：2026-08-16 离散逻辑宿主）  
 目的：以 Simulink（含 Library Browser / Model Editor / Simulation / Simscape 类比）为功能参照，补全 Modai Studio 的需求与分期，**不是**逐功能复刻 MATLAB/Simulink。  
 语义底座：Modelica + `rustmodlica`（因果信号流 Blocks ≈ Simulink；非因果物理域 ≈ Simscape）。
 
@@ -11,13 +11,13 @@
 | ------------------------- | ------------------------------------------ |
 | Simulink（信号/控制系统框图）       | 一等公民：Blocks 信号流建模                          |
 | Simscape（物理网络）            | 一等公民（分期）：Electrical / Mechanical connector |
-| Stateflow                 | 不做独立状态机产品；可用 when/if 子集远期探索                |
+| Stateflow                 | **Out（产品）**。模式/顺序走 Modelica：`when`/Logical；多步用同图 `Modelica.StateGraph` 块。不做 Chart、JSON 状态图、StateGraph2。第 17 章不进 Studio |
 | Embedded Coder / HDL      | 非目标；远期或走 FMU/C emit（编译器已有能力另议）             |
 | Simulink Test / Coverage  | 非目标（可用外部 regress-harness）                  |
 | MATLAB 工作区 / App Designer | 非目标；Studio 自含项目与曲线                         |
 
 
-原则：**交互形态学 Simulink，语义学 Modelica**。
+原则：**交互形态学 Simulink，语义学 Modelica**。主路（画布 → `emit_mo` → `.mo` → JIT）不因没有 Chart 而改向。
 
 ### 1.1 相对 jit-compiler 的完整度结论（摘要）
 
@@ -32,6 +32,19 @@
 | P3 Future | **Partial**（有 emit-fmu/c；无真暂停/完整 Coder） |
 
 对照 Simulink 只为排**交互主路径**优先级，不是承诺兼容或替换 Simulink。
+
+### 1.2 离散/顺序：不是 Stateflow 功能组合
+
+Stateflow 把模式、顺序、动作、时序捆在一张 Chart 里。Modelica 不这样捆，Studio 也不再叠一套：
+
+| 选项 | 地位 |
+|------|------|
+| `when` / `if` / `reinit` / Logical 块 | 连续对象上的切模式。现有能力。 |
+| `Modelica.StateGraph` | MSL 4 **仍有** `StateGraph.mo`（单文件包）。Grafcet 块 + `connect`。图可以画错还不报错，能力旧，但是合规且接现有 emit。Studio F95 catalog（InitialStep/Step/Transition）已落地。 |
+| `Modelica_StateGraph2` | 更强，**不完全符合 Modelica**，不用作宿主。 |
+| MLS 第 17 章 `state`/`transition` | 时钟化离散控制器。从 MLS 3.3 进规范，3.4+ 仍在。JIT **未实现**。做成 ≠ StateGraph 库。Studio 不排期。 |
+
+不要：独立 Chart 画布、`statechart.json`、把 Simulink 功能清单当语义目标。
 
 ## 2. 能力域总览（分期）
 
@@ -270,7 +283,7 @@
 2. **语义边界**：信号流保持因果连接；物理域保持非因果 `connect`；禁止用信号线伪连接电气 pin（规则引擎强制）。
 3. **Scope 策略**：P0 采用“全局结果面板”（类似一开即用的 Data 可视化），降低必须放置 Scope 块的门槛；P1 再补画布 Sink。
 4. **层级策略**：无子系统也可完成 MVP；P2 前数据结构需预留 `parentId` / 子文档引用（见数据结构补丁）。
-5. **不做清单固化**：Stateflow 产品化、Embedded Coder 级生成、HIL、MATLAB 工作区互操作 = Out。
+5. **不做清单固化**：Stateflow 产品化、JSON 状态图、StateGraph2 宿主、第 17 章 Studio 编辑器、Embedded Coder 级生成、HIL、MATLAB 工作区互操作 = Out。需要顺序图时只加 MSL `StateGraph` 块。
 
 
 
@@ -294,6 +307,6 @@
 
 - [ ] 同意“交互学 Simulink / 语义学 Modelica”
 - [ ] 同意 P0 Scope = 全局曲线面板（非强制 Scope 块）
-- [ ] 同意 Stateflow / Embedded Coder / HIL 为 Out
+- [ ] 同意 Stateflow Chart / JSON 状态图 / StateGraph2 / 第 17 章 Studio 编辑器为 Out；顺序逻辑用同图 `Modelica.StateGraph`
 - [ ] 同意 M4=Core、M5=Pro 的分期
 - [ ] Catalog 名单可按编译器支持度替换（保持数量级）

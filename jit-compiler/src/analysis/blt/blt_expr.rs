@@ -312,6 +312,9 @@ pub(super) fn simplify_expr(expr: &Expression) -> Expression {
                     );
                 }
             }
+            if sl == sr {
+                return make_num(0.0);
+            }
             Expression::BinaryOp(Box::new(sl), Operator::Sub, Box::new(sr))
         }
         BinaryOp(l, Operator::Div, r) => {

@@ -11,6 +11,9 @@ mod expr_emit;
 mod external;
 mod files;
 mod solvable_emit;
+pub mod coder_package;
+
+pub use coder_package::{write_coder_package, CoderPackageInfo};
 
 use crate::ast::{Equation, Expression};
 use crate::compiler::equation_convert::parse_array_index as parse_array_index_impl;

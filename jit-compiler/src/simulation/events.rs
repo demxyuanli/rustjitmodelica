@@ -248,15 +248,9 @@ pub(crate) fn run_event_iteration_at_time(
         pre_discrete_vals.len(),
         discrete_vals.len()
     );
-    // Pure algebraic, signal-free models can safely skip derivative evaluation.
-    // This avoids invoking generated derivative code paths that assume ODE state
-    // storage exists even when the model has zero states.
-    if states.is_empty() && when_count == 0 && crossings.is_empty() {
-        if outputs.len() == output_start_vals.len() {
-            outputs.copy_from_slice(output_start_vals);
-        }
-        return Ok(EventIterationOutcome::Completed);
-    }
+    // Algebraic-only models (no continuous states / when / crossings) still need
+    // calc_derivs so time-dependent outputs (Blocks.Sine, SineVoltage, ...) update.
+    // Falling through to the event loop evaluates once and converges immediately.
 
     fn sample_active(time: f64, start: f64, interval: f64) -> bool {
         const SAMPLE_EPS: f64 = 1e-9;
@@ -713,4 +707,89 @@ pub(crate) fn run_event_iteration_at_time(
     }
 
     Ok(EventIterationOutcome::Completed)
+}
+
+fn buffers_differ(a: &[f64], b: &[f64]) -> bool {
+    a.iter()
+        .zip(b.iter())
+        .any(|(x, y)| (x - y).abs() > 1e-12)
+}
+
+/// After event iteration, `pre(x)` is still the left-limit. Discrete registers
+/// such as StateGraph `active = pre(newActive)` therefore still show the
+/// pre-event value. Commit `pre := x` and re-evaluate so the sample at this
+/// event time records the right-limit, and so the following continuous step
+/// also uses post-event `pre()`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn commit_pre_after_event_and_reeval(
+    time: f64,
+    t_end: f64,
+    calc_derivs: CalcDerivsFunc,
+    when_count: usize,
+    states: &mut [f64],
+    discrete_vals: &mut [f64],
+    derivs: &mut [f64],
+    params: &[f64],
+    outputs: &mut [f64],
+    when_states: &mut [f64],
+    crossings: &mut [f64],
+    pre_states: &mut [f64],
+    pre_discrete_vals: &mut [f64],
+    homotopy_lambda_ptr: *const f64,
+    diag_residual: &mut f64,
+    diag_res_ptr: *mut f64,
+    diag_x_ptr: *mut f64,
+) -> Result<(), String> {
+    if !buffers_differ(pre_discrete_vals, discrete_vals)
+        && !buffers_differ(pre_states, states)
+    {
+        return Ok(());
+    }
+    pre_states.copy_from_slice(states);
+    pre_discrete_vals.copy_from_slice(discrete_vals);
+    if when_count > 0 {
+        for i in 0..when_count {
+            when_states[i * 2 + 1] = 0.0;
+        }
+    }
+    unsafe {
+        native::suppress_assert_begin();
+        let status = (calc_derivs)(
+            time,
+            states.as_mut_ptr(),
+            discrete_vals.as_mut_ptr(),
+            derivs.as_mut_ptr(),
+            params.as_ptr(),
+            outputs.as_mut_ptr(),
+            when_states.as_mut_ptr(),
+            crossings.as_mut_ptr(),
+            pre_states.as_ptr(),
+            pre_discrete_vals.as_ptr(),
+            t_end,
+            diag_res_ptr,
+            diag_x_ptr,
+            homotopy_lambda_ptr,
+        );
+        native::suppress_assert_end();
+        if status != 0
+            && !allow_zero_residual_newton(status, *diag_residual)
+            && !allow_algebraic_newton_fallback(status, states.len())
+        {
+            return Err(format!(
+                "Restart eval after event failed at t={:.4} with status {}",
+                time, status
+            ));
+        }
+    }
+    fail_if_assert_storm("event-restart", time)?;
+    if when_count > 0 {
+        for i in 0..when_count {
+            when_states[i * 2] = when_states[i * 2 + 1];
+        }
+    }
+    // Vars updated by the restart eval (e.g. active) must also have pre(y)=y
+    // for the subsequent continuous interval.
+    pre_states.copy_from_slice(states);
+    pre_discrete_vals.copy_from_slice(discrete_vals);
+    Ok(())
 }

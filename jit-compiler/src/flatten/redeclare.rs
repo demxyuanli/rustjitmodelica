@@ -136,6 +136,7 @@ pub fn apply_modification_to_model(
                     each: modification.each,
                     redeclare: modification.redeclare,
                     redeclare_type: modification.redeclare_type.clone(),
+                    nested: modification.nested.clone(),
                     is_inner: modification.is_inner,
                     is_outer: modification.is_outer,
                     is_public: modification.is_public,
@@ -219,9 +220,15 @@ pub fn apply_modification_to_model(
             if let Some(ref t) = modification.redeclare_type {
                 decl.type_name = t.clone();
             }
+            if modification.value.is_some() {
+                decl.start_value = modification.value.clone();
+            }
+        } else if modification.value.is_some() {
             decl.start_value = modification.value.clone();
-        } else {
-            decl.start_value = modification.value.clone();
+        }
+        // Class modifications: `comp(a=1, b=2)` / `redeclare T comp(a=1)`.
+        for nested in &modification.nested {
+            decl.modifications.push(nested.clone());
         }
         matched = true;
     }

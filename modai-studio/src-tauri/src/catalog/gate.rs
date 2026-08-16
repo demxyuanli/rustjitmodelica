@@ -132,6 +132,25 @@ fn classify(e: &CatalogEntry) -> GateInventoryEntry {
             tags,
         };
     }
+    if e.id.starts_with("stategraph.")
+        || e.type_name.contains("StateGraph.")
+        || e.category.eq_ignore_ascii_case("StateGraph")
+    {
+        return GateInventoryEntry {
+            id: e.id.clone(),
+            type_name: e.type_name.clone(),
+            domain: e.domain.clone(),
+            category: e.category.clone(),
+            group: "other".into(),
+            gate: "skip".into(),
+            skip_reason: Some(
+                "StateGraph blocks need inner StateGraphRoot + nIn/nOut harness (bundled example)"
+                    .into(),
+            ),
+            requires_library: e.requires_library.clone(),
+            tags,
+        };
+    }
     // Goto/From alone are incomplete; covered by emit golden P524.
     if e.id.contains("goto") || e.id.contains(".from") || e.id.ends_with(".from") {
         return GateInventoryEntry {

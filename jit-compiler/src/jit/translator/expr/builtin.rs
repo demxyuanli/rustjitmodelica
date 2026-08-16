@@ -45,6 +45,12 @@ pub(super) fn try_compile_builtin_call(
     if crate::jit::jit_policy::strict_function_builtin() {
         return None;
     }
+    // Known scalar math (including Modelica.Math.*) must reach the import/native path.
+    // The namespace-helper passthrough below would otherwise turn sin(x) into x and wipe
+    // Sine/Cosine sources (RateTransitionDemo / Blocks.Sources.Sine).
+    if is_registered_scalar_math(func_name) {
+        return None;
+    }
     // Generic namespace helper fallback: package-qualified helper calls are often not linked as
     // standalone symbols in validate mode. Degrade to passthrough placeholder.
     if let Some(head) = func_name.split('.').next() {
@@ -70,6 +76,39 @@ pub(super) fn try_compile_builtin_call(
         }
     }
     None
+}
+
+/// Tail names registered in `native::visit_builtin_symbols` for f64 math (plain + Modelica.Math.*).
+fn is_registered_scalar_math(func_name: &str) -> bool {
+    let tail = func_name.rsplit('.').next().unwrap_or(func_name);
+    matches!(
+        tail,
+        "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "atan2"
+            | "sinh"
+            | "cosh"
+            | "tanh"
+            | "sqrt"
+            | "exp"
+            | "log"
+            | "log10"
+            | "abs"
+            | "ceil"
+            | "floor"
+            | "mod"
+            | "rem"
+            | "sign"
+            | "min"
+            | "max"
+            | "div"
+            | "integer"
+            | "pow"
+    )
 }
 
 /// Placeholder-only builtins (constant return, no args). Used from compile_pre_expression

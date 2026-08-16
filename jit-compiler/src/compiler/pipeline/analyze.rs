@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::analysis::{sort_algebraic_equations, AnalysisOptions};

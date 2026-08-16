@@ -87,12 +87,12 @@ fn build_der_map(equations: &[Equation]) -> HashMap<String, Expression> {
     der_map
 }
 
-pub(super) fn try_index_reduction(
+    pub(super) fn try_index_reduction(
     equations: &[Equation],
     assigned_var: &[Option<usize>],
     _assigned_eq: &[Option<usize>],
     unknown_list: &[String],
-    state_vars: &[String],
+    state_vars: &mut Vec<String>,
     options: &AnalysisOptions,
 ) -> Option<Vec<Equation>> {
     fn normalize_index_method(method: &str) -> &str {
@@ -193,34 +193,68 @@ pub(super) fn try_index_reduction(
             let mut diff_vars = HashSet::new();
             collect_vars_expr(&diff_simplified, &mut diff_vars);
 
-            // Find a state variable whose der_x appears in the differentiated constraint
-            let mut best_state: Option<String> = None;
-            for sv in state_vars {
-                let der_name = format!("der_{}", sv);
-                if diff_vars.contains(&der_name) {
-                    best_state = Some(sv.clone());
-                    break;
-                }
-            }
-
-            // Fallback: if differentiated constraint has no der_ vars but has state vars,
-            // pick the first state variable that appears in the constraint itself.
-            if best_state.is_none() {
+            // Prefer StateSelect.avoid Body absolutes as dummy candidates so
+            // StateSelect.prefer joint DOFs remain independent states.
+            let is_always = |sv: &str| {
+                options
+                    .state_select_ranks
+                    .get(sv)
+                    .copied()
+                    .unwrap_or(crate::ast::StateSelect::Default)
+                    == crate::ast::StateSelect::Always
+            };
+            let mut candidates: Vec<&String> = state_vars
+                .iter()
+                .filter(|sv| {
+                    if is_always(sv) {
+                        return false;
+                    }
+                    let der_name = format!("der_{}", sv);
+                    diff_vars.contains(&der_name)
+                })
+                .collect();
+            if candidates.is_empty() {
                 let mut residual_vars = HashSet::new();
                 collect_vars_expr(&residual, &mut residual_vars);
-                for sv in state_vars {
-                    if residual_vars.contains(sv) {
-                        best_state = Some(sv.clone());
-                        break;
-                    }
-                }
+                candidates = state_vars
+                    .iter()
+                    .filter(|sv| !is_always(sv) && residual_vars.contains(sv.as_str()))
+                    .collect();
             }
+            candidates.sort_by_key(|sv| {
+                // Lower key = preferred dummy (demote from independent state).
+                let ss = options
+                    .state_select_ranks
+                    .get(sv.as_str())
+                    .copied()
+                    .unwrap_or(crate::ast::StateSelect::Default);
+                match ss {
+                    crate::ast::StateSelect::Never => 0u8,
+                    crate::ast::StateSelect::Avoid => 1,
+                    crate::ast::StateSelect::Default => {
+                        let body_avoid = sv.contains("_body_")
+                            || sv.contains("_r_0")
+                            || sv.contains("_v_0")
+                            || sv.contains("_w_a")
+                            || sv.contains("_body_Q")
+                            || sv.contains("_phi_d");
+                        if body_avoid {
+                            1
+                        } else {
+                            2
+                        }
+                    }
+                    crate::ast::StateSelect::Prefer => 3,
+                    crate::ast::StateSelect::Always => 4,
+                }
+            });
+            let best_state = candidates.first().map(|s| (*s).clone());
             if let Some(state_var) = best_state {
                 let der_name = format!("der_{}", state_var);
                 let dummy_name = format!("$dummy_{}", der_name);
                 let mut new_eqs = equations.to_vec();
 
-                // Replace the constraint with: $dummy_der_x = 0 (placeholder; Newton will solve)
+                // Replace the constraint with: $dummy_der_x = der_x
                 // The differentiated constraint becomes a new equation that replaces it
                 new_eqs[eq_idx] = Equation::Simple(
                     Expression::var(&dummy_name),
@@ -230,9 +264,12 @@ pub(super) fn try_index_reduction(
                 // Add the differentiated constraint as a new residual equation
                 new_eqs.push(Equation::Simple(diff_simplified, Expression::Number(0.0)));
 
+                // Dummy-derivative: selected state is no longer an independent integrator.
+                state_vars.retain(|s| s != &state_var);
+
                 eprintln!(
-                    "[index-reduction] dummy derivative: {} replaces {} in constraint {}",
-                    dummy_name, der_name, eq_idx
+                    "[index-reduction] dummy derivative: {} replaces {} (state {} demoted) in constraint {}",
+                    dummy_name, der_name, state_var, eq_idx
                 );
                 return Some(new_eqs);
             }
@@ -289,6 +326,7 @@ mod tests {
             index_reduction_method: "pantelides".to_string(),
             tearing_method: "first".to_string(),
             quiet: true,
+            state_select_ranks: Default::default(),
         }
     }
 
@@ -325,14 +363,14 @@ mod tests {
         let assigned_var = vec![Some(0)];
         let assigned_eq = vec![Some(0)];
         let unknown_list = vec!["der_x".to_string(), "x".to_string()];
-        let state_vars = vec!["x".to_string()];
+        let mut state_vars = vec!["x".to_string()];
 
         let result = try_index_reduction(
             &equations,
             &assigned_var,
             &assigned_eq,
             &unknown_list,
-            &state_vars,
+            &mut state_vars,
             &default_options(),
         );
         assert!(result.is_none(), "Expected no index reduction for index-1 system");

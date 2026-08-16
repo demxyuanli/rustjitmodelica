@@ -43,6 +43,13 @@ pub(super) fn compile_variable_load(
                 offset,
             ));
         }
+        // Dummy-derivative / demoted state: der_x lives as an algebraic output.
+        if let Some(idx) = ctx.output_index(&name) {
+            let offset = (idx * 8) as i32;
+            return Ok(builder
+                .ins()
+                .load(cl_types::F64, MemFlags::new(), ctx.outputs_ptr, offset));
+        }
         return Err(format!(
             "der({}) not found: state variable {} unknown",
             base, base
@@ -114,6 +121,41 @@ pub(super) fn compile_array_access(
         &mut cranelift::frontend::FunctionBuilder<'_>,
     ) -> Result<Value, String>,
 ) -> Result<Value, String> {
+    if let Expression::Call(func, args) = arr_expr {
+        if crate::flatten::expressions::vector_call_indexes_result(func) {
+            if let Some(suf) = flat_index_suffix_for_scalar_name(idx_expr) {
+                if let Ok(idx) = suf.parse::<usize>() {
+                    return super::mb_frames::compile_vector_call_component(
+                        func,
+                        args,
+                        idx,
+                        ctx,
+                        builder,
+                        compile_rec,
+                    );
+                }
+            }
+        }
+    }
+    if matches!(
+        arr_expr,
+        Expression::BinaryOp(_, _, _)
+            | Expression::ArrayLiteral(_)
+            | Expression::If(_, _, _)
+            | Expression::Call(_, _)
+    ) {
+        if let Some(suf) = flat_index_suffix_for_scalar_name(idx_expr) {
+            if let Ok(idx) = suf.parse::<usize>() {
+                return super::mb_frames::load_indexed_arg(
+                    arr_expr,
+                    idx,
+                    ctx,
+                    builder,
+                    compile_rec,
+                );
+            }
+        }
+    }
     if let Some(flat) = expr_to_flat_scalar_prefix(expr) {
         if jit_scalar_name_bound(ctx, &flat) {
             return compile_rec(&Expression::var(&flat), ctx, builder);

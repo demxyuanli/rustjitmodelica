@@ -9,7 +9,8 @@ export function sampleTimeClass(n: DiagramNode): "continuous" | "discrete" | "in
     id.includes("unitdelay") ||
     id.includes("zeroorder") ||
     id.includes("sampler") ||
-    id.includes("ratetransition")
+    id.includes("ratetransition") ||
+    id.includes("stategraph")
   ) {
     return "discrete";
   }

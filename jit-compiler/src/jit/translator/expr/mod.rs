@@ -9,6 +9,7 @@ mod clock_sample;
 mod compile;
 pub(crate) mod helpers;
 mod matrix;
+mod mb_frames;
 mod pre;
 mod variable;
 

@@ -120,6 +120,7 @@ impl ParamPassOptimizer {
                     let update = match context.get(&decl.name) {
                         None => true,
                         Some(Expression::Number(p)) => (n - p).abs() > 1e-12,
+                        Some(Expression::ArrayLiteral(items)) if items.len() != 1 => false,
                         Some(_) => true,
                     };
                     if update {

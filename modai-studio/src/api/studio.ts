@@ -161,6 +161,10 @@ export async function pickDataFile(): Promise<string | null> {
   return invoke("studio_pick_data_file");
 }
 
+export async function pickJsonFile(): Promise<string | null> {
+  return invoke("studio_pick_json_file");
+}
+
 export async function readTextFile(path: string): Promise<string> {
   return invoke("studio_read_text_file", { path });
 }

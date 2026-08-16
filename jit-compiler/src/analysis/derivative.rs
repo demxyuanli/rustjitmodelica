@@ -5,6 +5,7 @@ use std::collections::HashSet;
 pub(crate) fn expand_der_linear(inner: &Expression) -> Option<Expression> {
     use Expression::*;
     match inner {
+        Number(_) => Some(Number(0.0)),
         Variable(id) => Some(Expression::var(&format!("der_{}", resolve_id(*id)))),
         BinaryOp(l, Operator::Add, r) => {
             let dl = expand_der_linear(l)?;
@@ -27,8 +28,31 @@ pub(crate) fn expand_der_linear(inner: &Expression) -> Option<Expression> {
                 Operator::Mul,
                 Box::new(Expression::var(&format!("der_{}", resolve_id(*id)))),
             )),
+            (Number(c), other) => {
+                let d = expand_der_linear(other)?;
+                Some(BinaryOp(Box::new(Number(*c)), Operator::Mul, Box::new(d)))
+            }
+            (other, Number(c)) => {
+                let d = expand_der_linear(other)?;
+                Some(BinaryOp(Box::new(Number(*c)), Operator::Mul, Box::new(d)))
+            }
             _ => None,
         },
+        // mass.s +/- L/2 and similar: der(x/c) = der(x)/c for constant c
+        BinaryOp(l, Operator::Div, r) => {
+            if let Number(c) = r.as_ref() {
+                if c.abs() > 1e-15 {
+                    let d = expand_der_linear(l)?;
+                    return Some(BinaryOp(
+                        Box::new(d),
+                        Operator::Div,
+                        Box::new(Number(*c)),
+                    ));
+                }
+            }
+            None
+        }
+        Call(_, _) | ArrayAccess(_, _) => crate::analysis::frames_der::expand_der_frames_expr(inner),
         _ => None,
     }
 }
@@ -251,6 +275,18 @@ pub fn collect_states_from_eq(eq: &Equation, states: &mut HashSet<String>) {
 
 /// F2-1: Check for der(expr) where expr is not Variable or linear combination (unsupported).
 /// Returns a short error hint if found.
+fn der_inner_hint(inner: &Expression) -> String {
+    match inner {
+        Expression::Call(name, _) => format!("Call({name}, ...)"),
+        Expression::If(_, _, _) => "If(...)".to_string(),
+        Expression::Der(_) => "nested der(...)".to_string(),
+        other => format!("{other:?}")
+            .chars()
+            .take(120)
+            .collect(),
+    }
+}
+
 fn find_unsupported_der_in_expr(expr: &Expression) -> Option<String> {
     match expr {
         Expression::Der(inner) => {
@@ -263,7 +299,10 @@ fn find_unsupported_der_in_expr(expr: &Expression) -> Option<String> {
             } else if matches!(inner.as_ref(), Expression::ArrayAccess(_, _)) {
                 None
             } else {
-                Some("der(expr) only supports der(x) for state variable x or linear combinations of states (e.g. der(a+b), der(c*x)). Unsupported expression in der().".to_string())
+                Some(format!(
+                    "der(expr) only supports der(x) for state variable x or linear combinations of states (e.g. der(a+b), der(c*x)). Unsupported expression in der() ({}).",
+                    der_inner_hint(inner)
+                ))
             }
         }
         Expression::BinaryOp(l, _, r) => {

@@ -53,14 +53,17 @@ pub fn parse_modification_from_pair(
         .iter()
         .find(|p| p.as_rule() == Rule::modification_part)
         .cloned();
+    let (nested, start_from_nested) = if let Some(ref part) = nested_mod_part {
+        parse_modifications_from_modification_part(part.clone())
+    } else {
+        (Vec::new(), None)
+    };
     let val = if let Some(p) = mod_inner.iter().find(|e| e.as_rule() == Rule::expression) {
         Some(expression::parse_expression(p.clone()))
-    } else if let Some(ref part) = nested_mod_part {
-        parse_modifications_from_modification_part(part.clone()).1
     } else {
-        None
+        start_from_nested
     };
-    if !mod_redeclare && val.is_none() && nested_mod_part.is_none() {
+    if !mod_redeclare && val.is_none() && nested.is_empty() {
         return None;
     }
     let is_operator_function = mod_redeclare
@@ -72,6 +75,7 @@ pub fn parse_modification_from_pair(
         each: mod_each,
         redeclare: mod_redeclare,
         redeclare_type: mod_redeclare_type,
+        nested,
         is_inner,
         is_outer,
         is_public,

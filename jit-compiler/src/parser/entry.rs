@@ -25,6 +25,7 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
             Rule::short_class_definition | Rule::type_definition => {
                 let mut alias = String::new();
                 let mut base = String::new();
+                let mut array_dim: Option<String> = None;
                 let mut is_function = false;
                 let mut is_operator_function = false;
                 let mut is_record = false;
@@ -73,6 +74,24 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                                 base = p.as_str().trim().to_string();
                             }
                         }
+                        Rule::array_subscript => {
+                            if array_dim.is_none() {
+                                let mut sub_inner = p.into_inner();
+                                if let Some(dim_inner) = sub_inner.next() {
+                                    let dim_expr = if dim_inner.as_rule() == Rule::subscript_item {
+                                        dim_inner.into_inner().next()
+                                    } else {
+                                        Some(dim_inner)
+                                    };
+                                    if let Some(dim_expr) = dim_expr {
+                                        let raw = dim_expr.as_str().trim();
+                                        if !raw.is_empty() {
+                                            array_dim = Some(raw.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Rule::enumeration_type => {
                             if base.is_empty() {
                                 base = "Integer".to_string();
@@ -103,6 +122,11 @@ pub fn parse_all(input: &str) -> Result<Vec<ClassItem>, pest::error::Error<Rule>
                             }
                         }
                         _ => {}
+                    }
+                }
+                if let Some(dim) = array_dim {
+                    if !base.is_empty() {
+                        base = format!("{base}[{dim}]");
                     }
                 }
                 let alias_copy = alias.clone();

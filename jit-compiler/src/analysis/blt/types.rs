@@ -18,6 +18,8 @@ pub struct SortAlgebraicResult {
     pub alias_map: HashMap<String, Expression>,
     pub index_reduction_rounds: u32,
     pub dummy_derivative_equation_count: usize,
+    /// States removed by dummy-derivative index reduction (became algebraic).
+    pub demoted_states: Vec<String>,
     pub tearing_block_count: usize,
     pub tearing_residual_equation_count: usize,
     pub block_causality: Vec<BlockCausalityInfo>,

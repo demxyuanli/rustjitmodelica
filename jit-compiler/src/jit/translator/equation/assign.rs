@@ -1,6 +1,6 @@
 use crate::ast::{Equation, Expression};
 use crate::jit::context::TranslationContext;
-use crate::jit::translator::expr::compile_expression;
+use crate::jit::translator::expr::{compile_expression, compile_zero_crossing_store};
 use crate::jit::types::ArrayType;
 use cranelift::prelude::types as cl_types;
 use cranelift::prelude::*;
@@ -63,6 +63,7 @@ pub(super) fn compile_simple_equation(
     } else if let Expression::Variable(id) = lhs {
         let var_name = crate::string_intern::resolve_id(*id);
         let val = compile_expression(rhs, ctx, builder)?;
+        compile_zero_crossing_store(rhs, ctx, builder)?;
         if let Some(slot) = ctx.stack_slots.get(&var_name) {
             builder.ins().stack_store(val, *slot, 0);
         } else {

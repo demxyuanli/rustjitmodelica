@@ -16,7 +16,8 @@ use commands::{
     studio_list_examples, studio_list_imported_fmus, studio_open_example,
     studio_pause_simulation, studio_pick_catalog_pack_directory, studio_pick_directory,
     studio_pick_export_directory, studio_pick_fmu_file, studio_pick_mo_file, studio_pick_data_file,
-    studio_read_text_file, studio_project_create, studio_project_open, studio_project_save,
+    studio_pick_json_file, studio_read_text_file, studio_project_create, studio_project_open,
+    studio_project_save,
     studio_resume_simulation, studio_sim_is_paused, studio_simulate, studio_startup_project_path,
     studio_step_simulation, studio_validate, studio_wrap_mo,
 };
@@ -332,6 +333,7 @@ pub fn run() {
             studio_pick_fmu_file,
             studio_pick_mo_file,
             studio_pick_data_file,
+            studio_pick_json_file,
             studio_read_text_file,
             studio_import_fmu,
             studio_wrap_mo,

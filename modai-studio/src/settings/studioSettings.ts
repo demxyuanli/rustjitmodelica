@@ -27,6 +27,7 @@ export type MenuItemId =
   | "emitCoder"
   | "emitFmu"
   | "importFmu"
+  | "importIde"
   | "wrapMo"
   | "importPack"
   | "exportPack"
@@ -126,6 +127,7 @@ export const MENU_IDS: MenuItemId[] = [
   "emitCoder",
   "emitFmu",
   "importFmu",
+  "importIde",
   "wrapMo",
   "importPack",
   "exportPack",

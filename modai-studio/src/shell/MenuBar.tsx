@@ -42,6 +42,7 @@ export interface MenuBarActions {
   onEmitCoder: () => void;
   onEmitFmu: () => void;
   onImportFmu: () => void;
+  onImportIde: () => void;
   onWrapMo: () => void;
   onImportPack: () => void;
   onExportPack: () => void;
@@ -72,7 +73,12 @@ export function MenuBar({
   const vis = settings.menuVisible;
   const show = (id: keyof typeof vis) => vis[id] !== false;
   const fileOn =
-    show("welcome") || show("new") || show("open") || show("examples") || show("save");
+    show("welcome") ||
+    show("new") ||
+    show("open") ||
+    show("importIde") ||
+    show("examples") ||
+    show("save");
   const editOn =
     show("undo") ||
     show("redo") ||
@@ -128,6 +134,16 @@ export function MenuBar({
                   onClick={() => {
                     close();
                     actions.onOpen();
+                  }}
+                />
+              ) : null}
+              {show("importIde") ? (
+                <MenuDropItem
+                  icon={FileJson}
+                  labelKey="importIde"
+                  onClick={() => {
+                    close();
+                    actions.onImportIde();
                   }}
                 />
               ) : null}

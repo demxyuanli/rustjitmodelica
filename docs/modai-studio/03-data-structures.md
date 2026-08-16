@@ -1,6 +1,6 @@
 # Modai Studio 数据结构说明
 
-日期：2026-07-21（修订：为 Simulink 式层级/观测预留字段）  
+日期：2026-07-21（修订：2026-08-16 离散逻辑宿主）  
 关联：[设计说明](./02-design.md) · [功能说明](./04-features.md) · [Simulink 对照](./06-simulink-capability-map.md)
 
 本文定义落盘格式、内存模型与 IPC 载荷。字段名在 JSON 中使用 **camelCase**；Rust 侧用 `serde(rename_all = "camelCase")` 对齐。
@@ -393,7 +393,9 @@ IDE 现有 `DiagramModel`（components/connections/layout）语义相近，但�
 - 字段可对照，便于未来互通
 - Studio 以 node/edge（XYFlow 友好）建模；IDE 以 component/connection 建模
 
-若未来互通，增加导入适配器：`DiagramModel` ↔ `DiagramDocument`，不在 MVP 范围。
+若未来互通，增加导入适配器：`DiagramModel` → `DiagramDocument`（单向）。Studio 不复用 IDE 源文件。
+
+当前实现：`modai-studio/src/import/ideDiagram.ts`。File → Import IDE diagram 读取 IDE 导出的 JSON（`components`/`connections`，或带 `graphical` 的 `GraphicalDocumentModel`）。按 `typeName` 匹配 Studio catalog 填 `domain`/`catalogId`/`ports`；连线 `from`/`to` 按首个 `.` 拆成实例与端口。未匹配类型仍导入为 `imported.*` 节点。已是 Studio `DiagramDocument` 的 JSON 原样加载。不写回 IDE，也不做双向同步。
 
 ## 11. 标识符与合法性
 
@@ -405,3 +407,9 @@ IDE 现有 `DiagramModel`（components/connections/layout）语义相近，但�
 | 参数 `value` | 合法 Modelica 表达式文本（MVP 以字面量为主） |
 
 非法标识符在 Save/Simulate 前拦截。
+
+## 12. 没有 JSON 状态图
+
+`DiagramDocument` 只有框图 `nodes`/`edges`（component / subsystem / draw / fmu）。**不**增加 `states`/`transitions`/`junctions` schema，也不另存 `statechart.json`。
+
+顺序逻辑若进入 Studio，`InitialStep`/`Step`/`Transition` 就是普通 catalog 节点，连线仍是 `connect`。这不是 Stateflow Chart，也不是 MLS 第 17 章语法的视图。

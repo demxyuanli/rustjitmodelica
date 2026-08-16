@@ -1,6 +1,6 @@
 # Modai Studio × jit-compiler 可行性评估
 
-日期：2026-07-21  
+日期：2026-07-21（修订：2026-08-16 离散逻辑与 MSL 4 / MLS 分层）  
 依据：`jit-compiler`（`rustmodlica`）源码、TestLib、回归文档；对照 [06-simulink-capability-map.md](./06-simulink-capability-map.md)  
 结论口径：**不是**“能否做成完整 Simulink”，而是“对照表里各分期功能，编译器侧能否支撑、缺口在哪”。
 
@@ -29,7 +29,7 @@
 |-----------|------|----------------------|
 | Simulink 本体 | 因果框图、采样时间、求解器配置、Scope/SDI | **部分**：可用 Modelica.Blocks + 自研 UI 近似交互 |
 | MATLAB | 工作区、脚本、矩阵、App、数据字典运行时 | **无**：刻意不引入 MATLAB 运行时 |
-| Stateflow | 状态机 / 流程图逻辑 | **无**：仅有 Modelica `when`/`if`/Clock 子集 |
+| Stateflow | 状态机 / 流程图逻辑 | **无对等产品**。相关 Modelica 能力见下：`when`/Clock 子集；`Modelica.StateGraph` 库；第 17 章语言状态机未实现 |
 | Simscape | 物理网络（另套连接语义与求解栈） | **部分近似**：Modelica 非因果 `connect`，不是 Simscape 引擎 |
 | Embedded Coder / HDL / PLC Coder | 生产级代码生成与认证链 | **无**：仅有实验级 `--emit-c` / `--emit-fmu` |
 | Simulink Test / Coverage / Requirements | 测试与追溯工具链 | **无**（回归用 `regress-harness`，不是同产品） |
@@ -166,7 +166,9 @@ Library → 连线 → 改参数 → 配 stopTime/solver → Run → 看曲线/�
 | Subsystem / 选区封装 | P2 | **Partial** | flatten 支持嵌套 model；emit/UI 产品工作量大 |
 | Model Reference | P2 | **Partial** | 库路径 + 实例化已有基础 |
 | replaceable / Variant | P2–P3 | **Partial** | TestLib 有 replaceable；Variant 产品化不足 |
-| Stateflow | Out | **Out / Blocked** | when/if/Clock 子集 ≠ Stateflow |
+| Stateflow | Out | **Out / Blocked** | 不做 Chart。`when`/Clock ≠ Stateflow；第 17 章未实现 ≠ StateGraph |
+| `Modelica.StateGraph` | F95 | **Partial** | MSL 4 仍有 `StateGraph.mo`。flatten 已有 Step/Transition 口别名。Studio catalog + `examples/stategraph_first` 已落地。JIT 已绑 `localCondition`、展开 `anyTrue(inPort.set)` 为口标量、`time>=waitTime` 过零、`pre(newActive)` 离散寄存器；事件后提交 `pre` 再采样，FirstExample 级 `active` 在整秒切换。以 Studio Run 曲线为准 |
+| MLS 第 17 章 `state`/`transition` | Out（Studio） | **Blocked（JIT）** | pest 无 `state` 类前缀。时钟化离散控制器；做成也不实现 StateGraph 库 |
 
 ### 3.4 仿真配置与控制
 
@@ -230,8 +232,9 @@ Library → 连线 → 改参数 → 配 stopTime/solver → Run → 看曲线/�
 1. 在对照表增加 **Compiler** 列：`Full | Partial | Blocked | UI | Out`（见下文补丁意图）。  
 2. P1「仿真取消 / 真进度」标为 **依赖编译器增量**，否则只能做“关闭窗口杀任务”级降级。  
 3. P0 电气 catalog **强制 MSL FQN 门禁**；文档中写明 TestLib 本地电路不可直接映射。  
-4. 保持 Out：Stateflow、Embedded Coder、HIL、MATLAB 工作区。  
+4. 保持 Out：Stateflow 产品、JSON 状态图、StateGraph2 宿主、第 17 章 Studio 视图、Embedded Coder、HIL、MATLAB 工作区。  
 5. “完整实现 Simulink”从成功标准中排除；成功标准维持分期验收。
+6. 顺序逻辑下一刀是 **StateGraph catalog + 可 Run 例子**，不是补第 17 章来「实现 StateGraph」（两者独立）。
 
 ## 7. 建议的编译器前置工作（若要解锁 P1 引擎项）
 
@@ -248,4 +251,4 @@ Library → 连线 → 改参数 → 配 stopTime/solver → Run → 看曲线/�
 - **不能**承诺完整实现 Simulink。  
 - **能**按现有 `06` 对照表实现 **P0**，编译器不是主风险（主风险是 catalog 门禁与 emit 质量）。  
 - **P1** 中纯 UI 功能可完整做；**取消/进度**需先改 `jit-compiler`。  
-- **P2–P3** 只能 Partial，且必须接受与 OMEdit/Simulink 的语义差距（fallback、FMU 成熟度、无 Stateflow）。
+- **P2–P3** 只能 Partial，且必须接受与 OMEdit/Simulink 的语义差距（fallback、FMU 成熟度、无 Stateflow Chart；顺序图若做则是 StateGraph 块）。

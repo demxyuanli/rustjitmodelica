@@ -41,6 +41,8 @@ export function createNodeFromCatalog(
   const isTerminal = (entry.tags ?? []).includes("terminal");
   const isBusBar = (entry.tags ?? []).includes("busbar");
   const isJump = (entry.tags ?? []).includes("jump");
+  const isSgTransition = (entry.tags ?? []).includes("sg-transition");
+  const isSgStep = (entry.tags ?? []).includes("sg-step");
   const isModelRef =
     (entry.tags ?? []).includes("modelRef") ||
     entry.category === "ModelRef" ||
@@ -55,8 +57,12 @@ export function createNodeFromCatalog(
     ? drawDefaultSize(entry.id)
     : isTerminal
       ? { width: 72, height: 36 }
-      : isJump
+        : isJump
         ? { width: 64, height: 40 }
+        : isSgTransition
+          ? { width: 36, height: 72 }
+          : isSgStep
+            ? { width: 88, height: 48 }
         : isBusBar
           ? {
               width: (entry.tags ?? []).includes("bus") ? 28 : 22,

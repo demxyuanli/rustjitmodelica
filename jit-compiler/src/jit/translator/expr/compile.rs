@@ -72,6 +72,17 @@ pub(super) fn compile_expression_rec(
             compile_array_access(expr, arr_expr, idx_expr, ctx, builder, compile_expression_rec)
         }
         Expression::BinaryOp(lhs, op, rhs) => {
+            if *op == Operator::Mul {
+                if let Some(dot) = super::mb_frames::try_compile_inner_product(
+                    lhs,
+                    rhs,
+                    ctx,
+                    builder,
+                    compile_expression_rec,
+                )? {
+                    return Ok(dot);
+                }
+            }
             let l = compile_expression_rec(lhs, ctx, builder)?;
             let r = compile_expression_rec(rhs, ctx, builder)?;
             match op {

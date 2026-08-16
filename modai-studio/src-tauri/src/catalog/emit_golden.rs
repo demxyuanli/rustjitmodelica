@@ -269,6 +269,103 @@ fn fixture_goto_from() -> (DiagramDocument, HashMap<String, DiagramDocument>) {
     (root, HashMap::new())
 }
 
+fn sg_conn(id: &str, direction: &str, type_name: &str) -> PortDef {
+    PortDef {
+        id: id.into(),
+        kind: "connector".into(),
+        direction: direction.into(),
+        type_name: type_name.into(),
+    }
+}
+
+fn pv(name: &str, value: &str) -> ParamValue {
+    ParamValue {
+        name: name.into(),
+        value: value.into(),
+    }
+}
+
+/// FirstExample-style Grafcet loop: InitialStep -> T1 -> Step -> T2 -> InitialStep.
+fn fixture_stategraph() -> (DiagramDocument, HashMap<String, DiagramDocument>) {
+    let step_in = sg_conn(
+        "inPort[1]",
+        "in",
+        "Modelica.StateGraph.Interfaces.Step_in",
+    );
+    let step_out = sg_conn(
+        "outPort[1]",
+        "out",
+        "Modelica.StateGraph.Interfaces.Step_out",
+    );
+    let t_in = sg_conn(
+        "inPort",
+        "in",
+        "Modelica.StateGraph.Interfaces.Transition_in",
+    );
+    let t_out = sg_conn(
+        "outPort",
+        "out",
+        "Modelica.StateGraph.Interfaces.Transition_out",
+    );
+    let root = DiagramDocument {
+        schema_version: 1,
+        model_name: "StateGraphFirst".into(),
+        diagram_id: "root".into(),
+        parent_diagram_id: None,
+        nodes: vec![
+            node(
+                "n_init",
+                "initialStep",
+                "Modelica.StateGraph.InitialStep",
+                "stategraph.initialStep",
+                vec![step_in.clone(), step_out.clone()],
+                vec![pv("nIn", "1"), pv("nOut", "1")],
+            ),
+            node(
+                "n_t1",
+                "transition1",
+                "Modelica.StateGraph.Transition",
+                "stategraph.transition",
+                vec![t_in.clone(), t_out.clone()],
+                vec![
+                    pv("condition", "true"),
+                    pv("enableTimer", "true"),
+                    pv("waitTime", "1"),
+                ],
+            ),
+            node(
+                "n_step",
+                "step",
+                "Modelica.StateGraph.Step",
+                "stategraph.step",
+                vec![step_in, step_out],
+                vec![pv("nIn", "1"), pv("nOut", "1")],
+            ),
+            node(
+                "n_t2",
+                "transition2",
+                "Modelica.StateGraph.Transition",
+                "stategraph.transition",
+                vec![t_in, t_out],
+                vec![
+                    pv("condition", "true"),
+                    pv("enableTimer", "true"),
+                    pv("waitTime", "1"),
+                ],
+            ),
+        ],
+        edges: vec![
+            edge("e1", "n_init", "outPort[1]", "n_t1", "inPort"),
+            edge("e2", "n_t1", "outPort", "n_step", "inPort[1]"),
+            edge("e3", "n_step", "outPort[1]", "n_t2", "inPort"),
+            edge("e4", "n_t2", "outPort", "n_init", "inPort[1]"),
+        ],
+        annotations: vec![],
+        viewport: None,
+    };
+    (root, HashMap::new())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GoldenCheck {
@@ -344,6 +441,27 @@ pub fn run_emit_golden_checks(out_path: &Path) -> Result<GoldenReport, String> {
     ));
     if let Some(parent) = out_path.parent() {
         let _ = fs::write(parent.join("emit_golden_goto.mo"), &mo2);
+    }
+
+    let (root3, subs3) = fixture_stategraph();
+    let mo3 = emit_modelica(&root3, &subs3, None);
+    checks.push(require_contains(
+        &mo3,
+        "inner Modelica.StateGraph.StateGraphRoot stateGraphRoot",
+        "F95.stategraph_inner_root",
+    ));
+    checks.push(require_contains(
+        &mo3,
+        "connect(initialStep.outPort[1], transition1.inPort)",
+        "F95.step_to_transition",
+    ));
+    checks.push(require_contains(
+        &mo3,
+        "connect(transition2.outPort, initialStep.inPort[1])",
+        "F95.loop_back",
+    ));
+    if let Some(parent) = out_path.parent() {
+        let _ = fs::write(parent.join("emit_golden_stategraph.mo"), &mo3);
     }
 
     let passed = checks.iter().filter(|c| c.ok).count();

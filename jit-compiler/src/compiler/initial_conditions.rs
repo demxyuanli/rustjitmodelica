@@ -4,6 +4,27 @@ use crate::flatten::eval_const_expr_with_params;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+fn initial_assign_target(lhs: &Expression) -> Option<String> {
+    match lhs {
+        Expression::Variable(id) => Some(crate::string_intern::resolve_id(*id)),
+        Expression::Previous(inner) => initial_assign_target(inner),
+        Expression::Call(name, args) if name == "pre" && args.len() == 1 => {
+            initial_assign_target(&args[0])
+        }
+        _ => None,
+    }
+}
+
+fn unwrap_pre_const(expr: Expression) -> Expression {
+    match expr {
+        Expression::Previous(inner) => unwrap_pre_const(*inner),
+        Expression::Call(name, mut args) if name == "pre" && args.len() == 1 => {
+            unwrap_pre_const(args.remove(0))
+        }
+        other => other,
+    }
+}
+
 pub fn apply_initial_conditions(
     flat_model: &crate::flatten::FlattenedModel,
     states: &mut [f64],
@@ -60,9 +81,8 @@ pub fn apply_initial_conditions(
         for &idx in &initial_order {
             let eq = &flat_model.initial_equations[idx];
             if let Equation::Simple(lhs, rhs) = eq {
-                if let Expression::Variable(id) = lhs {
-                    let name = crate::string_intern::resolve_id(*id);
-                    let rhs_sub = substitute_initial_values(
+                if let Some(name) = initial_assign_target(lhs) {
+                    let rhs_sub = unwrap_pre_const(substitute_initial_values(
                         rhs,
                         state_var_index,
                         discrete_var_index,
@@ -70,7 +90,7 @@ pub fn apply_initial_conditions(
                         states,
                         discrete_vals,
                         params,
-                    );
+                    ));
                     if let Some(v) = eval_const_expr_with_params(&rhs_sub, param_value_map) {
                         let prev = state_var_index
                             .get(&name)
@@ -93,6 +113,20 @@ pub fn apply_initial_conditions(
                                 discrete_var_index,
                                 param_var_index,
                             );
+                            if name.ends_with("_active") {
+                                let stem = name.trim_end_matches("_active");
+                                let new_active = format!("{stem}_newActive");
+                                assign_var(
+                                    &new_active,
+                                    v,
+                                    states,
+                                    discrete_vals,
+                                    params,
+                                    state_var_index,
+                                    discrete_var_index,
+                                    param_var_index,
+                                );
+                            }
                             applied = true;
                         }
                     }

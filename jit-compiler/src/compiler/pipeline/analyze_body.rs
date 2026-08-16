@@ -1,3 +1,47 @@
+/// `localCondition = if 1 then condition else 0` must not load `condition` from a
+/// zeroed stack slot. When `condition` has a numeric start (`true` -> 1), fold
+/// the then-branch so the assignment writes the constant.
+fn fold_const_boolean_bindings(
+    eqs: Vec<Equation>,
+    decls: &[crate::ast::Declaration],
+) -> Vec<Equation> {
+    let mut starts: HashMap<String, f64> = HashMap::new();
+    for d in decls {
+        match &d.start_value {
+            Some(Expression::Number(n)) => {
+                starts.insert(d.name.clone(), *n);
+            }
+            Some(e) => {
+                if let Some(v) = crate::flatten::eval_const_expr(e) {
+                    starts.insert(d.name.clone(), v);
+                }
+            }
+            None => {}
+        }
+    }
+    eqs.into_iter()
+        .map(|eq| match eq {
+            Equation::Simple(lhs, Expression::If(c, t, f)) => {
+                let cond_true = matches!(c.as_ref(), Expression::Number(n) if *n != 0.0);
+                let else_zero = matches!(f.as_ref(), Expression::Number(n) if n.abs() < 1e-15);
+                if cond_true && else_zero {
+                    if let Expression::Variable(id) = t.as_ref() {
+                        let name = crate::string_intern::resolve_id(*id);
+                        if let Some(&n) = starts.get(&name) {
+                            return Equation::Simple(
+                                lhs,
+                                Expression::If(c, Box::new(Expression::Number(n)), f),
+                            );
+                        }
+                    }
+                }
+                Equation::Simple(lhs, Expression::If(c, t, f))
+            }
+            other => other,
+        })
+        .collect()
+}
+
 pub(crate) fn analyze_equations(
     flat_model: &FlattenedModel,
     layout: &mut VariableLayout,
@@ -87,34 +131,62 @@ pub(crate) fn analyze_equations(
             _ => None,
         }
     };
-    let continuous_eqs: Vec<Equation> = normalized_eqs
-        .into_iter()
-        .filter(|eq| {
-            !matches!(
-                eq,
-                Equation::When(_, _, _)
-                    | Equation::Reinit(_, _)
-                    | Equation::If(_, _, _, _)
-                    | Equation::Assert(_, _)
-                    | Equation::Terminate(_)
-            )
-                && !matches!(
+    let continuous_eqs: Vec<Equation> = {
+        let kept: Vec<Equation> = normalized_eqs
+            .into_iter()
+            .filter(|eq| {
+                !matches!(
+                    eq,
+                    Equation::When(_, _, _)
+                        | Equation::Reinit(_, _)
+                        | Equation::Assert(_, _)
+                        | Equation::Terminate(_)
+                ) && !matches!(
                     eq,
                     Equation::Simple(lhs, _)
                         if lhs_root_var(lhs)
                             .map(|n| discrete_var_set.contains(&n))
                             .unwrap_or(false)
                 )
-        })
-        .collect();
+            })
+            .collect();
+        let expanded = crate::analysis::expand_static_connection_ifs(kept)
+            .into_iter()
+            .filter(|eq| !matches!(eq, Equation::If(_, _, _, _)))
+            .collect();
+        fold_const_boolean_bindings(expanded, &flat_model.declarations)
+    };
 
     let mut known_vars: HashSet<String> = layout.state_vars.iter().cloned().collect();
     known_vars.extend(layout.discrete_vars.iter().cloned());
+    // Unassigned inputs with a numeric start (`condition=true`) are external
+    // knowns. Connector pins without a start (`available`/`reset`/`occupied`)
+    // stay unknown so connect equations can write them.
+    let mut assigned_lhs: HashSet<String> = HashSet::new();
+    for eq in &continuous_eqs {
+        if let Equation::Simple(lhs, _) = eq {
+            if let Some(n) = lhs_root_var(lhs) {
+                assigned_lhs.insert(n);
+            }
+        }
+    }
+    for name in &layout.input_var_names {
+        if assigned_lhs.contains(name) {
+            continue;
+        }
+        let has_number_start = flat_model.declarations.iter().any(|d| {
+            d.name == *name && matches!(d.start_value, Some(Expression::Number(_)))
+        });
+        if has_number_start {
+            known_vars.insert(name.clone());
+        }
+    }
 
     let analysis_opts = AnalysisOptions {
         index_reduction_method: opts.index_reduction_method.clone(),
         tearing_method: opts.tearing_method.clone(),
         quiet: opts.quiet,
+        state_select_ranks: crate::state_select::build_state_select_map(&flat_model.declarations),
     };
     if stage_trace {
         eprintln!("[stage] sort_equations");
@@ -144,6 +216,28 @@ pub(crate) fn analyze_equations(
                 let idx = layout.output_vars.len();
                 layout.output_var_index.insert(name.clone(), idx);
                 layout.output_vars.push(name);
+                layout.output_start_vals.push(0.0);
+            }
+        }
+    }
+
+    // Apply dummy-derivative demotions to the classified state set.
+    if !sort_result.demoted_states.is_empty() {
+        let demoted: HashSet<&str> = sort_result
+            .demoted_states
+            .iter()
+            .map(String::as_str)
+            .collect();
+        layout.state_vars.retain(|s| !demoted.contains(s.as_str()));
+        layout.state_var_index.clear();
+        for (i, s) in layout.state_vars.iter().enumerate() {
+            layout.state_var_index.insert(s.clone(), i);
+        }
+        for s in &sort_result.demoted_states {
+            if !layout.output_var_index.contains_key(s) {
+                let idx = layout.output_vars.len();
+                layout.output_var_index.insert(s.clone(), idx);
+                layout.output_vars.push(s.clone());
                 layout.output_start_vals.push(0.0);
             }
         }

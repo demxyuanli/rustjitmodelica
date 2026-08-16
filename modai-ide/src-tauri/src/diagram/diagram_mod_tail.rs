@@ -365,6 +365,7 @@ fn apply_component_to_declaration(decl: &mut Declaration, component: &ComponentI
                 each: false,
                 redeclare: false,
                 redeclare_type: None,
+                nested: Vec::new(),
                 is_inner: false,
                 is_outer: false,
                 is_public: false,

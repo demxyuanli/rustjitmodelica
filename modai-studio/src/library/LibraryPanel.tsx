@@ -8,7 +8,7 @@ import { setCatalogDragData } from "./catalogDnd";
 import { loadFavorites, toggleFavorite } from "./favorites";
 import { loadRecents, rememberRecent } from "./recents";
 
-const DEFAULT_OPEN = new Set(["Sources", "Math", "Continuous", "Analog"]);
+const DEFAULT_OPEN = new Set(["Sources", "Math", "Continuous", "Analog", "StateGraph"]);
 
 function entryAsNode(e: CatalogEntry): DiagramNode {
   return {

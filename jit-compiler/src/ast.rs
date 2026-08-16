@@ -175,6 +175,9 @@ pub struct Modification {
     pub redeclare: bool,
     /// When redeclare is true, new type for the component (e.g. "Real"); applied in extends/expand.
     pub redeclare_type: Option<String>,
+    /// Nested class modifications, e.g. `signalSource(final amplitude=V, final f=f)`.
+    #[serde(default)]
+    pub nested: Vec<Modification>,
     /// Element prefix on this modifier (e.g. `extends A(inner x = 1)`).
     pub is_inner: bool,
     pub is_outer: bool,
@@ -183,6 +186,31 @@ pub struct Modification {
     pub is_protected: bool,
     /// Set when the modification uses `operator function` prefix in a redeclare context.
     pub is_operator_function: bool,
+}
+
+/// Modelica predefined `StateSelect` enumeration (priority for independent states).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
+pub enum StateSelect {
+    Never = 0,
+    Avoid = 1,
+    #[default]
+    Default = 2,
+    Prefer = 3,
+    Always = 4,
+}
+
+impl StateSelect {
+    pub fn rank(self) -> u8 {
+        self as u8
+    }
+
+    pub fn is_preferred(self) -> bool {
+        matches!(self, StateSelect::Prefer | StateSelect::Always)
+    }
+
+    pub fn is_demotable_when_preferred_exists(self) -> bool {
+        matches!(self, StateSelect::Never | StateSelect::Avoid)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,6 +242,9 @@ pub struct Declaration {
         pub annotation: Option<String>,
     /// MSL: conditional component (e.g. "Real x if use_X"); flatten prunes or keeps.
     pub condition: Option<Expression>,
+    /// Resolved `stateSelect` attribute when present on this variable.
+    #[serde(default)]
+    pub state_select: Option<StateSelect>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
