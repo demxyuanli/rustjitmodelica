@@ -74,6 +74,21 @@ export function useStudioEdit(
     [replace],
   );
 
+  const importRootDiagram = useCallback(
+    (d: DiagramDocument) => {
+      setRootDiagram(d);
+      setSubsystems({});
+      setViewStack(["root"]);
+      replace(d);
+      setDiagramRev((x) => x + 1);
+      setDirty(true);
+      setSelectedIds([]);
+      setSelectedEdgeIds([]);
+      setFocusNodeId(null);
+    },
+    [replace],
+  );
+
   const updateDiagram = useCallback(
     (d: DiagramDocument) => {
       commit(d, true);
@@ -411,6 +426,7 @@ export function useStudioEdit(
     getSaveSnapshot,
     syncAfterSave,
     applyLoadedProject,
+    importRootDiagram,
     doUndo,
     doRedo,
     doCopy,

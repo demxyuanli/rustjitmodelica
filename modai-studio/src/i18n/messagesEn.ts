@@ -26,6 +26,7 @@ export const messagesEn = {
   emitCoder: "Coder",
   emitFmu: "FMU",
   importFmu: "Import FMU",
+  importIde: "Import IDE diagram",
   wrapMo: "Wrap .mo",
   importPack: "Import Pack",
   exportPack: "Export Pack",
@@ -52,6 +53,7 @@ export const messagesEn = {
 
   tipNew: "New project wizard (Ctrl+N)",
   tipOpen: "Open project (Ctrl+O)",
+  tipImportIde: "Import an IDE DiagramModel JSON (one-way)",
   tipExamples: "Open a bundled example (diagram + Run)",
   tipSave: "Save project (Ctrl+S)",
   tipUndo: "Undo (Ctrl+Z)",
@@ -365,6 +367,11 @@ export const messagesEn = {
   modelName: "Model name",
   recentProjects: "Recent projects",
   unsavedChanges: "Unsaved changes. Discard?",
+  importReplaceConfirm: "Replace the current diagram with the imported IDE model?",
+  errIdeImport: "IDE import failed: {error}",
+  statusIdeImported:
+    "Imported IDE diagram: {nodes} blocks, {edges} wires ({unmatched} unmatched types, {skipped} skipped wires).",
+  statusIdeImportedStudio: "Loaded Studio diagram JSON: {nodes} blocks, {edges} wires.",
   errRecentMissing: "Could not open {path}: {error}",
   exampleDomainSignal: "Signal",
   exampleDomainElectrical: "Electrical",

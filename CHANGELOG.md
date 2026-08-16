@@ -27,6 +27,7 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Properties Name / Type / size / label-below / Ref labels are i18n.
 - Rotate 90 degrees moves ports to the new sides and reroutes attached wires (no CSS-only spin).
 - Title bar File / Edit / Export / Simulation are real dropdown menus.
+- File > Import IDE diagram maps IDE `DiagramModel` JSON onto a Studio `DiagramDocument` (catalog type match, one-way).
 - Dirty projects auto-save to disk every 30s when a folder exists; a local crash draft can be restored after an unclean exit.
 - Bundled templates expanded to 20 (keep the previous 9, add first-order/PID/TF/limiter/switch/goto, RL/RLC, rotational drive/gear, mass-damper). Welcome Examples and New-project template list share the same set, grouped by domain (signal / electrical / mechanical / multibody).
 - Scrollbars follow the Tauri window theme: `fluentOverlay`, `color-scheme`, and `setTheme` on theme change.
