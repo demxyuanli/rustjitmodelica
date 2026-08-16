@@ -6,6 +6,10 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Studio welcome hero (2026-08-16)
+
+- Replace the start/welcome banner with a bright, well-lit Modelica modeling illustration (block diagram, circuit, pendulum) and lighten the caption overlay so the art is not crushed to black.
+
 ### Modai Studio P4 main-path feel (2026-08-15)
 
 - P4-A: Library HTML5 drag onto canvas; `screenToFlowPosition` placement; four-pane Library+Properties; connect banner instead of `alert`; context menu; double-click semantics; Pause/Step on the sim bar.

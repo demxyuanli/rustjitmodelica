@@ -278,8 +278,9 @@ button:disabled {
   right: 0;
   bottom: 0;
   padding: 20px 20px 14px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.72));
+  background: linear-gradient(transparent 12%, rgba(8, 16, 28, 0.22) 62%, rgba(8, 16, 28, 0.42));
   color: #fff;
+  text-shadow: 0 1px 6px rgba(8, 16, 28, 0.55);
 }
 
 .welcome-hero-caption h2 {
@@ -292,7 +293,7 @@ button:disabled {
   margin: 0;
   font-size: var(--studio-font-size);
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.82);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .welcome-close {
@@ -302,9 +303,9 @@ button:disabled {
   min-width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.35);
-  color: #fff;
+  border: 1px solid rgba(15, 28, 44, 0.18);
+  background: rgba(255, 255, 255, 0.78);
+  color: #1a2838;
 }
 
 .welcome-close:hover {
