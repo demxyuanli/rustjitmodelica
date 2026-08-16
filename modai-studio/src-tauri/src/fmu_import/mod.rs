@@ -2,7 +2,9 @@
 
 mod cosim;
 mod host;
+mod hybrid;
 mod parse;
+mod tight_cosim;
 
-pub use cosim::{any_fmu, simulate_with_fmu};
+pub use cosim::{any_fmu, simulate_with_fmu, CosimControl};
 pub use parse::{import_fmu, list_imported_fmus, FmuImportResult};

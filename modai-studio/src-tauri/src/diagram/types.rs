@@ -11,6 +11,18 @@ pub struct StudioProjectManifest {
     pub simulation_defaults: SimulationDefaults,
     #[serde(default)]
     pub ui: StudioUiPrefs,
+    /// Project-level parameter dictionary (F85). Values referenced as `$Name` on blocks.
+    #[serde(default)]
+    pub param_dictionary: Vec<ParamDictionaryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParamDictionaryEntry {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +170,31 @@ pub struct NodeUi {
     pub fmu_guid: Option<String>,
     #[serde(default)]
     pub fmu_model_identifier: Option<String>,
+    /// When true, instance name is drawn below the block body.
+    #[serde(default)]
+    pub label_below: Option<bool>,
+    /// Modelica Icon annotation JSON (optional block face).
+    #[serde(default)]
+    pub icon: Option<serde_json::Value>,
+    /// Relative .mo path for Model Reference / userlib (e.g. wrapped/Foo.mo).
+    #[serde(default)]
+    pub mo_asset: Option<String>,
+    /// Variant Subsystem choices (F87); active choice is mirrored in subsystem_ref.
+    #[serde(default)]
+    pub variants: Option<Vec<VariantChoice>>,
+    #[serde(default)]
+    pub active_variant_id: Option<String>,
+    /// Param names pinned to the pre-run dashboard.
+    #[serde(default)]
+    pub dashboard_pins: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariantChoice {
+    pub id: String,
+    pub label: String,
+    pub subsystem_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +214,12 @@ pub struct DiagramEdge {
     pub target_port_id: String,
     #[serde(default)]
     pub signal_name: Option<String>,
+    /// Unit annotation for signal / physical lines (F72 display).
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// Dimension hint, e.g. "1", "3", "[2]".
+    #[serde(default)]
+    pub dimension: Option<String>,
     #[serde(default)]
     pub vertices: Vec<Position>,
     #[serde(default)]
@@ -208,6 +251,9 @@ pub struct CatalogEntry {
     pub fmu_guid: Option<String>,
     #[serde(default)]
     pub fmu_model_identifier: Option<String>,
+    /// Modelica Icon annotation graphics for block face.
+    #[serde(default)]
+    pub icon: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,6 +263,79 @@ pub struct CatalogParam {
     pub value: String,
     #[serde(default)]
     pub value_type: Option<String>,
+    #[serde(default)]
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+impl CatalogParam {
+    pub fn typed(name: impl Into<String>, value: impl Into<String>, value_type: &str) -> Self {
+        let name = name.into();
+        let (unit, description) = known_param_meta(name.as_str());
+        Self {
+            name,
+            value: value.into(),
+            value_type: Some(value_type.to_string()),
+            unit,
+            description,
+        }
+    }
+
+    pub fn real(name: &str, value: &str) -> Self {
+        Self::typed(name, value, "Real")
+    }
+
+    pub fn with_unit(mut self, unit: &str, description: &str) -> Self {
+        self.unit = Some(unit.to_string());
+        self.description = Some(description.to_string());
+        self
+    }
+}
+
+fn known_param_meta(name: &str) -> (Option<String>, Option<String>) {
+    let pair = match name {
+        "R" => Some(("Ohm", "Resistance")),
+        "C" => Some(("F", "Capacitance")),
+        "V" => Some(("V", "Voltage")),
+        "I" => Some(("A", "Current")),
+        "Ron" => Some(("Ohm", "On-state resistance")),
+        "Goff" => Some(("S", "Off-state conductance")),
+        "Vknee" => Some(("V", "Knee voltage")),
+        "samplePeriod" => Some(("s", "Sample period")),
+        "startTime" => Some(("s", "Start time")),
+        "period" => Some(("s", "Period")),
+        "duration" => Some(("s", "Duration")),
+        "f" => Some(("Hz", "Frequency")),
+        "phase" => Some(("rad", "Phase")),
+        "amplitude" => Some(("1", "Amplitude")),
+        "offset" => Some(("1", "Offset")),
+        "Ti" => Some(("s", "Integral time")),
+        "Td" => Some(("s", "Derivative time")),
+        "J" => Some(("kg.m2", "Inertia")),
+        "m" => Some(("kg", "Mass")),
+        "density" => Some(("kg/m3", "Density")),
+        "diameter" => Some(("m", "Diameter")),
+        "phi0" => Some(("rad", "Initial angle")),
+        "s0" => Some(("m", "Initial position")),
+        "s_rel0" => Some(("m", "Unstretched length")),
+        "ratio" => Some(("1", "Gear ratio")),
+        "uMax" => Some(("1", "Upper limit")),
+        "uMin" => Some(("1", "Lower limit")),
+        "g" => Some(("m/s2", "Gravity acceleration")),
+        "length" => Some(("m", "Length")),
+        "width" => Some(("m", "Width")),
+        "height" => Some(("m", "Height")),
+        "k" => Some(("1", "Gain")),
+        "k1" => Some(("1", "Gain u1")),
+        "k2" => Some(("1", "Gain u2")),
+        "T" => Some(("s", "Time constant")),
+        _ => None,
+    };
+    match pair {
+        Some((u, d)) => (Some(u.to_string()), Some(d.to_string())),
+        None => (None, None),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +367,33 @@ pub struct StudioSimOptions {
     pub number_of_intervals: u32,
     pub solver: String,
     pub tolerance: f64,
+}
+
+/// Wall-clock phase timings for one simulate call (F89 Profiler).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SimProfile {
+    /// Diagram -> Modelica emit.
+    pub emit_ms: u64,
+    /// Full compile / JIT; 0 when Fast Restart reuses Artifacts.
+    pub compile_ms: u64,
+    /// Parameter vector merge + Artifacts clone.
+    pub apply_params_ms: u64,
+    /// Integrator wall time.
+    pub integrate_ms: u64,
+    /// Sum of phases (may be slightly under client wallMs due to IPC).
+    pub total_ms: u64,
+    /// True when compile was skipped (Fast Restart hit).
+    pub compile_skipped: bool,
+    /// "fastRestart" | "fullCompile" | "fmu" | null
+    #[serde(default)]
+    pub restart_mode: Option<String>,
+}
+
+impl SimProfile {
+    pub fn finalize(&mut self) {
+        self.total_ms = self.emit_ms + self.compile_ms + self.apply_params_ms + self.integrate_ms;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

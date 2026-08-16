@@ -1,0 +1,440 @@
+{
+  "schemaVersion": 1,
+  "modelName": "TransSpringDamper",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_step",
+      "instanceName": "step1",
+      "typeName": "Modelica.Blocks.Sources.Step",
+      "domain": "signal",
+      "catalogId": "blocks.sources.step",
+      "position": {
+        "x": 40.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "height",
+          "value": "1"
+        },
+        {
+          "name": "startTime",
+          "value": "0.2"
+        }
+      ],
+      "ports": [
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "step1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_force",
+      "instanceName": "force1",
+      "typeName": "Modelica.Mechanics.Translational.Sources.Force",
+      "domain": "mechanical",
+      "catalogId": "mechanics.translational.force",
+      "position": {
+        "x": 220.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
+      "params": [],
+      "ports": [
+        {
+          "id": "f",
+          "kind": "signal",
+          "direction": "in",
+          "typeName": "RealInput"
+        },
+        {
+          "id": "flange",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.Translational.Interfaces.Flange_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": {
+        "label": "force1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_mass",
+      "instanceName": "mass1",
+      "typeName": "Modelica.Mechanics.Translational.Components.Mass",
+      "domain": "mechanical",
+      "catalogId": "mechanics.translational.mass",
+      "position": {
+        "x": 400.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "m",
+          "value": "1"
+        }
+      ],
+      "ports": [
+        {
+          "id": "flange_a",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.Translational.Interfaces.Flange_a"
+        },
+        {
+          "id": "flange_b",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.Translational.Interfaces.Flange_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "s",
+        "v"
+      ],
+      "ui": {
+        "label": "mass1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_sd",
+      "instanceName": "springDamper1",
+      "typeName": "Modelica.Mechanics.Translational.Components.SpringDamper",
+      "domain": "mechanical",
+      "catalogId": "mechanics.translational.springDamper",
+      "position": {
+        "x": 580.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "c",
+          "value": "10"
+        },
+        {
+          "name": "d",
+          "value": "0.5"
+        },
+        {
+          "name": "s_rel0",
+          "value": "0"
+        }
+      ],
+      "ports": [
+        {
+          "id": "flange_a",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.Translational.Interfaces.Flange_a"
+        },
+        {
+          "id": "flange_b",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.Translational.Interfaces.Flange_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "s_rel"
+      ],
+      "ui": {
+        "label": "springDamper1",
+        "width": 140.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_fixed",
+      "instanceName": "fixed1",
+      "typeName": "Modelica.Mechanics.Translational.Components.Fixed",
+      "domain": "mechanical",
+      "catalogId": "mechanics.translational.fixed",
+      "position": {
+        "x": 760.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "s0",
+          "value": "0"
+        }
+      ],
+      "ports": [
+        {
+          "id": "flange",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.Translational.Interfaces.Flange_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": {
+        "label": "fixed1",
+        "width": 100.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_vsensor",
+      "instanceName": "vSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.SpeedSensor",
+      "domain": "mechanical",
+      "catalogId": "mechanics.translational.speedSensor",
+      "position": {
+        "x": 400.0,
+        "y": 240.0
+      },
+      "rotation": 0.0,
+      "params": [],
+      "ports": [
+        {
+          "id": "flange",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.Translational.Interfaces.Flange_a"
+        },
+        {
+          "id": "v",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "v"
+      ],
+      "ui": {
+        "label": "vSensor",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_scope",
+      "instanceName": "scope1",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "domain": "signal",
+      "catalogId": "blocks.sinks.scope",
+      "position": {
+        "x": 400.0,
+        "y": 360.0
+      },
+      "rotation": 0.0,
+      "params": [],
+      "ports": [
+        {
+          "id": "u",
+          "kind": "signal",
+          "direction": "in",
+          "typeName": "RealInput"
+        },
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "scope1",
+        "width": 100.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceNodeId": "n_step",
+      "sourcePortId": "y",
+      "targetNodeId": "n_force",
+      "targetPortId": "f",
+      "signalName": "step1.y",
+      "unit": "N",
+      "dimension": "1",
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e2",
+      "sourceNodeId": "n_force",
+      "sourcePortId": "flange",
+      "targetNodeId": "n_mass",
+      "targetPortId": "flange_a",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e3",
+      "sourceNodeId": "n_mass",
+      "sourcePortId": "flange_b",
+      "targetNodeId": "n_sd",
+      "targetPortId": "flange_a",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e4",
+      "sourceNodeId": "n_sd",
+      "sourcePortId": "flange_b",
+      "targetNodeId": "n_fixed",
+      "targetPortId": "flange",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e5",
+      "sourceNodeId": "n_mass",
+      "sourcePortId": "flange_a",
+      "targetNodeId": "n_vsensor",
+      "targetPortId": "flange",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e6",
+      "sourceNodeId": "n_vsensor",
+      "sourcePortId": "v",
+      "targetNodeId": "n_scope",
+      "targetPortId": "u",
+      "signalName": "vSensor.v",
+      "unit": "m/s",
+      "dimension": "1",
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    }
+  ],
+  "annotations": [],
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "zoom": 1.0
+  }
+}

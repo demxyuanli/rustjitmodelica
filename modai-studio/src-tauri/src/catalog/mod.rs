@@ -1,6 +1,14 @@
 use crate::diagram::{CatalogEntry, CatalogParam, PortDef};
 
-fn signal_port(id: &str, direction: &str) -> PortDef {
+pub mod emit_golden;
+pub mod gate;
+mod builtin_rest;
+mod mechanics_mb;
+mod physical_blocks;
+mod sensors;
+mod signal_blocks;
+
+pub(super) fn signal_port(id: &str, direction: &str) -> PortDef {
     PortDef {
         id: id.to_string(),
         kind: "signal".to_string(),
@@ -13,7 +21,7 @@ fn signal_port(id: &str, direction: &str) -> PortDef {
     }
 }
 
-fn pin(id: &str) -> PortDef {
+pub(super) fn pin(id: &str) -> PortDef {
     PortDef {
         id: id.to_string(),
         kind: "connector".to_string(),
@@ -22,7 +30,7 @@ fn pin(id: &str) -> PortDef {
     }
 }
 
-fn flange(id: &str) -> PortDef {
+pub(super) fn flange(id: &str) -> PortDef {
     PortDef {
         id: id.to_string(),
         kind: "connector".to_string(),
@@ -31,16 +39,54 @@ fn flange(id: &str) -> PortDef {
     }
 }
 
-fn p(name: &str, value: &str) -> CatalogParam {
-    CatalogParam {
-        name: name.to_string(),
-        value: value.to_string(),
-        value_type: Some("Real".to_string()),
+pub(super) fn frame(id: &str) -> PortDef {
+    PortDef {
+        id: id.to_string(),
+        kind: "connector".to_string(),
+        direction: "bidirectional".to_string(),
+        type_name: "Modelica.Mechanics.MultiBody.Interfaces.Frame_a".to_string(),
+    }
+}
+
+pub(super) fn p(name: &str, value: &str) -> CatalogParam {
+    CatalogParam::real(name, value)
+}
+
+pub(super) fn pu(name: &str, value: &str, unit: &str, desc: &str) -> CatalogParam {
+    CatalogParam::real(name, value).with_unit(unit, desc)
+}
+
+pub(super) fn p_str(name: &str, value: &str) -> CatalogParam {
+    CatalogParam::typed(name, value, "String")
+}
+
+pub(super) fn draw_entry(
+    id: &str,
+    type_suffix: &str,
+    prefix: &str,
+    params: Vec<CatalogParam>,
+) -> CatalogEntry {
+    CatalogEntry {
+        id: id.to_string(),
+        type_name: format!("Studio.Draw.{type_suffix}"),
+        domain: "draw".into(),
+        category: "Draw".into(),
+        display_key: format!("catalog.{id}"),
+        default_instance_prefix: prefix.into(),
+        requires_library: "Studio".into(),
+        default_params: params,
+        ports: vec![],
+        tags: vec!["draw".into(), "annotation".into()],
+        plot_hints: vec![],
+        fmu_asset: None,
+        fmu_guid: None,
+        fmu_model_identifier: None,
+        icon: None,
     }
 }
 
 pub fn builtin_catalog() -> Vec<CatalogEntry> {
-    vec![
+    let mut out = vec![
         CatalogEntry {
             id: "blocks.sources.step".into(),
             type_name: "Modelica.Blocks.Sources.Step".into(),
@@ -49,13 +95,14 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             display_key: "catalog.blocks.sources.step".into(),
             default_instance_prefix: "step".into(),
             requires_library: "Modelica".into(),
-            default_params: vec![p("height", "1"), p("startTime", "0")],
+            default_params: vec![pu("height", "1", "1", "Step height"), p("startTime", "0")],
             ports: vec![signal_port("y", "out")],
             tags: vec!["signal".into(), "source".into()],
             plot_hints: vec!["y".into()],
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "blocks.sources.sine".into(),
@@ -72,6 +119,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "blocks.sources.constant".into(),
@@ -88,6 +136,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "blocks.math.gain".into(),
@@ -104,6 +153,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "blocks.math.add".into(),
@@ -124,6 +174,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "blocks.math.feedback".into(),
@@ -144,6 +195,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "blocks.continuous.integrator".into(),
@@ -160,6 +212,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "blocks.continuous.firstOrder".into(),
@@ -176,6 +229,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "analog.basic.ground".into(),
@@ -192,6 +246,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "analog.basic.resistor".into(),
@@ -208,6 +263,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "analog.basic.capacitor".into(),
@@ -224,6 +280,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "analog.sources.constantVoltage".into(),
@@ -240,6 +297,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "analog.basic.inductor".into(),
@@ -249,13 +307,14 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             display_key: "catalog.analog.basic.inductor".into(),
             default_instance_prefix: "inductor".into(),
             requires_library: "Modelica".into(),
-            default_params: vec![p("L", "1")],
+            default_params: vec![pu("L", "1", "H", "Inductance")],
             ports: vec![pin("p"), pin("n")],
             tags: vec!["electrical".into()],
             plot_hints: vec!["i".into()],
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
         CatalogEntry {
             id: "analog.sensors.voltageSensor".into(),
@@ -276,93 +335,13 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
             fmu_asset: None,
             fmu_guid: None,
             fmu_model_identifier: None,
+            icon: None,
         },
-        CatalogEntry {
-            id: "analog.sensors.currentSensor".into(),
-            type_name: "Modelica.Electrical.Analog.Sensors.CurrentSensor".into(),
-            domain: "electrical".into(),
-            category: "Sensors".into(),
-            display_key: "catalog.analog.sensors.currentSensor".into(),
-            default_instance_prefix: "currentSensor".into(),
-            requires_library: "Modelica".into(),
-            default_params: vec![],
-            ports: vec![
-                pin("p"),
-                pin("n"),
-                signal_port("i", "out"),
-            ],
-            tags: vec!["electrical".into(), "sensor".into()],
-            plot_hints: vec!["i".into()],
-            fmu_asset: None,
-            fmu_guid: None,
-            fmu_model_identifier: None,
-        },
-        CatalogEntry {
-            id: "mechanics.rotational.inertia".into(),
-            type_name: "Modelica.Mechanics.Rotational.Components.Inertia".into(),
-            domain: "mechanical".into(),
-            category: "Rotational".into(),
-            display_key: "catalog.mechanics.rotational.inertia".into(),
-            default_instance_prefix: "inertia".into(),
-            requires_library: "Modelica".into(),
-            default_params: vec![p("J", "1")],
-            ports: vec![flange("flange_a"), flange("flange_b")],
-            tags: vec!["mechanical".into()],
-            plot_hints: vec!["phi".into(), "w".into()],
-            fmu_asset: None,
-            fmu_guid: None,
-            fmu_model_identifier: None,
-        },
-        CatalogEntry {
-            id: "mechanics.rotational.spring".into(),
-            type_name: "Modelica.Mechanics.Rotational.Components.Spring".into(),
-            domain: "mechanical".into(),
-            category: "Rotational".into(),
-            display_key: "catalog.mechanics.rotational.spring".into(),
-            default_instance_prefix: "spring".into(),
-            requires_library: "Modelica".into(),
-            default_params: vec![p("c", "1")],
-            ports: vec![flange("flange_a"), flange("flange_b")],
-            tags: vec!["mechanical".into()],
-            plot_hints: vec![],
-            fmu_asset: None,
-            fmu_guid: None,
-            fmu_model_identifier: None,
-        },
-        CatalogEntry {
-            id: "mechanics.rotational.damper".into(),
-            type_name: "Modelica.Mechanics.Rotational.Components.Damper".into(),
-            domain: "mechanical".into(),
-            category: "Rotational".into(),
-            display_key: "catalog.mechanics.rotational.damper".into(),
-            default_instance_prefix: "damper".into(),
-            requires_library: "Modelica".into(),
-            default_params: vec![p("d", "1")],
-            ports: vec![flange("flange_a"), flange("flange_b")],
-            tags: vec!["mechanical".into()],
-            plot_hints: vec![],
-            fmu_asset: None,
-            fmu_guid: None,
-            fmu_model_identifier: None,
-        },
-        CatalogEntry {
-            id: "mechanics.rotational.torque".into(),
-            type_name: "Modelica.Mechanics.Rotational.Sources.Torque".into(),
-            domain: "mechanical".into(),
-            category: "Rotational".into(),
-            display_key: "catalog.mechanics.rotational.torque".into(),
-            default_instance_prefix: "torque".into(),
-            requires_library: "Modelica".into(),
-            default_params: vec![],
-            ports: vec![
-                signal_port("tau", "in"),
-                flange("flange"),
-            ],
-            tags: vec!["mechanical".into(), "source".into()],
-            plot_hints: vec![],
-            fmu_asset: None,
-            fmu_guid: None,
-            fmu_model_identifier: None,
-        },
-    ]
+    ];
+    out.extend(builtin_rest::rest_catalog_entries());
+    out.extend(signal_blocks::extra_signal_blocks());
+    out.extend(physical_blocks::extra_physical_blocks());
+    out.extend(mechanics_mb::extra_mechanics_multibody_blocks());
+    out.extend(sensors::extra_sensor_blocks());
+    out
 }

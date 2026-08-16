@@ -1,0 +1,1737 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "unix:1784854516",
+  "note": "Q4-A catalog gate matrix. gate=validate|validate_sim|skip. Draw/terminals/Goto-From skipped with reason.",
+  "entries": [
+    {
+      "id": "analog.basic.capacitor",
+      "typeName": "Modelica.Electrical.Analog.Basic.Capacitor",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical"
+      ]
+    },
+    {
+      "id": "analog.basic.ground",
+      "typeName": "Modelica.Electrical.Analog.Basic.Ground",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical"
+      ]
+    },
+    {
+      "id": "analog.basic.inductor",
+      "typeName": "Modelica.Electrical.Analog.Basic.Inductor",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical"
+      ]
+    },
+    {
+      "id": "analog.basic.resistor",
+      "typeName": "Modelica.Electrical.Analog.Basic.Resistor",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical"
+      ]
+    },
+    {
+      "id": "analog.ideal.idealClosingSwitch",
+      "typeName": "Modelica.Electrical.Analog.Ideal.IdealClosingSwitch",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "ideal",
+        "switch"
+      ]
+    },
+    {
+      "id": "analog.ideal.idealDiode",
+      "typeName": "Modelica.Electrical.Analog.Ideal.IdealDiode",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "ideal",
+        "semiconductor"
+      ]
+    },
+    {
+      "id": "analog.ideal.idealOpeningSwitch",
+      "typeName": "Modelica.Electrical.Analog.Ideal.IdealOpeningSwitch",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "ideal",
+        "switch"
+      ]
+    },
+    {
+      "id": "analog.sensors.currentSensor",
+      "typeName": "Modelica.Electrical.Analog.Sensors.CurrentSensor",
+      "domain": "electrical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "sensor"
+      ]
+    },
+    {
+      "id": "analog.sensors.potentialSensor",
+      "typeName": "Modelica.Electrical.Analog.Sensors.PotentialSensor",
+      "domain": "electrical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "electrical"
+      ]
+    },
+    {
+      "id": "analog.sensors.powerSensor",
+      "typeName": "Modelica.Electrical.Analog.Sensors.PowerSensor",
+      "domain": "electrical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "electrical"
+      ]
+    },
+    {
+      "id": "analog.sensors.voltageSensor",
+      "typeName": "Modelica.Electrical.Analog.Sensors.VoltageSensor",
+      "domain": "electrical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "sensor"
+      ]
+    },
+    {
+      "id": "analog.sources.constantCurrent",
+      "typeName": "Modelica.Electrical.Analog.Sources.ConstantCurrent",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "source"
+      ]
+    },
+    {
+      "id": "analog.sources.constantVoltage",
+      "typeName": "Modelica.Electrical.Analog.Sources.ConstantVoltage",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "source"
+      ]
+    },
+    {
+      "id": "analog.sources.pulseVoltage",
+      "typeName": "Modelica.Electrical.Analog.Sources.PulseVoltage",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "source"
+      ]
+    },
+    {
+      "id": "analog.sources.sineVoltage",
+      "typeName": "Modelica.Electrical.Analog.Sources.SineVoltage",
+      "domain": "electrical",
+      "category": "Analog",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "electrical",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.continuous.derivative",
+      "typeName": "Modelica.Blocks.Continuous.Derivative",
+      "domain": "signal",
+      "category": "Continuous",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "continuous"
+      ]
+    },
+    {
+      "id": "blocks.continuous.firstOrder",
+      "typeName": "Modelica.Blocks.Continuous.FirstOrder",
+      "domain": "signal",
+      "category": "Continuous",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "continuous"
+      ]
+    },
+    {
+      "id": "blocks.continuous.integrator",
+      "typeName": "Modelica.Blocks.Continuous.Integrator",
+      "domain": "signal",
+      "category": "Continuous",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "continuous"
+      ]
+    },
+    {
+      "id": "blocks.continuous.pi",
+      "typeName": "Modelica.Blocks.Continuous.PI",
+      "domain": "signal",
+      "category": "Continuous",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "continuous",
+        "control"
+      ]
+    },
+    {
+      "id": "blocks.continuous.pid",
+      "typeName": "Modelica.Blocks.Continuous.PID",
+      "domain": "signal",
+      "category": "Continuous",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "continuous",
+        "control"
+      ]
+    },
+    {
+      "id": "blocks.continuous.transferFunction",
+      "typeName": "Modelica.Blocks.Continuous.TransferFunction",
+      "domain": "signal",
+      "category": "Continuous",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "continuous"
+      ]
+    },
+    {
+      "id": "blocks.discrete.firstOrderHold",
+      "typeName": "Modelica.Blocks.Discrete.FirstOrderHold",
+      "domain": "signal",
+      "category": "Discrete",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "discrete",
+        "sample"
+      ]
+    },
+    {
+      "id": "blocks.discrete.sampler",
+      "typeName": "Modelica.Blocks.Discrete.Sampler",
+      "domain": "signal",
+      "category": "Discrete",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "discrete",
+        "sample"
+      ]
+    },
+    {
+      "id": "blocks.discrete.transferFunction",
+      "typeName": "Modelica.Blocks.Discrete.TransferFunction",
+      "domain": "signal",
+      "category": "Discrete",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "discrete",
+        "sample"
+      ]
+    },
+    {
+      "id": "blocks.discrete.unitDelay",
+      "typeName": "Modelica.Blocks.Discrete.UnitDelay",
+      "domain": "signal",
+      "category": "Discrete",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "discrete",
+        "sample"
+      ]
+    },
+    {
+      "id": "blocks.discrete.zeroOrderHold",
+      "typeName": "Modelica.Blocks.Discrete.ZeroOrderHold",
+      "domain": "signal",
+      "category": "Discrete",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "discrete",
+        "sample"
+      ]
+    },
+    {
+      "id": "blocks.logical.and",
+      "typeName": "Modelica.Blocks.Logical.And",
+      "domain": "signal",
+      "category": "Logical",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "logical"
+      ]
+    },
+    {
+      "id": "blocks.logical.not",
+      "typeName": "Modelica.Blocks.Logical.Not",
+      "domain": "signal",
+      "category": "Logical",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "logical"
+      ]
+    },
+    {
+      "id": "blocks.logical.or",
+      "typeName": "Modelica.Blocks.Logical.Or",
+      "domain": "signal",
+      "category": "Logical",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "logical"
+      ]
+    },
+    {
+      "id": "blocks.logical.switch",
+      "typeName": "Modelica.Blocks.Logical.Switch",
+      "domain": "signal",
+      "category": "Logical",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "logical",
+        "switch"
+      ]
+    },
+    {
+      "id": "blocks.math.abs",
+      "typeName": "Modelica.Blocks.Math.Abs",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.math.acos",
+      "typeName": "Modelica.Blocks.Math.Acos",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "trig"
+      ]
+    },
+    {
+      "id": "blocks.math.add",
+      "typeName": "Modelica.Blocks.Math.Add",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.math.asin",
+      "typeName": "Modelica.Blocks.Math.Asin",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "trig"
+      ]
+    },
+    {
+      "id": "blocks.math.atan",
+      "typeName": "Modelica.Blocks.Math.Atan",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "trig"
+      ]
+    },
+    {
+      "id": "blocks.math.atan2",
+      "typeName": "Modelica.Blocks.Math.Atan2",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "trig"
+      ]
+    },
+    {
+      "id": "blocks.math.booleanToReal",
+      "typeName": "Modelica.Blocks.Math.BooleanToReal",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "logical"
+      ]
+    },
+    {
+      "id": "blocks.math.cos",
+      "typeName": "Modelica.Blocks.Math.Cos",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "trig"
+      ]
+    },
+    {
+      "id": "blocks.math.division",
+      "typeName": "Modelica.Blocks.Math.Division",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.math.feedback",
+      "typeName": "Modelica.Blocks.Math.Feedback",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.math.gain",
+      "typeName": "Modelica.Blocks.Math.Gain",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.math.product",
+      "typeName": "Modelica.Blocks.Math.Product",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.math.realToBoolean",
+      "typeName": "Modelica.Blocks.Math.RealToBoolean",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "logical"
+      ]
+    },
+    {
+      "id": "blocks.math.sign",
+      "typeName": "Modelica.Blocks.Math.Sign",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.math.sin",
+      "typeName": "Modelica.Blocks.Math.Sin",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math",
+        "trig"
+      ]
+    },
+    {
+      "id": "blocks.math.sqrt",
+      "typeName": "Modelica.Blocks.Math.Sqrt",
+      "domain": "signal",
+      "category": "Math",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "math"
+      ]
+    },
+    {
+      "id": "blocks.nonlinear.deadZone",
+      "typeName": "Modelica.Blocks.Nonlinear.DeadZone",
+      "domain": "signal",
+      "category": "Nonlinear",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "nonlinear"
+      ]
+    },
+    {
+      "id": "blocks.nonlinear.limiter",
+      "typeName": "Modelica.Blocks.Nonlinear.Limiter",
+      "domain": "signal",
+      "category": "Nonlinear",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "nonlinear"
+      ]
+    },
+    {
+      "id": "blocks.routing.bus2",
+      "typeName": "Modelica.Blocks.Routing.Multiplex2",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "bus",
+        "mux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.routing.bus3",
+      "typeName": "Modelica.Blocks.Routing.Multiplex3",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "bus",
+        "mux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.routing.demux2",
+      "typeName": "Modelica.Blocks.Routing.DeMultiplex2",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "demux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.routing.demux3",
+      "typeName": "Modelica.Blocks.Routing.DeMultiplex3",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "demux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.routing.demux4",
+      "typeName": "Modelica.Blocks.Routing.DeMultiplex4",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "demux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.routing.from",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "skip",
+      "skipReason": "Goto/From need paired tag harness (emit golden)",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "from",
+        "jump"
+      ]
+    },
+    {
+      "id": "blocks.routing.goto",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "skip",
+      "skipReason": "Goto/From need paired tag harness (emit golden)",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "goto",
+        "jump"
+      ]
+    },
+    {
+      "id": "blocks.routing.mux2",
+      "typeName": "Modelica.Blocks.Routing.Multiplex2",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "mux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.routing.mux3",
+      "typeName": "Modelica.Blocks.Routing.Multiplex3",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "mux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.routing.mux4",
+      "typeName": "Modelica.Blocks.Routing.Multiplex4",
+      "domain": "signal",
+      "category": "Routing",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "routing",
+        "mux",
+        "busbar"
+      ]
+    },
+    {
+      "id": "blocks.sinks.display",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "domain": "signal",
+      "category": "Sinks",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "sink",
+        "display"
+      ]
+    },
+    {
+      "id": "blocks.sinks.scope",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "domain": "signal",
+      "category": "Sinks",
+      "group": "routing",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "sink",
+        "scope"
+      ]
+    },
+    {
+      "id": "blocks.sources.booleanConstant",
+      "typeName": "Modelica.Blocks.Sources.BooleanConstant",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source",
+        "boolean"
+      ]
+    },
+    {
+      "id": "blocks.sources.booleanPulse",
+      "typeName": "Modelica.Blocks.Sources.BooleanPulse",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source",
+        "boolean"
+      ]
+    },
+    {
+      "id": "blocks.sources.booleanStep",
+      "typeName": "Modelica.Blocks.Sources.BooleanStep",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source",
+        "boolean"
+      ]
+    },
+    {
+      "id": "blocks.sources.clock",
+      "typeName": "Modelica.Blocks.Sources.Clock",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.sources.constant",
+      "typeName": "Modelica.Blocks.Sources.Constant",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.sources.expSine",
+      "typeName": "Modelica.Blocks.Sources.ExpSine",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.sources.fromFile",
+      "typeName": "Modelica.Blocks.Sources.CombiTimeTable",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "routing",
+      "gate": "skip",
+      "skipReason": "Goto/From need paired tag harness (emit golden)",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source",
+        "fromFile"
+      ]
+    },
+    {
+      "id": "blocks.sources.pulse",
+      "typeName": "Modelica.Blocks.Sources.Pulse",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.sources.ramp",
+      "typeName": "Modelica.Blocks.Sources.Ramp",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.sources.sine",
+      "typeName": "Modelica.Blocks.Sources.Sine",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.sources.step",
+      "typeName": "Modelica.Blocks.Sources.Step",
+      "domain": "signal",
+      "category": "Sources",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "source"
+      ]
+    },
+    {
+      "id": "blocks.tables.lookup1d",
+      "typeName": "Modelica.Blocks.Tables.CombiTable1Ds",
+      "domain": "signal",
+      "category": "Tables",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "tables",
+        "lookup"
+      ]
+    },
+    {
+      "id": "blocks.tables.lookup2d",
+      "typeName": "Modelica.Blocks.Tables.CombiTable2Ds",
+      "domain": "signal",
+      "category": "Tables",
+      "group": "signal-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "tables",
+        "lookup"
+      ]
+    },
+    {
+      "id": "blocks.terminals.inport",
+      "typeName": "Modelica.Blocks.Interfaces.RealInput",
+      "domain": "signal",
+      "category": "Terminals",
+      "group": "terminal",
+      "gate": "skip",
+      "skipReason": "terminal ports require parent subsystem harness",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "terminal",
+        "inport"
+      ]
+    },
+    {
+      "id": "blocks.terminals.outport",
+      "typeName": "Modelica.Blocks.Interfaces.RealOutput",
+      "domain": "signal",
+      "category": "Terminals",
+      "group": "terminal",
+      "gate": "skip",
+      "skipReason": "terminal ports require parent subsystem harness",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "signal",
+        "terminal",
+        "outport"
+      ]
+    },
+    {
+      "id": "draw.ellipse",
+      "typeName": "Studio.Draw.Ellipse",
+      "domain": "draw",
+      "category": "Draw",
+      "group": "draw",
+      "gate": "skip",
+      "skipReason": "draw annotation; not emitted to Modelica",
+      "requiresLibrary": "Studio",
+      "tags": [
+        "draw",
+        "annotation"
+      ]
+    },
+    {
+      "id": "draw.line",
+      "typeName": "Studio.Draw.Line",
+      "domain": "draw",
+      "category": "Draw",
+      "group": "draw",
+      "gate": "skip",
+      "skipReason": "draw annotation; not emitted to Modelica",
+      "requiresLibrary": "Studio",
+      "tags": [
+        "draw",
+        "annotation"
+      ]
+    },
+    {
+      "id": "draw.note",
+      "typeName": "Studio.Draw.Note",
+      "domain": "draw",
+      "category": "Draw",
+      "group": "draw",
+      "gate": "skip",
+      "skipReason": "draw annotation; not emitted to Modelica",
+      "requiresLibrary": "Studio",
+      "tags": [
+        "draw",
+        "annotation"
+      ]
+    },
+    {
+      "id": "draw.polygon",
+      "typeName": "Studio.Draw.Polygon",
+      "domain": "draw",
+      "category": "Draw",
+      "group": "draw",
+      "gate": "skip",
+      "skipReason": "draw annotation; not emitted to Modelica",
+      "requiresLibrary": "Studio",
+      "tags": [
+        "draw",
+        "annotation"
+      ]
+    },
+    {
+      "id": "draw.rectangle",
+      "typeName": "Studio.Draw.Rectangle",
+      "domain": "draw",
+      "category": "Draw",
+      "group": "draw",
+      "gate": "skip",
+      "skipReason": "draw annotation; not emitted to Modelica",
+      "requiresLibrary": "Studio",
+      "tags": [
+        "draw",
+        "annotation"
+      ]
+    },
+    {
+      "id": "draw.text",
+      "typeName": "Studio.Draw.Text",
+      "domain": "draw",
+      "category": "Draw",
+      "group": "draw",
+      "gate": "skip",
+      "skipReason": "draw annotation; not emitted to Modelica",
+      "requiresLibrary": "Studio",
+      "tags": [
+        "draw",
+        "annotation"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.accSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.AccSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "rotational"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.angleSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.AngleSensor",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "sensor"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.damper",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Damper",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.fixed",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Fixed",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "boundary"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.idealGear",
+      "typeName": "Modelica.Mechanics.Rotational.Components.IdealGear",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "gear"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.inertia",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Inertia",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.relAngleSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.RelAngleSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "rotational"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.relSpeedSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.RelSpeedSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "rotational"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.speed",
+      "typeName": "Modelica.Mechanics.Rotational.Sources.Speed",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "source"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.speedSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.SpeedSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "rotational"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.spring",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Spring",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.springDamper",
+      "typeName": "Modelica.Mechanics.Rotational.Components.SpringDamper",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.torque",
+      "typeName": "Modelica.Mechanics.Rotational.Sources.Torque",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "source"
+      ]
+    },
+    {
+      "id": "mechanics.rotational.torqueSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.TorqueSensor",
+      "domain": "mechanical",
+      "category": "Rotational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "sensor"
+      ]
+    },
+    {
+      "id": "mechanics.translational.accSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.AccSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "mechanics.translational.damper",
+      "typeName": "Modelica.Mechanics.Translational.Components.Damper",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "mechanics.translational.fixed",
+      "typeName": "Modelica.Mechanics.Translational.Components.Fixed",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "boundary"
+      ]
+    },
+    {
+      "id": "mechanics.translational.force",
+      "typeName": "Modelica.Mechanics.Translational.Sources.Force",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "source"
+      ]
+    },
+    {
+      "id": "mechanics.translational.forceSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.ForceSensor",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "sensor"
+      ]
+    },
+    {
+      "id": "mechanics.translational.idealGearR2T",
+      "typeName": "Modelica.Mechanics.Translational.Components.IdealGearR2T",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "gear",
+        "coupling"
+      ]
+    },
+    {
+      "id": "mechanics.translational.mass",
+      "typeName": "Modelica.Mechanics.Translational.Components.Mass",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "mass"
+      ]
+    },
+    {
+      "id": "mechanics.translational.position",
+      "typeName": "Modelica.Mechanics.Translational.Sources.Position",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "source"
+      ]
+    },
+    {
+      "id": "mechanics.translational.positionSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.PositionSensor",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "sensor"
+      ]
+    },
+    {
+      "id": "mechanics.translational.relForceSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.RelForceSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "mechanics.translational.relPositionSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.RelPositionSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "mechanics.translational.relSpeedSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.RelSpeedSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "mechanics.translational.speed",
+      "typeName": "Modelica.Mechanics.Translational.Sources.Speed",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational",
+        "source"
+      ]
+    },
+    {
+      "id": "mechanics.translational.speedSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.SpeedSensor",
+      "domain": "mechanical",
+      "category": "Sensors",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "sensor",
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "mechanics.translational.spring",
+      "typeName": "Modelica.Mechanics.Translational.Components.Spring",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "mechanics.translational.springDamper",
+      "typeName": "Modelica.Mechanics.Translational.Components.SpringDamper",
+      "domain": "mechanical",
+      "category": "Translational",
+      "group": "physical-core",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "mechanical",
+        "translational"
+      ]
+    },
+    {
+      "id": "multibody.body",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.Body",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.bodyBox",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.BodyBox",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.bodyCylinder",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.BodyCylinder",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "3d",
+        "body"
+      ]
+    },
+    {
+      "id": "multibody.fixed",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.Fixed",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.fixedRotation",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.FixedRotation",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.fixedTranslation",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.FixedTranslation",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.freeMotion",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.FreeMotion",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "joint",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.pointMass",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.PointMass",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "3d",
+        "body"
+      ]
+    },
+    {
+      "id": "multibody.prismatic",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.Prismatic",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "joint",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.prismaticActuated",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.Prismatic",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "joint",
+        "3d",
+        "actuated"
+      ]
+    },
+    {
+      "id": "multibody.revolute",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.Revolute",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "3d",
+        "joint"
+      ]
+    },
+    {
+      "id": "multibody.revoluteActuated",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.Revolute",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "joint",
+        "3d",
+        "actuated"
+      ]
+    },
+    {
+      "id": "multibody.spherical",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.Spherical",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "joint",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.universal",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.Universal",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "multibody",
+        "joint",
+        "3d"
+      ]
+    },
+    {
+      "id": "multibody.world",
+      "typeName": "Modelica.Mechanics.MultiBody.World",
+      "domain": "multibody",
+      "category": "MultiBody",
+      "group": "multibody",
+      "gate": "validate",
+      "requiresLibrary": "Modelica",
+      "tags": [
+        "multibody",
+        "3d"
+      ]
+    }
+  ]
+}

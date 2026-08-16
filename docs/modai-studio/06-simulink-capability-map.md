@@ -150,7 +150,7 @@
 | Stop / 取消    | 取消仿真       | P1  |             |
 | Pause        | 暂停（若引擎支持）  | P3  | 当前引擎多不支持真暂停 |
 | Step Forward | 单步/断点式推进   | P3  |             |
-| Fast Restart | 热重启同结构改参   | P2  | 依赖编译缓存      |
+| Fast Restart | 热重启同结构改参   | P2  | Studio P310 已落地 |
 | 仿真进度条        | 进度事件       | P1  |             |
 | 仿真出错定位到模块    | 错误映射到 node | P1  |             |
 
@@ -182,7 +182,7 @@
 | Simulink 能力     | Studio 能力   | 阶段  | 备注      |
 | --------------- | ----------- | --- | ------- |
 | 采样时间颜色          | 连续/离散着色图例   | P2  |         |
-| Rate Transition | 显式速率转换块     | P3  |         |
+| Rate Transition | 显式速率转换块     | P3  | 已落地 RATE（ZOH/UD 映射） |
 | 信号属性（单位、维度）     | port 元数据扩展  | P2  |         |
 | 日志与 MAT 文件      | CSV/JSON 序列 | P1  | 不追求 MAT |
 
@@ -197,7 +197,7 @@
 | 连接错误即时提示            | 连线规则 + reasonKey | P0–P1  |          |
 | 更新图 Update Diagram  | validate / 编译检查  | P0     |          |
 | Model Advisor 风格检查单 | 静态检查清单           | P2     |          |
-| 性能分析 Profiler       | 仿真耗时分解           | P3     |          |
+| 性能分析 Profiler       | 仿真耗时分解           | P3     | 已落地 F89（阶段 wall-clock） |
 | 线性化 / 频域工具          | Bode 等           | Out/P3 | 非 MVP 方向 |
 
 
@@ -212,7 +212,7 @@
 | 域专用库                 | Electrical/Mechanical 子集 | P0–P2  |       |
 | 求解器配置（局部）            | 全局求解器为主                  | P1     |       |
 | 物理探头 / 传感器块          | 传感器组件入 catalog           | P1     |       |
-| Multibody 3D         | 远期                       | P3/Out | 依赖编译器 |
+| Multibody 3D         | 远期                       | P3     | Studio P311 视口已落地 |
 
 
 
@@ -222,8 +222,8 @@
 
 | Simulink 能力         | Studio 能力    | 阶段  | 备注                       |
 | ------------------- | ------------ | --- | ------------------------ |
-| 生成 C/C++            | 可选调用编译器 emit | P3  |                          |
-| FMU 导出              | FMU 导出向导     | P3  |                          |
+| 生成 C/C++            | 可选调用编译器 emit | P3  | F90 Coder package via Export Suite |
+| FMU 导出              | FMU 导出向导     | P3  | F90 CS/ME wizard + history      |
 | FMI 协仿              | 导入 FMU 节点    | P3  |                          |
 | External Mode / PIL | Out          | —   |                          |
 | MATLAB Function 块   | 自定义算法块       | Out | 用 Modelica function/算法代替 |

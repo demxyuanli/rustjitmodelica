@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "checks": [
+    {
+      "id": "P523.subsystem_prefix",
+      "ok": true,
+      "detail": "contains `plant_gain1`"
+    },
+    {
+      "id": "P523.gain_type",
+      "ok": true,
+      "detail": "contains `Modelica.Blocks.Math.Gain`"
+    },
+    {
+      "id": "P524.variant_inactive_absent",
+      "ok": true,
+      "detail": "absent `altGain`"
+    },
+    {
+      "id": "P524.variant_inactive_param",
+      "ok": true,
+      "detail": "absent `k = 99`"
+    },
+    {
+      "id": "P524.goto_from_connect",
+      "ok": true,
+      "detail": "contains `connect(goto1.y, from1.u)`"
+    }
+  ],
+  "passed": 5,
+  "failed": 0
+}

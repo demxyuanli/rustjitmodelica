@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "product": "modai-studio",
+  "modelName": "FirstOrderStep",
+  "libraryPaths": [],
+  "simulationDefaults": {
+    "stopTime": 5.0,
+    "numberOfIntervals": 500,
+    "solver": "rk45",
+    "tolerance": 1e-6,
+    "maxStep": null,
+    "minStep": null,
+    "loggedVariables": []
+  },
+  "ui": { "locale": "zh" },
+  "paramDictionary": []
+}

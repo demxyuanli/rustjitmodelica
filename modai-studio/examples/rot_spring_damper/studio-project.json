@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "product": "modai-studio",
+  "modelName": "RotSpringDamper",
+  "libraryPaths": [],
+  "simulationDefaults": {
+    "stopTime": 2.0,
+    "numberOfIntervals": 400,
+    "solver": "rk45",
+    "tolerance": 1e-6,
+    "maxStep": null,
+    "minStep": null,
+    "loggedVariables": [
+      "wSensor.w",
+      "springDamper1.phi_rel"
+    ]
+  },
+  "ui": {
+    "locale": "zh"
+  },
+  "paramDictionary": []
+}

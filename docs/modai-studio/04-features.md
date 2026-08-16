@@ -30,9 +30,9 @@
 
 | ID | 功能 | Simulink 类比 | 说明 |
 |----|------|---------------|------|
-| F01 | 新建项目 | New Model | manifest + 空 diagram + 骨架 mo |
+| F01 | 新建项目 | New Model | 向导：名称 + 父目录自动建 `{parent}/{ModelName}` + 空白/示例模板 + 初始仿真参数 |
 | F02 | 打开项目 | Open | 读 schema；布局只信 diagram |
-| F03 | 保存项目 | Save | diagram + emit mo |
+| F03 | 保存项目 | Save | diagram + emit mo；无工程目录时走与新建相同的向导（名称 + 父目录自动建 `{parent}/{ModelName}`），保存当前画布而非模板 |
 | F04 | 组件库浏览 | Library Browser | 域/类别/搜索 |
 | F05 | 拖拽添组件 | 拖 Block | 默认实例名与参数 |
 | F06 | 端口连线 | 信号/物理连线 | 规则拒绝时提示 |
@@ -61,9 +61,9 @@
 | F32 | 对齐/分布工具 | Align / Distribute |
 | F33 | 画布注释 | Annotation |
 | F34 | 信号线标签 | Signal label |
-| F35 | 模块旋转 90° | Rotate |
+| F35 | 模块旋转 90° | Rotate | 端口改到新边；相关连线自动重布 |
 | F36 | 画布查找 | Find |
-| F37 | 自动正交路由/折点编辑 | 路由 |
+| F37 | 自动正交路由/折点编辑 | 路由 | 新连线避块；拖动模块松手后重布相关连线；工具栏 Reroute |
 | F38 | 错误定位到模块 | 点击诊断跳转 |
 | F39 | 端口悬停类型提示 | 端口提示 |
 | F43 | 实例树大纲 | Model Explorer 精简 |
@@ -73,10 +73,10 @@
 | F47 | 记录变量白名单 | Signal logging 配置 |
 | F48 | 固定/可变步长模式展示 | Solver 类型 |
 | F49 | 仿真进度条 | Progress |
-| F50 | 画布 Sink/Scope 节点 | Scope block |
-| F51 | 选中信号快速绘图 | Floating scope 精简 |
-| F52 | Display 终值 | Display |
-| F53 | 曲线缩放/光标读数 | Scope 工具 |
+| F50 | 画布 Sink/Scope 节点 | Scope block（Q4-A P526 加深） |
+| F51 | 选中信号快速绘图 | Floating scope 精简（Q4-A P527 加深） |
+| F52 | Display 终值 | Display（Q4-A P528 加深） |
+| F53 | 曲线缩放/光标读数 | Scope 工具（Q4-A P529 加深） |
 | F54 | 结果变量搜索过滤 | — |
 | F40 | Catalog 收藏/最近使用 | Library 快捷 |
 | F41 | 按关键字过滤库 | 搜索增强 |
@@ -88,16 +88,16 @@
 | F22 | 只读查看 .mo | — |
 | F23 | 子系统下钻 | Subsystem |
 | F60 | 选区创建子系统 | Create Subsystem |
-| F61 | 子系统端口自动提升 | 自动 In/Out |
+| F61 | 子系统端口自动提升 | 自动 In/Out（P337） |
 | F62 | 模型引用 | Model Reference |
-| F63 | replaceable 类型切换 | Configurable 精简 |
+| F63 | replaceable 类型切换 | Configurable 多选换型（P419+） |
 | F64 | 面包屑层级导航 | 上钻下钻 |
 | F55 | 多 run 历史 | SDI 精简 |
 | F56 | 多 run 曲线叠加对比 | SDI compare |
 | F42 | 用户扩展 catalog 包 | Custom library |
-| F70 | 物理库扩充（更多 Analog/Mechanics） | Simscape libs |
-| F71 | 传感器/探头组件 | PS-Simulink Converter 类比（Modelica 传感器） |
-| F72 | 物理连线样式区分 | 域着色 |
+| F70 | 物理库扩充（更多 Analog/Mechanics） | Analog/Rotational/Translational（P479+） |
+| F71 | 传感器/探头组件 | MSL Sensors RealOutput 桥（Q4-B P531–P538） |
+| F72 | 物理连线样式区分 | 域着色 + 线型（P499+）；unit 推断见 Q4-B |
 | F80 | 静态检查清单 | Model Advisor 精简 |
 | F81 | 代数环/结构告警展示 | Algebraic loop 诊断 |
 | F82 | 导出框图 PNG/SVG | Print/Export |
@@ -110,17 +110,17 @@
 
 | ID | 功能 | Simulink 类比 |
 |----|------|---------------|
-| F90 | FMU 导出向导 | FMU export |
+| F90 | FMU 导出向导 / Export Suite | Coder + FMU CS/ME wizard + history + smoke |
 | F91 | FMU 导入为节点 | FMU block |
 | F92 | C 代码 emit 向导 | Coder 极简 |
 | F93 | Dashboard 控件绑参 | Dashboard |
 | F49b | Fast Restart | Fast Restart |
 | F49c | 真暂停/单步 | Pause / Step |
-| F73 | 采样时间着色 | Sample time colors |
-| F74 | Multibody/3D 相关 | Simscape Multibody |
-| F87 | Variant 组件 | Variant Subsystem |
+| F73 | 采样时间着色 | Discrete 虚线/橙色 + Ts（P419+） |
+| F74 | Multibody/3D 相关 | Joints/Parts 扩充（P479+） |
+| F87 | Variant 组件 | Variant Subsystem（P459+） |
 | F88 | XY 相平面图 | XY Graph |
-| F89 | 仿真 Profiler | Profiler |
+| F89 | 仿真 Profiler | Profiler（阶段耗时：emit/compile/integrate） |
 
 ---
 
@@ -159,7 +159,7 @@
 - Sinks：`RealOutput` 终端、Scope 绑定节点、Display
 - Math：Product、Divide、Abs、Saturation、Relay
 - Continuous：Derivative、PI/PID（若有）、StateSpace（远期）
-- Discrete：UnitDelay、ZeroOrderHold（编译器就绪后）
+- Discrete：UnitDelay、ZeroOrderHold、Rate Transition（ZOH/UD 映射，见 RATE 板）
 - Routing：Mux/Demux 等价（数组）、Goto/From（P2）
 - Electrical：Inductor、CurrentSensor、VoltageSensor
 - Mechanical：Damper、Torque source
@@ -172,7 +172,7 @@
 
 ### 4.1 工程（F01–F03）
 
-同前：目录项目；Save 时 emit；Run 默认 **保存并仿真**。
+同前：目录项目；Save 时 emit；Run 默认 **保存并仿真**。欢迎为 800x600 模态窗（工具栏可再开）；最近 8 个工程；未保存关闭 / 换工程需确认。新建走向导：填写模型名、选择父目录后自动创建 `{parent}/{ModelName}`，可选空白或内置示例模板，并填写初始仿真参数。Ctrl+N / 菜单 New 打开欢迎窗的新建页，不再直接选文件夹。启动后尚未落盘时 Ctrl+S / Save 打开同一向导（隐藏模板，保存当前画布到 `{parent}/{ModelName}`），不再把所选文件夹直接当作工程根。尚未落盘时 Run / Update / 导出同样打开该向导，不跳过保存。已存在 `studio-project.json` 或非空目录会拒绝覆盖。
 
 ### 4.2 库与画布（F04–F07, F30–F39）
 
@@ -183,7 +183,7 @@
 3. 禁止跨域混连
 4. 禁止自环
 
-**P1 增强：** 悬停提示、非法边保留为 ghost 或标红、正交路由、对齐、注释、信号标签。
+**P1 增强：** 悬停提示、非法边保留为 ghost 或标红、正交路由（新连线避块；拖动模块松手后重布接到该模块的线；旋转 90° 后门位与连线跟随）、对齐、注释、信号标签。标题栏为 File / Edit / Export / Simulation 下拉菜单。脏工程有目录时定时自动保存；异常退出可恢复草稿。
 
 ### 4.3 参数与大纲（F08–F09, F43–F45）
 
@@ -208,7 +208,8 @@
 **P0 策略（刻意不同于必须放 Scope 的习惯）：**
 
 - 仿真结束 → 结果面板列出 `series` 键 → 勾选绘图
-- 默认可勾选 `*.y` / catalog `plotHints`
+- Run 中 Results 随积分输出行增长（准实时 Scope；Pause 停画）；结束后用完整 `series` 替换
+- 默认可勾选 `*.y` / catalog `plotHints`（`instance.hint` 会匹配编译器扁平名，如 `body.r_0[1]` → `body_r_0_1`）
 
 **P1：**
 
@@ -231,7 +232,7 @@
 
 - P0：四件套电路可仿真
 - P1：传感器 + 连线域着色
-- P2：库扩充；P3：多体/3D
+- P2：库扩充；P3：多体/3D（`examples/multibody_preview` 单摆；编译器按四元数近似展开 `Frames.*` / `Types.Axis`；`zeros(n)` 力/矩平衡展开；Frame `R` 别名跟随关节；`if rooted` 折成连续方程供 BLT 排序；`der(resolve1)` → `w × r`，`a_0` 耦合 `der(w)`；`resolve1`/`resolve2` 标量化使 `f=m(a-g)` 含 `der(w)`；`0 = e · t` 留作残差解 `der(w)`）
 
 ### 4.8 诊断（F18, F80–F83）
 
@@ -241,10 +242,30 @@
 
 ### 4.9 示例（F16）
 
+启动与工具栏 Home 打开 800x600 欢迎模态窗；下部 Tab 分示例（按信号/电气/机械/多体分类列表）/ 打开（含最近）/ 新建（名称、父目录自动建子文件夹、按域分类的模板列表、初始仿真配置）。
+
 | 示例 | 内容 | 类比 |
 |------|------|------|
-| `examples/signal_feedback` | Step–Gain–Integrator / Feedback | 经典教学模型 |
-| `examples/rc_circuit` | V–R–C–Ground | Simscape 入门 |
+| `examples/signal_feedback` | Step–Gain–Integrator | 信号链入门 |
+| `examples/first_order_step` | Step–FirstOrder | 一阶对象 |
+| `examples/pid_plant` | Step–Feedback–PID–FirstOrder | PID 闭环 |
+| `examples/tf_plant` | Step–TransferFunction `1/(s+1)` | 传递函数 |
+| `examples/limiter_integrator` | Step–Limiter–Integrator | 饱和非线性 |
+| `examples/switch_select` | Constants–BooleanStep–Switch | 逻辑切换 |
+| `examples/goto_from` | Step–Goto/From–Gain | 跳线 |
+| `examples/rate_transition` | Sine–ZeroOrderHold | 离散保持 |
+| `examples/rc_circuit` | StepV–R–C–Ground | 电路入门 |
+| `examples/rl_circuit` | PulseV–R–L–Ground | RL 电流 |
+| `examples/rlc_series` | V–R–L–C–Ground | 串联 RLC |
+| `examples/elec_sensor_control` | 电气 + 传感器 | 电气测量 |
+| `examples/rot_drive` | Torque–Inertia–Damper–Fixed | 旋转驱动 |
+| `examples/rot_gear_train` | Inertia–IdealGear–Inertia | 齿轮传动 |
+| `examples/rot_spring_damper` | Inertia–SpringDamper | 旋转二阶 |
+| `examples/rot_sensor_control` | 旋转 + 传感器 | 旋转测量 |
+| `examples/trans_mass_force` | Force–Mass–Damper–Fixed | 平移驱动 |
+| `examples/trans_spring_damper` | Mass–SpringDamper | 平移二阶 |
+| `examples/trans_sensor_control` | 平移 + 传感器 | 平移测量 |
+| `examples/multibody_preview` | World–Revolute–Rod–Body 单摆 | Multibody / 3D |
 
 ---
 

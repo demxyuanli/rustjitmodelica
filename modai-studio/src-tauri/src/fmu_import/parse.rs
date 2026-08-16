@@ -264,11 +264,7 @@ pub fn description_to_catalog(desc: &FmuDescription, asset_dir: &Path) -> Catalo
             }
             "parameter" => {
                 let start = s.start.map(|v| v.to_string()).unwrap_or_else(|| "0".into());
-                params.push(CatalogParam {
-                    name: port_id_from_name(&s.name),
-                    value: start,
-                    value_type: Some("Real".into()),
-                });
+                params.push(CatalogParam::real(&port_id_from_name(&s.name), &start));
             }
             _ => {}
         }
@@ -292,6 +288,7 @@ pub fn description_to_catalog(desc: &FmuDescription, asset_dir: &Path) -> Catalo
         fmu_asset: Some(asset_dir.display().to_string()),
         fmu_guid: Some(desc.guid.clone()),
         fmu_model_identifier: Some(desc.model_identifier.clone()),
+        icon: None,
     }
 }
 

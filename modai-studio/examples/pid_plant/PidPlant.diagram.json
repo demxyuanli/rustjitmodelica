@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "modelName": "PidPlant",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_step",
+      "instanceName": "step1",
+      "typeName": "Modelica.Blocks.Sources.Step",
+      "domain": "signal",
+      "catalogId": "blocks.sources.step",
+      "position": { "x": 40, "y": 80 },
+      "rotation": 0,
+      "params": [
+        { "name": "height", "value": "1" },
+        { "name": "startTime", "value": "0.5" }
+      ],
+      "ports": [{ "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "step1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_fb",
+      "instanceName": "feedback1",
+      "typeName": "Modelica.Blocks.Math.Feedback",
+      "domain": "signal",
+      "catalogId": "blocks.math.feedback",
+      "position": { "x": 220, "y": 80 },
+      "rotation": 0,
+      "params": [],
+      "ports": [
+        { "id": "u1", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "u2", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "feedback1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_pid",
+      "instanceName": "pid1",
+      "typeName": "Modelica.Blocks.Continuous.PID",
+      "domain": "signal",
+      "catalogId": "blocks.continuous.pid",
+      "position": { "x": 400, "y": 80 },
+      "rotation": 0,
+      "params": [
+        { "name": "k", "value": "2" },
+        { "name": "Ti", "value": "0.5" },
+        { "name": "Td", "value": "0.05" }
+      ],
+      "ports": [
+        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "pid1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_plant",
+      "instanceName": "plant",
+      "typeName": "Modelica.Blocks.Continuous.FirstOrder",
+      "domain": "signal",
+      "catalogId": "blocks.continuous.firstOrder",
+      "position": { "x": 580, "y": 80 },
+      "rotation": 0,
+      "params": [
+        { "name": "k", "value": "1" },
+        { "name": "T", "value": "0.8" }
+      ],
+      "ports": [
+        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "plant", "width": 120, "height": 48 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "sourceNodeId": "n_step", "sourcePortId": "y", "targetNodeId": "n_fb", "targetPortId": "u1", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e2", "sourceNodeId": "n_fb", "sourcePortId": "y", "targetNodeId": "n_pid", "targetPortId": "u", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e3", "sourceNodeId": "n_pid", "sourcePortId": "y", "targetNodeId": "n_plant", "targetPortId": "u", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e4", "sourceNodeId": "n_plant", "sourcePortId": "y", "targetNodeId": "n_fb", "targetPortId": "u2", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null }
+  ],
+  "annotations": [],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}

@@ -1,16 +1,17 @@
 use crate::catalog::builtin_catalog;
 use crate::diagram::{
-    CatalogEntry, DiagramDocument, OpenProjectResult, StudioProjectManifest, StudioReport,
-    StudioSimOptions,
+    CatalogEntry, DiagramDocument, OpenProjectResult, SimProfile, StudioProjectManifest,
+    StudioReport, StudioSimOptions,
 };
-use crate::emit_mo::emit_modelica;
+use crate::emit_mo::{emit_modelica, emit_modelica_with_dict};
 use crate::fmu_import::{self, FmuImportResult};
 use crate::project::{create_project, open_project, save_project};
-use crate::sim_bridge::{self, simulate_model, validate_model};
+use crate::sim_bridge::{self, validate_model, RestartMode};
+use crate::wrap_mo::{self, WrapMoResult};
 use rustmodlica::{SimControl, SimulationResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -19,7 +20,10 @@ use tauri::{AppHandle, Emitter};
 pub fn studio_catalog_list(root_dir: Option<String>) -> Vec<CatalogEntry> {
     let mut cat = builtin_catalog();
     if let Some(root) = root_dir {
-        cat.extend(fmu_import::list_imported_fmus(PathBuf::from(root).as_path()));
+        let p = PathBuf::from(&root);
+        cat.extend(fmu_import::list_imported_fmus(p.as_path()));
+        cat.extend(wrap_mo::list_wrapped(p.as_path()));
+        cat.extend(crate::user_catalog::list_user_catalog(p.as_path()));
     }
     cat
 }
@@ -32,6 +36,22 @@ pub fn studio_project_create(root_dir: String, model_name: String) -> Result<Ope
 #[tauri::command]
 pub fn studio_project_open(root_dir: String) -> Result<OpenProjectResult, String> {
     open_project(PathBuf::from(root_dir).as_path())
+}
+
+/// Path to auto-open on GUI startup (`MODAI_STUDIO_OPEN` or `--project=`).
+#[tauri::command]
+pub fn studio_startup_project_path() -> Option<String> {
+    crate::startup::resolve_startup_project().map(|p| p.display().to_string())
+}
+
+#[tauri::command]
+pub fn studio_list_examples() -> Vec<crate::examples::ExampleInfo> {
+    crate::examples::list_examples()
+}
+
+#[tauri::command]
+pub fn studio_open_example(id: String) -> Result<OpenProjectResult, String> {
+    crate::examples::open_example(&id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +101,11 @@ pub struct ValidateRequest {
     pub options: StudioSimOptions,
     #[serde(default)]
     pub emit_from_diagram: bool,
+    /// When true, validate runs Full compile including JIT codegen.
+    #[serde(default)]
+    pub full_jit: bool,
+    #[serde(default)]
+    pub param_dictionary: Vec<crate::diagram::ParamDictionaryEntry>,
 }
 
 fn resolve_code(req: &ValidateRequest) -> Result<String, StudioReport> {
@@ -98,7 +123,13 @@ fn resolve_code(req: &ValidateRequest) -> Result<String, StudioReport> {
                 min_step: None,
                 logged_variables: Vec::new(),
             };
-            return Ok(emit_modelica(diagram, &req.subsystems, Some(&sim)));
+            return Ok(emit_modelica_with_dict(
+                diagram,
+                &req.subsystems,
+                Some(&sim),
+                &req.param_dictionary,
+                req.root_dir.as_deref().map(Path::new),
+            ));
         }
     }
     if let Some(root) = &req.root_dir {
@@ -129,7 +160,25 @@ fn resolve_code(req: &ValidateRequest) -> Result<String, StudioReport> {
 }
 
 #[tauri::command]
-pub fn studio_validate(req: ValidateRequest) -> StudioReport {
+pub async fn studio_validate(req: ValidateRequest) -> StudioReport {
+    match tokio::task::spawn_blocking(move || studio_validate_blocking(req)).await {
+        Ok(report) => report,
+        Err(e) => StudioReport {
+            success: false,
+            stage: "validate".into(),
+            errors: vec![crate::diagram::StudioDiagnostic {
+                message: format!("validate join error: {e}"),
+                path: None,
+                line: None,
+                column: None,
+            }],
+            warnings: Vec::new(),
+        },
+    }
+}
+
+fn studio_validate_blocking(req: ValidateRequest) -> StudioReport {
+    let libs = resolved_library_paths(req.root_dir.as_deref(), &req.library_paths);
     if let Some(diagram) = &req.diagram {
         if fmu_import::any_fmu(diagram, &req.subsystems) {
             let mut warnings = Vec::new();
@@ -163,8 +212,13 @@ pub fn studio_validate(req: ValidateRequest) -> StudioReport {
             });
             // Still emit+validate Modelica stubs for structural connect check when possible.
             if let Ok(code) = resolve_code(&req) {
-                let mut report =
-                    validate_model(&code, &req.model_name, &req.library_paths, &req.options);
+                let mut report = validate_model(
+                    &code,
+                    &req.model_name,
+                    &libs,
+                    &req.options,
+                    req.full_jit,
+                );
                 report.warnings.extend(warnings);
                 return report;
             }
@@ -177,350 +231,25 @@ pub fn studio_validate(req: ValidateRequest) -> StudioReport {
         }
     }
     match resolve_code(&req) {
-        Ok(code) => validate_model(&code, &req.model_name, &req.library_paths, &req.options),
+        Ok(code) => validate_model(
+            &code,
+            &req.model_name,
+            &libs,
+            &req.options,
+            req.full_jit,
+        ),
         Err(r) => r,
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SimulateRequest {
-    pub root_dir: Option<String>,
-    pub model_name: String,
-    pub code: Option<String>,
-    pub diagram: Option<DiagramDocument>,
-    #[serde(default)]
-    pub subsystems: HashMap<String, DiagramDocument>,
-    pub library_paths: Vec<String>,
-    pub options: StudioSimOptions,
-    #[serde(default = "default_true")]
-    pub emit_from_diagram: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SimulateResponse {
-    pub success: bool,
-    pub report: Option<StudioReport>,
-    pub result: Option<SimulationResult>,
-    pub emitted_code: Option<String>,
-    pub run_id: Option<String>,
-    pub cancelled: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StudioProgressEvent {
-    pub run_id: String,
-    pub phase: String,
-    pub sim_time: Option<f64>,
-    pub t_end: Option<f64>,
-    pub step: Option<u64>,
-    pub fraction: Option<f64>,
-    pub message: String,
-}
-
-fn new_run_id() -> String {
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    format!("studio_run_{ms}")
-}
-
-#[tauri::command]
-pub async fn studio_simulate(app: AppHandle, req: SimulateRequest) -> SimulateResponse {
-    let run_id = new_run_id();
-
-    // FMU cosimulation path
-    if let Some(diagram) = req.diagram.clone() {
-        if fmu_import::any_fmu(&diagram, &req.subsystems) {
-            let _ = app.emit(
-                "studio-sim-progress",
-                StudioProgressEvent {
-                    run_id: run_id.clone(),
-                    phase: "fmu_cosim".into(),
-                    sim_time: None,
-                    t_end: Some(req.options.stop_time),
-                    step: None,
-                    fraction: Some(0.0),
-                    message: "Starting FMI2 CS cosimulation".into(),
-                },
-            );
-            let root = req.root_dir.clone().map(PathBuf::from);
-            let options = req.options.clone();
-            let code = resolve_code(&ValidateRequest {
-                root_dir: req.root_dir.clone(),
-                model_name: req.model_name.clone(),
-                code: req.code.clone(),
-                diagram: Some(diagram.clone()),
-                subsystems: req.subsystems.clone(),
-                library_paths: req.library_paths.clone(),
-                options: req.options.clone(),
-                emit_from_diagram: req.emit_from_diagram,
-            })
-            .ok();
-            let outcome = tokio::task::spawn_blocking(move || {
-                fmu_import::simulate_with_fmu(&diagram, root.as_deref(), &options)
-            })
-            .await;
-            return match outcome {
-                Ok(Ok(result)) => {
-                    let _ = app.emit(
-                        "studio-sim-progress",
-                        StudioProgressEvent {
-                            run_id: run_id.clone(),
-                            phase: "done".into(),
-                            sim_time: None,
-                            t_end: None,
-                            step: None,
-                            fraction: Some(1.0),
-                            message: "FMU cosimulation done".into(),
-                        },
-                    );
-                    SimulateResponse {
-                        success: true,
-                        report: None,
-                        result: Some(result),
-                        emitted_code: code,
-                        run_id: Some(run_id),
-                        cancelled: false,
-                    }
-                }
-                Ok(Err(report)) => {
-                    let _ = app.emit(
-                        "studio-sim-progress",
-                        StudioProgressEvent {
-                            run_id: run_id.clone(),
-                            phase: "error".into(),
-                            sim_time: None,
-                            t_end: None,
-                            step: None,
-                            fraction: None,
-                            message: report
-                                .errors
-                                .first()
-                                .map(|e| e.message.clone())
-                                .unwrap_or_else(|| "fmu cosim failed".into()),
-                        },
-                    );
-                    SimulateResponse {
-                        success: false,
-                        report: Some(report),
-                        result: None,
-                        emitted_code: code,
-                        run_id: Some(run_id),
-                        cancelled: false,
-                    }
-                }
-                Err(e) => SimulateResponse {
-                    success: false,
-                    report: Some(StudioReport {
-                        success: false,
-                        stage: "fmu_cosim".into(),
-                        errors: vec![crate::diagram::StudioDiagnostic {
-                            message: format!("join error: {e}"),
-                            path: None,
-                            line: None,
-                            column: None,
-                        }],
-                        warnings: Vec::new(),
-                    }),
-                    result: None,
-                    emitted_code: code,
-                    run_id: Some(run_id),
-                    cancelled: false,
-                },
-            };
-        }
-    }
-
-    let vreq = ValidateRequest {
-        root_dir: req.root_dir.clone(),
-        model_name: req.model_name.clone(),
-        code: req.code.clone(),
-        diagram: req.diagram.clone(),
-        subsystems: req.subsystems.clone(),
-        library_paths: req.library_paths.clone(),
-        options: req.options.clone(),
-        emit_from_diagram: req.emit_from_diagram,
-    };
-    let code = match resolve_code(&vreq) {
-        Ok(c) => c,
-        Err(r) => {
-            return SimulateResponse {
-                success: false,
-                report: Some(r),
-                result: None,
-                emitted_code: None,
-                run_id: Some(run_id),
-                cancelled: false,
-            };
-        }
-    };
-
-    let latest = Arc::new(Mutex::new(None::<(f64, f64, u64)>));
-    let latest_cb = latest.clone();
-    let control = SimControl::new().on_progress(move |p| {
-        if let Ok(mut g) = latest_cb.lock() {
-            *g = Some((p.time, p.t_end, p.step));
-        }
-    });
-    sim_bridge::register(&run_id, control.cancel_flag());
-
-    let _ = app.emit(
-        "studio-sim-progress",
-        StudioProgressEvent {
-            run_id: run_id.clone(),
-            phase: "started".into(),
-            sim_time: Some(0.0),
-            t_end: Some(req.options.stop_time),
-            step: Some(0),
-            fraction: Some(0.0),
-            message: "Simulation started".into(),
-        },
-    );
-
-    let model_name = req.model_name.clone();
-    let library_paths = req.library_paths.clone();
-    let options = req.options.clone();
-    let code_for_sim = code.clone();
-    let run_id_task = run_id.clone();
-    let mut task = tokio::task::spawn_blocking(move || {
-        let result = simulate_model(
-            &code_for_sim,
-            &model_name,
-            &library_paths,
-            &options,
-            Some(control),
-        );
-        sim_bridge::unregister(&run_id_task);
-        result
-    });
-
-    let started = Instant::now();
-    let mut heartbeat = tokio::time::interval(Duration::from_millis(250));
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let join = loop {
-        tokio::select! {
-            join_res = &mut task => break join_res,
-            _ = heartbeat.tick() => {
-                let snap = latest.lock().ok().and_then(|g| *g);
-                if let Some((sim_t, t_end, step)) = snap {
-                    let fraction = if t_end > 0.0 { (sim_t / t_end).clamp(0.0, 1.0) } else { 0.0 };
-                    let _ = app.emit(
-                        "studio-sim-progress",
-                        StudioProgressEvent {
-                            run_id: run_id.clone(),
-                            phase: "running".into(),
-                            sim_time: Some(sim_t),
-                            t_end: Some(t_end),
-                            step: Some(step),
-                            fraction: Some(fraction),
-                            message: format!(
-                                "t={:.4}/{:.4} step={} wall={}s",
-                                sim_t,
-                                t_end,
-                                step,
-                                started.elapsed().as_secs()
-                            ),
-                        },
-                    );
-                }
-            }
-        }
-    };
-
-    let outcome = match join {
-        Ok(r) => r,
-        Err(e) => {
-            sim_bridge::unregister(&run_id);
-            return SimulateResponse {
-                success: false,
-                report: Some(StudioReport {
-                    success: false,
-                    stage: "simulate".into(),
-                    errors: vec![crate::diagram::StudioDiagnostic {
-                        message: format!("blocking task join error: {e}"),
-                        path: None,
-                        line: None,
-                        column: None,
-                    }],
-                    warnings: Vec::new(),
-                }),
-                result: None,
-                emitted_code: Some(code),
-                run_id: Some(run_id),
-                cancelled: false,
-            };
-        }
-    };
-
-    match outcome {
-        Ok(result) => {
-            let _ = app.emit(
-                "studio-sim-progress",
-                StudioProgressEvent {
-                    run_id: run_id.clone(),
-                    phase: "done".into(),
-                    sim_time: None,
-                    t_end: None,
-                    step: None,
-                    fraction: Some(1.0),
-                    message: "Simulation done".into(),
-                },
-            );
-            SimulateResponse {
-                success: true,
-                report: None,
-                result: Some(result),
-                emitted_code: Some(code),
-                run_id: Some(run_id),
-                cancelled: false,
-            }
-        }
-        Err(report) => {
-            let cancelled = report
-                .errors
-                .iter()
-                .any(|e| rustmodlica::is_sim_cancelled_error(&e.message));
-            let _ = app.emit(
-                "studio-sim-progress",
-                StudioProgressEvent {
-                    run_id: run_id.clone(),
-                    phase: if cancelled { "cancelled".into() } else { "error".into() },
-                    sim_time: None,
-                    t_end: None,
-                    step: None,
-                    fraction: None,
-                    message: report
-                        .errors
-                        .first()
-                        .map(|e| e.message.clone())
-                        .unwrap_or_else(|| "failed".into()),
-                },
-            );
-            SimulateResponse {
-                success: false,
-                report: Some(report),
-                result: None,
-                emitted_code: Some(code),
-                run_id: Some(run_id),
-                cancelled,
-            }
-        }
+fn resolved_library_paths(root_dir: Option<&str>, paths: &[String]) -> Vec<String> {
+    match root_dir {
+        Some(r) => crate::user_catalog::ensure_project_library_paths(Path::new(r), paths),
+        None => paths.to_vec(),
     }
 }
 
-#[tauri::command]
-pub fn studio_cancel_simulation(run_id: String) -> bool {
-    sim_bridge::request_cancel(&run_id)
-}
-
+include!("sim_cmds.rs");
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmitRequest {
@@ -535,8 +264,24 @@ pub struct EmitRequest {
     pub out_dir: String,
     #[serde(default)]
     pub package_fmu: bool,
+    /// Write Coder-grade step API + CMake + interface.json (default true).
+    #[serde(default = "default_true")]
+    pub coder_package: bool,
+    /// "cs" | "me" when packaging FMU (default cs).
+    #[serde(default = "default_fmi_kind")]
+    pub fmi_kind: String,
+    #[serde(default)]
+    pub model_identifier: Option<String>,
+    #[serde(default)]
+    pub guid: Option<String>,
     #[serde(default = "default_true")]
     pub emit_from_diagram: bool,
+    #[serde(default)]
+    pub param_dictionary: Vec<crate::diagram::ParamDictionaryEntry>,
+}
+
+fn default_fmi_kind() -> String {
+    "cs".into()
 }
 
 #[tauri::command]
@@ -550,22 +295,43 @@ pub fn studio_emit_artifacts(req: EmitRequest) -> crate::sim_bridge::EmitArtifac
         library_paths: req.library_paths.clone(),
         options: req.options.clone(),
         emit_from_diagram: req.emit_from_diagram,
+        full_jit: false,
+        param_dictionary: req.param_dictionary.clone(),
     };
     match resolve_code(&vreq) {
-        Ok(code) => sim_bridge::emit_c_or_fmu(
-            &code,
-            &req.model_name,
-            &req.library_paths,
-            &req.options,
-            &req.out_dir,
-            req.package_fmu,
-        ),
+        Ok(code) => {
+            let libs = resolved_library_paths(req.root_dir.as_deref(), &req.library_paths);
+            let fmi_opts = rustmodlica::FmiExportOptions {
+                model_identifier_override: req
+                    .model_identifier
+                    .as_ref()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+                guid_override: req
+                    .guid
+                    .as_ref()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+            };
+            sim_bridge::emit_c_or_fmu(
+                &code,
+                &req.model_name,
+                &libs,
+                &req.options,
+                &req.out_dir,
+                req.package_fmu,
+                req.coder_package,
+                &req.fmi_kind,
+                fmi_opts,
+            )
+        }
         Err(report) => crate::sim_bridge::EmitArtifactsResult {
             success: false,
             out_dir: req.out_dir,
             files: Vec::new(),
             fmu_path: None,
             report: Some(report),
+            package_kind: None,
         },
     }
 }
@@ -595,6 +361,29 @@ pub fn studio_pick_fmu_file() -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+#[tauri::command]
+pub fn studio_pick_mo_file() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Select Modelica model (.mo)")
+        .add_filter("Modelica", &["mo"])
+        .pick_file()
+        .map(|p| p.display().to_string())
+}
+
+#[tauri::command]
+pub fn studio_pick_data_file() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Select data file")
+        .add_filter("Data", &["csv", "txt", "dat"])
+        .pick_file()
+        .map(|p| p.display().to_string())
+}
+
+#[tauri::command]
+pub fn studio_read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportFmuRequest {
@@ -611,7 +400,110 @@ pub fn studio_import_fmu(req: ImportFmuRequest) -> FmuImportResult {
     )
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WrapMoRequest {
+    pub mo_path: String,
+    pub project_root: Option<String>,
+}
+
+#[tauri::command]
+pub fn studio_wrap_mo(req: WrapMoRequest) -> WrapMoResult {
+    let root = req.project_root.as_ref().map(PathBuf::from);
+    let res = wrap_mo::wrap_mo_file(PathBuf::from(&req.mo_path).as_path(), root.as_deref());
+    // Ensure project can resolve the wrapped type on validate/run.
+    if res.success {
+        if let Some(root) = root.as_ref() {
+            let wrapped = root.join("wrapped");
+            if let Ok(mut opened) = open_project(root) {
+                let path_s = wrapped.display().to_string();
+                if !opened
+                    .manifest
+                    .library_paths
+                    .iter()
+                    .any(|p| p == &path_s || PathBuf::from(p) == wrapped)
+                {
+                    opened.manifest.library_paths.push(path_s);
+                    let _ = save_project(
+                        root,
+                        &opened.manifest,
+                        &opened.diagram,
+                        &opened.subsystems,
+                    );
+                }
+            }
+        }
+    }
+    res
+}
+
 #[tauri::command]
 pub fn studio_list_imported_fmus(root_dir: String) -> Vec<CatalogEntry> {
     fmu_import::list_imported_fmus(PathBuf::from(root_dir).as_path())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPackRequest {
+    pub pack_dir: String,
+    pub project_root: String,
+}
+
+#[tauri::command]
+pub fn studio_import_catalog_pack(req: ImportPackRequest) -> crate::user_catalog::ImportPackResult {
+    let root = PathBuf::from(&req.project_root);
+    let res = crate::user_catalog::import_catalog_pack(PathBuf::from(&req.pack_dir).as_path(), &root);
+    if res.success {
+        if let Ok(mut opened) = open_project(&root) {
+            let path_s = res.library_path.clone();
+            if !opened
+                .manifest
+                .library_paths
+                .iter()
+                .any(|p| p == &path_s || PathBuf::from(p) == PathBuf::from(&path_s))
+            {
+                opened.manifest.library_paths.push(path_s);
+                let _ = save_project(
+                    &root,
+                    &opened.manifest,
+                    &opened.diagram,
+                    &opened.subsystems,
+                );
+            }
+        }
+    }
+    res
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPackRequest {
+    pub project_root: String,
+    #[serde(default)]
+    pub relative_assets: Vec<String>,
+    pub out_dir: String,
+    #[serde(default = "default_pack_name")]
+    pub pack_name: String,
+}
+
+fn default_pack_name() -> String {
+    "UserLib".into()
+}
+
+#[tauri::command]
+pub fn studio_export_catalog_pack(req: ExportPackRequest) -> crate::user_catalog::ExportPackResult {
+    crate::user_catalog::export_catalog_pack(
+        PathBuf::from(&req.project_root).as_path(),
+        &req.relative_assets,
+        PathBuf::from(&req.out_dir).as_path(),
+        &req.pack_name,
+    )
+}
+
+#[tauri::command]
+pub fn studio_pick_catalog_pack_directory() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Select catalog pack folder")
+        .pick_folder()
+        .map(|p| p.display().to_string())
 }

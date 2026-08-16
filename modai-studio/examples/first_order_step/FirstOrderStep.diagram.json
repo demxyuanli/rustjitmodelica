@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "modelName": "FirstOrderStep",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_step",
+      "instanceName": "step1",
+      "typeName": "Modelica.Blocks.Sources.Step",
+      "domain": "signal",
+      "catalogId": "blocks.sources.step",
+      "position": { "x": 40, "y": 120 },
+      "rotation": 0,
+      "params": [
+        { "name": "height", "value": "1" },
+        { "name": "startTime", "value": "0.5" }
+      ],
+      "ports": [{ "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "step1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_plant",
+      "instanceName": "plant",
+      "typeName": "Modelica.Blocks.Continuous.FirstOrder",
+      "domain": "signal",
+      "catalogId": "blocks.continuous.firstOrder",
+      "position": { "x": 260, "y": 120 },
+      "rotation": 0,
+      "params": [
+        { "name": "k", "value": "1" },
+        { "name": "T", "value": "0.4" }
+      ],
+      "ports": [
+        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "plant", "width": 120, "height": 48 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceNodeId": "n_step",
+      "sourcePortId": "y",
+      "targetNodeId": "n_plant",
+      "targetPortId": "u",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    }
+  ],
+  "annotations": [],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}

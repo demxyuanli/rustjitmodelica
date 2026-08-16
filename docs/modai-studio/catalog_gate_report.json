@@ -1,0 +1,846 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "unix:1784853640",
+  "groups": [
+    "signal-core",
+    "physical-core",
+    "routing"
+  ],
+  "total": 92,
+  "passed": 89,
+  "failed": 0,
+  "skipped": 3,
+  "results": [
+    {
+      "id": "analog.basic.capacitor",
+      "typeName": "Modelica.Electrical.Analog.Basic.Capacitor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.basic.ground",
+      "typeName": "Modelica.Electrical.Analog.Basic.Ground",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.basic.inductor",
+      "typeName": "Modelica.Electrical.Analog.Basic.Inductor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.basic.resistor",
+      "typeName": "Modelica.Electrical.Analog.Basic.Resistor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.ideal.idealClosingSwitch",
+      "typeName": "Modelica.Electrical.Analog.Ideal.IdealClosingSwitch",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.ideal.idealDiode",
+      "typeName": "Modelica.Electrical.Analog.Ideal.IdealDiode",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.ideal.idealOpeningSwitch",
+      "typeName": "Modelica.Electrical.Analog.Ideal.IdealOpeningSwitch",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.sensors.currentSensor",
+      "typeName": "Modelica.Electrical.Analog.Sensors.CurrentSensor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.sensors.voltageSensor",
+      "typeName": "Modelica.Electrical.Analog.Sensors.VoltageSensor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.sources.constantCurrent",
+      "typeName": "Modelica.Electrical.Analog.Sources.ConstantCurrent",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.sources.constantVoltage",
+      "typeName": "Modelica.Electrical.Analog.Sources.ConstantVoltage",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.sources.pulseVoltage",
+      "typeName": "Modelica.Electrical.Analog.Sources.PulseVoltage",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "analog.sources.sineVoltage",
+      "typeName": "Modelica.Electrical.Analog.Sources.SineVoltage",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.continuous.derivative",
+      "typeName": "Modelica.Blocks.Continuous.Derivative",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.continuous.firstOrder",
+      "typeName": "Modelica.Blocks.Continuous.FirstOrder",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.continuous.integrator",
+      "typeName": "Modelica.Blocks.Continuous.Integrator",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.continuous.pi",
+      "typeName": "Modelica.Blocks.Continuous.PI",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.continuous.pid",
+      "typeName": "Modelica.Blocks.Continuous.PID",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.continuous.transferFunction",
+      "typeName": "Modelica.Blocks.Continuous.TransferFunction",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.discrete.firstOrderHold",
+      "typeName": "Modelica.Blocks.Discrete.FirstOrderHold",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.discrete.sampler",
+      "typeName": "Modelica.Blocks.Discrete.Sampler",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.discrete.transferFunction",
+      "typeName": "Modelica.Blocks.Discrete.TransferFunction",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.discrete.unitDelay",
+      "typeName": "Modelica.Blocks.Discrete.UnitDelay",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.discrete.zeroOrderHold",
+      "typeName": "Modelica.Blocks.Discrete.ZeroOrderHold",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.logical.and",
+      "typeName": "Modelica.Blocks.Logical.And",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.logical.not",
+      "typeName": "Modelica.Blocks.Logical.Not",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.logical.or",
+      "typeName": "Modelica.Blocks.Logical.Or",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.logical.switch",
+      "typeName": "Modelica.Blocks.Logical.Switch",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.abs",
+      "typeName": "Modelica.Blocks.Math.Abs",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.acos",
+      "typeName": "Modelica.Blocks.Math.Acos",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.add",
+      "typeName": "Modelica.Blocks.Math.Add",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.asin",
+      "typeName": "Modelica.Blocks.Math.Asin",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.atan",
+      "typeName": "Modelica.Blocks.Math.Atan",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.atan2",
+      "typeName": "Modelica.Blocks.Math.Atan2",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.booleanToReal",
+      "typeName": "Modelica.Blocks.Math.BooleanToReal",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.cos",
+      "typeName": "Modelica.Blocks.Math.Cos",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.division",
+      "typeName": "Modelica.Blocks.Math.Division",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.feedback",
+      "typeName": "Modelica.Blocks.Math.Feedback",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.gain",
+      "typeName": "Modelica.Blocks.Math.Gain",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.product",
+      "typeName": "Modelica.Blocks.Math.Product",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.realToBoolean",
+      "typeName": "Modelica.Blocks.Math.RealToBoolean",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.sign",
+      "typeName": "Modelica.Blocks.Math.Sign",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.sin",
+      "typeName": "Modelica.Blocks.Math.Sin",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.math.sqrt",
+      "typeName": "Modelica.Blocks.Math.Sqrt",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.nonlinear.deadZone",
+      "typeName": "Modelica.Blocks.Nonlinear.DeadZone",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.nonlinear.limiter",
+      "typeName": "Modelica.Blocks.Nonlinear.Limiter",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.bus2",
+      "typeName": "Modelica.Blocks.Routing.Multiplex2",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.bus3",
+      "typeName": "Modelica.Blocks.Routing.Multiplex3",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.demux2",
+      "typeName": "Modelica.Blocks.Routing.DeMultiplex2",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.demux3",
+      "typeName": "Modelica.Blocks.Routing.DeMultiplex3",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.demux4",
+      "typeName": "Modelica.Blocks.Routing.DeMultiplex4",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.from",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "group": "routing",
+      "gate": "skip",
+      "ok": true,
+      "stage": "skip",
+      "error": "Goto/From need paired tag harness (emit golden)",
+      "skipped": true
+    },
+    {
+      "id": "blocks.routing.goto",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "group": "routing",
+      "gate": "skip",
+      "ok": true,
+      "stage": "skip",
+      "error": "Goto/From need paired tag harness (emit golden)",
+      "skipped": true
+    },
+    {
+      "id": "blocks.routing.mux2",
+      "typeName": "Modelica.Blocks.Routing.Multiplex2",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.mux3",
+      "typeName": "Modelica.Blocks.Routing.Multiplex3",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.routing.mux4",
+      "typeName": "Modelica.Blocks.Routing.Multiplex4",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sinks.display",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sinks.scope",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "group": "routing",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.booleanConstant",
+      "typeName": "Modelica.Blocks.Sources.BooleanConstant",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.booleanPulse",
+      "typeName": "Modelica.Blocks.Sources.BooleanPulse",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.booleanStep",
+      "typeName": "Modelica.Blocks.Sources.BooleanStep",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.clock",
+      "typeName": "Modelica.Blocks.Sources.Clock",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.constant",
+      "typeName": "Modelica.Blocks.Sources.Constant",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.expSine",
+      "typeName": "Modelica.Blocks.Sources.ExpSine",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.fromFile",
+      "typeName": "Modelica.Blocks.Sources.CombiTimeTable",
+      "group": "routing",
+      "gate": "skip",
+      "ok": true,
+      "stage": "skip",
+      "error": "Goto/From need paired tag harness (emit golden)",
+      "skipped": true
+    },
+    {
+      "id": "blocks.sources.pulse",
+      "typeName": "Modelica.Blocks.Sources.Pulse",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.ramp",
+      "typeName": "Modelica.Blocks.Sources.Ramp",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.sine",
+      "typeName": "Modelica.Blocks.Sources.Sine",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.sources.step",
+      "typeName": "Modelica.Blocks.Sources.Step",
+      "group": "signal-core",
+      "gate": "validate_sim",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.tables.lookup1d",
+      "typeName": "Modelica.Blocks.Tables.CombiTable1Ds",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "blocks.tables.lookup2d",
+      "typeName": "Modelica.Blocks.Tables.CombiTable2Ds",
+      "group": "signal-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.angleSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.AngleSensor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.damper",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Damper",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.fixed",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Fixed",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.idealGear",
+      "typeName": "Modelica.Mechanics.Rotational.Components.IdealGear",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.inertia",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Inertia",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.speed",
+      "typeName": "Modelica.Mechanics.Rotational.Sources.Speed",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.spring",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Spring",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.springDamper",
+      "typeName": "Modelica.Mechanics.Rotational.Components.SpringDamper",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.torque",
+      "typeName": "Modelica.Mechanics.Rotational.Sources.Torque",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.rotational.torqueSensor",
+      "typeName": "Modelica.Mechanics.Rotational.Sensors.TorqueSensor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.damper",
+      "typeName": "Modelica.Mechanics.Translational.Components.Damper",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.fixed",
+      "typeName": "Modelica.Mechanics.Translational.Components.Fixed",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.force",
+      "typeName": "Modelica.Mechanics.Translational.Sources.Force",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.forceSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.ForceSensor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.idealGearR2T",
+      "typeName": "Modelica.Mechanics.Translational.Components.IdealGearR2T",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.mass",
+      "typeName": "Modelica.Mechanics.Translational.Components.Mass",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.position",
+      "typeName": "Modelica.Mechanics.Translational.Sources.Position",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.positionSensor",
+      "typeName": "Modelica.Mechanics.Translational.Sensors.PositionSensor",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.speed",
+      "typeName": "Modelica.Mechanics.Translational.Sources.Speed",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.spring",
+      "typeName": "Modelica.Mechanics.Translational.Components.Spring",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    },
+    {
+      "id": "mechanics.translational.springDamper",
+      "typeName": "Modelica.Mechanics.Translational.Components.SpringDamper",
+      "group": "physical-core",
+      "gate": "validate",
+      "ok": true,
+      "stage": "validate_analyze",
+      "skipped": false
+    }
+  ]
+}

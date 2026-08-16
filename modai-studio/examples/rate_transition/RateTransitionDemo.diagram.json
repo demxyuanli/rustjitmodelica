@@ -1,0 +1,273 @@
+{
+  "schemaVersion": 1,
+  "modelName": "RateTransitionDemo",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_sine",
+      "instanceName": "sine1",
+      "typeName": "Modelica.Blocks.Sources.Sine",
+      "domain": "signal",
+      "catalogId": "blocks.sources.sine",
+      "position": {
+        "x": 40.0,
+        "y": 100.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "amplitude",
+          "value": "1"
+        },
+        {
+          "name": "f",
+          "value": "1.28"
+        },
+        {
+          "name": "startTime",
+          "value": "0.17"
+        }
+      ],
+      "ports": [
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "sine1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
+    },
+    {
+      "id": "n_rt",
+      "instanceName": "rt1",
+      "typeName": "Modelica.Blocks.Discrete.ZeroOrderHold",
+      "domain": "signal",
+      "catalogId": "blocks.discrete.rateTransition",
+      "position": {
+        "x": 220.0,
+        "y": 100.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "samplePeriod",
+          "value": "0.38"
+        },
+        {
+          "name": "startTime",
+          "value": "0"
+        }
+      ],
+      "ports": [
+        {
+          "id": "u",
+          "kind": "signal",
+          "direction": "in",
+          "typeName": "RealInput"
+        },
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "rt1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
+    },
+    {
+      "id": "n_gain",
+      "instanceName": "gain1",
+      "typeName": "Modelica.Blocks.Math.Gain",
+      "domain": "signal",
+      "catalogId": "blocks.math.gain",
+      "position": {
+        "x": 400.0,
+        "y": 100.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "k",
+          "value": "1"
+        }
+      ],
+      "ports": [
+        {
+          "id": "u",
+          "kind": "signal",
+          "direction": "in",
+          "typeName": "RealInput"
+        },
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "gain1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
+    },
+    {
+      "id": "n_ud",
+      "instanceName": "ud1",
+      "typeName": "Modelica.Blocks.Discrete.UnitDelay",
+      "domain": "signal",
+      "catalogId": "blocks.discrete.unitDelay",
+      "position": {
+        "x": 580.0,
+        "y": 100.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "samplePeriod",
+          "value": "0.1"
+        },
+        {
+          "name": "startTime",
+          "value": "0.19"
+        },
+        {
+          "name": "y_start",
+          "value": "0"
+        }
+      ],
+      "ports": [
+        {
+          "id": "u",
+          "kind": "signal",
+          "direction": "in",
+          "typeName": "RealInput"
+        },
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "ud1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceNodeId": "n_sine",
+      "sourcePortId": "y",
+      "targetNodeId": "n_rt",
+      "targetPortId": "u",
+      "signalName": "sine1.y",
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e2",
+      "sourceNodeId": "n_rt",
+      "sourcePortId": "y",
+      "targetNodeId": "n_gain",
+      "targetPortId": "u",
+      "signalName": "rt1.y",
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e3",
+      "sourceNodeId": "n_gain",
+      "sourcePortId": "y",
+      "targetNodeId": "n_ud",
+      "targetPortId": "u",
+      "signalName": "gain1.y",
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    }
+  ],
+  "annotations": [],
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "zoom": 1.0
+  }
+}

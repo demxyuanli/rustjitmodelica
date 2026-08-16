@@ -6,6 +6,347 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Modai Studio P4 main-path feel (2026-08-15)
+
+- P4-A: Library HTML5 drag onto canvas; `screenToFlowPosition` placement; four-pane Library+Properties; connect banner instead of `alert`; context menu; double-click semantics; Pause/Step on the sim bar.
+- P4-B: numeric time axis + dataZoom; variable tree (`instance.port`); Data table; Run param snapshot/diff; Results checkboxes write `loggedVariables`; Dashboard pins + Apply and Run.
+- P4-17: integrator output rows feed `LiveSeriesHandle`; `studio-sim-progress` pushes incremental `liveTime`/`liveSeries` every 250ms so Results grows during Run (Pause stops new points).
+- P4-18: Simulation Configuration dialog (tolerance, step limits, solver descriptions; CVODE/IDA disabled without sundials).
+- P4-19: Messages split Compiler / Advisor / Connection; advisor rules and fix hints are i18n; click focuses the block.
+- P4-22: Catalog params carry `unit`/`description`; Properties shows Ohm next to `Resistor.R`; Dashboard knobs show the same unit.
+- P4-20: Welcome page lists the last 8 projects; window close and project switch confirm when dirty.
+- P4-21: Opening an example paints the diagram first; Validate runs in the background and can be cancelled.
+- Welcome is an 800x600 modal (hero image + example cards); toolbar Home reopens it.
+- Welcome bottom tabs: Examples, Open (browse + recents), New (name, parent folder auto-creates `{parent}/{ModelName}`, blank or example template, initial sim config).
+- Non-toolbar buttons show icon + text; menu/tool bars stay icon-only. Dialog corner close stays an X.
+- New project wizard: Ctrl+N and File > New open the New tab instead of picking a folder immediately; refuse overwrite of an existing Studio project or a non-empty folder.
+- Save with no project folder reuses the same wizard (name + parent auto-creates `{parent}/{ModelName}`); the current canvas is written, templates are hidden.
+- Dragging a block and releasing reroutes wires attached to the moved block(s) (same orthogonal router as Align / Reroute).
+- Unsaved sessions: Run / Update / Export open the save wizard instead of simulating with no project folder.
+- Connecting a wire highlights compatible ports and uses a larger snap radius.
+- Properties Name / Type / size / label-below / Ref labels are i18n.
+- Rotate 90 degrees moves ports to the new sides and reroutes attached wires (no CSS-only spin).
+- Title bar File / Edit / Export / Simulation are real dropdown menus.
+- Dirty projects auto-save to disk every 30s when a folder exists; a local crash draft can be restored after an unclean exit.
+- Bundled templates expanded to 20 (keep the previous 9, add first-order/PID/TF/limiter/switch/goto, RL/RLC, rotational drive/gear, mass-damper). Welcome Examples and New-project template list share the same set, grouped by domain (signal / electrical / mechanical / multibody).
+- Scrollbars follow the Tauri window theme: `fluentOverlay`, `color-scheme`, and `setTheme` on theme change.
+- Fill empty bundled example diagrams: RotSpringDamper, TransSensorControl, TransSpringDamper (stubs had `nodes: []`; trans models were emit-empty).
+- Canvas wire legend, sample-time legend, and minimap dock to the edge: hover or click the tab to show; pane click hides them back to the arrow.
+- Drop the root canvas breadcrumb title; align tools stay enabled after selecting 2+ blocks (Ctrl+click / Shift+drag).
+- Fix canvas height collapse after hiding the root breadcrumb (`editor-column` no longer uses a fixed 6-row grid).
+- Shift+drag box-select no longer rebuilds the React Flow graph on every hover (that unmounted the UI).
+- Connector ports expose both source and target handles so flange / flange_a wires no longer trip React Flow error 008.
+- Canvas graph is derived (no useNodesState/useEdgesState sync effects), so React Flow StoreUpdater no longer hits Maximum update depth exceeded.
+- UI type scale: body uses `--studio-font-size`; titles are one pixel larger (`--studio-font-title`).
+
+### Fix Multibody pendulum rest (Frames / Axis / gravity) (2026-08-14)
+
+- Flatten: `Types.Axis` expands as `Real[3]` (was collapsed to scalar `Real`, so `n={0,0,1}` vanished). `TypeReal` aliases split as primitive arrays.
+- Flatten: vector calls (`resolve1`, `planarRotation`, `gravityAcceleration`, `normalize`, ...) index the result (`f(args)[i]`), not each argument.
+- Flatten: do not const-fold `Real[3]` literals to the first element (was `{0,-0.5,0}` → `0`, killing rod length and axis).
+- BLT: rewrite whole-array names in Calls when all components alias (`resolve1(rod_frame_a_R, r)` follows `frame_b.R`).
+- BLT: Frame `R` / `r_0` Variable=Variable copies alias onto Call/If-assigned kinematics; substitute aliases inside `if` so `absoluteRotation(frame_a.R)` follows `world.frame_b.R`. Do not alias Call-assigned `R` away (that left `resolve1` at 0).
+- Flatten: expand `zeros(n)=rhs` / `ones(n)=rhs` into scalar `rhs[i]=0|1` (FixedTranslation force/torque balance was a Call LHS skipped by JIT).
+- Connect: potential equalities emit `b.member = a.member` so the second argument is assigned from the first.
+- Analyze: fold `if Connections.rooted` / `isRoot` / const `if not(0)` into the taken Simple equations so BLT orders `frame_b.R = absoluteRotation(...)` before `r_0 = resolve1(R, r)` (those Ifs were lowered to algorithms and ran after `resolve1`, leaving `body.r_0` at the identity).
+- BLT: `resolve1(R, r)` / `absoluteRotation(R1, R2)` mention array bases; expand those unknowns to `R_1..R_n` so orientation producers run first.
+- Analyze: `der(algebraic)` of Frames `resolve1`/`resolve2` becomes `cross(w, r)` using `planarRotation`/`absoluteRotation` `R.w` (`e * der(angle)`); second `der` is `cross(der(w), r)` so gravity torque enters `der(w)`. `angularVelocity2` no longer returns quaternion components.
+- Flatten: `I*z` 3x3 tensor-vector product indexes by row (`(I*z)[i] = I_i·z`), not element-wise `I[i]*z[i]` (was `I_33=0`, killing revolute gravity torque).
+- Analyze: expand Real[3] `v1*v2` to `e · t`; when `constantTorque.tau = 0`, keep `0 = e · t` as a residual so Newton/BLT assign axis torque from the rod, not `revolute.tau`. Expand `cross(r, f)[i]` to scalars so the lever arm constrains `f` / `der(w)`.
+- Analyze: scalarize `Frames.resolve1`/`resolve2` with the quaternion formula so `a_0 = der(v_0)` carries `der(w)` into `f = m(a-g)` (was compiling nested `resolve1[...]` as 0, dumping gravity into `I_33*der(w)`). Bind `internalAxis(tau=tau)` so the flange sum sees the joint scalar.
+- Refactor: extract BLT SCC emit (`sort_graph`), Frames helpers (`map_if_eq` / `walk_expr_any`), flatten composite finish (`flattener_instance.rs`), and `NotFound` alias-load recovery (`flattener_load.rs`) without changing algorithms.
+- Refactor: split every `jit-compiler` / Studio backend Rust file that was >=800 lines into sibling modules (compiler options, flatten expand, compile entry phases, JIT call/policy/blocks, loader scan, CLI/driver/sundials/native/FMI, catalog/commands) without changing algorithms.
+
+### Fix Multibody preview empty result curves (2026-08-14)
+
+- Example `multibody_preview`: use a gravity-driven `Revolute` pendulum (`phi(start=0.5)`) instead of a `Prismatic` along z (orthogonal to gravity, rest at zero).
+- Studio plotHints: match compiler flattened names (`revolute.phi` → `revolute_phi`, `body.r_0[1]` → `body_r_0_1`) so Results actually draws the hinted series.
+- emit_mo: nested modifiers `phi` + `(start = 0.5)` emit as `phi(start = 0.5)`.
+
+### Fix Multibody index-2 selection path (2026-07-25)
+
+- Classify: demote Multibody Body absolute pose/velocity when joint DOF states exist (MSL joint prefer / body avoid); also demote nested torque-source `phi`. Disable body demote with `RUSTMODLICA_MB_STATE_DEMOTE=0`.
+- Classify: recognize short Multibody joint names (`b1_phi`, `cylinder_s`, `bearing_*`, `inertia_*`) and demote sensor `der*`/`_u` intermediates; in planar cut loops keep the lowest-index `revolute*` DOF.
+- Classify: free-flying bodies (no joint DOF) demote redundant Euler `phi`/`phi_d` when quaternions `Q` are selected, and demote nested Body pose duplicates under BodyShape.
+- Classify: register demoted body vars and their `der_*` as algebraic outputs.
+- BLT alias: do not collapse Call/If RHS into aliases; do not rewrite `der_*` / `der(x)` into `der(Frames....)` (was F2-1 on DoublePendulum).
+- JIT: resolve `der_x` from algebraic outputs when `x` is no longer a state (dummy-derivative / demoted path).
+- BLT index reduction: prefer Body absolute / `r_0`/`v_0`/`w_a` as dummy-derivative candidates over joint DOF states; demote selected states out of the integrator set and sync `layout.state_vars`.
+- BLT: continue dummy-derivative rounds while states are demoted (was stopping when unassigned count did not drop).
+- CLI: default `--index-reduction-method` to `dummyDerivative` (was `none`) so Multibody constraints are reduced without a manual flag.
+- BLT matching: prefer `0 = f(u)` residuals (planar cut / force) before greedy `u = Call(...)` LHS assignment so loop closures keep free unknowns.
+- BLT: unmatched residuals with no state dependence are classified as algebraic loop closures (index-1), not differential index-2.
+- Classify: recognize RobotR3-style `rN_phi`/`rN_w` joint DOFs; demote `q`/`qd` array mirrors, sensor flange/speed, and gear/motor mechanical DOFs when Multibody revolutes are selected.
+- BLT: on dummy-derivative matching regression, restore the prior equation set and rematch instead of keeping the worse round.
+- StateSelect: parse/preserve `stateSelect` on flattened Reals (`Declaration.state_select`); classify demotes `Never`/`Avoid` when `Prefer`/`Always` states exist (`RUSTMODLICA_STATE_SELECT=0` disables).
+- StateSelect: alias demote and BLT dummy-derivative prefer Prefer/Always ranks over name heuristics.
+- StateSelect: Prefer ranks also drive Multibody "has joint DOF" presence; Body absolute name demote remains as fallback until Avoid attrs fully survive flatten.
+- Flatten: expand Body/Joint/Frame/Orientation on every instance; other types still once-only (FullRobot size).
+- Flatten/parser: preserve `type X = Real[n]` array dims; expand Orientation to Real scalars with `each stateSelect`.
+- Classify: demote `*_frame_a_r_0_*` when paired body `*_r_0_*` carries Avoid/Never; also simple `a=b` partners.
+- Classify: when Prefer/Always joint DOFs exist, demote Default-ranked Multibody body absolutes (covers aggregates missing Avoid); `RUSTMODLICA_MB_STATE_DEMOTE=0` no longer disables that Prefer+Default rule (only drive-motor legacy extras).
+- Classify: kinematic-loop Fourbar (Always + >=3 joint instances, or UniversalSpherical / JointSSP / planar cut): keep Always DOFs, demote Prefer loop joints and rod internals (`rRod_0`, `prismatic_distance`). Does not collapse independent parallel joints (SpringMass).
+- BLT: unmatched residuals that still mention algebraic unknowns are torn kinematic loops (index-1), not `g(x)=0` index-2; dummy-derivative will not demote `StateSelect.always` states.
+- BLT: simplify `x - x` residuals to 0 so flattened output aliases (`j1_phi = j1.phi`) are not reported as index-2 constraints.
+- Classify: when a `Sources.Position`/`Accelerate`/`Move` state shares a flange alias set with a joint or mass, keep the prescribed-motion source and demote the rest (Surfaces `position_*` vs `prismatic_*`).
+
+### Fix 1D mechanical index-2 from gear/force/rolling aliases (2026-07-25)
+
+- Classify: demote LossyGear `phi_a` / Force `s` / flange sensor potentials when they alias absolute mass/inertia states (without treating `*_rel` as keepers).
+- Classify: demote IdealRollingWheel cross-domain pairs `(phi-support)*radius = (s-support)` so rotational and translational absolutes are not both integrators.
+- Classify: split state-demote helpers into `classify_demote_{alias,relative}.rs` (`classify.rs` was over 1000 lines).
+- BLT: dependency edges are producer->consumer so `a = tau/J` is scheduled before `der_w = a` (was reversed; First/RollingWheel stayed at 0 with applied torque).
+
+### Fix RateTransitionDemo all-zero curves (2026-07-24)
+
+- Flatten: do not instance-prefix imported `pi`/`eps` (was `sine1_pi` -> 0 -> `sin(0)`).
+- JIT: do not namespace-passthrough `Modelica.Math.sin` (and other scalar math); call native sin.
+- Flatten clock_infer: `sampleTrigger = sample(...)` is continuous Boolean, not clocked state.
+- JIT: evaluate continuous algebraic equations before when-algorithms so sampleTrigger is visible to when edges.
+- Classify: only when-assigned vars are discrete from `pre`/`previous` (UnitDelay `pre(u)` no longer freezes continuous `u`).
+
+### Fix Studio algebraic / electrical example zeros (2026-07-24)
+
+- Simulation: algebraic-only models (no states / when / crossings) now call `calc_derivs` each step instead of copying start values (Blocks.Sine, SineVoltage aliases).
+- Solvers: empty state vector still evaluates algebraics (Euler / BE / RK4 / RK45).
+- Classify: undeclared equation refs become algebraic outputs, not frozen parameters at 0 (connector pins).
+- Flatten connect: synthesize connector potential/flow member decls when instances lack expanded members (electrical Pin `v`/`i`, rotational Flange/Support `phi`/`tau`, translational Flange `s`/`f`) so potential/flow equations are emitted.
+- BLT alias elim: do not collapse states or `v = der_*` kinematic links (was removing `w = der(phi)` so `der_phi` stayed 0).
+- BLT matching: prefer assigning `der_*` unknowns for `v = der_s` equations.
+- Classify: demote connector-potential states equated to a real component state (SpeedSensor `flange.phi` vs `inertia.phi`).
+- Classify: demote relative `phi_rel`/`w_rel`/`s_rel`/`v_rel` when flanges resolve to absolute states/constants, including affine `flange_s = mass_s +/- L/2` (Damper/SpringDamper index-2).
+- Classify: when connect equates flange roots without `_s`/`_phi`, also union potential members so translational sensors/SpringDamper relatives demote (avoids index-2 rebound).
+- `expand_der_linear`: support `der(x/c)` for constant `c` (Mass `s +/- L/2` after alias rewrite).
+- Flatten connect: expand potential/flow from either connector side (was a-path-only root fallback); synthesize `s`/`f` vs `phi`/`tau` from Translational/Rotational owner types so Damper/SpringDamper no longer get bare `flange_a = flange_b` roots.
+- Flatten connect: only infer flange potential/flow on `*_flange*` / Support paths (was synthesizing `torque1_tau_phi` from Rotational owner and zeroing mechanical sims).
+- Flatten: split `connections.rs` into `connections/{mod,expand,stream}.rs` (file was over 1000 lines).
+- Classify: demote AccSensor-local `v`/`w` when they duplicate an absolute mass/inertia velocity (`Translational.Examples.Sensors` index-2).
+- Classify: attach PartialRigid/Rod `flange = s +/- L/2` affines so ElastoGap/Damper relatives resolve across rod chains (`PreLoad`).
+- Studio examples: `trans_sensor_control`, `rot_spring_damper`, `trans_spring_damper`.
+- BLT alias subst: rewrite `der_x` through transitive potential aliases (`der_flange` -> `der_inertia_phi`); expand `der(0-x)`.
+- Example: `rc_circuit` is a real series StepVoltage-R-C-Ground (was lone unexcited Capacitor).
+- Example: `rot_sensor_control` rotational flange connects + der(phi) assignment (inertia/sensor/scope no longer stuck at 0).
+
+### Modai Studio F90 Export Suite (2026-07-24)
+
+- ExportWizard: Coder / FMU CS / FMU ME; model identifier + GUID; expected artifact preview; last options in `settings.lastExport`.
+- Backend `studio_emit_artifacts`: `fmiKind` + `FmiExportOptions`; package kinds include `fmu-me` / `coder+fmu-me`.
+- Results dock **Export** history (`EmitRecord`) with open folder / reveal FMU via opener.
+- Headless gate: `--smoke-emit-example=<id>` (Coder + FMU CS + FMU ME). Board: `docs/modai-studio/tasks_f90.json` (P563–P574).
+
+### Modai Studio Rate Transition / multi-rate (2026-07-24)
+
+- Catalog: `blocks.discrete.rateTransition` (ZOH) + `rateTransitionUd` (UnitDelay); Configurable discrete family; RT Mask + `RT Ts=` badge.
+- Advisor `sampleRateMismatch` when discrete samplePeriod differs without a Rate Transition bridge.
+- Example: `examples/rate_transition`. Task board: `docs/modai-studio/tasks_rate.json` (P556–P562).
+
+### Modai Studio F89 Profiler (2026-07-24)
+
+- `SimProfile` on `studio_simulate`: emit / compile / apply_params / integrate ms; Fast Restart marks compile skipped.
+- Progress phases `emit` / `compile`; Results dock **Profiler** tab (table + bar chart); profile stored on RunRecord.
+- Task board: `docs/modai-studio/tasks_f89.json` (P547–P555).
+
+### Modai Studio Q4-C routing + icons (2026-07-24)
+
+- Auto orthogonal routing with obstacle avoidance + feedback wrap-around (`edgePath.ts`); toolbar Reroute (selected edges or all).
+- Edge label show/hide + vertical offset in Settings; Mux/Bus face dimension badge (`n→m`).
+- Mask coverage: secondOrder/min/max/noise/stateSpace; wrap/MSL/domain Icon fallback (no empty placeholder).
+
+### Modai Studio Q4-B sensors + mix examples (2026-07-24)
+
+- F71 sensor catalog: Potential/Power, rotational Speed/Acc/Rel*, translational Speed/Acc/Rel* (`catalog/sensors.rs`).
+- Bridge convention: sensor RealOutput -> signal (no converter block); connect infers unit/dimension; Advisor domain/unit hints.
+- Examples: `rot_sensor_control`, `elec_sensor_control`.
+
+### Modai Studio Q4-A trust gates + observation (2026-07-24)
+
+- Catalog FQN inventory + gate CLI (`--dump-catalog-gate=` / `--run-catalog-gate=`) and `run_catalog_gate.ps1`; signal/physical/routing core Analyze green.
+- Emit golden checks (`--check-emit-golden=`): subsystem prefix, inactive Variant absent, Goto/From connect.
+- Validate Messages tag `[fallback]` for placeholder/fallback noise.
+- Observation: Scope sink, edge quick-plot (F51), Display end value (F52), Results cursor readout (F53).
+
+### Modai Studio Q4 task board (2026-07-24)
+
+- Next phase board: Tier A trust gates + observation (P519–P530), Tier B sensors/mix examples (P531–P538), Tier C routing/icons (P539–P546).
+- Canonical JSON: `docs/modai-studio/tasks_q4.json`; runner: `run_next.ps1 -Board q4`.
+- Deferred on this board: F89 Profiler, Rate Transition, FMU export polish.
+
+### Modai Studio P499–P518 signal attrs + domain edge styles (2026-07-24)
+
+- Edge `unit` / `dimension` annotations; label shows `name [unit]`; Properties panel when a wire is selected.
+- Domain wire styles (F72): signal arrow/thin, electrical thick solid, mechanical/multibody dashed; inferred from source port/domain.
+- Canvas domain legend; selected edge highlight.
+
+### Modai Studio P479–P498 Translational + Multibody joints (2026-07-24)
+
+- Translational 1D (F70): Mass, Spring, Damper, SpringDamper, Fixed, Force, Speed, Position, sensors, IdealGearR2T.
+- Multibody (F74): Prismatic, Spherical, Universal, FreeMotion, FixedRotation, BodyCylinder, PointMass, actuated Revolute/Prismatic.
+- Configurable variant groups for translational passives and multibody joints; Mask icons and library labels.
+
+### Modai Studio P459–P478 Variant Subsystem (2026-07-24)
+
+- F87 Variant Subsystem: `ui.variants` + `activeVariantId`; `subsystemRef` always mirrors the active child.
+- Add Variant clones the active child diagram; Properties switch / rename / remove; toolbar menu action.
+- Emit expands only the active choice; Advisor warns on mismatched variant port sets; dashed V face badge.
+
+### Modai Studio P439–P458 physical library + Logical (2026-07-23)
+
+- Analog expand (F70): SineVoltage, PulseVoltage, ConstantCurrent, IdealDiode, IdealClosing/OpeningSwitch.
+- Rotational expand: Fixed, SpringDamper, IdealGear, Speed, AngleSensor, TorqueSensor; mechanical domain coloring.
+- Logical And/Or/Not/Switch + BooleanToReal / RealToBoolean; Configurable logical variant group.
+- Sample-time legend on canvas (F73); Mask icons for new blocks.
+
+### Modai Studio P419–P438 Configurable + Discrete + sample-time colors (2026-07-23)
+
+- Multi-select Configurable (F63): same-family type switch + bulk param Enter-to-apply.
+- Catalog Discrete: Sampler / ZOH / FOH / UnitDelay / Discrete TF; Lookup2D (`CombiTable2Ds`).
+- Sample-time coloring (F73): dashed discrete face, orange stripe, `Ts=` badge; Properties sample hint.
+- Variant groups `discrete` / `tables` / `booleanSources`; Mask icons for discrete and Lookup2D.
+
+### Modai Studio P399–P418 Model Reference + user catalog pack (2026-07-23)
+
+- Wrap .mo branded as **ModelRef** catalog; copies into `wrapped/` and adds library path.
+- Emit prepends referenced non-MSL class sources from `wrapped/` / `userlib/` for self-contained `.mo`.
+- Validate/simulate auto-inject project `wrapped` + `userlib/*` library paths.
+- User catalog packs: `catalog.json` + `.mo`; Import Pack / Export Pack menu; UserLib category + Ref icon.
+
+### Modai Studio P379–P398 advisor + structure + PNG (2026-07-23)
+
+- Model Advisor (F80): unconnected ports, orphans, missing Ground, Goto/From tags, empty subsystems, signal cycles; merged into Update Messages.
+- Structure diagnostics (F81): tag compiler algebraic/singular messages with `[structure]`; clickable warnings focus blocks.
+- Export PNG (F82) via SVG rasterize; menu toggle in settings.
+
+### Modai Studio P358–P378 param dictionary + From File (2026-07-23)
+
+- Project `paramDictionary` (F85): block params use `$Name`; resolved at emit / Fast Restart overrides; Data activity panel; Properties Promote; Dashboard dict knobs; loggedVariables editor.
+- From File (F86): `CombiTimeTable` catalog entry; Load CSV embeds `table=[...]`; Clock + Boolean sources; Mask icons.
+- Menu Export SVG for diagram snapshot; validate/simulate/emit pass `paramDictionary`.
+
+### Modai Studio P338–P357 signal library + edit UX (2026-07-23)
+
+- Catalog: Math (Product/Division/Abs/Sqrt/Sign/trig), Nonlinear (Limiter/DeadZone), Sources (Ramp/Pulse/ExpSine), Tables Lookup1D, Continuous (TF/Derivative/PI/PID), Sinks Display.
+- Emit formats array/enum/string modifiers safely (`format_param_value`).
+- Library favorites (localStorage); expanded Type variant groups; Mask icons for new blocks.
+- Rotate selection 90 deg (toolbar / Ctrl+R); canvas Find (Ctrl+F); port hover type tips.
+
+### Modai Studio subsystem boundary In/Out (2026-07-23)
+
+- Create Subsystem promotes cut edges to child Inport/Outport terminals and parent face ports `In1`/`Out*`.
+- Navigating up, Save, and Validate sync parent subsystem ports from child Terminals.
+- Subsystem block: double-frame face, colored In/Out handles, port labels; Properties lists boundary bindings.
+
+### Modai Studio Goto/From + labelBelow + edge vertices (2026-07-23)
+
+- Library **Routing** Goto / From: `RealPassThrough` with matching `tag`; emit adds `connect(goto.y, from.u)` (tag is diagram-only, not a Modelica modifier).
+- Properties **Label below** stores `ui.labelBelow` and draws the instance name under the block.
+- Selected edges show editable orthogonal vertices (Alt+click / double-click wire to add; drag; double-click vertex to remove); persisted on `edge.vertices`.
+
+### Modai Studio Mux/Bus thick bars (2026-07-23)
+
+- Library **Routing**: Mux 2–4, Demux 2–4, Bus 2–3 as thick vertical bars.
+- Emit maps to `Modelica.Blocks.Routing.Multiplex*` / `DeMultiplex*` (scalar `n*=1`).
+- Properties Type switch resizes the bar and ports; Bus is Multiplex with thicker styling.
+
+### Modai Studio In/Out terminal tags (2026-07-23)
+
+- Library category **Terminals**: Inport (blue) / Outport (orange) color-tag blocks.
+- Maps to `Modelica.Blocks.Interfaces.RealInput` / `RealOutput`; emit uses connector `self` port (`connect(in1, gain.u)`).
+- Properties `portNumber` shown on the tag face.
+
+### Modai Studio Full JIT validate toggle (2026-07-23)
+
+- Messages show `Analyze only` / `Full JIT` from validate stage; Analyze success adds a hint line.
+- Toolbar **Full JIT** (Cpu) toggle; when on, Update / open-example validate with Full compile + codegen.
+
+### Modai Studio validate Analyze stop (2026-07-23)
+
+- `studio_validate` / `validate_model` stop at `CompileStopPhase::Analyze` (no JIT codegen).
+- Run / simulate still uses Full compile; opening examples and Update are much faster.
+
+### Modai Studio validate off main thread (2026-07-23)
+
+- `studio_validate` is async + `spawn_blocking` so opening examples / Update no longer freezes the UI during JIT compile.
+- Example open yields two animation frames so the diagram paints before validate; status shows validating.
+
+### Modai Studio edge labels + junctions (2026-07-23)
+
+- Custom `studioStep` orthogonal edges with short signal-name labels (full name in tooltip).
+- Fan-out from the same source port draws a filled junction dot; only one label per branch group.
+
+### Modai Studio wrap Icon face (2026-07-23)
+
+- Wrap `.mo` parses `annotation(Icon(...))` into catalog/node `icon`.
+- `IconFace` renders Modelica graphics on the block; falls back to Mask glyphs when absent.
+
+### Modai Studio wrap .mo auto ports (2026-07-23)
+
+- `studio_wrap_mo`: parse Modelica model/block, auto-extract multi in/out (and connector) ports + parameters into catalog **Wrapped** entry.
+- Menu **Wrap .mo**; place on canvas; Properties edits params; Run options stay project-level.
+
+### Modai Studio block Mask icons (2026-07-23)
+
+- Catalog SVG glyphs on blocks (Gain triangle, Add/Feedback, Integrator, Step/Sine, R/C/L, …).
+- Visual mapping doc: `docs/modai-studio/09-visual-graphics.md` (screenshot → 06 capability map).
+
+### Modai Studio Draw NodeResizer (2026-07-23)
+
+- Draw nodes: select then drag corner/edge handles (`NodeResizer`) to resize; size written to `ui.width/height`.
+- Snap-to-grid applies on resize end when snap is enabled; Properties width/height still work.
+
+### Modai Studio Draw graphics library (2026-07-22)
+
+- Library category **Draw**: Rectangle, Ellipse, Line, Polygon, Text, Note (`Studio.Draw.*`).
+- Canvas-only `nodeKind: "draw"` (no ports); skipped by `emit_mo`; properties for size/stroke/fill/text.
+
+### Modai Studio Simulink-like block diagram (2026-07-22)
+
+- Canvas blocks: sharp rectangular frames, domain stripe, side port rows with labels (signal triangle / connector square).
+- Orthogonal step edges with closed arrow markers; dual line grid (20/100); snap 10x10.
+- Styles in `styles/simulinkBlocks.css`; replaces flowchart-card aesthetics.
+
+### Modai Studio example auto-validate (2026-07-22)
+
+- Opening an example runs Validate automatically.
+- On success: switch to Results and pre-select `plotHints` (`instance.hint`); Run prefers those vars.
+
+### Modai Studio classic theme manager (2026-07-22)
+
+- Classic themes: Dark / Light / Classic Blue / High Contrast (`settings/themes.ts`).
+- Settings General theme swatches; shell/canvas/charts adapt via CSS tokens (`data-theme`).
+
+### Modai Studio example open / visualize / test (2026-07-22)
+
+- Bundled examples: `signal_feedback`, `rc_circuit`, `multibody_preview` (diagram + `.mo`).
+- GUI: File **Examples** menu + welcome overlay to open examples for canvas + Run.
+- Headless: `--smoke-example=<id>` / `--smoke-all` open+validate+simulate; `test_studio_autoload.ps1`.
+
+### Modai Studio auto-load smoke (2026-07-22)
+
+- **GUI**: `MODAI_STUDIO_OPEN` or `--project=<dir>` auto-opens a Studio project on startup.
+- **Headless**: `--smoke-open=<dir>` opens project and prints JSON `{ok,rootDir,modelName,nodes,edges}`.
+- **Script**: `pwsh -File ./test_studio_autoload.ps1` (unit + smoke; launches GUI unless `-NoGui`).
+
+### Modai Studio frameless VS Code shell (2026-07-22)
+
+- **Frameless**: Tauri `decorations: false` + custom title bar (drag, min/max/close).
+- **Workbench**: Activity bar | primary sidebar | editor | secondary sidebar | bottom panel | status bar.
+- **Views**: Explorer (Library/Outline) vs Properties/Dashboard; Ctrl+B / Ctrl+J / Ctrl+Alt+B toggles.
+- **Persist**: `layout.activity`, `showSidebar`, `showPanel`, `showSecondary` in settings.
+- **Split**: `useStudioSession` (composer) + `useStudioProject` / `useStudioEdit` / `useStudioSim` + `Workbench`; `App` is thin.
+- **Tauri versions**: pin `@tauri-apps/api`/`cli` to 2.11.x; bump `tauri` crate to 2.11.x to match.
+
+### Modai Studio shell UI settings (2026-07-22)
+
+- **Iconized menus/tools**: lucide icons for menu bar + toolbar; optional labels; grouped File/Edit/Export/Sim.
+- **System settings**: locale (zh/en), font family/size, density, tips/shortcuts, menu/tool visibility; persisted in `localStorage`.
+- **Shortcuts**: Ctrl+N/O/S, Ctrl+Enter (Run), plus existing Undo/Redo/Copy/Paste; tips via `title` when enabled.
+- **i18n**: shell + panel/tab titles via `src/i18n`; save syncs `manifest.ui.locale`.
+- **Layout**: drag-resize left/right panels, Library/Outline split, Results dock height; sizes in settings (`layout`) and CSS vars.
+- **Status i18n**: run/validate/emit/edit status and error strings via `t`/`tf` (zh/en).
+- **Shortcuts help**: Settings dialog Shortcuts tab; press `?` to open; Esc closes.
+- **Progress i18n**: map known sim progress phases/messages (`started`/`running`/`done`/`fmu_cosim`) via `localizeProgress`.
+- **Sim hotkeys**: Space pause/resume, `.` step, Ctrl+`.` stop; listed on Shortcuts page.
+
 ### Modai Studio P0 MVP (2026-07-21)
 
 - **App**: new workspace member `modai-studio` (Tauri 2 + React + XYFlow) — Library | Canvas | Properties | Results shell.
@@ -31,13 +372,31 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - **XY**: Results dock XY phase scatter; Runs show `wallMs` profiler.
 - **Dashboard**: pre-run numeric sliders (not mid-sim online tune).
 - **Variant**: Properties type switch among Sources/Math/Continuous compatible groups.
-- **Out/Blocked**: true Pause/Step, Multibody 3D, Embedded Coder-grade.
+- **Out/Blocked**: MathWorks Embedded Coder / certification parity（Studio Coder-grade 包已另条落地）
 
-### Modai Studio F91 FMU import cosim (2026-07-21)
+### Modai Studio coder-grade C package (2026-07-22)
 
-- **Import**: `studio_pick_fmu_file` / `studio_import_fmu` — unzip `.fmu`, parse `modelDescription.xml`, catalog under Imported FMU, extract to `imported_fmus/`.
-- **Canvas**: `nodeKind=fmu` block with signal ports from causality input/output; emit nested Modelica stub block.
-- **Sim bridge**: FMI2 CS host (`libloading`) + signal-domain cosim interpreter when diagram contains FMU nodes.
+- **Coder package**: beside `model.c`/`model.h`, emit `rml_step.{c,h}` (fixed-step RK4 API), `rml_main.c`, `CMakeLists.txt`, `interface.json`, `INTEGRATION.txt`.
+- **Studio**: toolbar **Emit Coder** / **Emit FMU** (coder package default on); IPC `coderPackage` + `packageKind`.
+- **CLI**: `--emit-coder=<dir>` sets emit-c + package.
+- **Boundary**: not MathWorks Embedded Coder / AUTOSAR / MISRA certification.
+
+### Modai Studio Multibody 3D viewport (2026-07-22)
+
+- **3D dock tab**: three.js scene with OrbitControls, Play/scrub; diagram kinematic preview (World + FixedTranslation chain) and simulation playback from `*.r_0[1..3]` / `*_r_0_*` series.
+- **Catalog**: MultiBody World / Fixed / FixedTranslation / Body / BodyBox / Revolute; World emit as `inner`.
+- **Example**: `modai-studio/examples/multibody_preview` pendulum-style diagram for preview.
+
+### Modai Studio Fast Restart (2026-07-22)
+
+- **Fast Restart**: session-cached `CompiledModel` on a dedicated worker thread; param-only / sim-option changes reuse JIT Artifacts via `with_params` (no recompile).
+- **UI**: toolbar "Fast Restart" toggle (default on); Run status / Runs label show `fast restart` vs `full compile`; IPC `restartMode`.
+- **Structure key**: diagram topology + types + param *names* (not values); library path or topology change forces full compile. FMU cosim path unchanged.
+
+### Modai Studio tight DAE/FMU cosim (2026-07-22)
+
+- **Tight co-integration**: single communication loop — plant `calc_derivs` RK4 step + FMI2 CS `doStep` with bridge params `sfmu_*.k`; Pause/Step honored.
+- **Fallback**: weak Jacobi two-pass path if tight compile/param binding fails.
 
 ### Media.Examples loader + Noise/ComplexBlocks (2026-07-21)
 

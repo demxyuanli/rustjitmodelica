@@ -1,0 +1,63 @@
+{
+  "product": "modai-studio",
+  "phase": "RATE",
+  "goal": "Rate Transition / multi-rate: discrete sample-rate bridge blocks + Advisor + example",
+  "updatedAt": "2026-07-24",
+  "priority": ["RATE"],
+  "deferred": [
+    "True multi-clock partition scheduling UI",
+    "Per-block residual timing (JIT hooks)",
+    "FMU export wizard polish"
+  ],
+  "tasks": [
+    {
+      "id": "P556",
+      "title": "RATE task board + scope (ZOH/UnitDelay mapping)",
+      "status": "done",
+      "milestone": "RATE",
+      "tier": "A"
+    },
+    {
+      "id": "P557",
+      "title": "Catalog RateTransition (ZOH) + RateTransitionUD",
+      "status": "done",
+      "milestone": "RATE",
+      "tier": "A"
+    },
+    {
+      "id": "P558",
+      "title": "Configurable discrete variants + Library labels",
+      "status": "done",
+      "milestone": "RATE",
+      "tier": "A"
+    },
+    {
+      "id": "P559",
+      "title": "Mask icon + sample-time class / Ts badge",
+      "status": "done",
+      "milestone": "RATE",
+      "tier": "A"
+    },
+    {
+      "id": "P560",
+      "title": "Advisor: samplePeriod mismatch without bridge",
+      "status": "done",
+      "milestone": "RATE",
+      "tier": "B"
+    },
+    {
+      "id": "P561",
+      "title": "Example rate_transition (smoke Run)",
+      "status": "done",
+      "milestone": "RATE",
+      "tier": "B"
+    },
+    {
+      "id": "P562",
+      "title": "docs/CHANGELOG + build gate",
+      "status": "done",
+      "milestone": "RATE",
+      "tier": "B"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "product": "modai-studio",
+  "modelName": "ElecSensorControl",
+  "libraryPaths": [],
+  "simulationDefaults": {
+    "stopTime": 0.05,
+    "numberOfIntervals": 500,
+    "solver": "rk45",
+    "tolerance": 1e-6,
+    "maxStep": null,
+    "minStep": null,
+    "loggedVariables": [
+      "vSense.v",
+      "gain1.y"
+    ]
+  },
+  "ui": {
+    "locale": "zh"
+  },
+  "paramDictionary": []
+}

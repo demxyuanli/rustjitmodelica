@@ -205,6 +205,7 @@ User edits canvas
 - 每条：`typeName`、`domain`（`signal` \| `electrical` \| `mechanical`）、显示名 i18n key、默认参数、端口列表（名、方向、种类）
 - 画布节点渲染：信号流用简洁方块；物理域用带端口锚点的自定义 node
 - MVP 不依赖完整 Icon annotation 解析；可用简单几何/SVG 占位
+- Library **Draw** 图元库（Rectangle/Ellipse/Line/Polygon/Text/Note）用于画布注释，不进 `.mo`
 
 首版数量目标（可在功能说明中 enumerated）：
 

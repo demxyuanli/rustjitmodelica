@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "modelName": "RotGearTrain",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_step",
+      "instanceName": "step1",
+      "typeName": "Modelica.Blocks.Sources.Step",
+      "domain": "signal",
+      "catalogId": "blocks.sources.step",
+      "position": { "x": 20, "y": 120 },
+      "rotation": 0,
+      "params": [
+        { "name": "height", "value": "1" },
+        { "name": "startTime", "value": "0.2" }
+      ],
+      "ports": [{ "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "step1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_torque",
+      "instanceName": "torque1",
+      "typeName": "Modelica.Mechanics.Rotational.Sources.Torque",
+      "domain": "mechanical",
+      "catalogId": "mechanics.rotational.torque",
+      "position": { "x": 160, "y": 120 },
+      "rotation": 0,
+      "params": [],
+      "ports": [
+        { "id": "tau", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "flange", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "torque1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_j1",
+      "instanceName": "inertia1",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Inertia",
+      "domain": "mechanical",
+      "catalogId": "mechanics.rotational.inertia",
+      "position": { "x": 300, "y": 120 },
+      "rotation": 0,
+      "params": [{ "name": "J", "value": "0.5" }],
+      "ports": [
+        { "id": "flange_a", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" },
+        { "id": "flange_b", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["phi", "w"],
+      "ui": { "label": "inertia1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_gear",
+      "instanceName": "gear1",
+      "typeName": "Modelica.Mechanics.Rotational.Components.IdealGear",
+      "domain": "mechanical",
+      "catalogId": "mechanics.rotational.idealGear",
+      "position": { "x": 440, "y": 120 },
+      "rotation": 0,
+      "params": [{ "name": "ratio", "value": "2" }],
+      "ports": [
+        { "id": "flange_a", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" },
+        { "id": "flange_b", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "gear1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_j2",
+      "instanceName": "inertia2",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Inertia",
+      "domain": "mechanical",
+      "catalogId": "mechanics.rotational.inertia",
+      "position": { "x": 580, "y": 120 },
+      "rotation": 0,
+      "params": [{ "name": "J", "value": "1" }],
+      "ports": [
+        { "id": "flange_a", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" },
+        { "id": "flange_b", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["phi", "w"],
+      "ui": { "label": "inertia2", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_d",
+      "instanceName": "damper1",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Damper",
+      "domain": "mechanical",
+      "catalogId": "mechanics.rotational.damper",
+      "position": { "x": 720, "y": 120 },
+      "rotation": 0,
+      "params": [{ "name": "d", "value": "0.4" }],
+      "ports": [
+        { "id": "flange_a", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" },
+        { "id": "flange_b", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "damper1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_fix",
+      "instanceName": "fixed1",
+      "typeName": "Modelica.Mechanics.Rotational.Components.Fixed",
+      "domain": "mechanical",
+      "catalogId": "mechanics.rotational.fixed",
+      "position": { "x": 860, "y": 120 },
+      "rotation": 0,
+      "params": [{ "name": "phi0", "value": "0" }],
+      "ports": [
+        { "id": "flange", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Mechanics.Rotational.Interfaces.Flange_a" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "fixed1", "width": 120, "height": 48 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "sourceNodeId": "n_step", "sourcePortId": "y", "targetNodeId": "n_torque", "targetPortId": "tau", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e2", "sourceNodeId": "n_torque", "sourcePortId": "flange", "targetNodeId": "n_j1", "targetPortId": "flange_a", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e3", "sourceNodeId": "n_j1", "sourcePortId": "flange_b", "targetNodeId": "n_gear", "targetPortId": "flange_a", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e4", "sourceNodeId": "n_gear", "sourcePortId": "flange_b", "targetNodeId": "n_j2", "targetPortId": "flange_a", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e5", "sourceNodeId": "n_j2", "sourcePortId": "flange_b", "targetNodeId": "n_d", "targetPortId": "flange_a", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e6", "sourceNodeId": "n_d", "sourcePortId": "flange_b", "targetNodeId": "n_fix", "targetPortId": "flange", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null }
+  ],
+  "annotations": [],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}

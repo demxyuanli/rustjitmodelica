@@ -1,19 +1,45 @@
-use crate::diagram::{DiagramDocument, DiagramNode, SimulationDefaults};
+use crate::diagram::{DiagramDocument, DiagramNode, ParamDictionaryEntry, SimulationDefaults};
+use crate::user_catalog::collect_referenced_sources;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Emit a flat Modelica model, expanding subsystem nodes by instance-name prefix.
 /// FMU co-sim nodes become nested block stubs (structure for validate; Run uses FMI host).
+/// `dictionary` resolves block params of the form `$Name`.
 pub fn emit_modelica(
     root: &DiagramDocument,
     subsystems: &HashMap<String, DiagramDocument>,
     sim: Option<&SimulationDefaults>,
 ) -> String {
+    emit_modelica_with_dict(root, subsystems, sim, &[], None)
+}
+
+pub fn emit_modelica_with_dict(
+    root: &DiagramDocument,
+    subsystems: &HashMap<String, DiagramDocument>,
+    sim: Option<&SimulationDefaults>,
+    dictionary: &[ParamDictionaryEntry],
+    project_root: Option<&Path>,
+) -> String {
+    let dict = dict_map(dictionary);
     let mut nested: Vec<String> = Vec::new();
     let mut decls: Vec<String> = Vec::new();
     let mut eqs: Vec<String> = Vec::new();
-    emit_diagram(root, "", subsystems, &mut nested, &mut decls, &mut eqs);
+    emit_diagram(
+        root,
+        "",
+        subsystems,
+        &dict,
+        &mut nested,
+        &mut decls,
+        &mut eqs,
+    );
 
     let mut out = String::new();
+    if let Some(pr) = project_root {
+        let types = collect_type_names(root, subsystems);
+        out.push_str(&collect_referenced_sources(pr, &types));
+    }
     out.push_str(&format!("model {}\n", root.model_name));
     for n in &nested {
         out.push_str(n);
@@ -42,6 +68,27 @@ pub fn emit_modelica(
     }
     out.push_str(&format!("end {};\n", root.model_name));
     out
+}
+
+fn collect_type_names(
+    root: &DiagramDocument,
+    subsystems: &HashMap<String, DiagramDocument>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut visit = |d: &DiagramDocument| {
+        for n in &d.nodes {
+            if n.node_kind == "component" && !n.type_name.is_empty() {
+                names.push(n.type_name.clone());
+            }
+        }
+    };
+    visit(root);
+    for d in subsystems.values() {
+        visit(d);
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn fmu_block_type_name(node: &DiagramNode) -> String {
@@ -100,6 +147,7 @@ fn emit_diagram(
     diagram: &DiagramDocument,
     prefix: &str,
     subsystems: &HashMap<String, DiagramDocument>,
+    dict: &HashMap<String, String>,
     nested: &mut Vec<String>,
     decls: &mut Vec<String>,
     eqs: &mut Vec<String>,
@@ -118,7 +166,15 @@ fn emit_diagram(
                     } else {
                         format!("{prefix}{}_", node.instance_name)
                     };
-                    emit_diagram(child, &child_prefix, subsystems, nested, decls, eqs);
+                    emit_diagram(
+                        child,
+                        &child_prefix,
+                        subsystems,
+                        dict,
+                        nested,
+                        decls,
+                        eqs,
+                    );
                 }
             }
             continue;
@@ -145,17 +201,33 @@ fn emit_diagram(
             decls.push(line);
             continue;
         }
+        // draw / annotation graphics are canvas-only
+        if node.node_kind == "draw"
+            || node.node_kind == "annotation"
+            || node.domain == "draw"
+        {
+            continue;
+        }
         if node.node_kind != "component" {
             continue;
         }
         let inst = format!("{prefix}{}", node.instance_name);
-        let mut line = format!("  {} {}", node.type_name, inst);
+        let inner = if node.type_name.contains("MultiBody.World") {
+            "inner "
+        } else {
+            ""
+        };
+        let mut line = format!("  {inner}{} {}", node.type_name, inst);
         if !node.params.is_empty() {
             let parts: Vec<String> = node
                 .params
                 .iter()
                 .filter(|p| !p.value.trim().is_empty())
-                .map(|p| format!("{} = {}", p.name, p.value))
+                .filter(|p| emit_param_allowed(node, &p.name))
+                .map(|p| {
+                    let raw = resolve_dict_value(&p.value, dict);
+                    format_instance_modifier(&p.name, &raw)
+                })
                 .collect();
             if !parts.is_empty() {
                 line.push('(');
@@ -179,9 +251,122 @@ fn emit_diagram(
         let (dst_inst, dst_port) =
             resolve_endpoint(dst_node, &edge.target_port_id, prefix, subsystems);
         eqs.push(format!(
-            "  connect({}.{}, {}.{});\n",
-            src_inst, src_port, dst_inst, dst_port
+            "  connect({}, {});\n",
+            format_connect_ref(&src_inst, &src_port),
+            format_connect_ref(&dst_inst, &dst_port)
         ));
+    }
+
+    emit_goto_from_links(diagram, prefix, eqs);
+}
+
+fn dict_map(dictionary: &[ParamDictionaryEntry]) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for e in dictionary {
+        let name = e.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        m.insert(name.to_string(), e.value.trim().to_string());
+    }
+    m
+}
+
+/// Resolve `$Name` against the project dictionary; otherwise return trimmed value.
+pub fn resolve_dict_value(value: &str, dict: &HashMap<String, String>) -> String {
+    let v = value.trim();
+    if let Some(rest) = v.strip_prefix('$') {
+        let key = rest.trim();
+        if let Some(found) = dict.get(key) {
+            return found.clone();
+        }
+    }
+    v.to_string()
+}
+
+fn param_value(node: &DiagramNode, name: &str) -> Option<String> {
+    node.params
+        .iter()
+        .find(|p| p.name == name)
+        .map(|p| p.value.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Skip diagram-only params that are not Modelica modifiers on the target type.
+fn emit_param_allowed(node: &DiagramNode, name: &str) -> bool {
+    match name {
+        "tag" if is_goto_node(node) || is_from_node(node) => false,
+        "portNumber" => false,
+        _ => true,
+    }
+}
+
+/// `phi` + `(start = 0.5)` -> `phi(start = 0.5)`; otherwise `name = value`.
+fn format_instance_modifier(name: &str, value: &str) -> String {
+    let v = value.trim();
+    if v.starts_with('(') && v.ends_with(')') {
+        format!("{name}{v}")
+    } else {
+        format!("{} = {}", name, format_param_value(v))
+    }
+}
+
+fn format_param_value(value: &str) -> String {
+    let v = value.trim();
+    if v.is_empty() {
+        return "0".into();
+    }
+    if v.starts_with('"') || v.starts_with('[') || v.starts_with('{') {
+        return v.to_string();
+    }
+    if v.parse::<f64>().is_ok() || v == "true" || v == "false" {
+        return v.to_string();
+    }
+    // Enum paths / identifiers (e.g. Modelica.Blocks.Types....)
+    if v.contains('.') && !v.contains(' ') {
+        return v.to_string();
+    }
+    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn is_goto_node(node: &DiagramNode) -> bool {
+    node.catalog_id.to_lowercase().contains("routing.goto")
+        || node.catalog_id.to_lowercase().ends_with(".goto")
+}
+
+fn is_from_node(node: &DiagramNode) -> bool {
+    node.catalog_id.to_lowercase().contains("routing.from")
+        || node.catalog_id.to_lowercase().ends_with(".from")
+}
+
+/// Wire From.u <- Goto.y for matching `tag` params (Simulink-like jump).
+fn emit_goto_from_links(diagram: &DiagramDocument, prefix: &str, eqs: &mut Vec<String>) {
+    let gotos: Vec<(&DiagramNode, String)> = diagram
+        .nodes
+        .iter()
+        .filter(|n| n.node_kind == "component" && is_goto_node(n))
+        .filter_map(|n| Some((n, param_value(n, "tag")?)))
+        .collect();
+    for node in diagram.nodes.iter().filter(|n| n.node_kind == "component" && is_from_node(n))
+    {
+        let Some(tag) = param_value(node, "tag") else {
+            continue;
+        };
+        let Some((goto, _)) = gotos.iter().find(|(_, t)| t == &tag) else {
+            continue;
+        };
+        let goto_inst = format!("{prefix}{}", goto.instance_name);
+        let from_inst = format!("{prefix}{}", node.instance_name);
+        eqs.push(format!("  connect({goto_inst}.y, {from_inst}.u);\n"));
+    }
+}
+
+/// Port id `self` means the component is a connector (RealInput/RealOutput).
+fn format_connect_ref(inst: &str, port: &str) -> String {
+    if port.is_empty() || port == "self" {
+        inst.to_string()
+    } else {
+        format!("{inst}.{port}")
     }
 }
 

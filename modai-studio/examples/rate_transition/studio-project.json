@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "product": "modai-studio",
+  "modelName": "RateTransitionDemo",
+  "libraryPaths": [],
+  "simulationDefaults": {
+    "stopTime": 2.0,
+    "numberOfIntervals": 400,
+    "solver": "rk45",
+    "tolerance": 1e-6,
+    "maxStep": null,
+    "minStep": null,
+    "loggedVariables": [
+      "sine1.y",
+      "rt1.y",
+      "gain1.y"
+    ]
+  },
+  "ui": {
+    "locale": "zh"
+  },
+  "paramDictionary": []
+}

@@ -1,7 +1,7 @@
 # Modai Studio 文档索引
 
-日期：2026-07-21  
-状态：P0–P3 已落地；F91 FMU 导入共仿已落地（见 `08-implementation-tasks.md` / `build/modai_studio/tasks*.json`）；Pause/3D 仍 Out/Blocked
+日期：2026-07-21（修订：2026-08-15）  
+状态：P0–P4 能力清单已收口（含 Fast Restart、Multibody 3D、Coder-grade C 包、P4 实用手感）。P4-D 后做项见 [10](./10-ux-practical-review.md)。MathWorks Embedded Coder / 认证级仍为显式非目标
   
 产品代号：`modai-studio`  
 决策基线：方案 1（独立 Tauri 应用 + 薄仿真桥）
@@ -18,6 +18,8 @@
 | 06 | [Simulink 能力对照](./06-simulink-capability-map.md) | 与 Simulink/Simscape 功能映射与分期 |
 | 07 | [编译器可行性评估](./07-compiler-feasibility.md) | 对照 jit-compiler：Full/Partial/Blocked |
 | 08 | [实现任务板](./08-implementation-tasks.md) | P0 里程碑 S01–S09；状态见 `build/modai_studio/tasks.json` |
+| 09 | [可视化图形对标](./09-visual-graphics.md) | 截图级图元/连线 ↔ 06 分期；Mask SVG 落地指引 |
+| 10 | [功能与界面审查](./10-ux-practical-review.md) | 对照 Simulink 主路径的实用差距与 P4 增强建议 |
 
 ## 已确认决策
 

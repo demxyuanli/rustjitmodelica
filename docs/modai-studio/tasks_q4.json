@@ -1,0 +1,214 @@
+{
+  "product": "modai-studio",
+  "phase": "Q4",
+  "goal": "Trust gates + observation loop; physical sensors/examples; canvas polish",
+  "updatedAt": "2026-07-24",
+  "priority": [
+    "Q4-A",
+    "Q4-B",
+    "Q4-C"
+  ],
+  "deferred": [
+    "Frequency-domain / linearization tools",
+    "Per-block residual timing (F89 follow-up)",
+    "True multi-clock partition scheduling UI"
+  ],
+  "tasks": [
+    {
+      "id": "P519",
+      "title": "Catalog FQN inventory matrix (typeName -> validate/sim target)",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P520",
+      "title": "Gate script: run validate over inventory; failures -> checklist",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P521",
+      "title": "Signal library gate: Sources/Math/Continuous/Discrete/Tables core",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P522",
+      "title": "Physical library gate: Analog/Rotational/Translational core",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P523",
+      "title": "Emit golden: nested subsystem + boundary In/Out",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P524",
+      "title": "Emit golden: ModelRef + Variant(active only) + Goto/From",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P525",
+      "title": "Surface placeholder/fallback hints in Studio Messages",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P526",
+      "title": "F50 Sink/Scope block binds Results series tab",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P527",
+      "title": "F51 select edge quick-plot (signal/source port)",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P528",
+      "title": "F52 Display block face shows Run end value",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P529",
+      "title": "F53 Results curve cursor readout",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P530",
+      "title": "F81 click structure/algebraic msg focuses node; Tier A build gate",
+      "status": "done",
+      "milestone": "Q4-A",
+      "tier": "A"
+    },
+    {
+      "id": "P531",
+      "title": "F71 fill common electrical/mechanical sensor catalog gaps",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P532",
+      "title": "Sensor-to-Real signal bridge convention + icons",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P533",
+      "title": "Infer default edge unit/dimension from ports on connect",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P534",
+      "title": "Advisor: domain mismatch / unit conflict hints",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P535",
+      "title": "Example: control + rotational mechatronic mix",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P536",
+      "title": "Example: electrical + control mix",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P537",
+      "title": "Include mix examples in gate script",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P538",
+      "title": "Docs/CHANGELOG align F71; Tier B build gate",
+      "status": "done",
+      "milestone": "Q4-B",
+      "tier": "B"
+    },
+    {
+      "id": "P539",
+      "title": "Auto orthogonal routing: new edges avoid blocks",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    },
+    {
+      "id": "P540",
+      "title": "Feedback loop routing / re-route command",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    },
+    {
+      "id": "P541",
+      "title": "Mask SVG coverage for top signal catalog blocks",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    },
+    {
+      "id": "P542",
+      "title": "Mask/IconFace coverage for top physical blocks",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    },
+    {
+      "id": "P543",
+      "title": "wrap/MSL common-type Icon fallback policy",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    },
+    {
+      "id": "P544",
+      "title": "Mux/Bus dimension badge + label layout",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    },
+    {
+      "id": "P545",
+      "title": "Edge label offset / show-hide setting",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    },
+    {
+      "id": "P546",
+      "title": "Update 09-visual-graphics; Tier C build gate",
+      "status": "done",
+      "milestone": "Q4-C",
+      "tier": "C"
+    }
+  ]
+}

@@ -6,21 +6,59 @@
   "nodes": [
     {
       "id": "n_v1",
-      "instanceName": "vsource1",
-      "typeName": "Modelica.Electrical.Analog.Sources.ConstantVoltage",
+      "instanceName": "vstep",
+      "typeName": "Modelica.Electrical.Analog.Sources.StepVoltage",
       "domain": "electrical",
-      "catalogId": "analog.sources.constantVoltage",
-      "position": { "x": 40, "y": 100 },
-      "rotation": 0,
-      "params": [{ "name": "V", "value": "1" }],
+      "catalogId": "analog.sources.stepVoltage",
+      "position": {
+        "x": 40.0,
+        "y": 80.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "V",
+          "value": "10"
+        },
+        {
+          "name": "startTime",
+          "value": "0.1"
+        }
+      ],
       "ports": [
-        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" },
-        { "id": "n", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+        {
+          "id": "p",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Electrical.Analog.Interfaces.Pin"
+        },
+        {
+          "id": "n",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Electrical.Analog.Interfaces.Pin"
+        }
       ],
       "nodeKind": "component",
       "subsystemRef": null,
-      "plotHints": [],
-      "ui": { "label": "vsource1" }
+      "plotHints": [
+        "v"
+      ],
+      "ui": {
+        "label": "vstep",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
     },
     {
       "id": "n_r1",
@@ -28,17 +66,52 @@
       "typeName": "Modelica.Electrical.Analog.Basic.Resistor",
       "domain": "electrical",
       "catalogId": "analog.basic.resistor",
-      "position": { "x": 220, "y": 40 },
-      "rotation": 0,
-      "params": [{ "name": "R", "value": "1000" }],
+      "position": {
+        "x": 220.0,
+        "y": 80.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "R",
+          "value": "100"
+        }
+      ],
       "ports": [
-        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" },
-        { "id": "n", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+        {
+          "id": "p",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Electrical.Analog.Interfaces.Pin"
+        },
+        {
+          "id": "n",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Electrical.Analog.Interfaces.Pin"
+        }
       ],
       "nodeKind": "component",
       "subsystemRef": null,
-      "plotHints": [],
-      "ui": { "label": "resistor1" }
+      "plotHints": [
+        "i",
+        "v"
+      ],
+      "ui": {
+        "label": "resistor1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
     },
     {
       "id": "n_c1",
@@ -46,17 +119,51 @@
       "typeName": "Modelica.Electrical.Analog.Basic.Capacitor",
       "domain": "electrical",
       "catalogId": "analog.basic.capacitor",
-      "position": { "x": 400, "y": 100 },
-      "rotation": 0,
-      "params": [{ "name": "C", "value": "1e-3" }],
+      "position": {
+        "x": 400.0,
+        "y": 80.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "C",
+          "value": "1e-3"
+        }
+      ],
       "ports": [
-        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" },
-        { "id": "n", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+        {
+          "id": "p",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Electrical.Analog.Interfaces.Pin"
+        },
+        {
+          "id": "n",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Electrical.Analog.Interfaces.Pin"
+        }
       ],
       "nodeKind": "component",
       "subsystemRef": null,
-      "plotHints": ["v"],
-      "ui": { "label": "capacitor1" }
+      "plotHints": [
+        "v"
+      ],
+      "ui": {
+        "label": "capacitor1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
     },
     {
       "id": "n_g1",
@@ -64,16 +171,38 @@
       "typeName": "Modelica.Electrical.Analog.Basic.Ground",
       "domain": "electrical",
       "catalogId": "analog.basic.ground",
-      "position": { "x": 220, "y": 220 },
-      "rotation": 0,
+      "position": {
+        "x": 400.0,
+        "y": 200.0
+      },
+      "rotation": 0.0,
       "params": [],
       "ports": [
-        { "id": "p", "kind": "connector", "direction": "bidirectional", "typeName": "Modelica.Electrical.Analog.Interfaces.Pin" }
+        {
+          "id": "p",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Electrical.Analog.Interfaces.Pin"
+        }
       ],
       "nodeKind": "component",
       "subsystemRef": null,
       "plotHints": [],
-      "ui": { "label": "ground1" }
+      "ui": {
+        "label": "ground1",
+        "width": 80.0,
+        "height": 40.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
     }
   ],
   "edges": [
@@ -84,8 +213,11 @@
       "targetNodeId": "n_r1",
       "targetPortId": "p",
       "signalName": null,
+      "unit": null,
+      "dimension": null,
       "vertices": [],
-      "routing": "orthogonal"
+      "routing": "orthogonal",
+      "ui": null
     },
     {
       "id": "e2",
@@ -94,8 +226,11 @@
       "targetNodeId": "n_c1",
       "targetPortId": "p",
       "signalName": null,
+      "unit": null,
+      "dimension": null,
       "vertices": [],
-      "routing": "orthogonal"
+      "routing": "orthogonal",
+      "ui": null
     },
     {
       "id": "e3",
@@ -104,8 +239,11 @@
       "targetNodeId": "n_g1",
       "targetPortId": "p",
       "signalName": null,
+      "unit": null,
+      "dimension": null,
       "vertices": [],
-      "routing": "orthogonal"
+      "routing": "orthogonal",
+      "ui": null
     },
     {
       "id": "e4",
@@ -114,10 +252,17 @@
       "targetNodeId": "n_g1",
       "targetPortId": "p",
       "signalName": null,
+      "unit": null,
+      "dimension": null,
       "vertices": [],
-      "routing": "orthogonal"
+      "routing": "orthogonal",
+      "ui": null
     }
   ],
   "annotations": [],
-  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "zoom": 1.0
+  }
 }

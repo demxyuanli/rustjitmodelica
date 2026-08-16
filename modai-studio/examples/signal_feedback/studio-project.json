@@ -4,7 +4,7 @@
   "modelName": "SignalFeedback",
   "libraryPaths": [],
   "simulationDefaults": {
-    "stopTime": 5,
+    "stopTime": 5.0,
     "numberOfIntervals": 500,
     "solver": "rk45",
     "tolerance": 1e-6,
@@ -12,5 +12,8 @@
     "minStep": null,
     "loggedVariables": []
   },
-  "ui": { "locale": "zh" }
+  "ui": {
+    "locale": "zh"
+  },
+  "paramDictionary": []
 }

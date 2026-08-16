@@ -1,0 +1,77 @@
+{
+  "product": "modai-studio",
+  "phase": "F89",
+  "goal": "Simulation Profiler: wall-clock phase breakdown for emit / compile / integrate",
+  "updatedAt": "2026-07-24",
+  "priority": ["F89"],
+  "deferred": [
+    "Per-block residual timing (needs JIT hooks)",
+    "Rate Transition / multi-rate productization",
+    "FMU export wizard polish"
+  ],
+  "tasks": [
+    {
+      "id": "P547",
+      "title": "F89 task board + SimProfile types (Rust + TS)",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "A"
+    },
+    {
+      "id": "P548",
+      "title": "Time emit (diagram -> .mo) in studio_simulate",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "A"
+    },
+    {
+      "id": "P549",
+      "title": "Time compile vs Fast Restart reuse in worker",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "A"
+    },
+    {
+      "id": "P550",
+      "title": "Time apply_params + integrate phases",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "A"
+    },
+    {
+      "id": "P551",
+      "title": "Return profile on SimulateResponse + progress phases",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "A"
+    },
+    {
+      "id": "P552",
+      "title": "Frontend: store profile on RunRecord / lastProfile",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "B"
+    },
+    {
+      "id": "P553",
+      "title": "ResultsDock Profiler tab: phase table + bar chart",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "B"
+    },
+    {
+      "id": "P554",
+      "title": "i18n + localizeProgress for emit/compile phases",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "B"
+    },
+    {
+      "id": "P555",
+      "title": "Update docs/CHANGELOG; build gate",
+      "status": "done",
+      "milestone": "F89",
+      "tier": "B"
+    }
+  ]
+}

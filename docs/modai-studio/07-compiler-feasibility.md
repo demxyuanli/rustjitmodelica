@@ -178,7 +178,7 @@ Library → 连线 → 改参数 → 配 stopTime/solver → Run → 看曲线/�
 | Stop / 取消 | P1 | **Partial→Full** | `SimControl` + IDE `cancel_simulation_run`；CVODE/IDA 路径仅入口检查 |
 | 进度条（仿真时间） | P1 | **Partial→Full** | 驱动 `poll_step` + `modai-jit-progress.simTime/tEnd` |
 | Pause / Step | P3 | **Blocked** | 现有 step 多为跑完后回放，非求解器内暂停 |
-| Fast Restart | P2 | **Partial** | 依赖编译/codegen 缓存；无产品级 API |
+| Fast Restart | P2 | **Done (Studio)** | `CompiledModel` 会话缓存 + `with_params`；结构指纹失效时全量编译 |
 
 ### 3.5 观测与数据
 
@@ -197,10 +197,10 @@ Library → 连线 → 改参数 → 配 stopTime/solver → Run → 看曲线/�
 |----|------|--------|------|
 | connector 物理连线 | P0 | **Full** | flatten `connect` |
 | 理想开关 / 电力电子进阶 | P2+ | **Partial / Risky** | 有 `Ideal_Switch_Simulation` 路径，非入门 RC |
-| Multibody 3D | P3/Out | **Partial** | 编译器有 MultiBody 回归进展；Studio 3D 另论 |
+| Multibody 3D | P3 | **Partial (Studio + Frames lowering)** | 视口回放 `r_0`；JIT 四元数 `resolve1`/`planarRotation`/`gravityAcceleration`；分析期 `resolve1`/`resolve2` 标量化使 `a_0` 含 `der(w)`；`zeros(n)` 力平衡展开；Frame `R` 别名跟随关节；`if rooted` 折进 BLT；`der(resolve1)` 用 `R.w`（含二阶导耦合 `der(w)`）；`0 = e · t` 残差解关节 `der(w)`；非完整 MSL `Orientation.T[3,3]+w` |
 | Update/Validate | P0 | **Full** | `validate_from_source` |
 | 代数环诊断 | P2 | **Partial** | 错误信息质量依赖分析阶段 |
-| FMU/C 导出 | P3 | **Partial** | CLI/库有 emit；非生产级 Coder |
+| FMU/C 导出 | P3 | **Done (coder package)** | residual + `rml_step`/CMake/`interface.json`；非 MathWorks Coder |
 | FMI 协仿导入 | P3 | **Partial / Blocked** | 导出强于导入节点产品化 |
 | External Mode / PIL | Out | **Out** | — |
 

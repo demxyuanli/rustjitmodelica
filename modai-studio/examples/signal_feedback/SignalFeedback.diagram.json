@@ -10,19 +10,48 @@
       "typeName": "Modelica.Blocks.Sources.Step",
       "domain": "signal",
       "catalogId": "blocks.sources.step",
-      "position": { "x": 40, "y": 120 },
-      "rotation": 0,
+      "position": {
+        "x": 40.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
       "params": [
-        { "name": "height", "value": "1" },
-        { "name": "startTime", "value": "0.5" }
+        {
+          "name": "height",
+          "value": "1"
+        },
+        {
+          "name": "startTime",
+          "value": "0.5"
+        }
       ],
       "ports": [
-        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
       ],
       "nodeKind": "component",
       "subsystemRef": null,
-      "plotHints": ["y"],
-      "ui": { "label": "step1", "width": 120, "height": 48 }
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "step1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
     },
     {
       "id": "n_gain1",
@@ -30,17 +59,50 @@
       "typeName": "Modelica.Blocks.Math.Gain",
       "domain": "signal",
       "catalogId": "blocks.math.gain",
-      "position": { "x": 220, "y": 120 },
-      "rotation": 0,
-      "params": [{ "name": "k", "value": "2" }],
+      "position": {
+        "x": 220.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "k",
+          "value": "2"
+        }
+      ],
       "ports": [
-        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
-        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+        {
+          "id": "u",
+          "kind": "signal",
+          "direction": "in",
+          "typeName": "RealInput"
+        },
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
       ],
       "nodeKind": "component",
       "subsystemRef": null,
-      "plotHints": ["y"],
-      "ui": { "label": "gain1", "width": 120, "height": 48 }
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "gain1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
     },
     {
       "id": "n_int1",
@@ -48,17 +110,50 @@
       "typeName": "Modelica.Blocks.Continuous.Integrator",
       "domain": "signal",
       "catalogId": "blocks.continuous.integrator",
-      "position": { "x": 400, "y": 120 },
-      "rotation": 0,
-      "params": [{ "name": "k", "value": "1" }],
+      "position": {
+        "x": 400.0,
+        "y": 120.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "k",
+          "value": "1"
+        }
+      ],
       "ports": [
-        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
-        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+        {
+          "id": "u",
+          "kind": "signal",
+          "direction": "in",
+          "typeName": "RealInput"
+        },
+        {
+          "id": "y",
+          "kind": "signal",
+          "direction": "out",
+          "typeName": "RealOutput"
+        }
       ],
       "nodeKind": "component",
       "subsystemRef": null,
-      "plotHints": ["y"],
-      "ui": { "label": "integrator1", "width": 120, "height": 48 }
+      "plotHints": [
+        "y"
+      ],
+      "ui": {
+        "label": "integrator1",
+        "width": 120.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
     }
   ],
   "edges": [
@@ -69,8 +164,11 @@
       "targetNodeId": "n_gain1",
       "targetPortId": "u",
       "signalName": null,
+      "unit": null,
+      "dimension": null,
       "vertices": [],
-      "routing": "orthogonal"
+      "routing": "orthogonal",
+      "ui": null
     },
     {
       "id": "e2",
@@ -79,10 +177,17 @@
       "targetNodeId": "n_int1",
       "targetPortId": "u",
       "signalName": null,
+      "unit": null,
+      "dimension": null,
       "vertices": [],
-      "routing": "orthogonal"
+      "routing": "orthogonal",
+      "ui": null
     }
   ],
   "annotations": [],
-  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "zoom": 1.0
+  }
 }

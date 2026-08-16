@@ -1,0 +1,52 @@
+{
+
+  "product": "modai-studio",
+
+  "phase": "F90",
+
+  "goal": "Export Suite closed loop: Coder + FMU CS/ME wizard, options, preview, history, smoke",
+
+  "updatedAt": "2026-07-24",
+
+  "priority": ["F90"],
+
+  "deferred": [
+
+    "True multi-clock partition scheduling UI",
+
+    "Per-block residual timing (JIT hooks)",
+
+    "Frequency-domain / linearization tools"
+
+  ],
+
+  "tasks": [
+
+    { "id": "P563", "title": "F90 task board + EmitOptions types", "status": "done", "milestone": "F90", "tier": "A" },
+
+    { "id": "P564", "title": "Backend: FmiExportOptions + CS/ME package paths", "status": "done", "milestone": "F90", "tier": "A" },
+
+    { "id": "P565", "title": "EmitRequest: fmiKind / modelId / guid / stop override", "status": "done", "milestone": "F90", "tier": "A" },
+
+    { "id": "P566", "title": "ExportWizard dialog (Coder / FMU CS / FMU ME)", "status": "done", "milestone": "F90", "tier": "A" },
+
+    { "id": "P567", "title": "Wizard file preview list before export", "status": "done", "milestone": "F90", "tier": "A" },
+
+    { "id": "P568", "title": "Wire MenuBar Emit Coder/FMU through wizard", "status": "done", "milestone": "F90", "tier": "B" },
+
+    { "id": "P569", "title": "Persist last export options in settings", "status": "done", "milestone": "F90", "tier": "B" },
+
+    { "id": "P570", "title": "EmitRecord + Results Export history tab", "status": "done", "milestone": "F90", "tier": "B" },
+
+    { "id": "P571", "title": "Open export folder via opener plugin", "status": "done", "milestone": "F90", "tier": "B" },
+
+    { "id": "P572", "title": "CLI --smoke-emit-example= headless emit gate", "status": "done", "milestone": "F90", "tier": "B" },
+
+    { "id": "P573", "title": "i18n for wizard + export tab", "status": "done", "milestone": "F90", "tier": "B" },
+
+    { "id": "P574", "title": "docs/CHANGELOG + build + smoke gate", "status": "done", "milestone": "F90", "tier": "B" }
+
+  ]
+
+}
+

@@ -135,7 +135,7 @@ MyPlant/
 | `ports` | Port[] | 可冗余自 catalog；落盘以便离线恢复 |
 | `nodeKind` | string | `component` \| `subsystem` \| `sink` \| `annotation`（P0 仅 component） |
 | `subsystemRef` | string\|null | P2：指向子 `diagramId` 或文件 |
-| `plotHints` | string[] | 结果面板默认勾选的端口/变量后缀 |
+| `plotHints` | string[] | 结果面板默认勾选的端口/变量后缀（`instance.hint` 匹配扁平 `instance_hint` / `r_0[1]`→`r_0_1`） |
 | `ui` | object | 纯展示字段，不影响 `.mo` |
 
 ### 3.3 Port
@@ -187,20 +187,32 @@ MyPlant/
 connect(source.instanceName.sourcePortId, target.instanceName.targetPortId);
 ```
 
-### 3.5 Annotation（P1）
+### 3.5 Annotation / Draw 图元（P1）
+
+画布装饰图元走 **Library → Draw** 目录，落盘为 `nodeKind: "draw"` 的节点（无端口），不参与 `emit_mo`。
+
+内置图元：`Rectangle` / `Ellipse` / `Line` / `Polygon` / `Text` / `Note`（`Studio.Draw.*`）。
 
 ```json
 {
-  "id": "a_1",
-  "kind": "text",
+  "id": "n_note1_…",
+  "instanceName": "note1",
+  "typeName": "Studio.Draw.Note",
+  "domain": "draw",
+  "catalogId": "draw.note",
   "position": { "x": 40, "y": 20 },
-  "text": "Plant loop",
-  "width": 160,
-  "height": 40
+  "nodeKind": "draw",
+  "ports": [],
+  "params": [
+    { "name": "text", "value": "Plant loop" },
+    { "name": "fill", "value": "…" },
+    { "name": "stroke", "value": "…" }
+  ],
+  "ui": { "label": "Plant loop", "width": 160, "height": 72 }
 }
 ```
 
-不参与 `emit_mo`。
+顶层 `annotations: []` 仍保留；新图元优先用 draw 节点，便于与 XYFlow 选中/删除/属性一致。
 
 ### 3.6 Run 元数据（P1/P2，`results/runs/*/meta.json`）
 

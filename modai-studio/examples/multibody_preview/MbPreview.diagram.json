@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "modelName": "MbPreview",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_world",
+      "instanceName": "world",
+      "typeName": "Modelica.Mechanics.MultiBody.World",
+      "domain": "multibody",
+      "catalogId": "multibody.world",
+      "position": {
+        "x": 80.0,
+        "y": 160.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "g",
+          "value": "9.81"
+        },
+        {
+          "name": "n",
+          "value": "{0,-1,0}"
+        }
+      ],
+      "ports": [
+        {
+          "id": "frame_b",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.MultiBody.Interfaces.Frame_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": null
+    },
+    {
+      "id": "n_rev",
+      "instanceName": "revolute",
+      "typeName": "Modelica.Mechanics.MultiBody.Joints.Revolute",
+      "domain": "multibody",
+      "catalogId": "multibody.revolute",
+      "position": {
+        "x": 240.0,
+        "y": 160.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "n",
+          "value": "{0,0,1}"
+        },
+        {
+          "name": "phi",
+          "value": "(start = 0.5)"
+        }
+      ],
+      "ports": [
+        {
+          "id": "frame_a",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.MultiBody.Interfaces.Frame_a"
+        },
+        {
+          "id": "frame_b",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.MultiBody.Interfaces.Frame_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "phi",
+        "w"
+      ],
+      "ui": {
+        "label": null,
+        "width": null,
+        "height": null,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null
+      }
+    },
+    {
+      "id": "n_rod",
+      "instanceName": "rod",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.FixedTranslation",
+      "domain": "multibody",
+      "catalogId": "multibody.fixedTranslation",
+      "position": {
+        "x": 400.0,
+        "y": 160.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "r",
+          "value": "{0, -0.5, 0}"
+        }
+      ],
+      "ports": [
+        {
+          "id": "frame_a",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.MultiBody.Interfaces.Frame_a"
+        },
+        {
+          "id": "frame_b",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.MultiBody.Interfaces.Frame_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": null
+    },
+    {
+      "id": "n_body",
+      "instanceName": "body",
+      "typeName": "Modelica.Mechanics.MultiBody.Parts.Body",
+      "domain": "multibody",
+      "catalogId": "multibody.body",
+      "position": {
+        "x": 560.0,
+        "y": 160.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "m",
+          "value": "1"
+        },
+        {
+          "name": "r_CM",
+          "value": "{0,0,0}"
+        }
+      ],
+      "ports": [
+        {
+          "id": "frame_a",
+          "kind": "connector",
+          "direction": "bidirectional",
+          "typeName": "Modelica.Mechanics.MultiBody.Interfaces.Frame_a"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "r_0[1]",
+        "r_0[2]",
+        "r_0[3]"
+      ],
+      "ui": null
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceNodeId": "n_world",
+      "sourcePortId": "frame_b",
+      "targetNodeId": "n_rev",
+      "targetPortId": "frame_a",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e2",
+      "sourceNodeId": "n_rev",
+      "sourcePortId": "frame_b",
+      "targetNodeId": "n_rod",
+      "targetPortId": "frame_a",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e3",
+      "sourceNodeId": "n_rod",
+      "sourcePortId": "frame_b",
+      "targetNodeId": "n_body",
+      "targetPortId": "frame_a",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    }
+  ],
+  "annotations": [],
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "zoom": 1.0
+  }
+}

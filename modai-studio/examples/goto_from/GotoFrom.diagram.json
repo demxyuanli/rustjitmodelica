@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "modelName": "GotoFrom",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_step",
+      "instanceName": "step1",
+      "typeName": "Modelica.Blocks.Sources.Step",
+      "domain": "signal",
+      "catalogId": "blocks.sources.step",
+      "position": { "x": 40, "y": 120 },
+      "rotation": 0,
+      "params": [
+        { "name": "height", "value": "1" },
+        { "name": "startTime", "value": "0.2" }
+      ],
+      "ports": [{ "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "step1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_goto",
+      "instanceName": "goto1",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "domain": "signal",
+      "catalogId": "blocks.routing.goto",
+      "position": { "x": 240, "y": 40 },
+      "rotation": 0,
+      "params": [{ "name": "tag", "value": "sigA" }],
+      "ports": [
+        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "goto1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_from",
+      "instanceName": "from1",
+      "typeName": "Modelica.Blocks.Routing.RealPassThrough",
+      "domain": "signal",
+      "catalogId": "blocks.routing.from",
+      "position": { "x": 240, "y": 200 },
+      "rotation": 0,
+      "params": [{ "name": "tag", "value": "sigA" }],
+      "ports": [
+        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": { "label": "from1", "width": 120, "height": 48 }
+    },
+    {
+      "id": "n_gain",
+      "instanceName": "gain1",
+      "typeName": "Modelica.Blocks.Math.Gain",
+      "domain": "signal",
+      "catalogId": "blocks.math.gain",
+      "position": { "x": 460, "y": 200 },
+      "rotation": 0,
+      "params": [{ "name": "k", "value": "2" }],
+      "ports": [
+        { "id": "u", "kind": "signal", "direction": "in", "typeName": "RealInput" },
+        { "id": "y", "kind": "signal", "direction": "out", "typeName": "RealOutput" }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": ["y"],
+      "ui": { "label": "gain1", "width": 120, "height": 48 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "sourceNodeId": "n_step", "sourcePortId": "y", "targetNodeId": "n_goto", "targetPortId": "u", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null },
+    { "id": "e2", "sourceNodeId": "n_from", "sourcePortId": "y", "targetNodeId": "n_gain", "targetPortId": "u", "signalName": null, "unit": null, "dimension": null, "vertices": [], "routing": "orthogonal", "ui": null }
+  ],
+  "annotations": [],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}

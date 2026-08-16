@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "product": "modai-studio",
+  "modelName": "LimiterIntegrator",
+  "libraryPaths": [],
+  "simulationDefaults": {
+    "stopTime": 4.0,
+    "numberOfIntervals": 400,
+    "solver": "rk45",
+    "tolerance": 1e-6,
+    "maxStep": null,
+    "minStep": null,
+    "loggedVariables": []
+  },
+  "ui": { "locale": "zh" },
+  "paramDictionary": []
+}

@@ -4,13 +4,16 @@
   "modelName": "RcCircuit",
   "libraryPaths": [],
   "simulationDefaults": {
-    "stopTime": 1,
+    "stopTime": 1.0,
     "numberOfIntervals": 500,
-    "solver": "rk45",
+    "solver": "implicit",
     "tolerance": 1e-6,
     "maxStep": null,
     "minStep": null,
     "loggedVariables": []
   },
-  "ui": { "locale": "zh" }
+  "ui": {
+    "locale": "zh"
+  },
+  "paramDictionary": []
 }

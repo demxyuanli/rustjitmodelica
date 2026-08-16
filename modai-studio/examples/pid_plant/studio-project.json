@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "product": "modai-studio",
+  "modelName": "PidPlant",
+  "libraryPaths": [],
+  "simulationDefaults": {
+    "stopTime": 8.0,
+    "numberOfIntervals": 800,
+    "solver": "rk45",
+    "tolerance": 1e-6,
+    "maxStep": null,
+    "minStep": null,
+    "loggedVariables": []
+  },
+  "ui": { "locale": "zh" },
+  "paramDictionary": []
+}

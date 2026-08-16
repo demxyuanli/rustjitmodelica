@@ -1,21 +1,23 @@
 {
   "product": "modai-studio",
-  "phase": "P3",
-  "goal": "FMU/C emit, XY plot, dashboard knobs, variant switch, FMU import cosim",
-  "updatedAt": "2026-07-21",
+  "phase": "P3+",
+  "goal": "Physical+FMU hybrid cosim and true Pause/Step",
+  "updatedAt": "2026-07-22",
   "tasks": [
     { "id": "P301", "title": "studio_emit_c / studio_emit_fmu IPC", "status": "done", "milestone": "P3" },
     { "id": "P302", "title": "XY phase plot + run wall-time profiler", "status": "done", "milestone": "P3" },
     { "id": "P303", "title": "Dashboard pre-run param knobs", "status": "done", "milestone": "P3" },
     { "id": "P304", "title": "Variant type switch in Properties", "status": "done", "milestone": "P3" },
     { "id": "P305", "title": "Build verify; Pause marked blocked", "status": "done", "milestone": "P3" },
-    { "id": "P306", "title": "F91 FMU import catalog node + FMI2 CS cosim bridge", "status": "done", "milestone": "P3" }
+    { "id": "P306", "title": "F91 FMU import catalog node + FMI2 CS cosim bridge", "status": "done", "milestone": "P3" },
+    { "id": "P307", "title": "Physical+FMU hybrid plant/FMU Jacobi cosim", "status": "done", "milestone": "P3+" },
+    { "id": "P308", "title": "True Pause/Step via SimControl step-boundary hold", "status": "done", "milestone": "P3+" },
+    { "id": "P309", "title": "Tight fixed-step DAE/FMU co-integration (RK4+doStep)", "status": "done", "milestone": "P3+" },
+    { "id": "P310", "title": "Fast Restart: reuse CompiledModel on param-only changes", "status": "done", "milestone": "P3+" },
+    { "id": "P311", "title": "Multibody 3D viewport (three.js + pose extract + catalog)", "status": "done", "milestone": "P3+" },
+    { "id": "P312", "title": "Coder-grade C package (step API + CMake + interface.json)", "status": "done", "milestone": "P3+" }
   ],
   "out": [
-    "True Pause/Step (solver hold)",
-    "Fast Restart product API",
-    "Multibody 3D viewport",
-    "Embedded Coder-grade codegen",
-    "Physical-domain + FMU hybrid cosim"
+    "MathWorks Embedded Coder / certification parity (explicit non-goal)"
   ]
 }

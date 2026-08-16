@@ -8,6 +8,51 @@ use crate::diagram::{
 use rustmodlica::SimulationResult;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+/// Pause/cancel handle for in-process FMU cosim loops (mirrors SimControl boundaries).
+pub struct CosimControl {
+    pub cancel: Arc<AtomicBool>,
+    pub pause: Arc<AtomicBool>,
+    pub step_once: Arc<AtomicBool>,
+}
+
+impl CosimControl {
+    pub fn from_flags(
+        cancel: Arc<AtomicBool>,
+        pause: Arc<AtomicBool>,
+        step_once: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            cancel,
+            pause,
+            step_once,
+        }
+    }
+
+    pub fn poll(&self, step: u64, n_steps: u64) -> Result<(), String> {
+        let _ = (step, n_steps);
+        loop {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err(rustmodlica::SIM_CANCELLED_MSG.to_string());
+            }
+            if !self.pause.load(Ordering::SeqCst) {
+                break;
+            }
+            if self.step_once.swap(false, Ordering::SeqCst) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(15));
+        }
+        if self.cancel.load(Ordering::SeqCst) {
+            return Err(rustmodlica::SIM_CANCELLED_MSG.to_string());
+        }
+        Ok(())
+    }
+}
 
 pub fn diagram_has_fmu(diagram: &DiagramDocument) -> bool {
     diagram.nodes.iter().any(|n| n.node_kind == "fmu")
@@ -129,11 +174,15 @@ fn load_fmu_runtime(
 }
 
 /// Simulate a diagram that contains one or more FMU co-sim nodes.
-/// Supports signal Sources / Gain / Add / Feedback / Integrator / FirstOrder + FMU CS.
+/// Signal-domain: in-process interpreter + FMI2 CS.
+/// Physical + FMU: tight fixed-step DAE/FMU co-integration (Jacobi fallback).
 pub fn simulate_with_fmu(
     diagram: &DiagramDocument,
+    subsystems: &HashMap<String, DiagramDocument>,
     project_root: Option<&Path>,
+    library_paths: &[String],
     sim: &StudioSimOptions,
+    control: Option<&CosimControl>,
 ) -> Result<SimulationResult, StudioReport> {
     let err = |msg: String| StudioReport {
         success: false,
@@ -148,9 +197,24 @@ pub fn simulate_with_fmu(
     };
 
     if diagram.nodes.iter().any(is_physical) {
-        return Err(err(
-            "FMU cosimulation currently supports signal-domain diagrams only".into(),
-        ));
+        // Prefer tight co-integration with the same CosimControl for Pause/Step.
+        return match super::tight_cosim::simulate_tight(
+            diagram,
+            subsystems,
+            project_root,
+            library_paths,
+            sim,
+            control,
+        ) {
+            Ok(r) => Ok(r),
+            Err(_) => super::hybrid::simulate_hybrid(
+                diagram,
+                subsystems,
+                project_root,
+                library_paths,
+                sim,
+            ),
+        };
     }
 
     let mut fmus = Vec::new();
@@ -173,13 +237,11 @@ pub fn simulate_with_fmu(
     // Integrator / FirstOrder state: node_id -> y
     let mut cont_state: HashMap<String, f64> = HashMap::new();
     for node in &diagram.nodes {
-        if node.type_name.ends_with(".Integrator")
-            || node.catalog_id.contains("integrator")
+        if node.type_name.ends_with(".Integrator") || node.catalog_id.contains("integrator")
         {
             cont_state.insert(node.id.clone(), param_f64(node, "y_start", 0.0));
         }
-        if node.type_name.ends_with(".FirstOrder")
-            || node.catalog_id.contains("firstOrder")
+        if node.type_name.ends_with(".FirstOrder") || node.catalog_id.contains("firstOrder")
         {
             cont_state.insert(node.id.clone(), 0.0);
         }
@@ -190,7 +252,6 @@ pub fn simulate_with_fmu(
         if let Err(e) = rt.fmu.setup(0.0, sim.stop_time, sim.tolerance) {
             return Err(err(e));
         }
-        // Apply node params to FMU parameters
         let node = diagram
             .nodes
             .iter()
@@ -204,7 +265,6 @@ pub fn simulate_with_fmu(
                 }
             }
         }
-        // Also default starts from description
         for s in &rt.fmu.parameters {
             let key = port_id_from_name(&s.name);
             if !node.params.iter().any(|p| p.name == key) {
@@ -221,15 +281,16 @@ pub fn simulate_with_fmu(
         }
     }
 
-    // Port values: (node_id, port_id) -> f64
     let mut port_vals: HashMap<(String, String), f64> = HashMap::new();
     let mut time = Vec::with_capacity(n_steps + 1);
     let mut series: HashMap<String, Vec<f64>> = HashMap::new();
 
-    // Init series keys
     for rt in &fmus {
         for (pid, _) in &rt.output_vr {
-            series.insert(format!("{}.{}", rt.instance_name, pid), Vec::with_capacity(n_steps + 1));
+            series.insert(
+                format!("{}.{}", rt.instance_name, pid),
+                Vec::with_capacity(n_steps + 1),
+            );
         }
     }
     for node in &diagram.nodes {
@@ -245,13 +306,6 @@ pub fn simulate_with_fmu(
         }
     }
 
-    let node_by_id: HashMap<&str, &DiagramNode> = diagram
-        .nodes
-        .iter()
-        .map(|n| (n.id.as_str(), n))
-        .collect();
-
-    // Incoming edges: target (node, port) <- source (node, port)
     let mut incoming: HashMap<(String, String), (String, String)> = HashMap::new();
     for e in &diagram.edges {
         incoming.insert(
@@ -261,10 +315,14 @@ pub fn simulate_with_fmu(
     }
 
     for step in 0..=n_steps {
+        if let Some(c) = control {
+            if let Err(e) = c.poll(step as u64, n_steps as u64) {
+                return Err(err(e));
+            }
+        }
         let t = step as f64 * dt;
         time.push(t);
 
-        // 1) Sources
         for node in &diagram.nodes {
             if let Some(y) = eval_source(node, t) {
                 for p in &node.ports {
@@ -275,7 +333,6 @@ pub fn simulate_with_fmu(
             }
         }
 
-        // 2) Continuous outputs from previous state
         for node in &diagram.nodes {
             if let Some(&y) = cont_state.get(&node.id) {
                 for p in &node.ports {
@@ -286,10 +343,8 @@ pub fn simulate_with_fmu(
             }
         }
 
-        // 3) FMU outputs from previous step (or zeros at t=0 before first doStep)
         for rt in &fmus {
             if step == 0 {
-                // try initial get
                 if let Ok(outs) = rt.fmu.get_outputs() {
                     for (vr, val) in outs {
                         if let Some((pid, _)) = rt.output_vr.iter().find(|(_, v)| **v == vr) {
@@ -300,7 +355,6 @@ pub fn simulate_with_fmu(
             }
         }
 
-        // 4) Algebraic blocks (Gain, Add, Feedback) — iterate a few times
         for _ in 0..8 {
             for node in &diagram.nodes {
                 let tn = node.type_name.as_str();
@@ -312,7 +366,8 @@ pub fn simulate_with_fmu(
                         .unwrap_or(0.0);
                     let k = param_f64(node, "k", 1.0);
                     port_vals.insert((node.id.clone(), "y".into()), k * u);
-                } else if tn.ends_with(".Add") || node.catalog_id.contains(".add")
+                } else if tn.ends_with(".Add")
+                    || node.catalog_id.contains(".add")
                     || node.catalog_id.ends_with("add")
                 {
                     let u1 = incoming
@@ -344,7 +399,6 @@ pub fn simulate_with_fmu(
             }
         }
 
-        // 5) Drive FMU inputs from connected ports, doStep (except last sample-only)
         if step < n_steps {
             for rt in &fmus {
                 let mut pairs = Vec::new();
@@ -376,7 +430,6 @@ pub fn simulate_with_fmu(
                 }
             }
 
-            // Euler update continuous blocks
             for node in &diagram.nodes {
                 if node.type_name.ends_with(".Integrator")
                     || node.catalog_id.contains("integrator")
@@ -401,13 +454,11 @@ pub fn simulate_with_fmu(
                     let k = param_f64(node, "k", 1.0);
                     let t_const = param_f64(node, "T", 1.0).max(1e-12);
                     let y = cont_state.entry(node.id.clone()).or_insert(0.0);
-                    // dy/dt = (k*u - y)/T
                     *y += dt * (k * u - *y) / t_const;
                 }
             }
         }
 
-        // Record series
         for node in &diagram.nodes {
             for p in &node.ports {
                 if p.direction != "out" {
@@ -423,7 +474,6 @@ pub fn simulate_with_fmu(
                 }
             }
         }
-        let _ = &node_by_id; // keep for future diagnostics
     }
 
     Ok(SimulationResult { time, series })
