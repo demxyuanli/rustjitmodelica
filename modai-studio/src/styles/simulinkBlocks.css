@@ -1,0 +1,773 @@
+/* --- Simulink-like engineering blocks --- */
+.slx-canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 3.25 !important;
+  filter: drop-shadow(0 0 1px var(--accent));
+}
+
+.slx-canvas .react-flow__edge.domain-electrical .react-flow__edge-path {
+  stroke-linecap: butt;
+}
+
+.slx-canvas .react-flow__edge.domain-mechanical .react-flow__edge-path,
+.slx-canvas .react-flow__edge.domain-multibody .react-flow__edge-path {
+  stroke-linecap: round;
+}
+
+.slx-canvas .react-flow__edge-text {
+  font-size: var(--studio-font-size);
+  fill: var(--muted);
+}
+
+.slx-edge-label {
+  padding: 1px 5px;
+  font-size: var(--studio-font-size);
+  font-family: var(--studio-font-mono);
+  line-height: 1.2;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.slx-junction {
+  pointer-events: none;
+}
+
+.slx-edge-hit {
+  cursor: crosshair;
+  pointer-events: stroke;
+}
+
+.slx-edge-vertex {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  background: var(--panel);
+  border: 1.5px solid var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 60%, transparent);
+  cursor: move;
+}
+
+.slx-canvas .react-flow__connection-path {
+  stroke: var(--signal);
+  stroke-width: 1.75;
+}
+
+.slx-block {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  box-shadow: 1px 1px 0 color-mix(in srgb, var(--shadow) 35%, transparent);
+  overflow: visible;
+  font-family: var(--studio-font);
+  user-select: none;
+}
+
+.slx-block.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  z-index: 2;
+}
+
+.slx-block-stripe {
+  width: 6px;
+  flex: 0 0 6px;
+  background: var(--muted);
+}
+
+.slx-block.domain-signal .slx-block-stripe {
+  background: var(--signal);
+}
+
+.slx-block.domain-discrete .slx-block-stripe {
+  background: var(--discrete);
+}
+
+.slx-block.domain-inport .slx-block-stripe,
+.slx-block.is-inport .slx-block-stripe {
+  background: var(--inport);
+}
+
+.slx-block.domain-outport .slx-block-stripe,
+.slx-block.is-outport .slx-block-stripe {
+  background: var(--outport);
+}
+
+.slx-block.domain-electrical .slx-block-stripe {
+  background: var(--connector);
+}
+
+.slx-block.domain-mechanical .slx-block-stripe {
+  background: var(--ok);
+}
+
+.slx-block.domain-multibody .slx-block-stripe {
+  background: var(--ok);
+}
+
+.slx-block.domain-subsystem .slx-block-stripe,
+.slx-block.is-subsystem .slx-block-stripe {
+  background: var(--block-sub-border);
+}
+
+.slx-block.domain-fmu .slx-block-stripe,
+.slx-block.is-fmu .slx-block-stripe {
+  background: var(--block-fmu-border);
+}
+
+.slx-block.is-subsystem {
+  border-style: double;
+  border-width: 3px;
+  background: var(--block-subsystem);
+}
+
+.slx-subsystem {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  overflow: visible;
+  border: 3px double var(--block-sub-border);
+  background: var(--block-subsystem);
+  padding: 6px 10px;
+}
+
+.slx-subsystem.is-variant {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--block-sub-border));
+}
+
+.slx-subsystem.is-variant .slx-subsystem-frame {
+  border-style: dashed;
+}
+
+.slx-subsystem-frame {
+  position: absolute;
+  inset: 5px;
+  border: 1px solid color-mix(in srgb, var(--block-sub-border) 55%, transparent);
+  pointer-events: none;
+}
+
+.slx-subsystem-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.slx-subsystem .slx-block-caption {
+  text-align: center;
+  align-items: center;
+}
+
+.slx-subsystem .slx-port-row {
+  z-index: 2;
+}
+
+.slx-block.is-fmu {
+  background: var(--block-fmu);
+}
+
+.slx-block.domain-signal {
+  background: var(--block-signal);
+}
+
+.slx-block.domain-discrete {
+  background: var(--block-discrete);
+  border-style: dashed;
+}
+
+.slx-sample-badge {
+  font-size: var(--studio-font-size);
+  line-height: 1.1;
+  color: var(--discrete);
+  font-variant-numeric: tabular-nums;
+}
+
+.slx-block.domain-electrical {
+  background: var(--block-electrical);
+}
+
+.slx-block.domain-mechanical {
+  background: var(--block-mechanical);
+}
+
+.slx-block.domain-multibody {
+  background: var(--block-multibody);
+}
+
+.slx-block-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4px 14px 4px 8px;
+  gap: 2px;
+}
+
+.slx-block.has-icon .slx-block-body {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px 4px 6px;
+}
+
+.slx-block-icon-wrap {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slx-block-icon-wrap.mo-icon {
+  width: auto;
+  height: auto;
+  min-width: 40px;
+  flex: 0 1 auto;
+}
+
+.slx-icon-face {
+  display: block;
+  overflow: visible;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+
+.slx-block-icon {
+  width: 48px;
+  height: 32px;
+  display: block;
+  overflow: visible;
+}
+
+.slx-block-caption {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.slx-block-title {
+  font-size: var(--studio-font-size);
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slx-block-type {
+  font-size: var(--studio-font-size);
+  color: var(--muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--studio-font-mono);
+}
+
+.slx-port-row {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.slx-port-row.left {
+  left: -1px;
+  flex-direction: row;
+}
+
+.slx-port-row.right {
+  right: -1px;
+  flex-direction: row;
+}
+
+.slx-port-row.top {
+  top: -1px;
+  flex-direction: column;
+  transform: translateX(-50%);
+}
+
+.slx-port-row.bottom {
+  bottom: -1px;
+  flex-direction: column-reverse;
+  transform: translateX(-50%);
+}
+
+.slx-port-label {
+  font-size: var(--studio-font-size);
+  color: var(--muted);
+  line-height: 1;
+  max-width: 36px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.slx-port-row.left .slx-port-label {
+  margin-left: 10px;
+}
+
+.slx-port-row.right .slx-port-label {
+  margin-right: 10px;
+}
+
+.slx-handle {
+  pointer-events: all !important;
+  width: 8px !important;
+  height: 8px !important;
+  border: 1.5px solid var(--text) !important;
+  background: var(--panel) !important;
+  border-radius: 0 !important;
+  position: relative !important;
+  transform: none !important;
+  left: auto !important;
+  right: auto !important;
+  top: auto !important;
+}
+
+.slx-handle.is-magnet {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 50%, transparent) !important;
+  z-index: 6;
+}
+
+.slx-handle.signal.is-magnet {
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+
+.slx-handle.signal {
+  width: 0 !important;
+  height: 0 !important;
+  border-style: solid !important;
+  background: transparent !important;
+}
+
+.slx-port-row.left .slx-handle.signal {
+  border-width: 5px 0 5px 8px !important;
+  border-color: transparent transparent transparent var(--signal) !important;
+}
+
+.slx-port-row.right .slx-handle.signal {
+  border-width: 5px 8px 5px 0 !important;
+  border-color: transparent var(--signal) transparent transparent !important;
+}
+
+.slx-port-row.top .slx-handle.signal {
+  border-width: 0 5px 8px 5px !important;
+  border-color: transparent transparent var(--signal) transparent !important;
+}
+
+.slx-port-row.bottom .slx-handle.signal {
+  border-width: 8px 5px 0 5px !important;
+  border-color: var(--signal) transparent transparent transparent !important;
+}
+
+.slx-port-row.left .slx-handle.signal.inport {
+  border-color: transparent transparent transparent var(--inport) !important;
+}
+
+.slx-port-row.right .slx-handle.signal.outport {
+  border-color: transparent var(--outport) transparent transparent !important;
+}
+
+.slx-port-label.inport {
+  color: var(--inport);
+  font-weight: 600;
+}
+
+.slx-port-label.outport {
+  color: var(--outport);
+  font-weight: 600;
+}
+
+.slx-handle.connector {
+  width: 9px !important;
+  height: 9px !important;
+  background: var(--connector) !important;
+  border-color: var(--text) !important;
+}
+
+.slx-handle-stack {
+  position: relative;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+}
+
+.slx-handle-stack .slx-handle {
+  position: absolute !important;
+  left: 0;
+  top: 0;
+}
+
+.slx-canvas .react-flow__node {
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+}
+
+.slx-canvas .react-flow__node.selected {
+  box-shadow: none;
+}
+
+.slx-canvas .react-flow__controls {
+  border: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+/* --- Draw primitives (annotation graphics) --- */
+.slx-draw {
+  position: relative;
+  box-sizing: border-box;
+  overflow: visible;
+  background: transparent;
+  border: none;
+  pointer-events: all;
+}
+
+.slx-draw.selected {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.slx-draw-svg {
+  display: block;
+  overflow: visible;
+}
+
+.slx-draw-text {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 2px 4px;
+  font-family: var(--studio-font);
+  font-weight: 600;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.25;
+  user-select: none;
+}
+
+.slx-draw-note {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border-style: solid;
+  border-radius: 0;
+  padding: 6px 8px;
+  font-family: var(--studio-font);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.3;
+  overflow: hidden;
+  user-select: none;
+  box-shadow: 1px 1px 0 color-mix(in srgb, var(--shadow) 30%, transparent);
+}
+
+.slx-canvas .react-flow__node-studioDraw {
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+}
+
+/* --- In/Out color-tag terminals --- */
+.slx-terminal {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  overflow: visible;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  box-sizing: border-box;
+  min-width: 56px;
+}
+
+.slx-terminal.is-inport {
+  background: color-mix(in srgb, var(--inport) 22%, var(--panel));
+  border-color: var(--inport);
+}
+
+.slx-terminal.is-outport {
+  background: color-mix(in srgb, var(--outport) 22%, var(--panel));
+  border-color: var(--outport);
+}
+
+.slx-terminal.selected {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.slx-terminal-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 2px 4px;
+  color: #fff;
+  font-size: var(--studio-font-size);
+  font-weight: 700;
+  line-height: 1.1;
+  user-select: none;
+}
+
+.slx-terminal.is-inport .slx-terminal-tag {
+  background: var(--inport);
+}
+
+.slx-terminal.is-outport .slx-terminal-tag {
+  background: var(--outport);
+}
+
+.slx-terminal-kind {
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.slx-terminal-num {
+  font-size: var(--studio-font-size);
+  font-family: var(--studio-font-mono);
+}
+
+.slx-terminal-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: var(--studio-font-size);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.slx-terminal .slx-port-row {
+  pointer-events: none;
+}
+
+.slx-terminal .slx-handle {
+  pointer-events: all;
+}
+
+/* --- Mux / Demux / Bus thick vertical bars --- */
+.slx-busbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: visible;
+  border: none;
+  background: transparent;
+  box-sizing: border-box;
+  min-width: 18px;
+}
+
+.slx-busbar-rail {
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  bottom: 4px;
+  width: 100%;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: var(--busbar);
+  border: 1px solid color-mix(in srgb, var(--busbar) 70%, var(--text));
+  box-sizing: border-box;
+}
+
+.slx-busbar.is-mux .slx-busbar-rail {
+  background: color-mix(in srgb, var(--signal) 55%, var(--busbar));
+}
+
+.slx-busbar.is-demux .slx-busbar-rail {
+  background: color-mix(in srgb, var(--signal) 40%, var(--busbar));
+}
+
+.slx-busbar.is-bus .slx-busbar-rail {
+  background: color-mix(in srgb, var(--text) 35%, var(--busbar));
+  width: 100%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel) 40%, transparent);
+}
+
+.slx-busbar.selected .slx-busbar-rail {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.slx-busbar-caption {
+  position: relative;
+  z-index: 1;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: var(--studio-font-size);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.45);
+  user-select: none;
+  pointer-events: none;
+}
+
+.slx-busbar-dim {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  font-size: var(--studio-font-size);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--busbar) 70%, #000);
+  border-radius: 2px;
+  padding: 0 3px;
+  line-height: 1.25;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.slx-busbar .slx-port-row {
+  z-index: 2;
+}
+
+.slx-busbar .slx-port-label {
+  font-size: var(--studio-font-size);
+  opacity: 0.85;
+}
+
+.slx-busbar.is-mux .slx-port-row.right .slx-port-label,
+.slx-busbar.is-bus .slx-port-row.right .slx-port-label {
+  display: none;
+}
+
+.slx-busbar.is-demux .slx-port-row.left .slx-port-label {
+  display: none;
+}
+
+/* --- Goto / From jump tags --- */
+.slx-jump {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px 6px;
+  overflow: visible;
+  border-color: color-mix(in srgb, var(--goto) 55%, var(--border));
+}
+
+.slx-jump.is-from {
+  border-color: color-mix(in srgb, var(--from) 55%, var(--border));
+}
+
+.slx-jump.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.slx-jump-tag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 2px 5px;
+  border-radius: 2px;
+  font-size: var(--studio-font-size);
+  font-weight: 600;
+  line-height: 1.2;
+  color: #fff;
+}
+
+.slx-jump.is-goto .slx-jump-tag {
+  background: var(--goto);
+}
+
+.slx-jump.is-from .slx-jump-tag {
+  background: var(--from);
+}
+
+.slx-jump-kind {
+  opacity: 0.9;
+}
+
+.slx-jump-name {
+  font-family: var(--studio-font-mono);
+  font-weight: 700;
+}
+
+.slx-jump-inst {
+  font-size: var(--studio-font-size);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.slx-jump .slx-port-row {
+  margin: 0;
+}
+
+.slx-jump .slx-handle {
+  width: 8px;
+  height: 8px;
+}
+
+/* --- Label below block --- */
+.slx-block-label-below {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 3px);
+  transform: translateX(-50%);
+  max-width: 140%;
+  padding: 0 2px;
+  font-size: var(--studio-font-size);
+  line-height: 1.2;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  text-align: center;
+}
+
+.slx-block.label-below .slx-block-caption.compact {
+  justify-content: center;
+}
+
+.slx-resize-line {
+  border-color: var(--accent) !important;
+}
+
+.slx-resize-handle {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 0 !important;
+  border: 1px solid var(--accent) !important;
+  background: var(--panel) !important;
+}

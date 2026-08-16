@@ -36,6 +36,17 @@ export interface DiagramNode {
     fmuAsset?: string;
     fmuGuid?: string;
     fmuModelIdentifier?: string;
+    /** Modelica Icon annotation for block face. */
+    icon?: unknown;
+    /** Draw instance name below the block body. */
+    labelBelow?: boolean;
+    /** Relative .mo asset for Model Reference / userlib (e.g. wrapped/Foo.mo). */
+    moAsset?: string;
+    /** Variant Subsystem choices (F87); active one is mirrored in subsystemRef. */
+    variants?: { id: string; label: string; subsystemRef: string }[];
+    activeVariantId?: string;
+    /** Param names pinned to the pre-run dashboard. */
+    dashboardPins?: string[];
   };
 }
 
@@ -46,6 +57,10 @@ export interface DiagramEdge {
   targetNodeId: string;
   targetPortId: string;
   signalName?: string | null;
+  /** Physical / signal unit annotation (display + docs). */
+  unit?: string | null;
+  /** Array / vector dimension hint, e.g. "1", "3", "[2]". */
+  dimension?: string | null;
   vertices?: Position[];
   routing?: string;
 }
@@ -71,6 +86,13 @@ export interface SimulationDefaults {
   loggedVariables: string[];
 }
 
+/** Project-level parameter dictionary (F85). Block params use `$Name` refs. */
+export interface ParamDictionaryEntry {
+  name: string;
+  value: string;
+  description?: string;
+}
+
 export interface StudioProjectManifest {
   schemaVersion: number;
   product: string;
@@ -78,6 +100,8 @@ export interface StudioProjectManifest {
   libraryPaths: string[];
   simulationDefaults: SimulationDefaults;
   ui: { locale: string };
+  /** F85 data dictionary entries. */
+  paramDictionary?: ParamDictionaryEntry[];
 }
 
 export interface CatalogEntry {
@@ -88,20 +112,36 @@ export interface CatalogEntry {
   displayKey: string;
   defaultInstancePrefix: string;
   requiresLibrary: string;
-  defaultParams: { name: string; value: string; valueType?: string }[];
+  defaultParams: {
+    name: string;
+    value: string;
+    valueType?: string;
+    unit?: string | null;
+    description?: string | null;
+  }[];
   ports: PortDef[];
   tags: string[];
   plotHints: string[];
   fmuAsset?: string | null;
   fmuGuid?: string | null;
   fmuModelIdentifier?: string | null;
+  /** Modelica Icon annotation JSON (from wrap .mo). */
+  icon?: unknown | null;
 }
+
+export type DiagnosticSource = "compiler" | "advisor" | "connection" | "structure";
 
 export interface StudioDiagnostic {
   message: string;
   path?: string | null;
   line?: number | null;
   column?: number | null;
+  source?: DiagnosticSource;
+  rule?: string;
+  hint?: string;
+  nodeId?: string;
+  severity?: "error" | "warning" | "info";
+  params?: Record<string, string | number>;
 }
 
 export interface StudioReport {
@@ -124,11 +164,31 @@ export interface OpenProjectResult {
   subsystems?: Record<string, DiagramDocument>;
 }
 
+export interface ExampleInfo {
+  id: string;
+  title: string;
+  modelName: string;
+  domain: string;
+  canSimulate: boolean;
+  rootDir: string;
+}
+
 export interface StudioSimOptions {
   stopTime: number;
   numberOfIntervals: number;
   solver: string;
   tolerance: number;
+}
+
+/** Wall-clock phase breakdown from studio_simulate (F89). */
+export interface SimProfile {
+  emitMs: number;
+  compileMs: number;
+  applyParamsMs: number;
+  integrateMs: number;
+  totalMs: number;
+  compileSkipped: boolean;
+  restartMode?: string | null;
 }
 
 export interface RunRecord {
@@ -139,6 +199,32 @@ export interface RunRecord {
   options: StudioSimOptions;
   result: SimulationResult;
   wallMs?: number;
+  profile?: SimProfile;
+  paramSnapshot?: Record<string, string>;
+}
+
+export type ExportMode = "coder" | "fmu-cs" | "fmu-me";
+
+/** Options collected by ExportWizard / last-export prefs. */
+export interface EmitOptions {
+  mode: ExportMode;
+  outDir: string;
+  coderPackage: boolean;
+  modelIdentifier?: string;
+  guid?: string;
+}
+
+export interface EmitRecord {
+  id: string;
+  createdAt: string;
+  modelName: string;
+  mode: ExportMode;
+  packageKind: string;
+  outDir: string;
+  fmuPath?: string | null;
+  files: string[];
+  success: boolean;
+  wallMs?: number;
 }
 
 export interface EmitArtifactsResult {
@@ -147,6 +233,8 @@ export interface EmitArtifactsResult {
   files: string[];
   fmuPath?: string | null;
   report?: StudioReport | null;
+  /** "c" | "coder" | "fmu" | "fmu-me" | "coder+fmu" | "coder+fmu-me" */
+  packageKind?: string | null;
 }
 
 export interface FmuImportResult {

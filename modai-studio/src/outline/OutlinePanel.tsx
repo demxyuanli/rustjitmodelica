@@ -1,4 +1,5 @@
 import type { DiagramNode } from "../api/types";
+import { t } from "../i18n";
 
 export function OutlinePanel({
   nodes,
@@ -12,9 +13,9 @@ export function OutlinePanel({
   const sorted = [...nodes].sort((a, b) => a.instanceName.localeCompare(b.instanceName));
   return (
     <div>
-      <h3>Outline</h3>
+      <h3>{t("outline")}</h3>
       {sorted.length === 0 ? (
-        <div style={{ padding: 10, fontSize: 12, color: "var(--muted)" }}>No instances</div>
+        <div className="hint" style={{ padding: 10 }}>{t("noInstances")}</div>
       ) : (
         sorted.map((n) => (
           <button
@@ -27,7 +28,7 @@ export function OutlinePanel({
             onClick={() => onSelect(n.id)}
           >
             {n.instanceName}
-            <div style={{ fontSize: 10, color: "var(--muted)" }}>
+            <div className="hint">
               {n.typeName.split(".").slice(-1)[0]}
             </div>
           </button>
