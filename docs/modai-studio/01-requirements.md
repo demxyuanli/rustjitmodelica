@@ -1,6 +1,6 @@
 # Modai Studio 需求说明
 
-日期：2026-07-21（修订：对齐 Simulink 能力域）  
+日期：2026-07-21（修订：2026-08-16 离散逻辑宿主）  
 产品：Modai Studio（工作目录名 `modai-studio`）  
 类型：基于 Modelica 的可视化建模与仿真桌面应用（Simulink 风格交互）  
 对照详表：[06-simulink-capability-map.md](./06-simulink-capability-map.md)
@@ -30,7 +30,7 @@ RustModlica 已具备：
 | 对标 | 不对标 |
 |------|--------|
 | Simulink 建模编辑手感 | MATLAB 语言工作区 |
-| Simulink 仿真与看波形主路径 | Stateflow 产品化 |
+| Simulink 仿真与看波形主路径 | Stateflow 产品/语言（Chart、动作语言、`after`、junction） |
 | Simscape 式物理连接（Modelica connector） | Embedded Coder / HDL 全流程 |
 | 文本友好的项目落盘 | 闭源 `.slx` 二进制生态 |
 
@@ -93,7 +93,8 @@ RustModlica 已具备：
 3. 项目参数字典；Goto/From；查表块
 4. `.mo` 只读预览；导出框图 PNG/SVG
 5. 物理库扩充与传感器块；静态检查清单（Advisor-lite）
-6. 与 `modai-ide` 项目互操作（单向导入优先）
+6. 与 `modai-ide` 项目互操作（单向导入优先；File → Import IDE diagram 已落地）
+7. 多步顺序控制：Library 提供 `Modelica.StateGraph` 的 Step/Transition（F95），落在现有 `diagram.json` + `connect`；不是独立 Chart
 
 ### 4.5 P3（Future）
 
@@ -112,11 +113,15 @@ FMU 导入导出、C emit 向导、Variant、Dashboard 控件、Fast Restart、�
 
 ### 5.2 产品线级不做（或极远期）
 
-1. Stateflow 等价独立状态机 IDE
-2. Embedded Coder / HDL Coder 级生产代码链
-3. HIL / External Mode / PIL
-4. MATLAB 工作区与 `.mat` 互操作（可用 CSV/JSON）
-5. 需求管理 / 覆盖率工具（回归交给 `regress-harness`）
+1. Stateflow 等价独立状态机 IDE / Chart 画布 / 动作语言 / JSON 状态图 schema
+2. 以 `Modelica_StateGraph2` 为语义宿主（更强但不完全符合 Modelica，进不了 MSL）
+3. Studio 排期实现 MLS 第 17 章 `state`/`transition`（时钟化状态机；JIT 尚未 parse/flatten；做成也不等于 StateGraph）
+4. Embedded Coder / HDL Coder 级生产代码链
+5. HIL / External Mode / PIL
+6. MATLAB 工作区与 `.mat` 互操作（可用 CSV/JSON）
+7. 需求管理 / 覆盖率工具（回归交给 `regress-harness`）
+
+顺序/模式逻辑在 Modelica 里已经拆开，不另做「像 Stateflow 的功能组合」：连续对象上的切模式用 `when`/`if`/`reinit` 或 Logical 块；Grafcet 多步用 MSL `StateGraph` 块画在**同一张**框图上。仿真真相仍是 `.mo`。
 
 ## 6. 成功标准（验收）
 

@@ -1,7 +1,7 @@
 # Modai Studio 文档索引
 
-日期：2026-07-21（修订：2026-08-15）  
-状态：P0–P4 能力清单已收口（含 Fast Restart、Multibody 3D、Coder-grade C 包、P4 实用手感）。P4-D 后做项见 [10](./10-ux-practical-review.md)。MathWorks Embedded Coder / 认证级仍为显式非目标
+日期：2026-07-21（修订：2026-08-16）  
+状态：P0–P4 能力清单已收口（含 Fast Restart、Multibody 3D、Coder-grade C 包、P4 实用手感）。P4-D 后做项见 [10](./10-ux-practical-review.md)。MathWorks Embedded Coder / 认证级 / Stateflow 产品仍为显式非目标。离散顺序逻辑走 MSL `StateGraph` 块，不另做 Chart。
   
 产品代号：`modai-studio`  
 决策基线：方案 1（独立 Tauri 应用 + 薄仿真桥）
@@ -12,7 +12,7 @@
 |------|------|------|
 | 01 | [需求说明](./01-requirements.md) | 目标用户、分期范围、非目标、验收标准 |
 | 02 | [设计说明](./02-design.md) | 架构、模块边界、Simulink 式信息架构 |
-| 03 | [数据结构说明](./03-data-structures.md) | 项目文件、图模型、预留层级/run 字段、IPC |
+| 03 | [数据结构说明](./03-data-structures.md) | 项目文件、图模型、无 JSON 状态图、IPC |
 | 04 | [功能说明](./04-features.md) | 功能域 A–L、P0–P3 清单、交互流程 |
 | 05 | [实现论证](./05-implementation-rationale.md) | 选型理由、风险、门禁、开放问题 |
 | 06 | [Simulink 能力对照](./06-simulink-capability-map.md) | 与 Simulink/Simscape 功能映射与分期 |
@@ -24,15 +24,17 @@
 ## 已确认决策
 
 1. **产品定位**：独立桌面产品，不从 `modai-ide` 拆仓；复用 `jit-compiler`（`rustmodlica`）。
-2. **MVP 交互**：框图拖拽为主；不做首版文本双向同步。
+2. **MVP 交互**：框图拖拽为主；不做首版文本双向同步。IDE `DiagramModel` JSON 可单向导入 Studio。
 3. **技术栈**：Tauri 2 + React + TypeScript；画布 XYFlow。
 4. **组件域**：信号流 + 物理域，首版各做极小子集。
 5. **落盘**：`model.mo` + `model.diagram.json`；仿真以 `.mo` 为准。
 6. **工程形态**：monorepo `modai-studio/`，Cargo workspace，path 依赖 `rustmodlica`。
-7. **对标策略**：交互学 Simulink，语义学 Modelica；不对标 Stateflow / Embedded Coder / HIL。
+7. **对标策略**：交互学 Simulink，语义学 Modelica；不对标 Stateflow 产品 / Embedded Coder / HIL。主路（画布 → `emit_mo` → `.mo` → JIT）不因缺 Chart 而改向。
 8. **Scope 策略（P0）**：全局 Results 曲线面板；不强制画布 Scope 块。
 9. **连续块默认**：P0 用 `FirstOrder` 作为传递函数直觉降级；TransferFunction 视支持升 P1。
-10. **编译器完整度**：不承诺完整 Simulink（产品族/语义/运行时/成熟度四层原因见 `07` §1.1）；P0 可行；P1 取消/进度依赖 `run_simulation` 增量。
+10. **编译器完整度**：不承诺完整 Simulink（产品族/语义/运行时/成熟度四层原因见 `07` §1.1）；P0 可行；P1 取消/进度依赖 `run_simulation` 增量。语言门禁是 **MLS 3.4 core 子集**，不是整本规范；库对齐 **MSL 4**（bundled `4.2.0 dev`）。
+11. **离散/顺序逻辑**：不发明 JSON 状态图，不引入 `Modelica_StateGraph2`（不合规外部库）。简单模式用 `when`/`if`/`reinit` 或 Logical 块；多步顺序用 **同一张框图**上的 `Modelica.StateGraph`（MSL 4 仍有 `StateGraph.mo` 单文件包）。规范第 17 章 `state`/`transition` 是时钟化语言能力，**不等于** StateGraph，Studio 不排期，等 JIT 真实现再谈视图。
+12. **停扩 Simulink 壳**：P4-D（频域、External Mode、逐块 residual）继续后做。StateGraph catalog（F95）已落地（同图 Step/Transition + emit `inner StateGraphRoot`），不是新语义宿主。下一刀仍是 MSL 映射诚实与可 Run 例子。
 
 ## 阅读顺序
 

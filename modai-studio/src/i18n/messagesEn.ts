@@ -379,6 +379,7 @@ export const messagesEn = {
   exampleSwitchSelect: "Switch Select",
   exampleGotoFrom: "Goto / From",
   exampleRateTransition: "Rate Transition",
+  exampleStateGraphFirst: "StateGraph First",
   exampleRcCircuit: "RC Circuit",
   exampleRlCircuit: "RL Circuit",
   exampleRlcSeries: "Series RLC",

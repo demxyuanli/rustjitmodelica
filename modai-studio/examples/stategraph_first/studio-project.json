@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "product": "modai-studio",
+  "modelName": "StateGraphFirst",
+  "libraryPaths": [],
+  "simulationDefaults": {
+    "stopTime": 5.5,
+    "numberOfIntervals": 500,
+    "solver": "rk45",
+    "tolerance": 1e-6,
+    "maxStep": null,
+    "minStep": null,
+    "loggedVariables": [
+      "step_active",
+      "initialStep_active"
+    ]
+  },
+  "ui": {
+    "locale": "zh"
+  },
+  "paramDictionary": []
+}

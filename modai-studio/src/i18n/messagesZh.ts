@@ -381,6 +381,7 @@ export const messagesZh: Record<keyof typeof messagesEn, string> = {
   exampleSwitchSelect: "开关选择",
   exampleGotoFrom: "Goto / From",
   exampleRateTransition: "速率转换",
+  exampleStateGraphFirst: "状态图入门",
   exampleRcCircuit: "RC 电路",
   exampleRlCircuit: "RL 电路",
   exampleRlcSeries: "串联 RLC",

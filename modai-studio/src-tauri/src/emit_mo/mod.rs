@@ -34,6 +34,7 @@ pub fn emit_modelica_with_dict(
         &mut decls,
         &mut eqs,
     );
+    inject_stategraph_root(root, subsystems, &mut decls);
 
     let mut out = String::new();
     if let Some(pr) = project_root {
@@ -290,6 +291,64 @@ fn param_value(node: &DiagramNode, name: &str) -> Option<String> {
         .find(|p| p.name == name)
         .map(|p| p.value.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+fn is_stategraph_type(type_name: &str, catalog_id: &str) -> bool {
+    type_name.contains("StateGraph.") || catalog_id.to_ascii_lowercase().starts_with("stategraph.")
+}
+
+fn is_stategraph_root_type(type_name: &str) -> bool {
+    type_name.contains("StateGraph.StateGraphRoot") || type_name.ends_with(".StateGraphRoot")
+}
+
+fn walk_needs_stategraph_root(
+    diagram: &DiagramDocument,
+    subsystems: &HashMap<String, DiagramDocument>,
+    saw_step: &mut bool,
+    saw_root: &mut bool,
+) {
+    for node in &diagram.nodes {
+        if node.node_kind == "subsystem" {
+            if let Some(ref_id) = &node.subsystem_ref {
+                if let Some(child) = subsystems.get(ref_id) {
+                    walk_needs_stategraph_root(child, subsystems, saw_step, saw_root);
+                }
+            }
+            continue;
+        }
+        if node.node_kind != "component" {
+            continue;
+        }
+        if is_stategraph_root_type(&node.type_name) {
+            *saw_root = true;
+            continue;
+        }
+        if is_stategraph_type(&node.type_name, &node.catalog_id) {
+            *saw_step = true;
+        }
+    }
+}
+
+/// MSL StateGraph Steps have `outer CompositeStepState stateGraphRoot`.
+/// Inject one top-level inner if the graph uses those blocks and none is already placed.
+fn inject_stategraph_root(
+    root: &DiagramDocument,
+    subsystems: &HashMap<String, DiagramDocument>,
+    decls: &mut Vec<String>,
+) {
+    let mut saw_step = false;
+    let mut saw_root = false;
+    walk_needs_stategraph_root(root, subsystems, &mut saw_step, &mut saw_root);
+    if saw_root || decls.iter().any(|d| d.contains("StateGraphRoot")) {
+        return;
+    }
+    if !saw_step {
+        return;
+    }
+    decls.insert(
+        0,
+        "  inner Modelica.StateGraph.StateGraphRoot stateGraphRoot;\n".into(),
+    );
 }
 
 /// Skip diagram-only params that are not Modelica modifiers on the target type.

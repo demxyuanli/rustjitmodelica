@@ -15,6 +15,7 @@ const TITLE_KEY: Record<string, MessageKey> = {
   switch_select: "exampleSwitchSelect",
   goto_from: "exampleGotoFrom",
   rate_transition: "exampleRateTransition",
+  stategraph_first: "exampleStateGraphFirst",
   rc_circuit: "exampleRcCircuit",
   rl_circuit: "exampleRlCircuit",
   rlc_series: "exampleRlcSeries",

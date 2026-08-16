@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 1,
+  "modelName": "StateGraphFirst",
+  "diagramId": "root",
+  "parentDiagramId": null,
+  "nodes": [
+    {
+      "id": "n_init",
+      "instanceName": "initialStep",
+      "typeName": "Modelica.StateGraph.InitialStep",
+      "domain": "signal",
+      "catalogId": "stategraph.initialStep",
+      "position": {
+        "x": 40.0,
+        "y": 80.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "nIn",
+          "value": "1"
+        },
+        {
+          "name": "nOut",
+          "value": "1"
+        }
+      ],
+      "ports": [
+        {
+          "id": "inPort[1]",
+          "kind": "connector",
+          "direction": "in",
+          "typeName": "Modelica.StateGraph.Interfaces.Step_in"
+        },
+        {
+          "id": "outPort[1]",
+          "kind": "connector",
+          "direction": "out",
+          "typeName": "Modelica.StateGraph.Interfaces.Step_out"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "active"
+      ],
+      "ui": {
+        "label": "initialStep",
+        "width": 88.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_t1",
+      "instanceName": "transition1",
+      "typeName": "Modelica.StateGraph.Transition",
+      "domain": "signal",
+      "catalogId": "stategraph.transition",
+      "position": {
+        "x": 180.0,
+        "y": 68.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "condition",
+          "value": "true"
+        },
+        {
+          "name": "enableTimer",
+          "value": "true"
+        },
+        {
+          "name": "waitTime",
+          "value": "1"
+        }
+      ],
+      "ports": [
+        {
+          "id": "inPort",
+          "kind": "connector",
+          "direction": "in",
+          "typeName": "Modelica.StateGraph.Interfaces.Transition_in"
+        },
+        {
+          "id": "outPort",
+          "kind": "connector",
+          "direction": "out",
+          "typeName": "Modelica.StateGraph.Interfaces.Transition_out"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": {
+        "label": "transition1",
+        "width": 36.0,
+        "height": 72.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_step",
+      "instanceName": "step",
+      "typeName": "Modelica.StateGraph.Step",
+      "domain": "signal",
+      "catalogId": "stategraph.step",
+      "position": {
+        "x": 280.0,
+        "y": 80.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "nIn",
+          "value": "1"
+        },
+        {
+          "name": "nOut",
+          "value": "1"
+        }
+      ],
+      "ports": [
+        {
+          "id": "inPort[1]",
+          "kind": "connector",
+          "direction": "in",
+          "typeName": "Modelica.StateGraph.Interfaces.Step_in"
+        },
+        {
+          "id": "outPort[1]",
+          "kind": "connector",
+          "direction": "out",
+          "typeName": "Modelica.StateGraph.Interfaces.Step_out"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [
+        "active"
+      ],
+      "ui": {
+        "label": "step",
+        "width": 88.0,
+        "height": 48.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    },
+    {
+      "id": "n_t2",
+      "instanceName": "transition2",
+      "typeName": "Modelica.StateGraph.Transition",
+      "domain": "signal",
+      "catalogId": "stategraph.transition",
+      "position": {
+        "x": 420.0,
+        "y": 68.0
+      },
+      "rotation": 0.0,
+      "params": [
+        {
+          "name": "condition",
+          "value": "true"
+        },
+        {
+          "name": "enableTimer",
+          "value": "true"
+        },
+        {
+          "name": "waitTime",
+          "value": "1"
+        }
+      ],
+      "ports": [
+        {
+          "id": "inPort",
+          "kind": "connector",
+          "direction": "in",
+          "typeName": "Modelica.StateGraph.Interfaces.Transition_in"
+        },
+        {
+          "id": "outPort",
+          "kind": "connector",
+          "direction": "out",
+          "typeName": "Modelica.StateGraph.Interfaces.Transition_out"
+        }
+      ],
+      "nodeKind": "component",
+      "subsystemRef": null,
+      "plotHints": [],
+      "ui": {
+        "label": "transition2",
+        "width": 36.0,
+        "height": 72.0,
+        "portBindings": null,
+        "fmuAsset": null,
+        "fmuGuid": null,
+        "fmuModelIdentifier": null,
+        "labelBelow": null,
+        "icon": null,
+        "moAsset": null,
+        "variants": null,
+        "activeVariantId": null,
+        "dashboardPins": null
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceNodeId": "n_init",
+      "sourcePortId": "outPort[1]",
+      "targetNodeId": "n_t1",
+      "targetPortId": "inPort",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e2",
+      "sourceNodeId": "n_t1",
+      "sourcePortId": "outPort",
+      "targetNodeId": "n_step",
+      "targetPortId": "inPort[1]",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e3",
+      "sourceNodeId": "n_step",
+      "sourcePortId": "outPort[1]",
+      "targetNodeId": "n_t2",
+      "targetPortId": "inPort",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [],
+      "routing": "orthogonal",
+      "ui": null
+    },
+    {
+      "id": "e4",
+      "sourceNodeId": "n_t2",
+      "sourcePortId": "outPort",
+      "targetNodeId": "n_init",
+      "targetPortId": "inPort[1]",
+      "signalName": null,
+      "unit": null,
+      "dimension": null,
+      "vertices": [
+        {
+          "x": 520.0,
+          "y": 104.0
+        },
+        {
+          "x": 520.0,
+          "y": 24.0
+        },
+        {
+          "x": 20.0,
+          "y": 24.0
+        },
+        {
+          "x": 20.0,
+          "y": 104.0
+        }
+      ],
+      "routing": "orthogonal",
+      "ui": null
+    }
+  ],
+  "annotations": [],
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "zoom": 1.0
+  }
+}

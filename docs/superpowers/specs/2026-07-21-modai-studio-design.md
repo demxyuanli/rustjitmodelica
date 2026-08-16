@@ -17,4 +17,4 @@
 | 实现论证 | `docs/modai-studio/05-implementation-rationale.md` |
 | Simulink 能力对照 | `docs/modai-studio/06-simulink-capability-map.md` |
 
-产品决策摘要：独立 Tauri 应用 `modai-studio`；XYFlow；`*.mo` + `*.diagram.json`；path 依赖 `rustmodlica`；交互学 Simulink / 语义学 Modelica；P0 全局 Results 面板（非强制 Scope 块）；信号流+物理域极小子集；不做 Stateflow / Embedded Coder / 文本双向同步（MVP）。
+产品决策摘要：独立 Tauri 应用 `modai-studio`；XYFlow；`*.mo` + `*.diagram.json`；path 依赖 `rustmodlica`；交互学 Simulink / 语义学 Modelica；P0 全局 Results 面板（非强制 Scope 块）；信号流+物理域极小子集；不做 Stateflow Chart / JSON 状态图 / Embedded Coder / 文本双向同步。顺序逻辑用同图 `Modelica.StateGraph` 块（F95），不另做功能组合。正式规格见 `docs/modai-studio/`（2026-08-16 修订）。

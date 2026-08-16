@@ -99,6 +99,11 @@ export function blockIconKey(n: DiagramNode): string {
   if ((id.includes("math.max") || ty.endsWith(".max")) && !id.includes("max_")) return "max";
   if (id.includes("noise") || ty.includes("noise")) return "noise";
   if (id.includes("statespace") || ty.includes("statespace")) return "stateSpace";
+  if (id.includes("stategraph.transition") || ty.includes("stategraph.transition"))
+    return "sgTransition";
+  if (id.includes("stategraph.initial") || ty.includes("stategraph.initial"))
+    return "sgInitialStep";
+  if (id.includes("stategraph.") || ty.includes("stategraph.")) return "sgStep";
   if (id.includes("step") || ty.endsWith(".step")) return "step";
   if (id.includes("sine") || ty.endsWith(".sine")) return "sine";
   if (id.includes("constant") && n.domain === "signal") return "constant";
@@ -761,6 +766,26 @@ export function BlockIcon({ kind, label }: { kind: string; label?: string }) {
           <text x="10" y="20" fontSize="10" fill={s}>
             dx=Ax
           </text>
+        </svg>
+      );
+    case "sgInitialStep":
+      return (
+        <svg className="slx-block-icon" viewBox="0 0 48 32" aria-hidden>
+          <rect x="10" y="6" width="28" height="20" fill="transparent" stroke={a} strokeWidth="2" />
+          <rect x="14" y="10" width="20" height="12" fill="transparent" stroke={s} strokeWidth="1.2" />
+        </svg>
+      );
+    case "sgStep":
+      return (
+        <svg className="slx-block-icon" viewBox="0 0 48 32" aria-hidden>
+          <rect x="10" y="6" width="28" height="20" fill="transparent" stroke={a} strokeWidth="1.6" />
+        </svg>
+      );
+    case "sgTransition":
+      return (
+        <svg className="slx-block-icon" viewBox="0 0 48 32" aria-hidden>
+          <line x1="24" y1="4" x2="24" y2="28" stroke={a} strokeWidth="3" />
+          <line x1="16" y1="16" x2="24" y2="16" stroke={s} strokeWidth="1.4" />
         </svg>
       );
     case "step":

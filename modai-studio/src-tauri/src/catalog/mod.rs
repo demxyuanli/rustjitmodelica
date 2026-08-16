@@ -7,6 +7,7 @@ mod mechanics_mb;
 mod physical_blocks;
 mod sensors;
 mod signal_blocks;
+mod stategraph;
 
 pub(super) fn signal_port(id: &str, direction: &str) -> PortDef {
     PortDef {
@@ -343,5 +344,6 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
     out.extend(physical_blocks::extra_physical_blocks());
     out.extend(mechanics_mb::extra_mechanics_multibody_blocks());
     out.extend(sensors::extra_sensor_blocks());
+    out.extend(stategraph::extra_stategraph_blocks());
     out
 }

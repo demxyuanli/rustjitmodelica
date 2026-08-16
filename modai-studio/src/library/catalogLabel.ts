@@ -61,6 +61,11 @@ const BY_ID: [string, LocaleName][] = [
   ["pointMass", { en: "PointMass", zh: "质点" }],
   ["revoluteActuated", { en: "RevoluteA", zh: "驱动转动副" }],
   ["revolute", { en: "Revolute", zh: "转动副" }],
+  ["stategraph.initialStep", { en: "InitialStep", zh: "初始步" }],
+  ["stategraph.stepWithSignal", { en: "StepWithSignal", zh: "步(信号)" }],
+  ["stategraph.transitionWithSignal", { en: "TransitionWithSignal", zh: "变迁(信号)" }],
+  ["stategraph.transition", { en: "Transition", zh: "变迁" }],
+  ["stategraph.step", { en: "Step", zh: "步" }],
   ["sources.step", { en: "Step", zh: "阶跃" }],
   ["sources.sine", { en: "Sine", zh: "正弦" }],
   ["sources.constant", { en: "Constant", zh: "常量" }],
@@ -81,6 +86,7 @@ const CATEGORY: Record<string, LocaleName> = {
   Math: { en: "Math", zh: "数学" },
   Continuous: { en: "Continuous", zh: "连续" },
   Discrete: { en: "Discrete", zh: "离散" },
+  StateGraph: { en: "StateGraph", zh: "状态图" },
   Logical: { en: "Logical", zh: "逻辑" },
   Nonlinear: { en: "Nonlinear", zh: "非线性" },
   Tables: { en: "Tables", zh: "查表" },
@@ -127,6 +133,7 @@ export function catalogDomainHint(e: CatalogEntry): string {
   if (e.category === "Terminals") return "terminal";
   if (e.category === "Routing") return "routing";
   if (e.category === "Discrete") return "discrete";
+  if (e.category === "StateGraph") return "discrete";
   if (e.category === "Logical") return "logical";
   if (e.category === "Translational" || e.category === "Rotational") return "1d";
   if (e.category === "MultiBody") return "3d";

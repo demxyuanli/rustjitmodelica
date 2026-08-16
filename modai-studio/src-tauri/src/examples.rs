@@ -45,6 +45,7 @@ fn defs() -> &'static [(&'static str, &'static str, &'static str, bool)] {
         ("switch_select", "Switch Select", "signal", true),
         ("goto_from", "Goto / From", "signal", true),
         ("rate_transition", "Rate Transition", "signal", true),
+        ("stategraph_first", "StateGraph First", "signal", true),
         ("rc_circuit", "RC Circuit", "electrical", true),
         ("rl_circuit", "RL Circuit", "electrical", true),
         ("rlc_series", "Series RLC", "electrical", true),

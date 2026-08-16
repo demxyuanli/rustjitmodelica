@@ -1,6 +1,6 @@
 # Modai Studio 功能说明
 
-日期：2026-07-21（修订：按 Simulink 能力域展开）  
+日期：2026-07-21（修订：2026-08-16 离散逻辑宿主）  
 关联：[需求说明](./01-requirements.md) · [设计说明](./02-design.md) · [Simulink 对照](./06-simulink-capability-map.md)
 
 优先级：P0 = MVP；P1 = Studio-Core；P2 = Studio-Pro；P3 = Future。
@@ -21,6 +21,7 @@
 | J 诊断 | Diagnostics / Advisor | F18, F80–F83 |
 | K 导出与互联 | Code / FMU | F22, F90–F93 |
 | L 示例与帮助 | Demos | F16, F94 |
+| M 顺序逻辑 | Grafcet / StateGraph（非 Stateflow） | F95 |
 
 ---
 
@@ -105,6 +106,8 @@
 | F84 | 一维查表块 | Lookup Table |
 | F85 | 项目参数字典 | Data Dictionary |
 | F86 | From File 激励 | From Workspace 精简 |
+| F94 | IDE DiagramModel 单向导入 | — |
+| F95 | `Modelica.StateGraph` Step/Transition catalog | Sequential Function Chart 精简 |
 
 ### 2.4 P3 — Future
 
@@ -242,7 +245,7 @@
 
 ### 4.9 示例（F16）
 
-启动与工具栏 Home 打开 800x600 欢迎模态窗；下部 Tab 分示例（按信号/电气/机械/多体分类列表）/ 打开（含最近）/ 新建（名称、父目录自动建子文件夹、按域分类的模板列表、初始仿真配置）。
+启动与工具栏 Home 打开 800x600 欢迎模态窗（顶部为明亮的多域建模横幅）；下部 Tab 分示例（按信号/电气/机械/多体分类列表）/ 打开（含最近）/ 新建（名称、父目录自动建子文件夹、按域分类的模板列表、初始仿真配置）。
 
 | 示例 | 内容 | 类比 |
 |------|------|------|
@@ -254,6 +257,7 @@
 | `examples/switch_select` | Constants–BooleanStep–Switch | 逻辑切换 |
 | `examples/goto_from` | Step–Goto/From–Gain | 跳线 |
 | `examples/rate_transition` | Sine–ZeroOrderHold | 离散保持 |
+| `examples/stategraph_first` | InitialStep–Transition–Step 环 | Grafcet / StateGraph |
 | `examples/rc_circuit` | StepV–R–C–Ground | 电路入门 |
 | `examples/rl_circuit` | PulseV–R–L–Ground | RL 电流 |
 | `examples/rlc_series` | V–R–L–C–Ground | 串联 RLC |
@@ -266,6 +270,10 @@
 | `examples/trans_spring_damper` | Mass–SpringDamper | 平移二阶 |
 | `examples/trans_sensor_control` | 平移 + 传感器 | 平移测量 |
 | `examples/multibody_preview` | World–Revolute–Rod–Body 单摆 | Multibody / 3D |
+
+### 4.10 顺序逻辑（F95）— catalog 已落地
+
+不另做 Stateflow Chart。需要多步顺序时：Library 的 StateGraph 分类提供 `Modelica.StateGraph` 的 `InitialStep` / `Step` / `Transition`（及 `*WithSignal`）；`condition` / `enableTimer` / `waitTime` 为块参数；`inner StateGraphRoot` 由 emit 补。画在与电阻、积分器相同的框图上。示例：`examples/stategraph_first`。简单切模式继续用 `when`/Logical。不做 JSON 状态图、不用 StateGraph2、不排期第 17 章编辑器。
 
 ---
 

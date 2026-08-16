@@ -6,6 +6,17 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Studio StateGraph catalog F95 (2026-08-16)
+
+- Library: `Modelica.StateGraph` InitialStep / Step / Transition / StepWithSignal / TransitionWithSignal on the existing diagram (no JSON statechart).
+- emit_mo injects `inner Modelica.StateGraph.StateGraphRoot stateGraphRoot` when graph nodes are present.
+- Bundled example `examples/stategraph_first` (FirstExample-style two-step loop).
+- Canvas minimap draws custom blocks (flow nodes now carry width/height) and opens pinned by default.
+
+### Studio discrete-logic host (2026-08-16)
+
+- Spec: sequential/mode logic stays Modelica (`when`/Logical, same-canvas `Modelica.StateGraph` blocks). No Stateflow Chart, no JSON statechart, no StateGraph2 host, no MLS chapter-17 editor in Studio. JIT chapter 17 is not StateGraph. MSL 4 still ships `StateGraph.mo`. F95 catalog is in this Unreleased section.
+
 ### Modai Studio P4 main-path feel (2026-08-15)
 
 - P4-A: Library HTML5 drag onto canvas; `screenToFlowPosition` placement; four-pane Library+Properties; connect banner instead of `alert`; context menu; double-click semantics; Pause/Step on the sim bar.
@@ -28,7 +39,7 @@ Format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Rotate 90 degrees moves ports to the new sides and reroutes attached wires (no CSS-only spin).
 - Title bar File / Edit / Export / Simulation are real dropdown menus.
 - Dirty projects auto-save to disk every 30s when a folder exists; a local crash draft can be restored after an unclean exit.
-- Bundled templates expanded to 20 (keep the previous 9, add first-order/PID/TF/limiter/switch/goto, RL/RLC, rotational drive/gear, mass-damper). Welcome Examples and New-project template list share the same set, grouped by domain (signal / electrical / mechanical / multibody).
+- Bundled templates expanded to 21 (keep the previous 9, add first-order/PID/TF/limiter/switch/goto, RL/RLC, rotational drive/gear, mass-damper, StateGraph first). Welcome Examples and New-project template list share the same set, grouped by domain (signal / electrical / mechanical / multibody).
 - Scrollbars follow the Tauri window theme: `fluentOverlay`, `color-scheme`, and `setTheme` on theme change.
 - Fill empty bundled example diagrams: RotSpringDamper, TransSensorControl, TransSpringDamper (stubs had `nodes: []`; trans models were emit-empty).
 - Canvas wire legend, sample-time legend, and minimap dock to the edge: hover or click the tab to show; pane click hides them back to the arrow.

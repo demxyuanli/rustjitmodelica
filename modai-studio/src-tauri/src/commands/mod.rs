@@ -380,6 +380,15 @@ pub fn studio_pick_data_file() -> Option<String> {
 }
 
 #[tauri::command]
+pub fn studio_pick_json_file() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Select IDE DiagramModel JSON")
+        .add_filter("JSON", &["json"])
+        .pick_file()
+        .map(|p| p.display().to_string())
+}
+
+#[tauri::command]
 pub fn studio_read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }

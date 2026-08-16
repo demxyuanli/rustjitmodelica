@@ -1,7 +1,7 @@
 # Modai Studio 实现任务板
 
 日期：2026-07-21（修订：2026-07-24 Rate Transition）  
-阶段：**F90 Export Suite 已收口；下一阶段 P4 实用手感**  
+阶段：**F95 StateGraph catalog 已落地；P4-D（频域 / External Mode）后做**  
 P4 规格与优先级：[10-ux-practical-review.md](./10-ux-practical-review.md)  
 历史阶段：P0 → P3 → Q4 → F89 → RATE → F90 均已收口（见下文）。
 机器可读状态：`docs/modai-studio/tasks_rate.json`（当前）；另有 `tasks_f89.json` / `tasks_q4.json`  
@@ -252,6 +252,14 @@ P4 已收口后仍缺的实用项（不含 P4-D 延后项）：未落盘 Run 先
 | P5-04 | done | 旋转 90° 后门位与连线跟随 | 端口改到上/下/左/右；松手后重布相关连线 |
 | P5-05 | done | File/Edit/Export/Simulation 真正下拉菜单 | 标题栏文字菜单，不再是图标组 |
 | P5-06 | done | 脏工程定时自动保存 / 崩溃恢复 | 有目录时 30s 写盘；localStorage 草稿，异常退出可恢复 |
+
+## IDE 单向导入（F94）
+
+File → Import IDE diagram：读取 IDE `DiagramModel` / `GraphicalDocumentModel` JSON，适配为 Studio `DiagramDocument` 后替换当前根图（脏画布先确认）。不反向导出、不共享类型定义。适配器：`modai-studio/src/import/ideDiagram.ts`。
+
+## StateGraph catalog（F95，done）
+
+不另做 Stateflow / JSON 状态图 / 第 17 章编辑器。Library 增加 `Modelica.StateGraph` 的 `InitialStep` / `Step` / `Transition` / `*WithSignal`；emit 在出现图节点时补 `inner StateGraphRoot`。验收示例：`modai-studio/examples/stategraph_first`（FirstExample 式启停环）。MSL 4 源码在 `jit-compiler/Modelica/StateGraph.mo`。
 
 ## 历史闭环规则（P0）
 

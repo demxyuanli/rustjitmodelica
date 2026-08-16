@@ -66,7 +66,7 @@
 11. **P379–P398**：Model Advisor F80 + 结构告警 F81 + Export PNG F82 — 已落地
 12. **P399–P418**：Model Reference F62 + 用户 catalog 包 — 已落地
 
-禁止项（见 07）：Stateflow、完整 Bus Object 生态、与 MATLAB 数值逐块对等。
+禁止项（见 07）：Stateflow Chart、JSON 状态图、完整 Bus Object 生态、与 MATLAB 数值逐块对等。顺序图若做，是同画布上的 StateGraph 块，不是独立状态图画布。
 
 ## 4. 本轮实现
 

@@ -1,6 +1,6 @@
 # Modai Studio 实现论证
 
-日期：2026-07-21  
+日期：2026-07-21（修订：2026-08-16 离散逻辑宿主）  
 目的：在编码前论证“为什么这样做、先做什么、风险如何收口”。  
 关联：本目录其余规格文档。
 
@@ -154,6 +154,7 @@ Studio 命令面保持**薄**：不复制 IDE 的方程图、自迭代、监控�
 | Q5 | 自动保存？ | 仅 Run 前保存；Ctrl+S | 待确认 |
 | Q6 | P0 Scope 是否强制画布块？ | **否**，全局 Results 面板 | 规格已采纳 |
 | Q7 | 子系统数据形态？ | 预留 `diagramId`/`subsystemRef`；P2 再选嵌套 model | 规格已预留 |
+| Q8 | 顺序逻辑 /「像 Stateflow」？ | **不做 Chart**。宿主：`when`/Logical + 同图画 `Modelica.StateGraph` 块。不用 StateGraph2；第 17 章不进 Studio 排期 | 规格已采纳 |
 
 评审记下结论后更新 [00-index.md](./00-index.md) 决策基线。
 
@@ -163,3 +164,5 @@ Studio 命令面保持**薄**：不复制 IDE 的方程图、自迭代、监控�
 2. **要**在 P0 数据结构留下层级/标签/run 扩展点，避免 Core/Pro 推倒 schema。
 3. Catalog 名单以“编译器能跑”为硬门禁，名称上贴近 Simulink 用户直觉即可。
 4. 完整对照与 Out 清单见 [06-simulink-capability-map.md](./06-simulink-capability-map.md)。
+5. **不要**为顺序逻辑发明第三种语言或 JSON 状态图；需要 Grafcet 时只加 StateGraph catalog（F95）。
+6. **不要**把第 17 章语言状态机当成 StateGraph 的实现，也**不要**以为做了第 17 章就有了 StateGraph。

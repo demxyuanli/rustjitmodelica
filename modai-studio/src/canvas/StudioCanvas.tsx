@@ -76,8 +76,8 @@ function toFlow(
   return {
     nodes: diagram.nodes.map((n) => {
       const draw = isDrawNode(n);
-      const w = n.ui?.width ?? (draw ? 140 : undefined);
-      const h = n.ui?.height ?? (draw ? 80 : undefined);
+      const w = n.ui?.width ?? (draw ? 140 : 120);
+      const h = n.ui?.height ?? (draw ? 80 : 48);
       return {
         id: n.id,
         type: (draw ? "studioDraw" : "studio") as "studio" | "studioDraw",
@@ -85,7 +85,9 @@ function toFlow(
         data: { diagram: n },
         selected: false,
         zIndex: draw ? -1 : 0,
-        style: draw && w != null && h != null ? { width: w, height: h } : undefined,
+        width: w,
+        height: h,
+        style: { width: w, height: h },
       };
     }),
     edges: diagram.edges.map((e) => {
@@ -193,7 +195,9 @@ export function StudioCanvas({
   const [connectHint, setConnectHint] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [connecting, setConnecting] = useState<ConnectingPort | null>(null);
-  const [pinnedDocks, setPinnedDocks] = useState<Partial<Record<CanvasEdgeDockId, boolean>>>({});
+  const [pinnedDocks, setPinnedDocks] = useState<Partial<Record<CanvasEdgeDockId, boolean>>>({
+    minimap: true,
+  });
   const [dragPos, setDragPos] = useState<Record<string, { x: number; y: number }>>({});
   const dragRev = useRef(diagramRev);
   const livePos = dragRev.current === diagramRev ? dragPos : EMPTY_POS;
@@ -683,7 +687,10 @@ export function StudioCanvas({
           onPinnedChange={(pinned) => setDockPinned("minimap", pinned)}
         >
           <MiniMap
+            pannable
+            zoomable
             nodeStrokeWidth={2}
+            style={{ width: 200, height: 150 }}
             nodeColor={(n) => {
               const d = (n.data as {
                 diagram?: { domain?: string; nodeKind?: string; catalogId?: string };

@@ -38,7 +38,7 @@ P0–P3 / Q4 / F89 / RATE / F90 的**能力清单已经铺得很宽**：库、�
 2. **实现**：`modai-studio/src/app/Workbench.tsx`、`LibraryPanel`、`StudioCanvas`、`ToolBar` / `MenuBar`、`ResultsDock`、`useStudioSim`、`DashboardPanel`、`catalog/*`。
 3. **Simulink 日常动作**：Library 拖拽、双击改参、Config 对话框、Run 中看 Scope、Stop、改参再 Run、点诊断跳模块。
 
-不纳入本审查（规格已 Out）：Stateflow、Embedded Coder 认证级、HIL / External Mode、MATLAB 工作区、完整 Bus Object。
+不纳入本审查（规格已 Out）：Stateflow Chart、JSON 状态图、StateGraph2、第 17 章 Studio 编辑器、Embedded Coder 认证级、HIL / External Mode、MATLAB 工作区、完整 Bus Object。顺序逻辑不按「缺 Chart」计差距。
 
 ---
 
@@ -305,7 +305,8 @@ P4-17 是唯一必须动 `sim_bridge` / 仿真循环的项，也是「实时平�
 ### P4-D 明确后做 / 不做
 
 后做：真多时钟分区 UI、频域/线性化、逐块 residual、在线 External Mode、完整最近块推荐引擎。  
-不做：Stateflow 产品化、认证级 Coder、HIL、MATLAB 工作区。
+不做：Stateflow 产品化、JSON 状态图、StateGraph2 宿主、第 17 章 Studio 编辑器、认证级 Coder、HIL、MATLAB 工作区。  
+离散顺序（非本 P4 审查范围）：同图 `Modelica.StateGraph` catalog（F95）已落地。
 
 ---
 

@@ -2100,6 +2100,20 @@ button.linkish {
   inset: auto !important;
 }
 
+.canvas-edge-dock[data-dock="minimap"].is-open .canvas-edge-dock-body {
+  max-width: 220px;
+}
+
+.canvas-edge-dock .react-flow__minimap {
+  border: 1px solid var(--border);
+}
+
+.canvas-edge-dock .react-flow__minimap-svg {
+  display: block;
+  width: 200px;
+  height: 150px;
+}
+
 .sample-time-legend {
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   border: 1px solid var(--border);
